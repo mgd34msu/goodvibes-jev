@@ -177,3 +177,23 @@ for (const alias of ['project-plan', 'planning']) for (const fallback of [false,
     expect(f.captures).toEqual([]); expect(f.dispatched).toEqual([]);
   });
 }
+
+for (const alias of ['project-plan', 'planning']) {
+  test(`${alias} historical inspection cannot replace uncertain native input or become recovery fallback`, async () => {
+    const f = fixture(); const capture = f.client.capture; const opened: string[] = [];
+    f.context.openModal = name => { opened.push(name); };
+    f.client.capture = async (...args) => { await capture(...args); throw new Error('lost response'); };
+    f.submit(`/${alias} ${original}`); await settled(f);
+    const retained = structuredClone([...f.records]); const captureIds = f.ids(); const beforeCalls = [...f.calls];
+    for (const args of [['history'], ['panel'], ['pause'], ['stop'], ['cancel']]) {
+      await f.registry.execute(alias, args, f.context);
+    }
+    expect(opened).toEqual(['planning-modal', 'native-work-ledger-modal']);
+    expect([...f.records]).toEqual(retained); expect(f.ids()).toBe(captureIds);
+    expect(f.calls).toEqual(beforeCalls); expect(f.dispatched).toEqual([]);
+    const recovered = await f.controls.resume();
+    expect(recovered?.result).toMatchObject({ kind: 'turn', text: original });
+    expect(f.captures).toHaveLength(1); expect(f.captures[0]?.text).toBe(original);
+    expect(f.ids()).toBe(captureIds);
+  });
+}

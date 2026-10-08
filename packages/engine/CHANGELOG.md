@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Preserve original IMAP literal byte boundaries through legacy email reads,
+  body-capability checks and folder discovery. Reuse shared byte framing and
+  keep opaque payloads separate from protocol syntax and message identity.
+
 - Apply the selected configuration's HTTPS trust to daemon status and update
   commands. Keep explicit fetch policy isolated across concurrent calls and
   existing global transport wrappers while retaining middleware guards and

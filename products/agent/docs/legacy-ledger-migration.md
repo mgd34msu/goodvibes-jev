@@ -3,8 +3,8 @@
 Agent and TUI share the same explicit `/work-import` command and durable journal.
 The selected authenticated daemon and its existing KnowledgeStore remain the only
 work authority. Import migrates historical data; it neither launches a work
-attempt nor verifies an old completion. Legacy records and the planning interview
-are retained while the wider native replacement is qualified.
+attempt nor verifies an old completion. Legacy records remain available for historical
+inspection and explicit migration; importing does not require a live planning interview.
 
 ## Command workflow
 
@@ -120,7 +120,7 @@ synthetic owned HTTP hosts, SQLite journal reopen, lost acknowledgement and exac
 replay, repeated submit, stale request selection, source/revision conflicts,
 revocation during shared retry, closed service, and interrupted transports.
 Compiled command fixtures exercise the real command/SDK/journal composition in
-new processes; they are not a claim that all main-screen planning replacement is
-finished. Independent review, exact-head CI, product tests and compiled startup
-qualification remain release gates. The active planning interview is retired
-only after the broader replacement and recovery behavior is proven.
+new processes. Planning-history retirement and its additional replacement/recovery
+proof are tracked in [PR187](https://github.com/mgd34msu/goodvibes-jev/pull/187).
+Independent review, exact-head CI, product tests and compiled startup qualification
+remain delivery gates. This evidence does not establish whole-product parity.

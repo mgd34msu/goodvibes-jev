@@ -24,6 +24,7 @@
  * for every input, not for the inputs we thought of.
  */
 
+import { type ImapFetchFrame, parseFetchResponses, fetchSection } from './imap-fetch-response.js';
 import type { ImapAttachmentInfo } from './imap-client.js';
 
 // ---------------------------------------------------------------------------
@@ -359,24 +360,31 @@ const SECTION_MARKER = /BODY(?:\.PEEK)?\[[^\]]*\](?:<[^>]*>)?[ \t]*/;
 const RESPONSE_END = /^\s*(?:UID \d+\s*)?\)\s*$/;
 
 /** True when the server actually returned a message for the fetch. */
-export function hasFetchResponse(lines: readonly string[]): boolean {
-  return lines.some((line) => FETCH_START.test(line));
+export function hasFetchResponse(lines: readonly (string | ImapFetchFrame)[]): boolean {
+  return lines.some((line) => FETCH_START.test(typeof line === 'string' ? line : line.syntax));
 }
 
 /**
  * Pull the section payload out of a single-message FETCH response.
  *
- * The session inlines a `{n}` literal into the line that announced it, so the
- * payload usually arrives as the tail of the `* n FETCH (BODY[..] ` line;
- * short sections may instead arrive as a quoted string, and an absent one as
- * NIL. Returns null when there was no FETCH response at all, which is how a
+ * Transport callers retain explicit literal frames through the canonical FETCH
+ * reader. Scripted string callers retain their historical folded-line shape;
+ * short sections may be quoted strings, and absent sections may be NIL. Returns null when there was no FETCH response at all, which is how a
  * UID that no longer exists is told apart from a section that is empty.
  */
-export function extractFetchSection(lines: readonly string[]): string | null {
-  const startIndex = lines.findIndex((line) => FETCH_START.test(line));
+export function extractFetchSection(lines: readonly (string | ImapFetchFrame)[]): string | null {
+  if (lines.some(line => typeof line !== 'string')) {
+    const response = parseFetchResponses(lines)[0];
+    if (response !== undefined && response.parseError === null) return fetchSection(response, () => true);
+    if (lines.some(line => typeof line !== 'string' && line.literal !== undefined)) return null;
+  }
+  // Preserve the established lenient quoted-section reader only when there
+  // are no literal values to flatten. Transport literals always use frames.
+  const textLines = lines.map(line => typeof line === 'string' ? line : line.syntax);
+  const startIndex = textLines.findIndex((line) => FETCH_START.test(line));
   if (startIndex === -1) return null;
 
-  const first = lines[startIndex] ?? '';
+  const first = textLines[startIndex] ?? '';
   const marker = SECTION_MARKER.exec(first);
   let head = marker === null ? '' : first.slice(marker.index + marker[0].length);
 
@@ -388,7 +396,7 @@ export function extractFetchSection(lines: readonly string[]): string | null {
 
   const collected: string[] = head.length > 0 ? [head] : [];
   for (let i = startIndex + 1; i < lines.length; i += 1) {
-    const line = lines[i] ?? '';
+    const line = textLines[i] ?? '';
     // The response closes with `)`, which a server that puts the automatic
     // UID item last writes as `UID 42)`. Either ends the payload; so does the
     // tagged completion, in case the close never arrives.
@@ -403,12 +411,37 @@ export function extractFetchSection(lines: readonly string[]): string | null {
  * Lines are joined first, because a literal inside the structure (a filename,
  * typically) fragments the response across several of them.
  */
-export function extractBodyStructure(lines: readonly string[]): string {
-  const joined = lines.join('\r\n');
-  const marker = /BODYSTRUCTURE\s*/i.exec(joined);
-  if (marker === null) return '';
-  const rest = joined.slice(marker.index + marker[0].length);
-  if (!rest.startsWith('(')) return '';
-  const end = skipList(rest, 1);
-  return rest.slice(0, end);
+export function extractBodyStructure(lines: readonly (string | ImapFetchFrame)[]): string {
+  const encoded = lines.map(line => typeof line === 'string' ? line : line.syntax
+    + (line.literal === undefined ? '' : '"' + line.literal.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'));
+  for (let frameIndex = 0; frameIndex < lines.length; frameIndex += 1) {
+    const frame = lines[frameIndex];
+    const syntax = typeof frame === 'string' ? frame : frame?.syntax ?? '';
+    const start = /^\* \d+ FETCH \(/i.exec(syntax);
+    if (start === null) continue;
+    // Only actual FETCH syntax can start a candidate. Status prose and a
+    // lookalike inside a literal cannot seed depth or supply an item marker.
+    let endIndex = frameIndex + 1;
+    while (endIndex < lines.length) {
+      const next = lines[endIndex];
+      const nextSyntax = typeof next === 'string' ? next : next?.syntax ?? '';
+      if (/^(?:\* |\S+ (?:OK|NO|BAD)\b)/i.test(nextSyntax)) break;
+      endIndex += 1;
+    }
+    const joined = encoded.slice(frameIndex, endIndex).join('\r\n');
+    let depth = 1;
+    for (let index = start[0].length; index < joined.length; index += 1) {
+      const char = joined.charAt(index);
+      if (char === '"') { index = readQuoted(joined, index).next - 1; continue; }
+      if (char === '[') { const close = joined.indexOf(']', index); if (close < 0) break; index = close; continue; }
+      if (char === '(') { depth += 1; continue; }
+      if (char === ')') { if (--depth === 0) break; continue; }
+      if (depth !== 1 || !/[\s(]/.test(joined.charAt(index - 1))) continue;
+      const marker = /^BODYSTRUCTURE\s+/i.exec(joined.slice(index));
+      if (marker === null) continue;
+      const rest = joined.slice(index + marker[0].length);
+      return rest.startsWith('(') ? rest.slice(0, skipList(rest, 1)) : '';
+    }
+  }
+  return '';
 }

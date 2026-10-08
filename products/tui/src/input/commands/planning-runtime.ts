@@ -1,4 +1,3 @@
-import type { ProjectPlanningQuestion } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { directOwnerPlanningInput, type CommandRegistry } from '../command-registry.ts';
 import { routeNativeConversationInput } from '../../runtime/native-conversation-ingress.ts';
 import { openModalCommand, requirePlanManager } from './runtime-services.ts';
@@ -7,22 +6,11 @@ import { parsePlanningActionTarget } from './planning-action-target.ts';
 
 /**
  * Single-token verbs that look like a `/project-plan` subcommand but are not real ones.
- * A lone one of these is refused rather than seeded as a goal, so a stray verb
- * can never overwrite the project goal with itself.
- *
- * `dismiss` and `answer` are now REAL subcommands (handled above this
- * guard), so they were removed from the refuse-list. `pause`/`stop`/`cancel`
- * remain here, they still have no backing verb and must not seed a goal.
+ * A lone one of these is refused rather than submitted as a new native goal.
+ * Explicit historical `dismiss`, `answer` and `approve` commands are handled
+ * separately and never enter native intake.
  */
 const PSEUDO_SUBCOMMAND_VERBS = new Set(['pause', 'stop', 'cancel']);
-
-function formatNextQuestion(question: ProjectPlanningQuestion | undefined): string {
-  if (!question) return 'No next question recorded.';
-  const lines = [`Next question: ${question.prompt}`];
-  if (question.recommendedAnswer) lines.push(`Recommended answer: ${question.recommendedAnswer}`);
-  lines.push('Use /project-plan history to answer this saved historical question.');
-  return lines.join('\n');
-}
 
 export function registerPlanningRuntimeCommands(registry: CommandRegistry): void {
   registry.register({
@@ -53,7 +41,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
 
       if (args[0] === 'history') {
         openProjectPlanningModal();
-        ctx.print('Opened historical project planning. Saved answers and approvals do not authorize native work.');
+        ctx.print('Opened saved historical project planning. The planning interview is retired; saved answers and approvals do not authorize native work.');
         return;
       }
 
@@ -64,18 +52,18 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         }
         const target = parsePlanningActionTarget(args.slice(1));
         if (!target.valid || target.args.length) {
-          ctx.print('Invalid planning selection. Refresh and approve the selected plan again.');
+          ctx.print('Invalid planning selection. Reload saved history before retrying the explicit historical approval command.');
           return;
         }
         const result = await projectPlanningService.applyStateAction({
           projectId, expected: target.expected, ...(target.planningId ? { planningId: target.planningId } : {}), action: { kind: 'approve' },
         });
         if (!result.applied) {
-          ctx.print(result.reason === 'no-state' ? 'No project planning state exists to approve.' : 'Planning changed. Refresh and approve the selected plan again.');
+          ctx.print(result.reason === 'no-state' ? 'No historical project planning state exists to approve.' : 'Planning changed. Reload saved history before retrying the explicit historical approval command.');
           return;
         }
         openProjectPlanningModal();
-        ctx.print(`Historical planning approved; no native work authorized. Readiness: ${result.evaluation.readiness}. State: ${result.state.id}.`);
+        ctx.print(`Historical planning approval recorded; no native work authorized. State: ${result.state.id}.`);
         return;
       }
 
@@ -110,10 +98,8 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         return;
       }
 
-      // /project-plan dismiss, archive the current plan. Dismisses the active
-      // execution plan (ExecutionPlanManager.dismiss, honest per-state) AND
-      // deactivates the project-planning interview state shown in the modal so a
-      // later /project-plan <goal> starts fresh. Mid-execution is refused outright.
+      // Explicit historical archival only. The current native request and its
+      // retained recovery source are untouched; mid-execution is refused.
       if (args[0] === 'dismiss') {
         const planManager = requirePlanManager(ctx);
         const dismissal = planManager.dismiss(ctx.session.runtime.sessionId);
@@ -140,13 +126,13 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
                 },
               },
             });
-            planningNote = ' Project planning interview marked inactive.';
+            planningNote = ' Historical project planning record marked inactive.';
           }
         }
         if (dismissal.outcome === 'dismissed') {
           ctx.print(
             `Dismissed plan "${dismissal.plan?.title ?? 'active plan'}" ` +
-            `(archived as dismissed; retained in /project-plan list; /project-plan <goal> starts fresh).${planningNote}`,
+            `(archived as dismissed; retained in /project-plan list).${planningNote}`,
           );
         } else if (planningNote) {
           ctx.print(`No active execution plan to dismiss.${planningNote}`);
@@ -156,8 +142,8 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         return;
       }
 
-      // /project-plan answer <n|question-id> <text>, record a real answer to an
-      // open planning question (moves open → answered, consumed on next refine).
+      // Explicit historical record editing only. The SDK guards the selected
+      // source revision; its evaluation hints never reopen an interview here.
       if (args[0] === 'answer') {
         if (!projectPlanningService || !projectId) {
           ctx.print('Project planning service is not available in this runtime.');
@@ -165,7 +151,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         }
         const target = parsePlanningActionTarget(args.slice(1));
         if (!target.valid) {
-          ctx.print('Invalid planning selection. Refresh and choose an answer again.');
+          ctx.print('Invalid planning selection. Reload saved history before retrying the explicit historical answer command.');
           return;
         }
         const ref = target.args[0];
@@ -186,7 +172,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
           if (answerResult.reason === 'no-state') {
             ctx.print('No historical project planning state exists to answer. New goals use native intake with /project-plan <goal>.');
           } else if (answerResult.reason === 'state-changed') {
-            ctx.print('Planning changed. Refresh and choose an answer again.');
+            ctx.print('Planning changed. Reload saved history before retrying the explicit historical answer command.');
           } else if (answerResult.reason === 'question-not-found') {
             const open = answerResult.state?.openQuestions ?? [];
             const listing = open.length > 0
@@ -200,9 +186,8 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         }
         openProjectPlanningModal();
         ctx.print(
-          `Recorded answer to: ${answerResult.question?.prompt ?? 'question'}\n` +
-          `Readiness: ${answerResult.evaluation.readiness}\n` +
-          formatNextQuestion(answerResult.evaluation.nextQuestion),
+          `Recorded historical answer to: ${answerResult.question?.prompt ?? 'question'}\n` +
+          'The planning interview is retired; no native work authorized.',
         );
         return;
       }
@@ -216,7 +201,7 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
       // corrupting the goal.
       if (args.length === 1 && PSEUDO_SUBCOMMAND_VERBS.has(args[0].toLowerCase())) {
         ctx.print(
-          `Unknown /project-plan subcommand "${args[0]}": did you mean panel, approve, list, show, or status? ` +
+          `Unknown /project-plan subcommand "${args[0]}": did you mean panel, history, list, show, or status? ` +
           `To submit a new native request, use /project-plan <a real sentence describing the change>.`,
         );
         return;

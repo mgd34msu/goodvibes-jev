@@ -1,85 +1,75 @@
-# Project planning
+# Native planning and saved historical records
 
-GoodVibes TUI owns the active project-planning loop. The SDK provides passive storage and readiness evaluation only.
+New terminal requests use native conversation intake. The historical project-planning interview is retired: the TUI does not generate clarification questions, propose answers, request execution approval, or turn a saved goal into a new native request. This follows the [autonomous Jev decision contract](../../../docs/design/autonomous-jev-decisions.md).
 
 ## Boundary
 
-Responsibility is split cleanly between the two layers:
-
 | Responsibility | Owner |
 | --- | --- |
-| Natural-language planning intent detection in the main terminal conversation | TUI |
-| The planning interview loop and one-question-at-a-time clarification | TUI |
-| The project planning modal | TUI |
-| Execution approval | TUI |
-| Agent handoff metadata and future agent assignment UX | TUI |
-| Durable project-scoped planning artifacts in knowledge spaces named `project:<projectId>` | SDK |
-| Readiness evaluation and next-question hints | SDK |
-| Project-language and decision records | SDK |
-| Task, dependency, verification, and agent-assignment metadata | SDK |
-| Passive daemon routes and operator methods | SDK |
+| Exact original terminal input capture and native request/recovery display | TUI |
+| Semantic routing, admission and autonomous execution decisions | Native engine and Jev |
+| Passive display of saved historical planning records | TUI |
+| Explicit compatibility edits to saved answers/approval metadata | TUI commands through the revision-guarded SDK action |
+| Durable project-scoped planning artifacts in `project:<projectId>` knowledge spaces | SDK |
+| Historical readiness evaluation and next-question API compatibility | SDK; not a TUI interview |
+| Project-language, decision, task and verification records | SDK |
 
-Daemon, web, webhook, ntfy, Home Assistant, Slack, Discord, and companion surfaces do not enter planning loops. They can use the SDK routes as storage/evaluation APIs, but conversation control stays in the TUI.
+Saved readiness, questions, answers and approval metadata describe historical artifacts. They are not native criteria, current execution evidence or authority to admit/start/resume native work. This change does not rewrite stored records, alter SDK APIs or schemas, or add a native reply protocol.
 
-## TUI behavior
+## Native input and recovery
 
-The TUI derives a stable `projectId` from the workspace path and passes it to the SDK `ProjectPlanningService`. Planning artifacts are stored under the matching `project:<projectId>` knowledge space, so unrelated workspaces do not share planning state.
+`/project-plan` and its alias `/planning` open native work and recovery. `/project-plan panel` does the same. `/project-plan <goal>` submits the original owner-authored terminal source through native conversation intake, just like ordinary terminal input. A generic/model/nested command call cannot fabricate that original source.
 
-Normal conversation can start planning when the user uses planning language such as implementation plan, execution strategy, dependency graph, verification gates, or agent handoff. The TUI then opens the `Planning` modal and persists the current planning state through the SDK, recording active open questions and user answers as they accumulate. It calls SDK readiness evaluation to find gaps and the suggested next question, and injects a planning-only system instruction for that turn so the assistant asks one focused question instead of executing.
+Command syntax and its first whitespace separator are removed; the remaining text is retained exactly, including additional leading spaces, trailing whitespace, line breaks and Unicode. A CRLF delimiter is one separator. Folded paste/image markers and file/context references remain unsupported source references instead of being expanded into replacement authority.
 
-The planning loop can be paused with natural language such as "stop planning" or "pause planning".
+There is no legacy planning or ordinary-turn fallback when native intake, the paired host, the verified principal or durable journal is unavailable. Uncertain submissions retain the original IDs and source. Use `/work intake-status`, `/work intake-retry`, `/work intake-resume` and `/work intake-cancel` to inspect or recover them. Historical inspection and edits do not replace that source or silently retry it. See [terminal workstream intake](../README.md#terminal-workstream-intake) for the shared recovery boundary.
 
-## Planning modal
+Plain conversation, including planning-related language, uses native intake. It does not open an interview or become an answer to a saved question. A new complete request must come from new original terminal input; opening saved history never manufactures one from saved goal/scope/task fields.
 
-Open the modal from the command palette (`Ctrl+P`, type "planning") or with `/project-plan panel`.
+## Historical planning modal
 
-The modal shows:
+Open the historical view with `/project-plan history`. The workspace-derived project id scopes its saved records to the matching knowledge space.
 
-- workspace project id and knowledge space, and live SDK artifact counts (states/decisions/language) from the planning status route
-- readiness and approval state
-- goal, scope, known context, and current next question
-- blocking/advisory readiness gaps
-- task graph and verification gates
-- agent handoff candidates
-- answered questions (prompt + recorded answer, most recent first)
-- durable decisions
-- project language and ambiguity resolutions
+The modal displays persisted planning content, including:
 
-The modal's keys:
+- Saved readiness and approval metadata, explicitly historical
+- Saved goal, scope, known context, questions and recorded answers
+- Tasks, dependencies, verification gates and agent-assignment metadata
+- Durable decisions and project language records
+- Workspace project and knowledge-space identity
+
+Opening and refreshing are passive reads. The modal does not call readiness evaluation, choose a next question, create synthetic question rows, generate answer suggestions, offer approval/dismiss actions, or submit a new native request. Existing saved questions and answers remain inspectable even when the current native request is blocked or recovering.
 
 | Key | Action |
 | --- | --- |
-| `r` | Refresh SDK-backed planning artifacts |
-| `a` | Mark the current structurally ready plan as approved for execution |
-| `d` | Dismiss planning (asks first) |
-| Up/Down | Choose an answer action when a question is active |
-| `Enter` | Submit the selected answer through the normal planning chat path |
-| `Esc` | Close the modal |
+| `r` | Reload saved SDK-backed records |
+| Navigation keys | Inspect and scroll saved content |
+| `Esc` | Close the view |
 
-A custom answer is typed in the normal composer, or recorded with `/project-plan answer`. Dismissing pauses planning for the workspace and returns to normal chat. Keyword-matched canned answer suggestions (scope/task/verification/recommended) are de-duplicated by answer text, so a question that matches more than one category never shows the same suggested answer twice.
+Closing, reopening, refreshing or repeatedly pressing former action keys cannot write historical state or dispatch native work. Explicit saved-record edits remain separate commands below.
 
 ## `/project-plan`
 
-`/project-plan` (alias `/planning`) is the command surface for inspection and seeding, but it is no longer the primary planning UX; natural conversation is.
-
 | Command | Does |
 | --- | --- |
-| `/project-plan` | Print current project-planning readiness and open the modal |
-| `/project-plan panel` | Open the modal |
-| `/project-plan approve` | Record explicit execution approval |
-| `/project-plan dismiss` | Archive the active plan and mark the interview inactive so the next `/project-plan <goal>` starts fresh; refused while a plan is mid-execution (run `/workstream cancel` first) |
-| `/project-plan answer <question-number\|question-id> <text>` | Record an answer to an open planning question outside the modal |
-| `/project-plan <goal>` | Seed project planning state |
+| `/project-plan` or `/project-plan panel` | Open native work and recovery |
+| `/project-plan history` | Inspect saved historical planning records without evaluating or starting an interview |
+| `/project-plan <goal>` | Submit the exact original terminal request through native conversation intake |
+| `/project-plan answer <question-number\|question-id> <text>` | Explicitly record an answer to an existing saved historical question; does not ask a next question or authorize native work |
+| `/project-plan approve` | Explicitly update saved historical approval metadata; does not authorize native work |
+| `/project-plan dismiss` | Archive the historical execution plan and mark saved historical planning inactive; refused while that execution plan is mid-execution, with `/workstream cancel` guidance |
 | `/project-plan list` and `/project-plan show <id>` | Inspect older execution-plan records |
-| `/project-plan mode\|explain\|override\|status\|clear` | Route to the adaptive runtime controls |
+| `/project-plan mode\|explain\|override\|status\|clear` | Route to the existing adaptive runtime controls |
 
-Use natural language such as "stop planning" or the modal's dismiss action when the TUI has entered planning but the current work should continue as normal chat.
+Both current-record and selected-revision answer/approve forms remain compatible. Manual commands capture the current source revision once; selected commands retain their explicit planning/source/generation binding. Both use the SDK's atomic revision guard. A stale or malformed selected revision cannot fall back to another record, a fresh interview or native intake. Numeric references in manual answers remain one-based question indexes; selected-revision answers keep opaque question IDs, including numeric IDs.
 
-`/project-plan` is unrelated to the plain `/plan` command, which only toggles the session's read-only permission plan mode (writes, commands, and network calls blocked until you exit). `/plan` never touches project-planning state; `Shift+Tab` cycles the same permission mode.
+Successful historical edits report only the saved action. They do not print fresh readiness, recommended answers or a next question. SDK normalization within an explicitly requested write is unchanged; the TUI does not consume its evaluation hints. Existing saved approval metadata is retained by passive inspection and is never reinterpreted as native execution authority.
+
+`/project-plan` is unrelated to `/plan`, which toggles the session's existing read-only permission plan mode. `/plan` never touches project-planning state; `Shift+Tab` cycles that same permission mode. These retained compatibility controls do not claim that other legacy permission/runtime consumers have already completed their autonomous migration.
 
 ## Work Plan
 
-GoodVibes also has a lightweight persistent work-plan tracker for concrete implementation tasks. It is separate from the planning interview state and is intended for visible, durable checklists while work is in progress.
+GoodVibes also has a lightweight persistent work-plan tracker for concrete implementation tasks. It is separate from the saved historical planning records and is intended for visible, durable checklists while work is in progress.
 
 The command surface (aliases `/wp`, `/todo`, `/workplan`):
 
@@ -118,7 +108,7 @@ When the selected item has linked ids (`item.linked` holds any of `agentId`, `wr
 
 ## SDK routes and operator methods
 
-The TUI does not need to call daemon routes for its own local planning loop, but the updated SDK exposes passive routes, each with a matching operator method:
+The SDK retains its passive historical storage/evaluation routes and matching operator methods. Their compatibility contract is unchanged. Opening or refreshing the TUI historical view only reads saved records; it does not call the evaluation route or turn its next-question hints into an interview:
 
 | Route | Operator method(s) | Purpose |
 | --- | --- | --- |
