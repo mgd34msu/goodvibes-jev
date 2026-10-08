@@ -11,9 +11,10 @@ or a declaration of full product parity.
 ## Current accounting checkpoint (2026-10-08)
 
 Reviewed source: merged main `dfe395031e14542ac21d35fb89336886fbdacffd`.
-The historical counts below remain attached to their original SHA. That accounting baseline retains 666 source dispositions, 17 mappings and partial
-status; the local preset follow-up below adds three mapping records without
-changing dispositions or partial status.
+The historical counts below remain attached to their original SHA. That
+accounting baseline retains 666 source dispositions, 17 mappings and partial
+status; the local preset and Mail follow-ups below each add three mapping
+records (23 total), without changing dispositions or partial status.
 
 - **THE-70 is complete.** [PR149](https://github.com/mgd34msu/goodvibes-jev/pull/149)
   merged as `aa961d0092555f80ff233bc065f9a69c097d9ae4`.
@@ -36,7 +37,8 @@ changing dispositions or partial status.
 - **Settings/context credit stays bounded.** PR127 propagates known/unknown
   context provenance; PR128 supplies the canonical theme enum/default; PR189
   repairs scalar/budget draft reconciliation after canonical config refresh.
-  Concrete open WebUI gaps are engine-owned gate-preset presentation adoption,
+  At that reviewed SHA, concrete open WebUI gaps are engine-owned gate-preset
+  presentation adoption,
   typed `webui.mail.reply-subject` in the reachable Mail Reply flow, and canonical
   persisted `display.treeGlyphs`, including genuine credential classification,
   generated metadata, persistence and actual browser proof. A read-only glyph
@@ -50,11 +52,28 @@ mapping count is treated as a count of wholly unimplemented features.
 ## Local gate-preset follow-up (publication pending)
 
 The local session picker now consumes labels and settable ids directly from the
-engine's browser-safe gate preset table. Three inventory mappings bring the
-working-tree total to 20. Source, type, API, package and behavioral unit checks
+engine's browser-safe gate preset table. Three inventory mappings cover this
+preset slice. Source, type, API, package and behavioral unit checks
 have passed for that slice; the seven phone/desktop scenarios are discoverable,
 but actual hosted browser and publication proof remain pending. These local
 results do not close THE-30 or replace the merged receipts above.
+
+## Local Mail reply-subject follow-up (publication pending)
+
+Source commit `56f00c524cec98a82eeabcafcee91ad026c15c7c` implements the typed
+`webui.mail.reply-subject` reader and reachable Mail reply caller. Only a canonical
+complete mail read with current account/mailbox/UID identity can issue its opaque
+subject reference. An acted boolean keeps the exact subject or prepends `Re: `;
+pending/held readings do not choose a heuristic fallback. Manual editing remains
+available, and cancellation plus draft/client-lifetime guards retire stale work.
+
+Three mappings cover MailView, its behavior tests and the presentational
+MailCompose. Together with the three preset mappings, the working-tree total is
+23. The mail slice's local unit tests and affected type/build checks passed;
+final union publication and actual browser execution are still pending. Synthetic
+reader and transport fixtures do not establish live classification accuracy
+(THE-35), external mail delivery or broad THE-30/THE-15 acceptance. Canonical
+persisted `display.treeGlyphs` remains open.
 
 ## Acceptance basis
 
@@ -66,8 +85,9 @@ packaging/PWA/daemon bundle behavior and connected-daemon flows where available.
 
 The [666-path inventory](../inventory/webui.md) retains 597 PORT, 62 JEV and seven
 DROP dispositions. These describe required treatment of the pinned source, not
-666 completed mappings or 62 wholly unimplemented modules. The reviewed-main baseline has 17 mapping records; the local preset follow-up
-adds three, for 20 working-tree records. [Import proof](../../products/webui/docs/migration-proof.md)
+666 completed mappings or 62 wholly unimplemented modules. The reviewed-main
+baseline has 17 mapping records; the bounded preset and Mail follow-ups add six,
+for 23 working-tree records. [Import proof](../../products/webui/docs/migration-proof.md)
 and [upstream delta accounting](webui-upstream-delta.md) retain their historical
 observations; their old local-browser restrictions and missing-slice statements
 do not override the merged evidence below.
@@ -199,8 +219,9 @@ the browser replays prove a real connected deployment, user account or provider.
    consumes labels and settable preset names from the engine-owned, browser-safe
    `sdk/platform/gate/presets` catalog. Existing session permission-mode get/set
    verbs, custom read-only state and local-runtime scope remain intact. This
-   presentation migration does not close the remaining persisted glyph setting,
-   mail reply-subject judgment or broader semantic and connected-daemon work.
+   presentation migration does not close the remaining persisted glyph setting
+   or broader semantic and connected-daemon work. The separate local Mail
+   implementation above still awaits publication and actual browser proof.
    Sources: [completed SDK context integration](sdk-nullable-context-windows.md),
    [session renderer](../../products/webui/src/views/work/SessionDetail.tsx),
    [session wire](../../packages/engine/sdk/src/platform/control-plane/method-catalog-control-core.ts),

@@ -19,11 +19,21 @@ ingress and final parity evidence. See the acceptance reconciliation for receipt
 and boundaries.
 
 The local gate-preset follow-up now imports the engine-owned picker data directly
-and adds three mapping records (20 total), while preserving partial status and
+and adds three mapping records, while preserving partial status and
 all source dispositions. Its local unit/type/build/API/package checks passed;
 publication and the 14 actual phone/desktop browser cases remain pending. The
 baseline's missing-preset statements below describe the reviewed main SHA, not a
 claim that this local implementation is already merged.
+
+The local Mail reply-subject slice (`56f00c524cec98a82eeabcafcee91ad026c15c7c`)
+adds the typed canonical-read-bound `webui.mail.reply-subject` reader and reachable
+reply caller. Its three mappings cover MailView, behavior tests and MailCompose,
+bringing the working-tree total to 23. An acted boolean preserves the exact
+subject or prepends `Re: `; held/unavailable readings leave manual editing
+available without a guessed prefix. Local unit tests and affected type/build
+checks passed, while final union publication and real browser execution remain
+pending. This does not establish THE-35 live accuracy, external mail delivery,
+the persisted `display.treeGlyphs` setting or broad product acceptance.
 
 ## Historical acceptance checkpoint (2026-10-05)
 
