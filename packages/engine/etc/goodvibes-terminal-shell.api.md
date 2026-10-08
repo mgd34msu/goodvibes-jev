@@ -460,6 +460,8 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
     //
     // (undocumented)
     readonly automationManager?: Pick<AutomationManager, 'listJobs' | 'createJob' | 'updateJob' | 'setEnabled' | 'attachCheckinEvaluator' | 'listRuns' | 'runNow'> | undefined;
+    // (undocumented)
+    readonly browserJudgment?: EmailCompositionDeps['browserJudgment'];
     // Warning: (ae-forgotten-export) The symbol "CalendarGatewayService" needs to be exported by the entry point index.d.ts
     readonly calendarGateway?: CalendarGatewayService | undefined;
     // Warning: (ae-forgotten-export) The symbol "ChannelDeliveryRouter" needs to be exported by the entry point index.d.ts
@@ -1370,9 +1372,9 @@ export function writeTreeStatusMarker(line: Line, glyph: string | null, fg: stri
 // Warnings were encountered during analysis:
 //
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:150:5 - (ae-forgotten-export) The symbol "PermissionPromptRequest" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:273:30 - (ae-forgotten-export) The symbol "CheckinSessionView" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:340:5 - (ae-forgotten-export) The symbol "CredentialWriteConfig" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:341:5 - (ae-forgotten-export) The symbol "CredentialWriteSecrets" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:274:30 - (ae-forgotten-export) The symbol "CheckinSessionView" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:341:5 - (ae-forgotten-export) The symbol "CredentialWriteConfig" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:342:5 - (ae-forgotten-export) The symbol "CredentialWriteSecrets" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:103:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:105:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts

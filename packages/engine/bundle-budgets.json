@@ -668,5 +668,9 @@
   "./platform/personal-capture": {
     "gzip_bytes": 456,
     "rationale": "new public package export budget; measured 380 B gzip @ v2.0.6 release verification (personal-capture authority/spawn-contract/port for conversational channel turns); headroom max(ceil(380*1.2)=456, 380+50=430) -> 456 (1.2x dominates)"
+  },
+  "./platform/runtime/provider-health": {
+    "gzip_bytes": 251,
+    "rationale": "New canonical provider-health public entry. Measured 201 B gzip from independently composed source e4c9a2ca (provider slice e0e68957); entry-file reference only, excluding imported dependencies; headroom max(ceil(201*1.2), 201+50) = 251 B. This is an advisory size reference, not a consumer-bundle measurement."
   }
 }
