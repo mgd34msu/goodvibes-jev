@@ -26,6 +26,7 @@
  * (RFC 6154), which is the only answer that is right by construction.
  */
 
+import type { ImapFetchFrame } from './imap-fetch-response.js';
 import type { ImapAppendDraftInput } from './imap-client.js';
 import { validateSmtpAddress, validateSmtpSubject } from './smtp-client.js';
 
@@ -200,12 +201,14 @@ function unquoteMailboxName(raw: string): string {
 }
 
 /** Parse the mailboxes out of a LIST reply. Unreadable lines are skipped. */
-export function parseMailboxList(lines: readonly string[]): MailboxEntry[] {
+export function parseMailboxList(lines: readonly (string | ImapFetchFrame)[]): MailboxEntry[] {
   const entries: MailboxEntry[] = [];
-  for (const line of lines) {
+  for (const frame of lines) {
+    const line = typeof frame === 'string' ? frame : frame.syntax;
     const match = LIST_LINE.exec(line);
     if (match === null) continue;
-    const name = unquoteMailboxName(match[3] ?? '');
+    const name = typeof frame !== 'string' && frame.literal !== undefined
+      ? frame.literal : unquoteMailboxName(match[3] ?? '');
     if (name.length === 0) continue;
     entries.push({
       name,
@@ -234,6 +237,11 @@ export function parseMailboxList(lines: readonly string[]): MailboxEntry[] {
  * APPEND to one fails.
  */
 export function selectDraftsMailbox(lines: readonly string[]): string | null {
+  return selectDraftsMailboxFrames(lines);
+}
+
+/** Internal transport seam; deliberately not exported by the email public index. */
+export function selectDraftsMailboxFrames(lines: readonly (string | ImapFetchFrame)[]): string | null {
   const entries = parseMailboxList(lines).filter(
     (entry) => !entry.attributes.includes('\\noselect'),
   );

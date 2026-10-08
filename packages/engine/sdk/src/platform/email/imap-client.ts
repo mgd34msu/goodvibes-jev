@@ -95,7 +95,7 @@ import {
   DEFAULT_DRAFTS_MAILBOX,
   buildDraftMessage,
   parseAppendUid,
-  selectDraftsMailbox,
+  selectDraftsMailboxFrames,
   validateDraftInput,
 } from './imap-draft.js';
 import { fetchSection, parseFetchResponses } from './imap-fetch-response.js';
@@ -434,7 +434,7 @@ export class ImapClient {
       );
     }
     const session = this.requireReadableMailbox();
-    const lines = await session.command(
+    const lines = await session.commandFrames(
       `UID FETCH ${uids.join(',')} (UID BODY.PEEK[HEADER.FIELDS ` +
       `(FROM SUBJECT DATE MESSAGE-ID TO DELIVERED-TO X-ORIGINAL-TO AUTHENTICATION-RESULTS)])`,
     );
@@ -480,7 +480,7 @@ export class ImapClient {
   async fetchBodyPreview(uid: number): Promise<string> {
     const session = this.requireReadableMailbox();
     const maxBytes = this.options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-    const lines = await session.command(
+    const lines = await session.commandFrames(
       `UID FETCH ${uid} BODY.PEEK[TEXT]<0.${maxBytes}>`,
     );
     const [response] = parseFetchResponses(lines);
@@ -639,8 +639,8 @@ export class ImapClient {
     const explicit = (override ?? '').trim();
     if (explicit.length > 0) return explicit;
     try {
-      const lines = await session.command('LIST "" "*"');
-      return selectDraftsMailbox(lines) ?? DEFAULT_DRAFTS_MAILBOX;
+      const lines = await session.commandFrames('LIST "" "*"');
+      return selectDraftsMailboxFrames(lines) ?? DEFAULT_DRAFTS_MAILBOX;
     } catch {
       return DEFAULT_DRAFTS_MAILBOX;
     }

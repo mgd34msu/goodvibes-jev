@@ -34,7 +34,7 @@ import {
   bodyCapabilityFailure,
   declaredTextOctets,
 } from './imap-body-probe.js';
-import { parseFetchResponses } from './imap-fetch-response.js';
+import { type ImapFetchFrame, parseFetchResponses } from './imap-fetch-response.js';
 import {
   extractAuthenticationResults,
   extractDeliveryEvidence,
@@ -68,7 +68,7 @@ import type { ImapFetchProblem, ImapMessageRead } from './imap-types.js';
  * successful read.
  */
 export function unreadableHeaderResponses(
-  lines: readonly string[],
+  lines: readonly (string | ImapFetchFrame)[],
   uid: number,
 ): ImapFetchProblem[] {
   if (!hasFetchResponse(lines)) return [];
@@ -107,7 +107,7 @@ async function fetchTextSection(
   part: ImapBodyPart,
 ): Promise<string> {
   try {
-    const lines = await session.command(`UID FETCH ${uid} BODY.PEEK[${part.section}]`);
+    const lines = await session.commandFrames(`UID FETCH ${uid} BODY.PEEK[${part.section}]`);
     return decodeTextPart(extractFetchSection(lines) ?? '', part.encoding, part.charset);
   } catch {
     return '';
@@ -150,13 +150,13 @@ export async function readMessageDetail(
   mailbox: string,
   enforceBodyReadable = false,
 ): Promise<ImapMessageRead> {
-  const headerLines = await session.command(`UID FETCH ${uid} BODY.PEEK[HEADER]`);
+  const headerLines = await session.commandFrames(`UID FETCH ${uid} BODY.PEEK[HEADER]`);
   const problems = unreadableHeaderResponses(headerLines, uid);
   if (problems.length > 0) return { outcome: 'unreadable', problems };
   if (!hasFetchResponse(headerLines)) return { outcome: 'gone' };
   const rawHeaders = extractFetchSection(headerLines) ?? '';
 
-  const structureLines = await session.command(`UID FETCH ${uid} BODYSTRUCTURE`);
+  const structureLines = await session.commandFrames(`UID FETCH ${uid} BODYSTRUCTURE`);
   const parts = parseBodyStructure(extractBodyStructure(structureLines));
 
   const textPart = selectBodyPart(parts, 'plain');
@@ -172,7 +172,7 @@ export async function readMessageDetail(
     // to download, so it stays unfetched and the body reads empty.
     const contentType = extractHeader(rawHeaders, 'Content-Type').toLowerCase();
     if (contentType.length === 0 || contentType.startsWith('text/')) {
-      const lines = await session.command(`UID FETCH ${uid} BODY.PEEK[TEXT]`);
+      const lines = await session.commandFrames(`UID FETCH ${uid} BODY.PEEK[TEXT]`);
       const raw = (extractFetchSection(lines) ?? '').replace(/\r\n/g, '\n');
       if (contentType.startsWith('text/html')) bodyHtml = raw;
       else bodyText = raw;

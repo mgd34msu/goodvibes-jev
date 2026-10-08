@@ -88,6 +88,7 @@ export const KNOWN_TEMP_PREFIXES = [
   'webui-terminal-theme-',
   'temp-root-proof-',
   'pack-bundle-',
+  'ci-browser-partitions-',
   'gv-live-smoke-home-',
   'gv-live-smoke-work-',
 ] as const;

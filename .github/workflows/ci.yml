@@ -403,9 +403,18 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install official terminal harness package
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends tmux
-          tmux -V
+          # Hosted runners can already provide tmux. Verify it before touching
+          # package indexes; a stalled unrelated mirror must not spend the test budget.
+          if command -v tmux >/dev/null 2>&1 && timeout --signal=KILL 10s tmux -V; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # Transfer timeouts alone do not bound a refresh across many indexes.
+          # KILL the attached group at expiry; TERM can leave a child alive when
+          # its parent exits first. Timeout runs inside sudo to signal elevated children.
+          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" --error-on=any update
+          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" install --no-install-recommends -y tmux
+          timeout --signal=KILL 10s tmux -V
       - name: Setup Bun + deps (cached)
         uses: ./.github/actions/setup
       - name: Download workspace package output
@@ -431,10 +440,14 @@ jobs:
           GOODVIBES_E2E_BINARY: ${{ github.workspace }}/products/tui/dist/goodvibes-linux-x64
         run: bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts src/test/e2e/host-pair-interactive.e2e.test.ts src/test/e2e/planning-history.e2e.test.ts
 
-  # One browser lane exercises the production WebUI on both viewport sizes and
-  # an actual LAN HTTP origin. Its daemon is a synthetic, loopback-only fixture.
-  webui-browser:
-    name: WebUI browser (phone, desktop, LAN)
+  # Schedule the measured phone and desktop work on separate runners. Each
+  # retains two workers, every assertion, and the genuine LAN-origin admission.
+  webui-browser-partitions:
+    name: WebUI browser partition (${{ matrix.partition }})
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [phone, desktop-lan]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [build]
@@ -444,6 +457,7 @@ jobs:
         shell: bash
     env:
       DESIGN_PROOF_SHOTS: e2e/.artifacts/screenshots
+      BROWSER_PARTITION: ${{ matrix.partition }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -464,31 +478,125 @@ jobs:
           tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
           find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
       - name: Install official Playwright Chromium and OS dependencies
-        run: bunx playwright install --with-deps chromium
+        run: |
+          # Use the lockfile-installed CLI and its exact Chromium revision. Browser
+          # acquisition does not need a broad package-index refresh on a ready host.
+          timeout --signal=KILL 180s node node_modules/@playwright/test/cli.js install chromium
+          if timeout --signal=KILL 30s bun scripts/ci-browser-smoke.ts; then
+            exit 0
+          else
+            probe_status=$?
+          fi
+          # Never retry after a timed-out controller: Chromium owns a detached
+          # process group, so hard-kill cleanup belongs to runner teardown.
+          if (( probe_status == 124 || probe_status >= 128 )); then
+            exit "$probe_status"
+          fi
+          # If the actual browser cannot run, install the official dependency set.
+          # A per-process APT config preserves update errors without changing mirrors
+          # or persistent host settings. Timeout runs inside sudo to own root children.
+          apt_config=$(mktemp)
+          trap 'rm -f "$apt_config"' EXIT
+          cat > "$apt_config" <<'APT'
+          APT::Update::Error-Mode "any";
+          Acquire::Retries "1";
+          Acquire::http::Timeout "15";
+          Acquire::https::Timeout "15";
+          APT
+          # APT_CONFIG is read before host apt.conf.d; reject later overrides.
+          actual_config=$(sudo -n timeout --signal=KILL 10s env APT_CONFIG="$apt_config" apt-config shell error_mode APT::Update::Error-Mode retries Acquire::Retries http_timeout Acquire::http::Timeout https_timeout Acquire::https::Timeout)
+          expected_config=$(printf "%s\n" "error_mode='any'" "retries='1'" "http_timeout='15'" "https_timeout='15'")
+          if [[ "$actual_config" != "$expected_config" ]]; then
+            printf 'Unexpected effective APT configuration:\n%s\n' "$actual_config" >&2
+            exit 1
+          fi
+          sudo -n timeout --signal=KILL 180s env APT_CONFIG="$apt_config" "$(command -v node)" "$(realpath node_modules/@playwright/test/cli.js)" install-deps chromium
+          timeout --signal=KILL 30s bun scripts/ci-browser-smoke.ts
       - name: Check workspace exports and generated data
         run: bun run release:gate && bun run generated:check
+      - name: Verify complete disjoint browser discovery
+        id: discovery
+        run: bun scripts/ci-browser-partitions.ts discover
       - name: Exercise the production app with synthetic daemon fixtures
         id: browser-proof
         run: |
           set -euo pipefail
           mkdir -p e2e/.artifacts
-          bun run e2e --project=phone --project=desktop --project=lan-origin --workers=2 2>&1 | tee e2e/.artifacts/browser.log
+          bun scripts/ci-browser-partitions.ts run "$BROWSER_PARTITION" 2>&1 | tee e2e/.artifacts/browser.log
       - name: Record browser execution outcome
         if: always()
         env:
+          DISCOVERY_OUTCOME: ${{ steps.discovery.outcome }}
           BROWSER_OUTCOME: ${{ steps.browser-proof.outcome }}
+        run: bun scripts/ci-browser-partitions.ts record "$BROWSER_PARTITION" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Retain partition reports, traces, and screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: webui-browser-partition-${{ matrix.partition }}
+          path: |
+            products/webui/e2e/.artifacts/execution.txt
+            products/webui/e2e/.artifacts/outcome.json
+            products/webui/e2e/.artifacts/browser.log
+            products/webui/e2e/.artifacts/discovery-*
+            products/webui/e2e/.artifacts/manifest.json
+            products/webui/e2e/.artifacts/executed.json
+            products/webui/e2e/.artifacts/executed-report.json
+            products/webui/e2e/.artifacts/blob-report
+            products/webui/e2e/.artifacts/test-output
+            products/webui/e2e/.artifacts/screenshots
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  # Keep the required context and release dependency stable. Always run, but
+  # fail closed for a failed, skipped, cancelled, missing or incomplete leg.
+  webui-browser:
+    name: WebUI browser (phone, desktop, LAN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [build, webui-browser-partitions]
+    if: always()
+    defaults:
+      run:
+        working-directory: products/webui
+        shell: bash
+    env:
+      BUILD_RESULT: ${{ needs.build.result }}
+      PARTITION_RESULT: ${{ needs.webui-browser-partitions.result }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download every browser partition
+        if: always()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: webui-browser-partition-*
+          path: products/webui/e2e/.artifacts/partitions
+      - name: Assemble labelled browser evidence
+        id: evidence
+        if: always()
+        run: bun scripts/ci-browser-partitions.ts collect
+      - name: Merge native Playwright reports
+        if: always() && hashFiles('products/webui/e2e/.artifacts/blob-report/*.zip') != ''
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: e2e/.artifacts/report
+          PLAYWRIGHT_HTML_OPEN: never
+          PLAYWRIGHT_JSON_OUTPUT_FILE: e2e/.artifacts/report.json
+          BROWSER_INVENTORY_OUTPUT: e2e/.artifacts/merged-inventory.json
+        run: node node_modules/@playwright/test/cli.js merge-reports --reporter=html,json,./scripts/ci-browser-inventory-reporter.ts e2e/.artifacts/blob-report
+      - name: Require successful jobs and exact browser inventory
+        if: always()
         run: |
-          mkdir -p e2e/.artifacts
-          {
-            echo "Browser command outcome: ${BROWSER_OUTCOME}"
-            if [ "$BROWSER_OUTCOME" = skipped ]; then
-              echo "The browser command did not run. No browser proof was produced."
-            else
-              echo "Consult the Playwright report for executed, failed, and skipped assertions."
-              echo "A setup, build, or launch failure is not a passing browser assertion."
-            fi
-          } | tee e2e/.artifacts/execution.txt >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain browser reports, traces, and screenshots
+          set -euo pipefail
+          bun scripts/ci-browser-partitions.ts verify 2>&1 | tee -a e2e/.artifacts/execution.txt "$GITHUB_STEP_SUMMARY"
+      - name: Retain combined browser proof and raw partition evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -497,11 +605,14 @@ jobs:
             products/webui/e2e/.artifacts/execution.txt
             products/webui/e2e/.artifacts/browser.log
             products/webui/e2e/.artifacts/report
-            products/webui/e2e/.artifacts/test-output
-            products/webui/e2e/.artifacts/screenshots
+            products/webui/e2e/.artifacts/report.json
+            products/webui/e2e/.artifacts/merged-inventory.json
+            products/webui/e2e/.artifacts/inventory-verification.json
+            products/webui/e2e/.artifacts/blob-report
+            products/webui/e2e/.artifacts/partitions
           include-hidden-files: true
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # A separate, mandatory live OS-boundary proof. Pin a supported VM runner
   # with unprivileged namespaces; never disable AppArmor, change sysctls, or
@@ -520,10 +631,23 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install official sandbox and PTY packages
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap util-linux
-          bwrap --version
-          script --version
+          # Prove the actual unprivileged namespace and PTY capabilities first.
+          # The full required containment fixtures still run below.
+          verify_host() {
+            timeout --signal=KILL 10s bwrap --ro-bind / / --proc /proc --dev /dev --unshare-net /bin/true &&
+              timeout --signal=KILL 10s script --quiet --return --command 'test -t 0 && test -t 1' /dev/null
+          }
+          if verify_host; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          # Hosted images retain signed package indexes. Use them first instead
+          # of refreshing every unrelated repository on each fresh runner.
+          if ! sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --yes --no-install-recommends bubblewrap util-linux; then
+            sudo -n timeout --signal=KILL 60s apt-get "${apt_options[@]}" --error-on=any update
+            sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --yes --no-install-recommends bubblewrap util-linux
+          fi
+          verify_host
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
