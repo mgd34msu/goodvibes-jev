@@ -54,7 +54,8 @@ import { formatElapsed } from '../utils/format-elapsed.ts';
 import { isTextBackspace } from './delete-key-policy.ts';
 import type { ConfirmOptions } from './confirm-dialog.ts';
 import type { ViewTarget } from './views.ts';
-import { hostedBody, hostedHeaderTexts, hostedRowTexts, transcriptTail } from './agents-modal-text.ts';
+import { hostedHeaderTexts, hostedRowTexts, transcriptTail } from './agents-modal-text.ts';
+import { HostedTranscriptViewport } from './hosted-transcript-viewport.ts';
 
 /** What the modal can do to a process (the process registry, through the fleet read model). */
 export interface FleetActionCallbacks {
@@ -115,6 +116,7 @@ export class AgentsModal implements SurfaceModal {
   private readonly unsubs: Array<() => void> = [];
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+  private readonly hostedViewport = new HostedTranscriptViewport();
 
   constructor(private readonly deps: AgentsModalDeps) {
     this.unsubs.push(deps.readModel.subscribe(() => { this.onFleetChange(); deps.requestRender(); }));
@@ -129,13 +131,18 @@ export class AgentsModal implements SurfaceModal {
       }
       deps.requestRender();
     }));
-    if (deps.hosted) this.unsubs.push(deps.hosted.subscribe(() => deps.requestRender()));
+    if (deps.hosted) this.unsubs.push(deps.hosted.subscribe(() => {
+      // Feed dispatch snapshots listeners; a queued callback can outlive close.
+      if (this.closed) return;
+      this.synchronizeHostedView(); deps.requestRender();
+    }));
     const tickMs = deps.tickMs ?? 1_000;
     if (tickMs > 0) this.tickTimer = setInterval(() => { this.onFleetChange(); deps.requestRender(); }, tickMs);
   }
 
   onClose(): void {
     this.closed = true;
+    this.hostedViewport.reset();
     this.deps.spawn?.cancel();
     this.deps.acts?.cancelPick();
     for (const unsub of this.unsubs) unsub();
@@ -158,6 +165,14 @@ export class AgentsModal implements SurfaceModal {
 
   private findNode(id: string): ProcessNode | null {
     return this.deps.readModel.getSnapshot().rows.find((row) => row.node.id === id)?.node ?? null;
+  }
+
+  private synchronizeHostedView(): void {
+    const feed = this.deps.hosted;
+    if (!feed) return;
+    const state = feed.getState();
+    this.hostedViewport.synchronize(state, feed.getGeneration());
+    if (!state.record && this.hostedFull) { this.hostedFull = false; this.selectedId = null; }
   }
 
   private hostedAttached(): boolean {
@@ -265,6 +280,8 @@ export class AgentsModal implements SurfaceModal {
 
   /** Open the hosted session's full view (after /hosted new or attach). */
   showHosted(): void {
+    this.hostedViewport.reset();
+    this.synchronizeHostedView();
     this.deps.acts?.cancelPick();
     this.view = 'active';
     this.selectedId = HOSTED_ID;
@@ -288,7 +305,7 @@ export class AgentsModal implements SurfaceModal {
   private openFull(host: SurfaceModalHost): void {
     const entry = this.selectedEntry();
     if (!entry) return;
-    if (entry.kind === 'hosted') { this.hostedFull = true; return; }
+    if (entry.kind === 'hosted') { this.hostedViewport.reset(); this.synchronizeHostedView(); this.hostedFull = true; return; }
     const node = entry.row.node;
     if (this.deps.acts?.handleTreeKey('enter', node)) return;
     // An agent or a background process opens full screen, outside the modal.
@@ -430,7 +447,7 @@ export class AgentsModal implements SurfaceModal {
     if (this.deps.acts?.pickModeActive()) { this.deps.acts.handlePickInput('escape'); return true; }
     if (this.deps.spawn?.spawnModeActive()) { this.deps.spawn.handleSpawnInput('escape'); return true; }
     if (this.filtering) { this.filtering = false; return true; }
-    if (this.hostedFull) { this.hostedFull = false; return true; }
+    if (this.hostedFull) { this.hostedFull = false; this.hostedViewport.reset(); return true; }
     if (this.tabs.activeTabIndex > 0) { this.tabs = { tabs: this.tabs.tabs, activeTabIndex: 0 }; return true; }
     if (this.query) { this.query = ''; return true; }
     return false;
@@ -517,6 +534,20 @@ export class AgentsModal implements SurfaceModal {
   }
 
   private handleFullToken(token: InputToken): void {
+    if (this.hostedFull) {
+      this.synchronizeHostedView();
+      if (!this.hostedFull) return;
+      if (token.type === 'key' && !token.ctrl && !token.meta) {
+        const name = token.logicalName ?? '';
+        if (name === 'up') { this.hostedViewport.move(-1); return; }
+        if (name === 'down') { this.hostedViewport.move(1); return; }
+        if (name === 'pageup') { this.hostedViewport.page(-1); return; }
+        if (name === 'pagedown') { this.hostedViewport.page(1); return; }
+        if (name === 'home') { this.hostedViewport.oldest(); return; }
+        if (name === 'end') { this.hostedViewport.latest(); return; }
+      }
+      if (token.type === 'text' && token.value === 'f') { this.hostedViewport.latest(); return; }
+    }
     if (token.type === 'key') {
       const name = token.logicalName ?? '';
       if (token.ctrl && name === 'x') {
@@ -677,7 +708,7 @@ export class AgentsModal implements SurfaceModal {
     if (level === 'picker') return [['↑↓', 'choose'], ['⏎', this.deps.acts?.pickModeActive() ? 'pick (asks first)' : 'next'], ['esc', 'back']];
     if (this.filtering) return [['⏎', 'done'], ['esc', 'stop filtering']];
     if (level === 'full') {
-      if (this.hostedFull) return [['s', 'say'], ['esc', 'back']];
+      if (this.hostedFull) return [['↑↓', 'scroll'], ['f', this.hostedViewport.following ? 'following' : 'follow tail'], ['s', 'say'], ['esc', 'back']];
       const tab = activeFleetTab(this.tabs);
       const node = tab ? this.findNode(tab.nodeId) : null;
       const allowed = new Set(buildFleetTreeHints(node ?? undefined, this.follow, true).map((hint) => hint.keys));
@@ -706,6 +737,7 @@ export class AgentsModal implements SurfaceModal {
   }
 
   private buildView(): AgentsModalView {
+    this.synchronizeHostedView();
     const level = this.level();
     const tab = activeFleetTab(this.tabs);
     const input = this.steer
@@ -718,6 +750,7 @@ export class AgentsModal implements SurfaceModal {
     const shown = this.entries().length;
     const total = this.snapshotRows().length + (this.hostedAttached() ? 1 : 0);
     const hostedState = this.deps.hosted?.getState();
+    const hostedGeneration = this.deps.hosted?.getGeneration() ?? 0;
     return {
       level,
       crumbs: level === 'full' ? [this.hostedFull ? (hostedState?.record?.title || 'hosted session') : (this.findNode(tab!.nodeId)?.label ?? tab!.label)]
@@ -733,7 +766,8 @@ export class AgentsModal implements SurfaceModal {
       full: level === 'full' ? {
         meta: this.hostedFull ? 'hosted on the daemon' : [tab!.kind, this.findNode(tab!.nodeId)?.state ?? 'finished'].join(' · '),
         header: this.hostedFull && hostedState ? hostedHeaderTexts(hostedState) : [],
-        body: this.hostedFull && hostedState ? (width, height) => hostedBody(hostedState.rows, width, height) : (width, height) => this.fullBody(width, height),
+        body: this.hostedFull && hostedState ? (width, height) => this.hostedViewport.render(hostedState, hostedGeneration, width, height) : (width, height) => this.fullBody(width, height),
+        ...(this.hostedFull ? { scroll: () => this.hostedViewport.position } : {}),
       } : null,
       picker: level === 'picker'
         ? pick
