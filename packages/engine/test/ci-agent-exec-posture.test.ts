@@ -37,6 +37,9 @@ const commands: Record<string, readonly string[]> = {
   'graph-runtime': [runner, 'test/contract/actual-input-authority-graph.test.ts', 'test/contract/actual-edit-write-input-authority.test.ts', 'test/contract/actual-validator-runtime.test.ts'],
   'agent-posture': [runner, '--cwd', '../../products/agent', './src/test/tools/owner-terminal-guard.test.ts',
     './src/test/runtime/exec-cancellation-wrappers.test.ts', './src/test/tools/tool-execution-safety.test.ts'],
+  repair: [runner, 'test/captured-auto-heal-candidate.test.ts', 'test/captured-auto-heal-revision.test.ts', 'test/captured-auto-heal.test.ts',
+    'test/captured-auto-heal-backend-isolation.test.ts', 'test/captured-auto-heal-rollback.test.ts', 'test/contract/actual-captured-auto-heal.test.ts'],
+  'repair-runtime': [runner, 'test/captured-auto-heal-real-tools.test.ts'],
 };
 
 test('ordinary Agent posture joins the existing required unprivileged containment job', () => {

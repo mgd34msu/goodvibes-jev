@@ -100,7 +100,13 @@ State and questions are snapshotted once so retries cannot evaluate a mutated
 payload under the original logical reading. `beforeAttempt` is a synchronous,
 fail-closed authority check immediately before each wire transmission, including
 after backoff. Browser callers use it to revalidate live principal, route, source
-and outbound authorization. A progress-only `onRetry` observer receives
+and outbound authorization. Callers with asynchronous permission sources may
+also supply `beforeAsyncAttempt`; every attempt awaits that admission under the
+owning cancellation signal, then runs `beforeAttempt` synchronously before
+dispatch. A refused admission sends nothing and is not an availability retry.
+The per-attempt timeout starts only after admission; cancellation also stops a
+pending admission that ignores its signal. `beforeAttempt` remains synchronous
+and rejects promise returns. A progress-only `onRetry` observer receives
 `JudgmentRetryProgress` containing the stable logical request ID, immutable last
 attempt metadata, elapsed time and next delay. Observer failures are ignored;
 progress is neither a semantic result nor authority to act. The retry loop owns

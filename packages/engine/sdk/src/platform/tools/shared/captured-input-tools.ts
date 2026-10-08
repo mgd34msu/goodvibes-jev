@@ -1,5 +1,5 @@
 import { withCapturedAnalyzeInput } from '../analyze/captured-git.js';
-import { captureCapturedWriteRevision, type CapturedWriteRevision } from './captured-write-revision.js';
+import { assertCapturedWriteRevision, captureCapturedWriteRevision, type CapturedWriteRevision } from './captured-write-revision.js';
 import { prepareCapturedWriteBackup } from './captured-write-backup.js';
 import { withCapturedPublication, type CapturedPublicationLease } from './captured-publication.js';
 import { isCapturedRegistryTool } from '../registry-tool/index.js';
@@ -26,6 +26,7 @@ const deliveryReads = new AsyncLocalStorage<{
   readonly paths: Set<string>;
   readonly checks: Set<() => Promise<void>>;
   readonly assertMutable: (path?: string) => void;
+  readonly assertRevision: (path: string, revision: CapturedWriteRevision) => void;
   readonly captureRevision: (path: string, bytes: Buffer) => CapturedWriteRevision;
   readonly prepareBackup: (path: string) => ReturnType<typeof prepareCapturedWriteBackup>;
   readonly publicationLease?: CapturedPublicationLease | undefined;
@@ -64,6 +65,13 @@ export function captureCapturedToolWriteRevision(path: string, bytes: Buffer): C
   if (!context) throw new Error('owned write revision requires a captured invocation');
   context.assertMutable(path);
   return context.captureRevision(path, bytes);
+}
+
+export function assertCapturedToolWriteRevision(path: string, revision: CapturedWriteRevision): void {
+  const context = deliveryReads.getStore();
+  if (!context) throw new Error('owned write revision requires a captured invocation');
+  context.assertMutable(path);
+  context.assertRevision(path, revision);
 }
 
 export function capturedToolPublicationContext(): { readonly lease: CapturedPublicationLease; readonly signal?: AbortSignal | undefined } {
@@ -130,6 +138,7 @@ export function capturedInputTool(
                 }
               }
             },
+            assertRevision: (path, revision) => { assertCapturedWriteRevision(revision, authority, capturedToolPublicationContext().lease, path); },
             captureRevision: (path, bytes) => captureCapturedWriteRevision(authority, capturedToolPublicationContext().lease, path, bytes),
             prepareBackup: (path) => {
               const callSignal = options?.signal;

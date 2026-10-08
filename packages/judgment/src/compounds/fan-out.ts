@@ -68,10 +68,14 @@ export async function fanOut<const P extends Parts>(
     questions: mergedQuestions(parts),
     ...(model === port.model ? {} : { model }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.beforeAsyncAttempt === undefined ? {} : { beforeAsyncAttempt: options.beforeAsyncAttempt }),
+    ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
     context: {
       battery: options.label ?? Object.values(parts).map((battery) => battery.name).join('+'),
       pattern: 'fan-out',
       ...(options.site === undefined ? {} : { site: options.site }),
+      ...(options.fixture === undefined ? {} : { fixture: options.fixture }),
     },
   });
   const readings = readParts(parts, result.answers);

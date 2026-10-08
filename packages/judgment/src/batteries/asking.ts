@@ -33,6 +33,7 @@ export type PatternName =
 
 export interface CallOptions {
   readonly beforeAttempt?: () => void;
+  readonly beforeAsyncAttempt?: () => void | Promise<void>;
   readonly onRetry?: (progress: import('../port/types.ts').JudgmentRetryProgress) => void;
   readonly signal?: AbortSignal;
   /** The decision site, recorded in the decision log. */
@@ -72,6 +73,7 @@ export function askAs<const Q extends Questions>(
     ...(header.model === undefined ? {} : { model: header.model }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.beforeAsyncAttempt === undefined ? {} : { beforeAsyncAttempt: options.beforeAsyncAttempt }),
     ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
     context: contextFor(header, pattern, options),
   });

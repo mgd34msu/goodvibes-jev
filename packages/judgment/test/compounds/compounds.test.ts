@@ -46,6 +46,24 @@ describe('fanOut', () => {
     expect(got.readings.routing.mood.level).toBe(1);
   });
 
+  test('preserves attempt authority, retry observation, cancellation and attribution options', async () => {
+    const { port, requests } = fakePort(() => noulAnswer(0.9));
+    const controller = new AbortController();
+    const beforeAttempt = () => {};
+    const beforeAsyncAttempt = async () => {};
+    const onRetry = () => {};
+    await fanOut(port, 'synthetic', { urgency }, {
+      signal: controller.signal, beforeAttempt, beforeAsyncAttempt, onRetry,
+      site: 'synthetic-site', fixture: 'synthetic-fixture', label: 'synthetic-label',
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.signal).toBe(controller.signal);
+    expect(requests[0]!.beforeAttempt).toBe(beforeAttempt);
+    expect(requests[0]!.beforeAsyncAttempt).toBe(beforeAsyncAttempt);
+    expect(requests[0]!.onRetry).toBe(onRetry);
+    expect(requests[0]!.context).toEqual({ battery: 'synthetic-label', pattern: 'fan-out', site: 'synthetic-site', fixture: 'synthetic-fixture' });
+  });
+
   test('refuses batteries tuned on different models', async () => {
     const pinned = defineBattery({
       ...header,
