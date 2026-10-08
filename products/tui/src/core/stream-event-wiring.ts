@@ -3,10 +3,10 @@ import { createStreamStallWatchdog } from './stream-stall-watchdog.ts';
 import { buildRoutingChip, FALLBACK_CORRELATION_WINDOW_MS } from './model-routing-chip.ts';
 import { createErrorNoticeOwner, unavailableErrorLine, userErrorLine } from './format-user-error.ts';
 import type { PendingFailoverNotice } from './turn-event-wiring.ts';
-import { classifyProviderSetup } from '../providers/provider-classification.ts';
+import { ProviderSetupReadings, describeProviderSetup, type ProviderSetupClassification } from '../providers/provider-classification.ts';
 import type { FailoverTurnState } from './active-model-identity.ts';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
-import type { ReasoningEffortSpec } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { ProviderRuntimeMetadata, ReasoningEffortSpec } from '@goodvibes-jev/engine/sdk/platform/providers';
 import {
   publishActiveEffortOptions,
   remapEffortForServingModel,
@@ -104,6 +104,10 @@ interface StreamProviderRegistry {
     readonly reasoningEffort?: ReasoningEffortSpec | undefined;
   };
   setCurrentModel(registryKey: string): void;
+  /** Live declared facts; absence is unknown, never provider-id folklore. */
+  describeRuntime?(providerId: string): Promise<ProviderRuntimeMetadata | null>;
+  /** Exact instance identity fences replacement while asynchronous facts are read. */
+  getRegistered?(providerId: string): object;
 }
 
 /**
@@ -351,15 +355,16 @@ function buildCostDeltaSuffix(
  * who does not want their subscription spent on an automatic retry can object
  * and turn the optimizer off.
  *
- * Classification comes from providers/provider-classification.ts, which is
- * honest about ignorance: an unrecognised provider id reports "Unknown" rather
- * than being quietly assumed safe.
+ * Classification is an owned asynchronous engine reading of instance facts.
+ * Missing, stale or unavailable facts say Unknown, including familiar ids.
+ * This display result never chooses or authorizes the fallback.
  */
-function buildBillingSuffix(fromProviderId: string, toProviderId: string): string {
-  const from = classifyProviderSetup({ providerId: fromProviderId }).setupLabel;
-  const to = classifyProviderSetup({ providerId: toProviderId }).setupLabel;
-  const changed = from !== to ? ': billing class changed' : '';
-  return ` [billing: ${from} → ${to}${changed}]`;
+function buildBillingSuffix(fromProviderId: string, toProviderId: string, setups: ReadonlyMap<string, ProviderSetupClassification>): string {
+  const from = setups.get(fromProviderId) ?? describeProviderSetup('unknown');
+  const to = setups.get(toProviderId) ?? describeProviderSetup('unknown');
+  const changed = from.setupClass !== 'unknown' && to.setupClass !== 'unknown' && from.setupClass !== to.setupClass
+    ? ': billing class changed' : '';
+  return ` [billing: ${from.setupLabel} → ${to.setupLabel}${changed}]`;
 }
 
 /**
@@ -388,6 +393,13 @@ export function wireStreamEventMetrics(
 
   const unsubs: Array<() => void> = [];
   const errorNotices = createErrorNoticeOwner(options.errorNoticeTimeoutMs);
+  const setupReadings = new ProviderSetupReadings();
+  let setupGeneration = 0;
+  // Both custom-provider reload and credential refresh emit this owner event.
+  // Only narration expires here; it is not a new fallback admission policy.
+  if (events.providers) unsubs.push(events.providers.on('PROVIDERS_CHANGED', () => {
+    setupGeneration++; setupReadings.invalidate();
+  }));
   let noticeGeneration = 0;
   let currentTurnId: string | undefined;
   let settledTurnId: string | undefined;
@@ -635,10 +647,45 @@ export function wireStreamEventMetrics(
       && options.isActive?.() !== false && (hold?.isCurrent() ?? true);
     const recovery = providerOptimizer?.enabled && retryTurn ? { isCurrent: isTurnCurrent, hold, registryKey } : undefined;
     if (recovery) pendingRecovery = recovery;
+    const readingSetupGeneration = setupGeneration;
+    let setups: ReadonlyMap<string, ProviderSetupClassification> = new Map();
+    const setupInstances = new Map<string, object>();
+    const currentSetups = (values: ReadonlyMap<string, ProviderSetupClassification>): ReadonlyMap<string, ProviderSetupClassification> => {
+      if (readingSetupGeneration !== setupGeneration) return new Map();
+      return new Map([...values].filter(([id]) => {
+        try {
+          const instance = setupInstances.get(id);
+          return instance !== null && typeof instance === 'object' && instance === providerRegistry.getRegistered?.(id);
+        }
+        catch { return false; }
+      }));
+    };
     errorNotices.enqueue(errVal, 'tui.stream-error', {
       isCurrent: () => isTurnCurrent()
         && registryKey === providerRegistry.getCurrentModel().registryKey,
       discard: () => hold?.cancel(),
+      prepare: providerOptimizer?.enabled && retryTurn && providerRegistry.describeRuntime ? async (signal) => {
+        const from = providerRegistry.getCurrentModel().provider;
+        // Reading a candidate's declared setup is not selection/authorization.
+        // Delivery still uses the optimizer's current chain and existing fences.
+        const next = providerOptimizer.testFallback({}).chain.find(node => node.capable
+          && node.providerId !== from && !failoverVisited.has(node.providerId) && node.providerId !== 'synthetic');
+        const ids = next ? [from, next.providerId] : [from];
+        const entries = await Promise.all(ids.map(async (providerId): Promise<readonly [string, ProviderSetupClassification]> => {
+          try {
+            const instance = providerRegistry.getRegistered?.(providerId);
+            if (instance === null || typeof instance !== 'object') return [providerId, describeProviderSetup('unknown')];
+            setupInstances.set(providerId, instance);
+            const runtime = await providerRegistry.describeRuntime!(providerId);
+            if (signal.aborted || readingSetupGeneration !== setupGeneration) return [providerId, describeProviderSetup('unknown')];
+            const value = await setupReadings.read({ providerId, runtime: runtime ?? undefined }, { signal, site: 'tui.failover.setup' });
+            return [providerId, instance === providerRegistry.getRegistered?.(providerId) ? value : describeProviderSetup('unknown')];
+          } catch { return [providerId, describeProviderSetup('unknown')]; }
+        }));
+        // A side that completed early can have been replaced while its peer
+        // was pending. Keep identities for the later ordered delivery fence too.
+        if (!signal.aborted) setups = currentSetups(new Map(entries));
+      } : undefined,
       deliver: (reading) => {
         const errorClass = reading === null ? unavailableErrorLine(errVal) : userErrorLine(reading);
         let retried = false;
@@ -701,7 +748,7 @@ export function wireStreamEventMetrics(
               }
               providerOptimizer.recordFallbackTransition(fromProvider, next.providerId, errorClass);
               const costSuffix = buildCostDeltaSuffix(costLookup, fromRegistryKey, toRegistryKey);
-              const billingSuffix = buildBillingSuffix(fromProvider, next.providerId);
+              const billingSuffix = buildBillingSuffix(fromProvider, next.providerId, currentSetups(setups));
               // Re-submit the last user turn on the new provider, handing the notice
               // to retryTurn so it outlives that call's transcript rollback (see the
               // retryTurn option doc). Emitting it here instead would delete it.

@@ -71,6 +71,9 @@ export { sumConversationUsage } from './conversation-usage.ts';
 
 export class ConversationManager extends SdkConversationManager {
   public history = new InfiniteBuffer();
+  /** Replacement identity for asynchronous presentation tied to this history. */
+  private replacementGeneration = 0;
+  public getReplacementGeneration(): number { return this.replacementGeneration; }
   /** Display-only output kept for redraw (conversation-display-only.ts). */
   private readonly displayOnly = new DisplayOnlyOutput();
   private _getWidth: () => number;
@@ -357,6 +360,7 @@ export class ConversationManager extends SdkConversationManager {
    * This is a full reset; the LLM context is wiped.
    */
   public override resetAll(): void {
+    this.replacementGeneration++;
     super.resetAll();
     this.history.clear();
     this.lineCache.clear();
@@ -415,6 +419,7 @@ export class ConversationManager extends SdkConversationManager {
     title?: string;
     titleSource?: import('@goodvibes-jev/engine/sdk/platform/core').ConversationTitleSource;
   }): void {
+    this.replacementGeneration++;
     super.fromJSON(data);
     this.usageHydrator?.();
     // A restored session's notices go back into the history (not toasted).

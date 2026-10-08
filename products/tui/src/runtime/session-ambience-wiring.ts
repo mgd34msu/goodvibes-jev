@@ -21,6 +21,8 @@ export interface SessionAmbienceDeps {
   readonly orchestrator: Orchestrator;
   readonly providerRegistry: Parameters<typeof attachSpokenTurnModelRouting>[0]['providerRegistry'];
   readonly workingDir: string;
+  readonly getSessionId: () => string;
+  readonly isActive: () => boolean;
   readonly notify: (message: string) => void;
   readonly render: () => void;
 }
@@ -49,6 +51,7 @@ export function wireSessionAmbience(deps: SessionAmbienceDeps): SessionAmbience 
   });
   const sessionAutoTitler = createSessionAutoTitler({
     conversation: deps.conversation, model: deps.toolLLM, configManager, turns: deps.events.turns,
+    getSessionId: deps.getSessionId, isActive: deps.isActive,
     onTitled: (title) => notifyAndPaint(`[Session] Auto-titled: "${title}"`),
   });
   const routingUnsub = attachSpokenTurnModelRouting({

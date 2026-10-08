@@ -104,6 +104,8 @@ export interface CommandUiActions {
   cancelGeneration?: () => void;
   /** Revoke only an async failed-turn recovery before replacing session identity/history. */
   cancelPendingRecovery?: () => boolean;
+  /** Owned natural-language schedule submission; revoked by the same shell lifecycle. */
+  scheduleReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
   /**
    * Cancel JUST the currently-running tool call (the live transcript row),
    * leaving the turn to continue, the local-session equivalent of the

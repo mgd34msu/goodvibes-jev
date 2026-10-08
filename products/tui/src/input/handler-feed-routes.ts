@@ -1,3 +1,4 @@
+import { scheduleCommandArguments } from './commands/schedule-arguments.ts';
 import { captureNativeConversationInput } from '../runtime/native-conversation-input.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { FooterTarget } from '../renderer/footer-targets.ts';
@@ -295,9 +296,14 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
       if (!commandMode && text.startsWith('/') && state.commandRegistry && state.commandContext?.executeCommand) {
         const parts = text.slice(1).trim().split(/\s+/);
         const name = parts[0];
-        const args = parts.slice(1);
+        const args = name === 'schedule' || name === 'sched' ? scheduleCommandArguments(text.slice(1)) : parts.slice(1);
         prompt = '';
         cursorPos = 0;
+        if (!args) {
+          state.commandContext.scheduleReading?.cancel();
+          state.commandContext.print('Invalid schedule command quoting.'); state.requestRender();
+          return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };
+        }
         if (name) {
           state.conversationManager?.dismissSplash(); // command input retires the splash, same as text input
           const executeCommand = state.commandContext.executeCommand;
