@@ -70,6 +70,12 @@ async function createTriagedSource(
   ctx: Omit<InboxSurfaceContext, 'catalog'>, options: OwnedTriagedInboxOptions,
   enclosingClosing?: () => Promise<void> | undefined,
 ): Promise<OwnedTriagedInboxSource> {
+  // Construction option properties and provider membership are captured before
+  // the first await. Trusted collaborator objects remain borrowed. In particular,
+  // validating a caller-owned lease/map and then rereading it after lock
+  // acquisition would let mutation silently replace the validated account.
+  ctx = Object.freeze({ ...ctx });
+  options = Object.freeze({ ...options, adapters: new Map(options.adapters) });
   const { providerId, accountScopeId } = options;
   if (!providerId || providerId.includes(':') || !accountScopeId || accountScopeId.length > 500
     || options.adapters.size !== 1 || !options.adapters.has(providerId) || typeof options.acquireReadLease !== 'function') {
@@ -212,6 +218,7 @@ async function createTriagedSource(
 
 /** Compatibility-shaped registrar; adds no catalog methods, tagger or activation. */
 export async function registerTriagedInbox(ctx: InboxSurfaceContext, options: OwnedTriagedInboxOptions): Promise<OwnedTriagedInboxSource> {
+  ctx = Object.freeze({ ...ctx });
   let closing: Promise<void> | undefined;
   const source = await createTriagedSource(ctx, options, () => closing);
   let binding: ReturnType<typeof registerCompositeInboxSurface>;

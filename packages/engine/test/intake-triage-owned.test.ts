@@ -1,11 +1,11 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
-import { registerTriagedInbox, type InboxTriageAuthority } from '../sdk/src/platform/intake/triage/owned.js';
+import { createOwnedTriagedInboxSource, registerTriagedInbox, type InboxTriageAuthority } from '../sdk/src/platform/intake/triage/owned.js';
 import { TRIAGE_MODEL } from '../sdk/src/platform/intake/triage/battery.js';
 import { SqliteTriageStore } from '../sdk/src/platform/intake/triage/store.js';
 import { createOwnedInboxSource, registerCompositeInboxSurface, type InboxPollingControl } from '../sdk/src/platform/intake/registration.js';
@@ -219,4 +219,57 @@ test('canonical publication rejects asynchronous final fences without replacing 
     await expect(store.commit(result.receipts, undefined, (() => Promise.reject(new Error('private proof'))) as () => void)).rejects.toThrow('synchronous');
     expect(readFileSync(file)).toEqual(before);
   } finally { await store.close(); }
+});
+
+
+test('constructor snapshots account proof and adapter membership before awaiting its ownership lock', async () => {
+  const directory = makeProjectTempDir('triage-constructor-snapshot');
+  let leaseCalls = 0, validationCalls = 0, current = true;
+  const adapter = { id: 'fixture', pollIntervalMs: 3_600_000,
+    poll: async () => ({ items: [], state: 'empty' as const, configured: true }) };
+  const adapters = new Map([['fixture', adapter]]);
+  const options = { providerId: 'fixture', accountScopeId: 'snapshot-account', adapters, skipInitialPoll: true,
+    acquireReadLease: async () => {
+      leaseCalls++;
+      return Object.assign(async () => { validationCalls++; }, { assertCurrent() { if (!current) throw new Error('revoked account'); } });
+    },
+  };
+  const redirected = makeProjectTempDir('triage-constructor-redirected');
+  const context = { workingDirectory: directory, logger: { info() {}, warn() {}, error() {} } };
+  const pending = createOwnedTriagedInboxSource(context, options);
+  context.workingDirectory = redirected;
+  // The constructor has synchronously validated the supplied scope but has
+  // yielded for its lifetime lock. Caller mutation must not replace that scope.
+  Object.assign(options, { acquireReadLease: undefined, assertReadCurrent: undefined });
+  adapters.set('added-provider', { ...adapter, id: 'added-provider' });
+  const owned = await pending;
+  const read = await owned.acquireRead(true);
+  try {
+    await read.validate();
+    expect(owned.providerIds).toEqual(['fixture']);
+    expect(leaseCalls).toBe(1); expect(validationCalls).toBe(1);
+    expect(existsSync(join(redirected, '.goodvibes', 'tui', 'operator'))).toBe(false);
+    current = false;
+    await expect(read.validate()).rejects.toMatchObject({ code: 'INBOX_SCOPE_UNAVAILABLE' });
+  } finally { read.release(); await owned.close(); }
+});
+
+
+test('registrar binds only the catalog captured before asynchronous account acquisition', async () => {
+  const original = new GatewayMethodCatalog(), substituted = new GatewayMethodCatalog();
+  const context = { catalog: original, workingDirectory: makeProjectTempDir('triage-constructor-catalog'),
+    logger: { info() {}, warn() {}, error() {} } };
+  const pending = registerTriagedInbox(context, { providerId: 'fixture', accountScopeId: 'catalog-account', skipInitialPoll: true,
+    adapters: new Map([['fixture', { id: 'fixture', pollIntervalMs: 3_600_000,
+      poll: async () => ({ items: [], state: 'empty' as const, configured: true }) }]]),
+    acquireReadLease: async () => Object.assign(async () => {}, { assertCurrent() {} }),
+  });
+  context.catalog = substituted;
+  const owned = await pending;
+  try {
+    await owned.ready;
+    expect(original.hasHandler('channels.inbox.list')).toBe(true);
+    expect(substituted.hasHandler('channels.inbox.list')).toBe(false);
+  } finally { await owned.close(); }
+  expect(original.hasHandler('channels.inbox.list')).toBe(false);
 });
