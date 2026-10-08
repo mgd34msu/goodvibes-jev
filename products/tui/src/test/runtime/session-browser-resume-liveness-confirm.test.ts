@@ -188,3 +188,19 @@ describe('the session-browser resume seam honours the confirm', () => {
     expect(conversation.getMessageCount()).toBe(1);
   });
 });
+
+test('the browser resume seam revokes pending native retry admission before replacing the session', async () => {
+  const { heldNativeRetry } = await import('../helpers/held-native-retry.ts');
+  const native = await heldNativeRetry(); const result = native.start(); let cancelled = 0;
+  const runtime = { sessionId: 'boot-session', model: 'm', provider: 'p' };
+  const { options } = makeResumeOptions({ runtime, cancelPendingRecovery: () => {
+    expect(runtime.sessionId).toBe('boot-session'); cancelled++; return native.cancel();
+  } });
+  try {
+    await native.waiting; expect(native.orchestrator.isThinking).toBe(false);
+    await createResumeSessionHandler(options)('other-session');
+    expect(cancelled).toBe(1); expect(runtime.sessionId).toBe('other-session');
+    native.release(); expect(await result).toMatchObject({ name: 'AbortError' });
+    expect(native.conversation.getMessageCount()).toBe(0);
+  } finally { native.dispose(); await result; }
+});

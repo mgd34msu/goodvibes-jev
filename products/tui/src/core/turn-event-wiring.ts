@@ -194,6 +194,16 @@ function normalizeTitleSource(source: unknown): 'user' | 'system' | null {
   return source === 'user' || source === 'system' ? source : null;
 }
 
+/** A bounded caller owns this hold; late/cancelled readings cannot restart a turn. */
+export interface PendingFailoverNotice {
+  readonly signal: AbortSignal;
+  readonly isCurrent: () => boolean;
+  readonly finish: (retried: boolean) => void;
+  readonly cancel: () => void;
+  /** Explicit Esc/Ctrl+C cancellation, including an idle SDK between attempts. */
+  readonly cancelTurn: () => void;
+}
+
 export interface WireTurnEventHandlersResult {
   /** Trigger a git status refresh; may be called from external code after tool execution. */
   readonly refreshGit: () => void;
@@ -209,6 +219,7 @@ export interface WireTurnEventHandlersResult {
    * for how it finally ended.
    */
   readonly continueTurnAfterFailover: () => void;
+  readonly beginFailoverNotice: (turnId: string) => PendingFailoverNotice;
 }
 
 /**
@@ -305,6 +316,10 @@ export function wireTurnEventHandlers(
   // attempt: its failure is withheld while the retry is on its way, and the
   // retry's TURN_SUBMITTED continues it (same start time, tally and name).
   let failoverRetryPending = false;
+  let turnGeneration = 0;
+  let activeTurnId: string | undefined;
+  let activeTurnSessionId: string | undefined;
+  let pendingFailoverRead: { readonly abort: AbortController } | undefined;
   let withheldFailure: { turnId: string; reason: string | null; timer: ReturnType<typeof setTimeout> } | null = null;
   const clearWithheldFailure = (): void => {
     if (withheldFailure) clearTimeout(withheldFailure.timer);
@@ -314,6 +329,38 @@ export function wireTurnEventHandlers(
     failoverRetryPending = true;
   };
 
+  const beginFailoverNotice = (turnId: string): PendingFailoverNotice => {
+    const generation = turnGeneration;
+    const sessionId = runtime.sessionId;
+    const token = { abort: new AbortController() };
+    pendingFailoverRead = token;
+    failoverRetryPending = true;
+    const isCurrent = () => pendingFailoverRead === token && turnGeneration === generation && runtime.sessionId === sessionId;
+    return {
+      signal: token.abort.signal,
+      isCurrent,
+      finish(retried) {
+        if (!isCurrent()) return;
+        if (retried) return; // retain authority until submission, cancellation or grace expiry
+        pendingFailoverRead = undefined;
+        token.abort.abort();
+        failoverRetryPending = false;
+        if (withheldFailure?.turnId === turnId) notifyTurnEnd(turnId, 'failed', withheldFailure.reason);
+      },
+      cancelTurn() {
+        if (isCurrent()) notifyTurnEnd(turnId, 'cancelled', 'User cancelled');
+      },
+      cancel() {
+        if (pendingFailoverRead !== token) return;
+        pendingFailoverRead = undefined;
+        token.abort.abort();
+        turnGeneration++; // invalidate an error microtask not yet delivered
+        failoverRetryPending = false;
+        clearWithheldFailure();
+      },
+    };
+  };
+
   /**
    * The end of a turn, however it ended: the in-terminal (OSC 9) notice on
    * its own per-signal config + focus gate, then the long-task desktop and
@@ -321,6 +368,10 @@ export function wireTurnEventHandlers(
    */
   const notifyTurnEnd = (turnId: string, outcome: TurnOutcome, reason: string | null): void => {
     if (turnId === lastEndedTurnId) return;
+    if (activeTurnId !== undefined && (turnId !== activeTurnId || runtime.sessionId !== activeTurnSessionId)) return;
+    turnGeneration++;
+    pendingFailoverRead?.abort.abort();
+    pendingFailoverRead = undefined;
     lastEndedTurnId = turnId;
     clearWithheldFailure();
     failoverRetryPending = false;
@@ -362,28 +413,32 @@ export function wireTurnEventHandlers(
   };
 
   /**
-   * A TURN_ERROR. The failover path decides synchronously, in its own
-   * TURN_ERROR handler, whether to re-submit the turn, and this handler runs
-   * first (main.ts wires it first), so the notice waits a microtask for that
-   * decision. Withheld while a retry is on its way; told anyway if the retry
-   * has not started within the grace period.
+   * A TURN_ERROR. The stream caller acquires a hold synchronously, then reads
+   * the error asynchronously before attempting failover. This handler runs
+   * first, so a microtask observes that hold. It ends on failed/cancelled
+   * delivery or continues through retry; the grace deadline independently
+   * revokes any retry that never starts.
    */
   const onTurnError = (turnId: string, reason: string | null): void => {
+    if (activeTurnId !== undefined && (turnId !== activeTurnId || runtime.sessionId !== activeTurnSessionId)) return;
+    const generation = turnGeneration;
+    const sessionId = runtime.sessionId;
     queueMicrotask(() => {
+      if (generation !== turnGeneration || sessionId !== runtime.sessionId) return;
       if (!failoverRetryPending) {
         notifyTurnEnd(turnId, 'failed', reason);
         return;
       }
       clearWithheldFailure();
       const timer = setTimeout(() => {
-        if (withheldFailure?.turnId !== turnId) return;
+        if (withheldFailure?.turnId !== turnId || generation !== turnGeneration || sessionId !== runtime.sessionId) return;
         notifyTurnEnd(turnId, 'failed', reason);
       }, _failoverRetryGraceMs);
       (timer as { unref?: () => void }).unref?.();
       withheldFailure = { turnId, reason, timer };
     });
   };
-  unsubs.push(clearWithheldFailure);
+  unsubs.push(() => { turnGeneration++; pendingFailoverRead?.abort.abort(); pendingFailoverRead = undefined; clearWithheldFailure(); });
 
   const refreshGit = (): void => {
     gitStatusProvider.refresh().then((info) => { lastGitInfoRef.value = info; render(); }).catch(() => { /* non-fatal */ });
@@ -392,7 +447,13 @@ export function wireTurnEventHandlers(
   // Journal user message immediately on TURN_SUBMITTED so a SIGKILL during
   // the subsequent stream loses at most the in-flight token chunk.
   unsubs.push(events.turns.on('TURN_SUBMITTED', (evt) => {
-    if (failoverRetryPending && withheldFailure !== null) {
+    const sameSession = activeTurnSessionId === runtime.sessionId;
+    activeTurnId = evt.turnId;
+    activeTurnSessionId = runtime.sessionId;
+    const continuesFailover = sameSession && failoverRetryPending && (withheldFailure !== null || pendingFailoverRead !== undefined);
+    turnGeneration++;
+    pendingFailoverRead = undefined;
+    if (continuesFailover) {
       // The failover's re-submission: the same user turn goes on.
       clearWithheldFailure();
       failoverRetryPending = false;
@@ -597,5 +658,5 @@ export function wireTurnEventHandlers(
   }
 
   unsubs.push(() => { agentTasks.clear(); workstreams.clear(); readTurnText = null; });
-  return { refreshGit, unsubs, transcriptJournal, continueTurnAfterFailover };
+  return { refreshGit, unsubs, transcriptJournal, continueTurnAfterFailover, beginFailoverNotice };
 }

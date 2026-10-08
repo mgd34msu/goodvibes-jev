@@ -14,10 +14,15 @@ import type { SpokenTurnRuntime } from '../audio/spoken-turn-wiring.ts';
 export function createCancelGeneration(
   orchestrator: Orchestrator,
   spokenTurns: Pick<SpokenTurnRuntime, 'stop'>,
+  cancelPendingRecovery?: () => boolean,
 ): () => boolean {
   return () => {
+    // TURN_ERROR finalizes the SDK attempt before our async reading/memory
+    // preparation finishes. Esc/Ctrl+C must revoke that owned recovery even
+    // though isThinking is already false and abort() would emit no TURN_CANCEL.
+    const cancelledRecovery = cancelPendingRecovery?.() === true;
     const stoppedSpeech = spokenTurns.stop('Spoken output stopped.');
-    if (orchestrator.isThinking) {
+    if (orchestrator.isThinking || cancelledRecovery) {
       orchestrator.abort();
     }
     return stoppedSpeech;
@@ -61,4 +66,28 @@ export function createCancelToolCall(
     if (cancelled) onCancelled(target);
     return cancelled;
   };
+}
+
+
+/**
+ * Relay recovery cancellation through both memory preparation and native SDK
+ * admission. The latter can be pending before isThinking/TURN_SUBMITTED, so a
+ * boolean pre-entry check alone cannot cancel it. The turn hold releases this
+ * signal without abort on submission; the SDK then owns ordinary turn abort.
+ */
+export async function runOwnedTurnRetry(options: {
+  readonly prepare: () => Promise<unknown>;
+  readonly submit: () => Promise<void>;
+  readonly abort: () => void;
+  readonly isCurrent: () => boolean;
+  readonly signal?: AbortSignal | undefined;
+}): Promise<void> {
+  if (!options.isCurrent() || options.signal?.aborted) return;
+  const abort = () => { options.abort(); };
+  options.signal?.addEventListener('abort', abort, { once: true });
+  try {
+    await options.prepare();
+    if (!options.isCurrent() || options.signal?.aborted) return;
+    await options.submit();
+  } finally { options.signal?.removeEventListener('abort', abort); }
 }
