@@ -31448,7 +31448,7 @@
         "receivedAt",
         "unread"
       ],
-      "text": "export interface ChannelInboxItem { id: string; provider: string; kind: string; from: string; subject?: string; bodyPreview: string; receivedAt: number; unread: boolean; routeId?: string; }"
+      "text": "export interface ChannelInboxItem { id: string; provider: string; kind: string; from: string; subject?: string; bodyPreview: string; receivedAt: number; unread: boolean; routeId?: string; triageScore?: number; triageLabel?: 'spam' | 'priority' | 'normal'; triageTags?: string[]; }"
     },
     {
       "name": "ChannelInboxProviderStatus",
@@ -31732,6 +31732,30 @@
       "text": "export interface InboxSweepSummary { readonly at: number; readonly expired: number; readonly capped: number; readonly remaining: number; }"
     },
     {
+      "name": "InboxTriageAuthority",
+      "kind": "interface",
+      "required": [
+        "accountScopeId",
+        "assertCurrent",
+        "destinationId",
+        "port",
+        "providerId",
+        "retention",
+        "signal"
+      ],
+      "text": "export interface InboxTriageAuthority { readonly accountScopeId: string; readonly providerId: string; readonly destinationId: string; readonly retention: 'ephemeral-no-log'; readonly port: JudgmentPort; readonly signal: AbortSignal; assertCurrent(): void; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; readonly health?: () => readonly JudgmentEndpointHealth[]; }"
+    },
+    {
+      "name": "InboxTriageOverlay",
+      "kind": "interface",
+      "required": [
+        "triageLabel",
+        "triageScore",
+        "triageTags"
+      ],
+      "text": "export interface InboxTriageOverlay { readonly triageScore: number; readonly triageLabel: 'spam' | 'priority' | 'normal'; readonly triageTags: readonly string[]; }"
+    },
+    {
       "name": "IntakeCredentialStore",
       "kind": "interface",
       "required": [
@@ -31819,7 +31843,7 @@
         "release",
         "validate"
       ],
-      "text": "export interface OwnedInboxRead extends InboxReadSource { validate(): Promise<void>; assertCurrent(): void; release(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface OwnedInboxRead extends InboxReadSource { readonly enrichTriage?: RegisterInboxSurfaceOptions['enrichTriage']; validate(): Promise<void>; assertCurrent(): void; release(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "OwnedInboxReadLease",
@@ -31834,6 +31858,34 @@
         "providerIds"
       ],
       "text": "export interface OwnedInboxSource extends InboxSurfaceRegistration { readonly providerIds: readonly string[]; acquireRead(requireFinalProof?: boolean): Promise<OwnedInboxRead>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "OwnedInboxTriageResult",
+      "kind": "interface",
+      "required": [
+        "hasMore",
+        "receipts",
+        "total"
+      ],
+      "text": "export interface OwnedInboxTriageResult { readonly receipts: readonly TriageReceipt[]; readonly total: number; readonly hasMore: boolean; readonly nextCursor?: string; }"
+    },
+    {
+      "name": "OwnedTriagedInboxOptions",
+      "kind": "interface",
+      "required": [
+        "accountScopeId",
+        "acquireReadLease",
+        "providerId"
+      ],
+      "text": "export interface OwnedTriagedInboxOptions extends Omit<RegisterInboxSurfaceOptions, 'storeFileName' | 'enrichTriage' | 'acquireReadLease'> { readonly providerId: string; readonly accountScopeId: string; readonly acquireReadLease: NonNullable<RegisterInboxSurfaceOptions['acquireReadLease']>; readonly authority?: InboxTriageAuthority; } ;; via NonNullable = type NonNullable<T> = T & {};"
+    },
+    {
+      "name": "OwnedTriagedInboxSource",
+      "kind": "interface",
+      "required": [
+        "runInboxTriage"
+      ],
+      "text": "export interface OwnedTriagedInboxSource extends OwnedInboxSource { runInboxTriage(query?: InboxListInput, operation?: { readonly signal?: AbortSignal; readonly dryRun?: boolean; }): Promise<OwnedInboxTriageResult>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "POLL_CADENCE_MS",
@@ -31910,7 +31962,7 @@
       "required": [
         "adapters"
       ],
-      "text": "export interface RegisterInboxSurfaceOptions { readonly adapters: ReadonlyMap<string, InboundProviderAdapter>; readonly storeFileName?: string; readonly skipInitialPoll?: boolean; readonly awaitInitialPoll?: boolean; readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>); readonly assertReadCurrent?: () => void | Promise<void>; readonly acquireReadLease?: () => Promise<OwnedInboxReadLease>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+      "text": "export interface RegisterInboxSurfaceOptions { readonly adapters: ReadonlyMap<string, InboundProviderAdapter>; readonly enrichTriage?: (items: readonly Readonly<ChannelInboxItem>[]) => Promise<ReadonlyMap<string, InboxTriageOverlay>>; readonly storeFileName?: string; readonly skipInitialPoll?: boolean; readonly awaitInitialPoll?: boolean; readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>); readonly assertReadCurrent?: () => void | Promise<void>; readonly acquireReadLease?: () => Promise<OwnedInboxReadLease>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
     },
     {
       "name": "RouteResolver",
@@ -31968,7 +32020,7 @@
         "dbPath",
         "readBatch"
       ],
-      "text": "export declare class SqliteTriageStore implements TriageStore { private readonly path; private closed; private closing; private readonly pending; constructor(workingDirectory: string); get dbPath(): string; readBatch(ids: readonly string[]): Promise<ReadonlyMap<string, TriageStoredRecord>>; commit(receipts: readonly TriageReceipt[], signal?: AbortSignal): Promise<void>; close(): Promise<void>; private enqueue; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+      "text": "export declare class SqliteTriageStore implements TriageStore { private readonly path; private closed; private closing; private readonly pending; constructor(workingDirectory: string, fileName?: string); get dbPath(): string; readBatch(ids: readonly string[]): Promise<ReadonlyMap<string, TriageStoredRecord>>; commit(receipts: readonly TriageReceipt[], signal?: AbortSignal, assertPublicationCurrent?: () => void): Promise<void>; close(): Promise<void>; private enqueue; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
     },
     {
       "name": "TRIAGE_MODEL",
@@ -32088,6 +32140,11 @@
       "text": "export declare function createOwnedInboxSource(ctx: Omit<InboxSurfaceContext, 'catalog'>, options: RegisterInboxSurfaceOptions): OwnedInboxSource; ;; via Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;"
     },
     {
+      "name": "createOwnedTriagedInboxSource",
+      "kind": "function",
+      "text": "export declare function createOwnedTriagedInboxSource(ctx: Omit<InboxSurfaceContext, 'catalog'>, options: OwnedTriagedInboxOptions): Promise<OwnedTriagedInboxSource>; ;; via Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "createProtectedInboxMapper",
       "kind": "function",
       "text": "export declare function createProtectedInboxMapper(owner: ProtectedSourceOwner): (input: ProtectedInboxPreviewInput, signal?: AbortSignal) => Promise<ProtectedInboxPreviewFields | null>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProtectedSourceOwner = export interface ProtectedSourceOwner { capture(parts: readonly string[]): ProtectedSource; screen(source: ProtectedSource): Promise<SourceScreeningResult>; project(receipt: SourceScreeningReceipt): readonly string[]; captureResearchReference(reference: string): ProtectedResearchReference; screenResearchReference(reference: ProtectedResearchReference, operation?: ResearchReferenceOperation): Promise<ResearchReferenceScreeningResult>; projectResearchReference(receipt: ResearchReferenceScreeningReceipt): ResearchReferenceProjection; release(source: ProtectedSource | ProtectedResearchReference): Promise<void>; close(): Promise<void>; }"
@@ -32171,6 +32228,11 @@
       "name": "registerInboxSurface",
       "kind": "function",
       "text": "export declare function registerInboxSurface(ctx: InboxSurfaceContext, options: RegisterInboxSurfaceOptions): InboxSurfaceRegistration;"
+    },
+    {
+      "name": "registerTriagedInbox",
+      "kind": "function",
+      "text": "export declare function registerTriagedInbox(ctx: InboxSurfaceContext, options: OwnedTriagedInboxOptions): Promise<OwnedTriagedInboxSource>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "registeredProviderIds",

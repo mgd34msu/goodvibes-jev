@@ -8,8 +8,8 @@
 //
 //   * The mirror is already live. Each adapter polls its provider on that
 //     provider's own cadence (Slack/Discord 30s, email 60s) and writes what it
-//     pulls straight into the store, that is what the triage pipeline scores.
-//     Reading it IS reading what has arrived.
+//     pulls straight into the store. Explicit triage can score its admitted
+//     mirror selection; polling and listing never initiate scoring.
 //   * A fetch-per-call would put a third-party rate limit behind a read verb
 //     any client may call at any rate, so one impatient UI could get every
 //     other consumer throttled by Slack.
@@ -18,9 +18,8 @@
 //     standby node fetch too, which is exactly the double-read the election
 //     exists to prevent, while the READ is deliberately ungated so a standby
 //     still answers.
-//   * Triage scores are applied as items are persisted. Items fetched inline
-//     would arrive unscored, so the verb would answer two different shapes
-//     depending on when you called it.
+//   * Optional triage enrichment reads exact-input receipts under the owned
+//     account read lease. It never initiates a judgment or provider write.
 //   * A provider outage would turn a read into a hang or a 500 instead of a
 //     partial answer with a named cause.
 //
@@ -66,6 +65,9 @@ export interface ChannelInboxItem {
   receivedAt: number;
   unread: boolean;
   routeId?: string;
+  triageScore?: number;
+  triageLabel?: 'spam' | 'priority' | 'normal';
+  triageTags?: string[];
 }
 
 /**

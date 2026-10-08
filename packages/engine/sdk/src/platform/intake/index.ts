@@ -67,3 +67,7 @@ export type {
 
 export { composeInboxReads } from './composite.js';
 export type { InboxReadSource } from './composite.js';
+
+export { createOwnedTriagedInboxSource, registerTriagedInbox } from './triage/owned.js';
+export type { InboxTriageAuthority, OwnedTriagedInboxOptions, OwnedInboxTriageResult, OwnedTriagedInboxSource } from './triage/owned.js';
+export type { InboxTriageOverlay } from './registration.js';
