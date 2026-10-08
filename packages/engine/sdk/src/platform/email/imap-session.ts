@@ -149,6 +149,8 @@ export type ImapUntaggedListener = (line: string) => void;
 
 /** What a caller wants kept while a command is in flight. */
 export interface ImapSendOptions {
+  /** Optional fail-closed bound on all original response bytes for this command. */
+  readonly maxResponseBytes?: number;
   /**
    * Collect untagged lines into this command's response. Default true, which
    * is what an ordinary request/response command needs.
@@ -215,6 +217,8 @@ interface Waiter<T> {
 
 interface PendingCommand {
   readonly tag: string;
+  readonly maxResponseBytes: number | undefined;
+  receivedBytes: number;
   readonly lines: ImapFetchFrame[];
   /**
    * Whether untagged lines are collected for this command at all.
@@ -264,6 +268,14 @@ export class ImapSession implements ImapConnection {
   private destroyed = false;
 
   private readonly onData = (chunk: Uint8Array): void => {
+    const command = this.oldestOpenCommand();
+    if (command?.maxResponseBytes !== undefined) {
+      command.receivedBytes += chunk.byteLength;
+      if (command.receivedBytes > command.maxResponseBytes) {
+        this.failStream(new Error('IMAP response exceeded the complete-source byte limit'));
+        return;
+      }
+    }
     this.buffer = Buffer.concat([this.buffer, chunk]);
     this.drain();
   };
@@ -556,8 +568,8 @@ export class ImapSession implements ImapConnection {
   }
 
   /** Internal FETCH path: never project an opaque literal back into syntax. */
-  async commandFrames(text: string): Promise<ImapFetchFrame[]> {
-    const tag = await this.sendCommand(text);
+  async commandFrames(text: string, options: ImapSendOptions = {}): Promise<ImapFetchFrame[]> {
+    const tag = await this.sendCommand(text, options);
     return this.awaitTagFrames(tag);
   }
 
@@ -571,10 +583,15 @@ export class ImapSession implements ImapConnection {
    * array does not grow for the length of the round.
    */
   async sendCommand(text: string, options: ImapSendOptions = {}): Promise<string> {
+    if (this.failure !== null) throw this.failure;
+    if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes)
+      || options.maxResponseBytes < 1)) throw new Error('Invalid IMAP response byte limit');
     this.greetingSeen = true;
     const tag = this.nextTag();
     this.pending.set(tag, {
       tag,
+      maxResponseBytes: options.maxResponseBytes,
+      receivedBytes: this.buffer.length,
       lines: [],
       retainUntagged: options.retainUntagged ?? true,
       completion: null,

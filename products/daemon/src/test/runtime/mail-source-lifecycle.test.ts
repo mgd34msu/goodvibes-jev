@@ -76,3 +76,23 @@ test('narrow composition lacks provenance unless all lifecycle hooks and disposa
   const { emailServiceDeps } = composeMailDeps({ configManager: { get: () => undefined }, secretsManager: { get: async () => null } });
   expect(emailServiceDeps.replySubjectSourceOwner).toBeUndefined();
 });
+
+test('canonical mail composition revokes mailbox observations with subject sources on reload, secret changes and shutdown', () => {
+  const state = fixture();
+  const observe = () => {
+    const read = state.begin(); read.observeMailbox('INBOX', 7);
+    return { source: read.complete(42, 'INBOX', 'Synthetic subject')!, mailbox: read.completeMailboxObservation()! };
+  };
+  for (const mutate of [
+    () => { state.configManager.set('surfaces.email.user', 'other@example.invalid'); state.configManager.set('surfaces.email.user', 'fixture@example.invalid'); },
+    () => state.configManager.load(),
+    () => { for (const listener of state.changes) listener('SYNTHETIC_ALIAS_TARGET'); },
+    () => state.dispose(),
+  ]) {
+    const { source, mailbox } = observe();
+    expect(mailbox.uidValidity).toBe(7); mutate();
+    expect(source.signal.aborted).toBe(true); expect(mailbox.signal.aborted).toBe(true);
+    expect(() => mailbox.assertCurrent()).toThrow();
+  }
+  expect(state.changes.size).toBe(0); expect(state.reads()).toBe(0);
+});

@@ -41,11 +41,12 @@
  * bun/node transport lives in the sibling `email/node` entry.
  */
 
+import { readEmailInboxBatch, type EmailInboxBatchInput, type EmailInboxBatchRead } from './email-inbox-batch.js';
+import { listEmailInbox } from './email-inbox-list.js';
 import { readEmailMessage } from './email-message-reader.js';
-import type { EmailReplySubjectSource, EmailReplySubjectSourceOwner } from './reply-subject-source.js';
+import type { EmailMailboxObservation, EmailReplySubjectSource, EmailReplySubjectSourceOwner } from './reply-subject-source.js';
 import { ensureMailboxConfigDefaults } from '../config/connector-config-sections.js';
-import { readSenderAuthentication } from '../google/sender-authentication.js';
-import { ImapClient, IMAP_MAX_FETCH_UIDS } from './imap-client.js';
+import { ImapClient } from './imap-client.js';
 import { SmtpClient, validateSmtpAddress, validateSmtpSubject } from './smtp-client.js';
 import {
   imapSocketFactoryFor,
@@ -65,7 +66,6 @@ export {
 } from './email-config.js';
 import type {
   ImapAppendDraftResult,
-  ImapEnvelope,
   ImapMessageDetail,
 } from './imap-client.js';
 import type { EmailInboxUnreadableResponse, EmailMessageRead } from './email-read-results.js';
@@ -225,6 +225,8 @@ export interface SendMailOptions {
 
 /** What to list, for `listInbox`. Every field is optional. */
 export interface EmailInboxListInput {
+  /** Cancellation drains admitted credential/transport work before settling. */
+  readonly signal?: AbortSignal | undefined;
   /** Maximum messages to return. Default: 10. */
   readonly limit?: number | undefined;
   /** Restrict to messages the server dates on or after this day. */
@@ -373,6 +375,22 @@ export interface EmailServiceDeps {
 
 export class EmailService {
   private readonly deps: EmailServiceDeps;
+  readonly #inboxObservations = new WeakMap<object, EmailMailboxObservation>();
+
+  /** Exact local result only; mailbox evidence is never complete-content authority. */
+  getInboxMailboxObservation(result: EmailInboxListResult | EmailInboxBatchRead): EmailMailboxObservation | undefined {
+    const observation = this.#inboxObservations.get(result);
+    try { observation?.assertCurrent(); return observation; } catch { return undefined; }
+  }
+
+  private bindObservation(observation: EmailMailboxObservation, signal?: AbortSignal): EmailMailboxObservation {
+    const combined = signal ? AbortSignal.any([signal, observation.signal]) : observation.signal;
+    return Object.freeze({ ...observation, signal: combined, assertCurrent() {
+      if (combined.aborted) throw new Error('Mailbox observation is no longer current.');
+      observation.assertCurrent();
+    } });
+  }
+
   readonly #replySubjectSources = new WeakMap<ImapMessageDetail, EmailReplySubjectSource>();
 
   /** Only the exact canonical result can retrieve its immutable subject snapshot. */
@@ -423,123 +441,54 @@ export class EmailService {
    * the truncated page.
    */
   async listInbox(input: EmailInboxListInput = {}): Promise<EmailInboxListResult> {
-    const limit = input.limit ?? 10;
-    const unreadOnly = input.unreadOnly ?? true;
+    const { signal, limit, since, unreadOnly } = input;
+    input = { signal, limit, since: since === undefined ? undefined : new Date(since.getTime()), unreadOnly };
+    if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
     const config = this.getValidatedConfig();
     const sourceRead = this.deps.replySubjectSourceOwner?.beginRead(config);
-    const password = await resolveEmailPassword(config.passwordRef, this.deps.secretsManager);
+    const { result, ingest } = await listEmailInbox(this.deps, config, sourceRead, input);
+    const current = (): void => {
+      if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
+      sourceRead?.assertCurrent();
+    };
+    current();
+    for (const entry of ingest) { current(); this.recordIngest([entry]); }
+    current();
+    const observation = sourceRead?.completeMailboxObservation();
+    if (observation) this.#inboxObservations.set(result, this.bindObservation(observation, input.signal));
+    return result;
+  }
 
-    const socketFactory = this.deps.imapSocketFactory ?? imapSocketFactoryFor(this.deps.transport, config.imapSecurity);
-    const socket = await socketFactory(config.imapHost, config.imapPort);
-
-    const client = new ImapClient({
-      socket,
-      username: config.username,
-      password,
-      ...(config.mailbox.length > 0 ? { mailbox: config.mailbox } : {}),
-    });
-
-    try {
-      await client.open();
-      sourceRead?.observeMailbox(client.mailbox, client.mailboxStatus?.uidValidity ?? null);
-      const uids = unreadOnly
-        ? await client.searchUnseen(input.since)
-        : await client.searchAll(input.since);
-      // Page here, visibly, rather than handing the whole match set to a
-      // function that would quietly keep the tail of it. `total` below reports
-      // the full match, so a caller can always see that this is a page.
-      const pageUids = uids.slice(-Math.min(limit, IMAP_MAX_FETCH_UIDS));
-      // `fetchEnvelopeBatch`, not `fetchEnvelopes`. They run the same fetch;
-      // the difference is that one of them answers the question this method
-      // has to answer. `fetchEnvelopes` returns a list, and its own doc warns
-      // that "omission alone is not evidence of an expunge", which is exactly
-      // the inference a caller makes when a page comes back short with nothing
-      // saying why. The responses that could not be read travel with the page.
-      const batch = await client.fetchEnvelopeBatch(pageUids);
-      const envelopes: readonly ImapEnvelope[] = batch.envelopes;
-
-      // NEWEST FIRST. A search answers in ascending UID order and the page
-      // keeps the highest UIDs, so `envelopes` is the newest N with the OLDEST
-      // of them at index 0, which is the reverse of what anybody displaying a
-      // mailbox wants, and the reverse of what this method's own contract now
-      // promises. Ordered by UID rather than by the `Date:` header, because
-      // the UID is assigned by the receiving server and `Date:` is written by
-      // whoever sent the message: sorting on it would let a forged date pin a
-      // message to the top of the owner's inbox.
-      const page = [...envelopes].reverse();
-
-      // Fetch a body preview for the newest message of this page (read-only;
-      // BODY.PEEK), which is now index 0. Taken from the page rather than from
-      // the search results: the first search result is the oldest match and is
-      // usually not on the page at all. Preview text taken from one message
-      // and shown against another is worse than no preview, it attributes
-      // words to a sender who did not write them, both in the listing and in
-      // the untrusted-ingest record below.
-      // Failures are non-fatal, the inbox summary is still returned.
-      const previewTarget = page[0];
-      let newestBodyPreview = '';
-      if (previewTarget !== undefined) {
-        try {
-          newestBodyPreview = await client.fetchBodyPreview(previewTarget.uid);
-        } catch {
-          // best-effort: body preview unavailable, proceed without it
-        }
-      }
-
-      // Which of these are actually unread. When the search was UNSEEN they
-      // all are; when it was ALL, saying so would be a fabricated flag, so the
-      // unseen set is asked for separately rather than assumed.
-      const unseen = unreadOnly
-        ? null
-        : new Set<number>(await client.searchUnseen(input.since));
-
-      await client.logout();
-
-      // Delivery evidence is carried through deliberately. Dropping it here
-      // would leave correlation with nothing but the sender-authored `To:`
-      // header, which is the exact hole the evidence exists to close.
-      this.recordIngest(page.map((env, idx) => ({
-        from: env.from,
-        // The preview is fetched for one message only, so that is the one
-        // whose words are available here; the rest contribute their subject,
-        // which is itself attacker-written. The index is the one the preview
-        // was fetched from, so the text is attributed to the sender who wrote
-        // it.
-        text: `${env.subject}\n${idx === 0 ? newestBodyPreview : ''}`.trim(),
-      })));
-
-      const messages = page.map((env, idx) => ({
-        uid: env.uid,
-        messageId: env.messageId,
-        from: env.from,
-        subject: env.subject,
-        date: env.date,
-        unread: unseen === null ? true : unseen.has(env.uid),
-        bodyPreview: idx === 0 ? newestBodyPreview : '',
-        mailbox: env.mailbox,
-        deliveredTo: env.deliveredTo,
-        unverifiedToHeaderClaim: env.unverifiedToHeaderClaim,
-        senderClaim: this.deps.describeSenderClaim(
-          env.from,
-          readSenderAuthentication(env.authenticationResults),
-        ),
-      }));
-      return {
-        messages,
-        total: uids.length,
-        ...(batch.unreadable.length > 0
-          ? {
-            unreadable: batch.unreadable.map((problem) => ({
-              uid: problem.uid,
-              detail: problem.detail,
-            })),
-          }
-          : {}),
-      };
-    } catch (err) {
-      try { await client.logout(); } catch { /* best-effort */ }
-      throw err;
+  /**
+   * Strict complete-source snapshot for a future owned inbox adapter. No cursor
+   * advances here. Partial/gone/unsupported content withholds the entire batch.
+   * The caller still needs fresh account authorization and protected screening.
+   */
+  async readInboxBatch(input: EmailInboxBatchInput = {}): Promise<EmailInboxBatchRead> {
+    const { signal, limit } = input;
+    input = { signal, limit };
+    if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
+    const owner = this.deps.replySubjectSourceOwner;
+    if (!owner) throw new Error('Mail snapshot requires an owned account lifetime.');
+    const config = this.getValidatedConfig();
+    const sourceRead = owner.beginRead(config);
+    const result = await readEmailInboxBatch(this.deps, config, sourceRead, input);
+    const current = (): void => {
+      if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
+      sourceRead.assertCurrent();
+    };
+    current();
+    if (result.outcome !== 'complete') return result;
+    const observation = sourceRead.completeMailboxObservation();
+    if (!observation) return Object.freeze({ outcome: 'incomplete', reason: 'Mailbox identity is unavailable.' });
+    for (const message of result.messages) {
+      current();
+      this.recordIngest([{ from: message.source.detail.from,
+        text: [message.source.rawHeaders, message.source.rawBodyStructure, ...message.source.textSections.map(section => section.text)].join('\n') }]);
     }
+    current();
+    this.#inboxObservations.set(result, this.bindObservation(observation, input.signal));
+    return result;
   }
 
   /**
