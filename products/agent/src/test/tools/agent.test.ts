@@ -49,7 +49,6 @@ import {
   AGENT_REMOTE_MUTATION_DENIAL_MESSAGE,
   AGENT_REGISTRY_CONTENT_DENIAL_MESSAGE,
   AGENT_SETTINGS_CONFIRMATION_PROPERTY,
-  AGENT_SETTINGS_TOOL_DESCRIPTION_TEXT,
   AGENT_STATE_MUTATION_DENIAL_MESSAGE,
   AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE,
   installAgentToolPolicyGuard,
@@ -57,6 +56,12 @@ import {
   wrapAgentToolForAgentPolicy,
 } from '../../tools/agent-tool-policy-guard.ts';
 import { AGENT_READ_ADMISSION_DENIAL_MESSAGE } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { executeToolCalls, type ToolExecutionDeps } from '@goodvibes-jev/engine/sdk/platform/core';
+import { composeAgentToolRegistry } from '../../runtime/agent-tool-registry.ts';
+import { composeAgentPermissionManager } from '../../runtime/bootstrap-core.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +79,45 @@ function makeAgentHarness(options: { readonly guarded?: boolean } = {}) {
   });
   if (options.guarded) wrapAgentToolForAgentPolicy(agentTool);
   return { agentTool, manager, messageBus, configManager };
+}
+
+/** Recorded fixture answers; the actual Agent registry, admission and config owners execute. */
+function settingsGuardRuntime() {
+  const services = getTestRuntimeServices();
+  const log = new SqliteDecisionLog(':memory:');
+  let selected: 'act' | 'reject' = 'act';
+  const answers = fakePort((name, question) => {
+    if (name === 'disposition' && question.type === 'choice') {
+      return choiceAnswer(question, selected === 'act' && !Object.hasOwn(question.criteria, 'act') ? 'reject' : selected, 0.999);
+    }
+    if (name === 'hazard') return choiceAnswer(question, 'approval-gate', 0.999);
+    if (name === 'family' || name === 'capability') return choiceAnswer(question, 'generic', 0.999);
+    if (name === 'kind') return choiceAnswer(question, 'write', 0.999);
+    if (question.type === 'noul') return noulAnswer(name === 'mutates' || name === 'requested' ? 0.999 : 0.001);
+    throw new Error(`Unscripted settings guard fixture reading: ${name}`);
+  });
+  const previousPort = installJudgmentPort(withDecisionLog(answers.port, log));
+  const previousPrompt = services.permissionPromptRef.requestPermission;
+  let prompts = 0;
+  services.permissionPromptRef.requestPermission = async () => { prompts++; throw new Error('Unexpected semantic approval callback'); };
+  const source = { goal: 'Apply the exact synthetic fixture setting', criteria: ['Only the temporary fixture store may change'] };
+  const registry = composeAgentToolRegistry({ services, configManager: services.configManager,
+    homeDirectory: services.homeDirectory, resolveSessionId: () => 'settings-guard', getLastUserMessage: () => source.goal }).toolRegistry;
+  const manager = composeAgentPermissionManager(services);
+  const deps: ToolExecutionDeps = { toolRegistry: registry, permissionManager: manager, autonomousSource: () => source,
+    hookDispatcher: null, runtimeBus: null, sessionId: 'settings-guard',
+    emitterContext: () => { throw new Error('No emitter is used by this fixture'); } };
+  let sequence = 0;
+  return { registry, config: services.configManager, answers, prompts: () => prompts,
+    choose(value: 'act' | 'reject') { selected = value; },
+    async run(args: Record<string, unknown>) {
+      const result = (await executeToolCalls(deps, `settings-guard-turn-${++sequence}`,
+        [{ id: `settings-guard-${sequence}`, name: 'goodvibes_settings', arguments: args }]))[0];
+      if (!result) throw new Error('Actual settings execution returned no result');
+      return result;
+    },
+    close() { services.permissionPromptRef.requestPermission = previousPrompt; installJudgmentPort(previousPort); log[Symbol.dispose](); },
+  };
 }
 
 function makeNoopTool(name: string): Tool {
@@ -948,7 +992,8 @@ describe('spawn mode', () => {
     installAgentToolPolicyGuard(registry);
 
     const settingsDefinition = registry.getToolDefinitions().find((tool) => tool.name === 'goodvibes_settings');
-    expect(settingsDefinition?.description).toBe(AGENT_SETTINGS_TOOL_DESCRIPTION_TEXT);
+    expect(settingsDefinition?.description).toContain('original host request');
+    expect(settingsDefinition?.description).toContain('recorded autonomous decision');
     expect(settingsDefinition?.sideEffects).toEqual(['state']);
     // The old guard stripped every parameter, which left the model unable to see
     // that a settings write was something it could attempt at all.
@@ -959,43 +1004,36 @@ describe('spawn mode', () => {
     expect(properties.confirm).toBeDefined();
     expect(properties[AGENT_SETTINGS_CONFIRMATION_PROPERTY]).toBeDefined();
 
-    const result = await registry.execute('call-settings-ordinary', 'goodvibes_settings', {
-      mode: 'set',
-      key: 'surfaces.telegram.botUsername',
-      value: 'goodvibes_agent_bot',
-      confirm: true,
-    });
-    expect(result.success).toBe(true);
+    const f = settingsGuardRuntime();
+    try {
+      const before = f.config.get('display.theme');
+      const value = before === 'nord' ? 'vaporwave' : 'nord';
+      const args = { mode: 'set', key: 'display.theme', value, confirm: true };
+      const direct = await f.registry.execute('call-settings-direct', 'goodvibes_settings', args);
+      expect(direct.success).toBe(false); expect(f.config.get('display.theme')).toBe(before);
+      const result = await f.run(args);
+      expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+      expect(f.config.get('display.theme')).toBe(value); expect(f.prompts()).toBe(0);
+    } finally { f.close(); }
   });
 
-  test('Agent runtime guard gates a genuinely dangerous key and says which and why', async () => {
-    const registry = new ToolRegistry();
-    const guarded = makeAgentHarness();
-    registry.register(guarded.agentTool);
-    registry.register(makeSettingsTool());
-
-    installAgentToolPolicyGuard(registry);
-
-    const result = await registry.execute('call-settings-gated', 'goodvibes_settings', {
-      mode: 'set',
-      key: 'behavior.autoApprove',
-      value: true,
-      confirm: true,
-    });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('behavior.autoApprove');
-    expect(result.error).toContain('auto-approves every future tool permission request');
-    expect(result.error).toContain('was NOT changed');
-    expect(result.error).toContain(AGENT_SETTINGS_CONFIRMATION_PROPERTY);
-
-    const allowed = await registry.execute('call-settings-gated-confirmed', 'goodvibes_settings', {
-      mode: 'set',
-      key: 'behavior.autoApprove',
-      value: true,
-      confirm: true,
-      [AGENT_SETTINGS_CONFIRMATION_PROPERTY]: 'turn on auto approve for me',
-    });
-    expect(allowed.success).toBe(true);
+  test('Agent runtime guard preserves recorded settings denial despite caller request text', async () => {
+    const f = settingsGuardRuntime();
+    try {
+      const before = f.config.get('behavior.autoApprove');
+      const args = { mode: 'set', key: 'behavior.autoApprove', value: !before, confirm: true,
+        [AGENT_SETTINGS_CONFIRMATION_PROPERTY]: 'turn on auto approve for me' };
+      f.choose('reject');
+      const denied = await f.run(args);
+      expect(denied.success).toBe(false); expect(denied.autonomousDecision?.outcome).toBe('reject');
+      expect(denied.error).toBeTruthy(); expect(f.config.get('behavior.autoApprove')).toBe(before);
+      expect(JSON.stringify(f.answers.requests.filter(request => request.context?.site === 'engine.gate.settings-write')))
+        .toContain('behavior.autoApprove');
+      f.choose('act');
+      const allowed = await f.run(args);
+      expect(allowed.success).toBe(true); expect(allowed.autonomousDecision?.outcome).toBe('act');
+      expect(f.config.get('behavior.autoApprove')).toBe(!before); expect(f.prompts()).toBe(0);
+    } finally { f.close(); }
   });
 
   test('Agent runtime guard routes copied runtime context tool to Agent capabilities', async () => {

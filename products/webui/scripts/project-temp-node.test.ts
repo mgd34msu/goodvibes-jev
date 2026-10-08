@@ -82,3 +82,38 @@ test('the browser fixture constructs and runs real config routes under Node with
   expect(proof.root.startsWith(PROJECT_TEMP_ROOT + sep + 'webui-terminal-theme-')).toBe(true);
   expect(existsSync(proof.root)).toBe(false);
 });
+
+test('the Node browser fixture refuses settings envelopes without invoking the legacy writer', () => {
+  const hostUrl = new URL('../e2e/support/terminal-theme-host.ts', import.meta.url);
+  const proof = runNode([helperUrl, hostUrl], `
+    import { existsSync, readFileSync } from 'node:fs';
+    import { createTerminalThemeHost, themeConfigRequest } from ${JSON.stringify(hostUrl.href)};
+    const host = createTerminalThemeHost('vaporwave');
+    try {
+      const before = readFileSync(host.settingsPath, 'utf8');
+      const originalWrite = host.manager.setDynamic.bind(host.manager);
+      let writes = 0;
+      host.manager.setDynamic = (...args) => { writes++; return originalWrite(...args); };
+      const replies = [];
+      for (const settingsPrecondition of [
+        { version: 1, action: 'capture', operation: 'set', key: 'display.theme', value: 'nord' },
+        { version: 1, action: 'apply', reference: 'unissued-terminal-theme-reference' },
+      ]) {
+        for (const legacy of [{}, { key: 'display.theme', value: 'nord' }]) {
+          const response = await host.dispatch(themeConfigRequest('POST', { ...legacy, settingsPrecondition }));
+          replies.push({ status: response.status, code: (await response.json()).code });
+        }
+      }
+      host.reload();
+      console.log(JSON.stringify({ root: host.root, replies, writes,
+        unchanged: readFileSync(host.settingsPath, 'utf8') === before,
+        daemonFile: existsSync(host.daemonTierPath), theme: host.manager.get('display.theme') }));
+    } finally { host.cleanup(); }
+  `) as { root: string; replies: { status: number; code: string }[]; writes: number; unchanged: boolean; daemonFile: boolean; theme: string };
+  expect(proof.replies).toEqual(Array.from({ length: 4 }, () => ({ status: 409, code: 'SETTINGS_PRECONDITION_UNSUPPORTED' })));
+  expect(proof.writes).toBe(0);
+  expect(proof.unchanged).toBe(true);
+  expect(proof.daemonFile).toBe(false);
+  expect(proof.theme).toBe('vaporwave');
+  expect(existsSync(proof.root)).toBe(false);
+});
