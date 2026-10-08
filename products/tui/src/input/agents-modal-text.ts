@@ -53,15 +53,25 @@ export function hostedRowTexts(rows: readonly HostedSessionRow[]): AgentsText[] 
   });
 }
 
-/** The hosted transcript as lines at a width (text from column 5, like the transcript). */
-export function hostedBody(rows: readonly HostedSessionRow[], width: number, height: number): Line[] {
+export interface HostedTranscriptLine {
+  readonly line: Line;
+  readonly row: number;
+  /** Text offset within the styled row, for resize-stable viewport anchors. */
+  readonly offset: number;
+}
+
+/** The full wrapped transcript with its retained row/text coordinates. */
+export function hostedTranscriptLines(rows: readonly HostedSessionRow[], width: number): HostedTranscriptLine[] {
   const t = activeTokens();
-  const out: Line[] = [];
+  const out: HostedTranscriptLine[] = [];
   const textWidth = Math.max(8, width - 9);
-  for (const item of hostedRowTexts(rows)) {
+  for (const [row, item] of hostedRowTexts(rows).entries()) {
     const fg = item.tone === 'error' ? t.error : item.tone === 'brand' ? t.brand : item.tone === 'faint' ? t.textFaint : t.text;
     const text = item.glyph ? `${item.glyph} ${item.text}` : item.text;
+    let nextOffset = 0;
     for (const part of wrapText(text, textWidth)) {
+      const offset = Math.max(nextOffset, text.indexOf(part, nextOffset));
+      nextOffset = offset + Math.max(1, part.length);
       const line = createEmptyLine(width);
       let x = 5;
       for (const ch of part) {
@@ -71,10 +81,15 @@ export function hostedBody(rows: readonly HostedSessionRow[], width: number, hei
         if (w === 2) line[x + 1] = { ...line[x]!, char: '' };
         x += w;
       }
-      out.push(line);
+      out.push({ line, row, offset });
     }
   }
-  return out.slice(-Math.max(1, height));
+  return out;
+}
+
+/** Existing tail-only helper; the actual modal owns its scroll cursor separately. */
+export function hostedBody(rows: readonly HostedSessionRow[], width: number, height: number): Line[] {
+  return hostedTranscriptLines(rows, width).slice(-Math.max(1, height)).map(entry => entry.line);
 }
 
 function contentText(content: string | ReadonlyArray<{ type: string; text?: string }>): string {
