@@ -11,7 +11,7 @@ coverage/
 /.tmp/
 packages/engine/.tmp/
 
-# Verdaccio dry-run and test scratch dir
+# Local release and test scratch directories
 packages/engine/.test-tmp/
 packages/engine/test/.test-tmp/
 
