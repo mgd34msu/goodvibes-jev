@@ -107,7 +107,10 @@ test('actual configured host initializes memory, starts real boot, serves persis
     keep(spyOn(runtime.bootTasks!, 'start').mockImplementation(() => {
       expect(memoryReady).toBe(true); expect(fx.host.daemon?.isRunning).toBe(true); bootStarted = true; return start();
     }));
-  });
+  }, { createServer(config) {
+    expect(config).not.toHaveProperty('updateArtifact');
+    return new DaemonServer(config);
+  } });
   const plugin = seedPlugin(fx);
   expect(fx.host.services).toBeUndefined();
   const start = fx.host.start(); expect(fx.host.start()).toBe(start);
