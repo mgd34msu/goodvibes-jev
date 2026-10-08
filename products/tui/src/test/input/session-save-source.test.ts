@@ -111,3 +111,25 @@ describe('the standalone /save command', () => {
 
 describe('automatic persistence is stamped as automatic', () => {
 });
+
+for (const command of ['fork', 'save', 'resume'] as const) {
+  test(`/session ${command} revokes pending native retry admission before changing session identity/history`, async () => {
+    const { heldNativeRetry } = await import('../helpers/held-native-retry.ts');
+    const native = await heldNativeRetry(); const result = native.start();
+    const sm = new SessionManager(tmpDir, { surface }); const printed: string[] = [];
+    sm.save('destination', [{ role: 'user', content: 'saved' }], { title: 'Destination', model: 'm', provider: 'p', timestamp: Date.now() });
+    const ctx = makeCtx(sm, printed); let cancelled = 0;
+    ctx.cancelPendingRecovery = () => {
+      expect(ctx.session.runtime.sessionId).toBe('current-session');
+      expect(ctx.session.conversationManager.getMessageCount()).toBe(1);
+      cancelled++; return native.cancel();
+    };
+    try {
+      await native.waiting; expect(native.orchestrator.isThinking).toBe(false);
+      await handleSessionWorkflowCommand([command, 'destination'], ctx);
+      expect(cancelled).toBe(1); expect(ctx.session.runtime.sessionId).not.toBe('current-session');
+      native.release(); expect(await result).toMatchObject({ name: 'AbortError' });
+      expect(native.conversation.getMessageCount()).toBe(0);
+    } finally { native.dispose(); await result; }
+  });
+}

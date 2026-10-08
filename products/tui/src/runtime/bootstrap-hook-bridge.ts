@@ -23,6 +23,7 @@ export interface ResumeSessionOptions {
   readonly conversation: ConversationManager;
   readonly requestRender: () => void;
   readonly onSessionIdChanged?: (sessionId: string) => void;
+  readonly cancelPendingRecovery?: () => boolean;
   readonly sharedSessionBroker: Pick<SharedSessionBroker, 'reopenSession'>;
   /** Fire-and-forget daemon-spine mirror. Reopen (not register) is the
    * ONLY resume-time verb, see the SDK session-spine client.ts header doc. */
@@ -80,6 +81,7 @@ export function createResumeSessionHandler(options: ResumeSessionOptions): (sess
       // parse; the tiny duplicate read keeps this announcement's meaning
       // unchanged rather than repurposing it to a post-replay count).
       const { messages: rawMessages } = options.sessionManager.load(sessionId);
+      options.cancelPendingRecovery?.();
       emitSessionResumed(options.runtimeBus, {
         sessionId: options.runtime.sessionId,
         traceId: `${options.runtime.sessionId}:session-resume:${sessionId}`,

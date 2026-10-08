@@ -244,6 +244,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
 
     try {
       const providerApi = requireProviderApi(ctx);
+      ctx.cancelPendingRecovery?.();
       const outcome = await resumeSessionCore(found.name, {
         sessionManager: sm,
         conversation: ctx.session.conversationManager,
@@ -315,6 +316,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     };
     try {
       sm.save(newId, messages, meta);
+      ctx.cancelPendingRecovery?.();
       ctx.session.runtime.sessionId = newId;
       ctx.session.conversationManager.title = forkName;
       ctx.renderRequest();
@@ -345,6 +347,7 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     };
     try {
       const { filePath, sanitizedName } = sm.save(rawName, messages, meta);
+      if (sanitizedName !== ctx.session.runtime.sessionId) ctx.cancelPendingRecovery?.();
       ctx.session.runtime.sessionId = sanitizedName;
       const nameNote = sanitizedName !== rawName ? ` (saved as "${sanitizedName}")` : '';
       ctx.print(`Session saved: ${rawName}${nameNote}\n  → ${filePath}`);

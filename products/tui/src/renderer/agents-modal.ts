@@ -76,8 +76,10 @@ export interface AgentsModalView {
   readonly full: {
     readonly meta: string;
     readonly header: readonly AgentsText[];
-    /** The transcript for a body of this width and height (newest at the bottom). */
+    /** The selected transcript viewport for a body of this width and height. */
     readonly body: (width: number, height: number) => readonly Line[];
+    /** Read after body layout, from the view's owned viewport. */
+    readonly scroll?: () => { readonly above: number; readonly below: number };
   } | null;
   // picker
   readonly picker: { readonly intro: string; readonly options: readonly AgentsOption[]; readonly side: readonly AgentsText[] } | null;
@@ -280,6 +282,7 @@ function drawFullLevel(f: ModalFrame, view: AgentsModalView): void {
     const lines = full.body(bodyWidth, height);
     const start = Math.max(0, lines.length - height);
     for (let k = start; k < lines.length; k++) blitLine(f.canvas, f.l - 2, y + (k - start), lines[k]!, bodyWidth, activeTokens().backgroundPanel);
+    if (full.scroll) { const position = full.scroll(); f.hintRight = scrollCountText(position.above, position.below); }
   }
   drawBottom(f, view);
 }

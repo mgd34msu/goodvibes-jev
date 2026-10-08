@@ -1,3 +1,8 @@
+import { beforeEach, afterEach } from 'bun:test';
+import { installUserErrorReading, flushErrorNotices } from '../helpers/user-error-reading.ts';
+let restoreUserErrorReading: () => void;
+beforeEach(() => { restoreUserErrorReading = installUserErrorReading('rate-limit'); });
+afterEach(() => { restoreUserErrorReading(); });
 // ---------------------------------------------------------------------------
 // failover-effort-remap.test.ts, a failover re-resolves the configured
 // reasoning level against the model that is about to serve.
@@ -132,12 +137,13 @@ function emitFailoverTurnError(emit: (type: string, payload: unknown) => void): 
 }
 
 describe('failover re-resolves reasoning effort against the serving model', () => {
-  test('a level the fallback model lacks is announced as snapped down', () => {
+  test('a level the fallback model lacks is announced as snapped down', async () => {
     const { messages, emit } = wire({
       specs: { [CONFIGURED_ID]: SIX_LEVELS, [FALLBACK_ID]: THREE_LEVELS },
       configuredEffort: 'xhigh',
     });
     emitFailoverTurnError(emit);
+    await flushErrorNotices();
 
     const note = messages.find((m) => m.includes("Reasoning effort 'xhigh'"));
     expect(note, `expected a remap note, got: ${JSON.stringify(messages)}`).toBeDefined();
@@ -146,34 +152,37 @@ describe('failover re-resolves reasoning effort against the serving model', () =
     expect(note).toContain('[Failover]');
   });
 
-  test('a level the fallback model does offer is not narrated at all', () => {
+  test('a level the fallback model does offer is not narrated at all', async () => {
     const { messages, emit } = wire({
       specs: { [CONFIGURED_ID]: SIX_LEVELS, [FALLBACK_ID]: THREE_LEVELS },
       configuredEffort: 'medium',
     });
     emitFailoverTurnError(emit);
+    await flushErrorNotices();
 
     expect(messages.some((m) => m.includes('Reasoning effort'))).toBe(false);
   });
 
-  test('a fallback model with no configurable reasoning says the level is dropped', () => {
+  test('a fallback model with no configurable reasoning says the level is dropped', async () => {
     const { messages, emit } = wire({
       specs: { [CONFIGURED_ID]: SIX_LEVELS, [FALLBACK_ID]: NO_REASONING },
       configuredEffort: 'high',
     });
     emitFailoverTurnError(emit);
+    await flushErrorNotices();
 
     const note = messages.find((m) => m.includes('Reasoning effort'));
     expect(note, `expected a remap note, got: ${JSON.stringify(messages)}`).toBeDefined();
     expect(note).toContain("isn't configurable");
   });
 
-  test('no configured level means nothing is resolved and nothing is said', () => {
+  test('no configured level means nothing is resolved and nothing is said', async () => {
     const { messages, emit } = wire({
       specs: { [CONFIGURED_ID]: SIX_LEVELS, [FALLBACK_ID]: THREE_LEVELS },
       configuredEffort: undefined,
     });
     emitFailoverTurnError(emit);
+    await flushErrorNotices();
 
     expect(messages.some((m) => m.includes('Reasoning effort'))).toBe(false);
   });

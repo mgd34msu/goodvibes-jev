@@ -20,8 +20,11 @@ import { describe, expect, mock, test } from 'bun:test';
 import { wireTurnEventHandlers, type WireTurnEventHandlersOptions } from '../../core/turn-event-wiring.ts';
 import { wireStreamEventMetrics, type WireStreamEventMetricsOptions, type StreamMetrics } from '../../core/stream-event-wiring.ts';
 import type { WebhookNotifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { FocusTracker } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { makeTestSurface } from '../helpers/session-surface.ts';
+import { createCancelGeneration } from '../../core/turn-cancellation.ts';
+import type { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
 
 const ASK = 'Migrate the billing tables to the new schema';
 
@@ -56,6 +59,9 @@ interface HarnessOptions {
   readonly chain?: Array<{ providerId: string; modelId: string }>;
   readonly handOff?: () => () => void;
   readonly graceMs?: number;
+  readonly synchronousRetry?: boolean;
+  readonly retryMissing?: boolean;
+  readonly memory?: Promise<void>;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -64,6 +70,9 @@ function harness(opts: HarnessOptions = {}) {
   const webhook: Array<Parameters<WebhookNotifier['sendNotification']>[0]> = [];
   const bells: number[] = [];
   const retries: string[] = [];
+  let submittedAfterMemory = 0;
+  let capturedAuthority: (() => boolean) | undefined;
+  let capturedSignal: AbortSignal | undefined;
   const turns = bus(); const tools = bus(); const agents = bus(); const contracts = bus();
   let now = 1_000;
   const tracker = new FocusTracker();
@@ -71,6 +80,14 @@ function harness(opts: HarnessOptions = {}) {
   // These named-notice routing tests explicitly use the public content-enabled setting.
   const settings: Record<string, unknown> = { 'behavior.notifyAfterSeconds': 30, 'behavior.notificationsMetadataOnly': false, ...opts.config };
   const orchestrator: Record<string, unknown> = { lastInputTokens: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  // This is the SDK state after TURN_ERROR has run finalizeTurn/stopThinking.
+  // main.ts passes this exact cancellation action to both Esc and Ctrl+C.
+  const abort = mock(() => {});
+  const cancelGeneration = createCancelGeneration(
+    { isThinking: false, abort } as unknown as Orchestrator,
+    { stop: () => false },
+    () => streamWiring.cancelPendingRecovery(),
+  );
   if (opts.handOff) orchestrator['turnEndNotice'] = { handOff: opts.handOff };
   const turnOptions = {
     events: { turns, tools, agents, contracts },
@@ -129,17 +146,33 @@ function harness(opts: HarnessOptions = {}) {
       fallbackLog: [],
     } : undefined,
     // As in main.ts: a pre-submission snapshot exists, so the turn is re-submitted.
-    retryTurn: (notice?: string) => { retries.push(notice ?? ''); return true; },
+    retryTurn: (notice?: string, isCurrent?: () => boolean, signal?: AbortSignal) => {
+      if (opts.retryMissing) return false;
+      retries.push(notice ?? '');
+      capturedAuthority = isCurrent;
+      capturedSignal = signal;
+      if (opts.memory) void opts.memory.then(() => {
+        if (!isCurrent?.()) return;
+        submittedAfterMemory++;
+        turns.emit('TURN_SUBMITTED', { turnId: 'late-retry', prompt: ASK });
+      });
+      if (opts.synchronousRetry) turns.emit('TURN_SUBMITTED', { turnId: 'sync-retry', prompt: ASK });
+      return true;
+    },
     onFailoverRetry: turnWiring.continueTurnAfterFailover,
+    beginFailoverNotice: turnWiring.beginFailoverNotice,
   } as unknown as WireStreamEventMetricsOptions;
-  wireStreamEventMetrics(streamOptions);
+  const streamWiring = wireStreamEventMetrics(streamOptions);
 
   return {
-    desktop, terminal, webhook, bells, retries, turnWiring,
+    desktop, terminal, webhook, bells, retries, turnWiring, streamWiring, cancelGeneration, abort,
+    submittedAfterMemory: () => submittedAfterMemory, authority: () => capturedAuthority?.(), signal: () => capturedSignal,
+    close: () => { for (const unsub of [...streamWiring.unsubs, ...turnWiring.unsubs]) unsub(); },
     advance: (ms: number) => { now += ms; },
     turn: (type: string, payload: Record<string, unknown>) => turns.emit(type, { type, ...payload }),
   };
 }
+
 
 describe('one desktop popup per turn: the TUI owns it, the Orchestrator hands its own off', () => {
   test('the wiring hands the Orchestrator popup off, and its unsubscribe gives it back', () => {
@@ -298,4 +331,140 @@ describe('one notice per user turn across a provider failover', () => {
       { title: 'Now update the README', body: 'Done in 35s' },
     ]);
   });
+});
+
+
+describe('async error reading shares the one-turn notice owner', () => {
+  const chain = [{ providerId: 'openai', modelId: 'gpt-5' }];
+  function delayedReading() {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const previous = installJudgmentPort({ model: 'jev-1.13.0', async ask() { await pending; throw new Error('reader unavailable'); } });
+    return { release, restore: () => { release(); installJudgmentPort(previous); } };
+  }
+  for (const synchronousRetry of [false, true]) {
+    test(`a delayed reading with ${synchronousRetry ? 'synchronous' : 'asynchronous'} retry keeps one timed user turn`, async () => {
+      const read = delayedReading(); const h = harness({ chain, synchronousRetry });
+      try {
+        h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+        h.turn('TURN_ERROR', { turnId: 'first', error: 'first provider failed' }); await flush();
+        expect(h.desktop).toEqual([]); expect(h.terminal).toEqual([]); expect(h.retries).toEqual([]);
+        read.release(); await flush(); expect(h.retries).toHaveLength(1); expect(h.desktop).toEqual([]);
+        if (!synchronousRetry) h.turn('TURN_SUBMITTED', { turnId: 'later-retry', prompt: ASK });
+        h.advance(20_000);
+        h.turn('TURN_COMPLETED', { turnId: synchronousRetry ? 'sync-retry' : 'later-retry', response: 'done', stopReason: 'completed' }); await flush();
+        expect(h.desktop).toEqual([{ title: ASK, body: 'Done in 1m' }]); expect(h.terminal).toHaveLength(1);
+      } finally { h.close(); read.restore(); }
+    });
+  }
+  test('cancelling while the read is pending emits only cancellation and never retries', async () => {
+    const read = delayedReading(); const h = harness({ chain });
+    try {
+      h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+      h.turn('TURN_ERROR', { turnId: 'first', error: 'first failed' }); await flush();
+      h.turn('TURN_CANCEL', { turnId: 'first', reason: 'User cancelled' });
+      read.release(); await flush();
+      expect(h.retries).toEqual([]); expect(h.desktop).toHaveLength(1); expect(h.desktop[0]?.body).toContain('Cancelled');
+    } finally { h.close(); read.restore(); }
+  });
+  test('a new user submission cancels the old hold and owns its own completion', async () => {
+    const read = delayedReading(); const h = harness({ chain });
+    try {
+      h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+      h.turn('TURN_ERROR', { turnId: 'first', error: 'first failed' }); await flush();
+      h.streamWiring.clearFailoverVisited(); h.turn('TURN_SUBMITTED', { turnId: 'new', prompt: 'New work' });
+      read.release(); await flush(); h.advance(35_000);
+      h.turn('TURN_COMPLETED', { turnId: 'new', response: 'done', stopReason: 'completed' }); await flush();
+      expect(h.retries).toEqual([]); expect(h.desktop).toEqual([{ title: 'New work', body: 'Done in 35s' }]);
+    } finally { h.close(); read.restore(); }
+  });
+  test('a retry that cannot be submitted releases its held failure exactly once', async () => {
+    const read = delayedReading(); const h = harness({ chain, retryMissing: true });
+    try {
+      h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+      h.turn('TURN_ERROR', { turnId: 'first', error: 'first failed' }); await flush(); expect(h.desktop).toEqual([]);
+      read.release(); await flush(); expect(h.desktop).toEqual([{ title: ASK, body: 'Failed after 40s: first failed' }]);
+    } finally { h.close(); read.restore(); }
+  });
+  test('the turn owner grace deadline revokes a still-pending retry', async () => {
+    const read = delayedReading(); const h = harness({ chain, graceMs: 5 });
+    try {
+      h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+      h.turn('TURN_ERROR', { turnId: 'first', error: 'first failed' }); await new Promise(resolve => setTimeout(resolve, 20));
+      expect(h.desktop).toHaveLength(1); read.release(); await flush();
+      expect(h.retries).toEqual([]); expect(h.desktop).toHaveLength(1);
+    } finally { h.close(); read.restore(); }
+  });
+});
+
+test('an accepted failover cannot submit after terminal grace while memory preparation was pending', async () => {
+  const previous = installJudgmentPort({ model: 'jev-1.13.0', async ask() { throw new Error('Synthetic reading unavailable'); } });
+  let release!: () => void;
+  const memory = new Promise<void>(resolve => { release = resolve; });
+  const h = harness({ chain: [{ providerId: 'openai', modelId: 'gpt-5' }], graceMs: 10, memory });
+  try {
+    h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+    h.turn('TURN_ERROR', { turnId: 'first', error: 'Synthetic provider error' });
+    await flush();
+    expect(h.retries).toHaveLength(1);
+    expect(h.authority()).toBe(true);
+    expect(h.submittedAfterMemory()).toBe(0);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(h.terminal).toHaveLength(1);
+    expect(h.desktop).toHaveLength(1);
+    expect(h.desktop[0]?.body).toContain('Failed');
+    expect(h.signal()?.aborted).toBe(true);
+    release(); await flush();
+    expect(h.submittedAfterMemory()).toBe(0);
+  } finally { release(); h.close(); installJudgmentPort(previous); }
+});
+
+
+test('the real cancel action revokes an accepted failover while memory preparation is pending', async () => {
+  const previous = installJudgmentPort({ model: 'jev-1.13.0', async ask() { throw new Error('Synthetic reading unavailable'); } });
+  let release!: () => void;
+  const memory = new Promise<void>(resolve => { release = resolve; });
+  const h = harness({ chain: [{ providerId: 'openai', modelId: 'gpt-5' }], graceMs: 5_000, memory });
+  try {
+    h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+    h.turn('TURN_ERROR', { turnId: 'first', error: 'Synthetic provider error' });
+    await flush();
+    expect(h.retries).toHaveLength(1);
+    expect(h.submittedAfterMemory()).toBe(0);
+    h.cancelGeneration();
+    expect(h.abort).toHaveBeenCalledTimes(1);
+    release(); await flush();
+    expect(h.submittedAfterMemory()).toBe(0);
+  } finally { release(); h.close(); installJudgmentPort(previous); }
+});
+
+
+test('the real cancel action revokes the pending reading while the SDK is idle', async () => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const previous = installJudgmentPort({ model: 'jev-1.13.0', async ask() { await pending; throw new Error('reading unavailable'); } });
+  const h = harness({ chain: [{ providerId: 'openai', modelId: 'gpt-5' }] });
+  try {
+    h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+    h.turn('TURN_ERROR', { turnId: 'first', error: 'provider failed' }); await flush();
+    expect(h.retries).toEqual([]); h.cancelGeneration(); expect(h.abort).toHaveBeenCalledTimes(1);
+    release(); await flush();
+    expect(h.retries).toEqual([]); expect(h.terminal).toHaveLength(1); expect(h.desktop[0]?.body).toContain('Cancelled');
+  } finally { release(); h.close(); installJudgmentPort(previous); }
+});
+
+
+test('successful synchronous submission transfers the old hold without aborting the newer turn', async () => {
+  const previous = installJudgmentPort({ model: 'jev-1.13.0', async ask() { throw new Error('reading unavailable'); } });
+  const h = harness({ chain: [{ providerId: 'openai', modelId: 'gpt-5' }], synchronousRetry: true });
+  try {
+    h.turn('TURN_SUBMITTED', { turnId: 'first', prompt: ASK }); h.advance(40_000);
+    h.turn('TURN_ERROR', { turnId: 'first', error: 'failed' }); await flush();
+    expect(h.retries).toHaveLength(1); expect(h.signal()?.aborted).toBe(false);
+    expect(h.streamWiring.cancelPendingRecovery()).toBe(false);
+    h.turn('TURN_CANCEL', { turnId: 'first', reason: 'stale cancel' });
+    expect(h.signal()?.aborted).toBe(false); expect(h.terminal).toEqual([]);
+    h.advance(20_000); h.turn('TURN_COMPLETED', { turnId: 'sync-retry', response: 'done', stopReason: 'completed' }); await flush();
+    expect(h.signal()?.aborted).toBe(false); expect(h.desktop).toEqual([{ title: ASK, body: 'Done in 1m' }]);
+  } finally { h.close(); installJudgmentPort(previous); }
 });

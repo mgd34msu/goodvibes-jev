@@ -101,6 +101,7 @@ function readString(payload: Record<string, unknown>, key: string): string {
  */
 export class HostedSessionFeed {
   private state: HostedSessionFeedState = EMPTY_STATE;
+  private attachmentGeneration = 0;
   private readonly listeners = new Set<() => void>();
   /** The assistant row currently being streamed, by index into `rows`. */
   private streamingRowIndex: number | null = null;
@@ -113,6 +114,9 @@ export class HostedSessionFeed {
    * process goes away.
    */
   private streamCloser: (() => void) | null = null;
+
+  /** Local view identity only; same-session reattachment still replaces history. */
+  getGeneration(): number { return this.attachmentGeneration; }
 
   getState(): HostedSessionFeedState {
     return this.state;
@@ -130,6 +134,7 @@ export class HostedSessionFeed {
 
   /** Start rendering a session: the record the verb returned and its backfilled history. */
   attach(record: HostedSessionRecord, history: readonly HostedSessionHistoryMessage[]): void {
+    this.attachmentGeneration++;
     this.streamingRowIndex = null;
     this.state = {
       record,
@@ -145,6 +150,7 @@ export class HostedSessionFeed {
   /** Replace the record, every verb answer and every lifecycle notice lands here. */
   setRecord(record: HostedSessionRecord): void {
     if (this.state.record && this.state.record.id !== record.id) return;
+    if (!this.state.record) this.attachmentGeneration++;
     this.state = { ...this.state, record };
     this.emit();
   }
@@ -175,6 +181,7 @@ export class HostedSessionFeed {
   /** Forget the session entirely (detached, killed, or replaced). */
   clear(): void {
     this.closeStream();
+    this.attachmentGeneration++;
     this.streamingRowIndex = null;
     this.state = EMPTY_STATE;
     this.emit();
