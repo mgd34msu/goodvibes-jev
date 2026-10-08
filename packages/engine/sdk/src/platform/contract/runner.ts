@@ -1,4 +1,6 @@
 import { pinContractInputAdmission } from './input-authority.js';
+import { inspectContractIntegration } from './integration-inspection.js';
+import type { ContractIntegrationInspection } from './integration-inspection-wire.js';
 /**
  * The contract runner (docs/design/contract-runner.md sections 1, 2.2, 6.5
  * and 7.3): `createContractRunner(deps)` owns every contract's lifecycle.
@@ -162,6 +164,8 @@ export interface ContractRunner {
   /** Waits for the actual work admitted by this contract, after it ends. */
   join(contractId: string): Promise<void>;
   get(contractId: string): ContractView | null;
+  /** Detached live facts only; never loads, starts or resumes. Optional for custom runners; the factory always supplies it. */
+  inspectIntegration?(contractId: string): ContractIntegrationInspection;
   list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined }): ContractView[];
   /** Stops a contract and everything it runs. False when it is unknown or already ended. */
   cancel(contractId: string, reason: string): boolean;
@@ -212,7 +216,7 @@ export function filesModified(contract: Pick<Contract, 'units'>): number {
   return new Set(contract.units.flatMap((unit) => unit.touchedPaths)).size;
 }
 
-export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
+export function createContractRunner(deps: ContractRunnerDeps): ContractRunner & Required<Pick<ContractRunner, 'inspectIntegration'>> {
   const now = deps.now ?? Date.now;
   const durableAdmissions = new DurableContractAdmissions(deps.store.projectRoot);
   const durableLeases = new Map<string, () => void>();
@@ -1123,6 +1127,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       finally { release(); }
     },
     join: (contractId) => settlements.get(contractId)?.promise ?? Promise.resolve(),
+    inspectIntegration: (contractId) => inspectContractIntegration(runs.get(contractId), disposed),
     get: (contractId) => {
       const contract = deps.store.get(contractId);
       return contract === null ? null : structuredClone(contract);

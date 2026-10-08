@@ -3903,6 +3903,15 @@
       "status": "retained-source"
     },
     {
+      "source": "src/runtime/execution-ledger.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/gate/policy/execution-ledger.ts"
+      ],
+      "status": "engine-owner-adopted",
+      "evidence": "docs/audit/agent-engine-owner-accounting.md"
+    },
+    {
       "source": "src/runtime/feature-enablement.ts",
       "disposition": "PORT",
       "targets": [
@@ -4165,6 +4174,15 @@
         "products/agent/src/runtime/tar-archive.ts"
       ],
       "status": "retained-source"
+    },
+    {
+      "source": "src/runtime/tool-permission-safety.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/gate/policy/tool-permission-safety.ts"
+      ],
+      "status": "engine-owner-adopted",
+      "evidence": "docs/audit/agent-engine-owner-accounting.md"
     },
     {
       "source": "src/runtime/ui-read-models.ts",

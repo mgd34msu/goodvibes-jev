@@ -2,6 +2,7 @@
  * The contract runner (docs/design/contract-runner.md). Curated named exports,
  * the convention orchestration/index.ts uses.
  */
+export type { ContractIntegrationInspection, ContractIntegrationItem, ContractIntegrationUnit } from './integration-inspection-wire.js';
 export {
   CONTRACT_AGENT_ROLES,
   CONTRACT_DECISION_ACTIONS,

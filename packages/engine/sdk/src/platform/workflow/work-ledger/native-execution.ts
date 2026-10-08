@@ -11,6 +11,7 @@ import { decideAutonomous } from '../../gate/autonomous-decision.js';
 import { criteriaSetIdForWork, durableKeyHash, durablePayloadRevision, freezeDurableRequest, type DurableContractAdmission, type DurableContractKey, type DurableContractRequest, type DurableStartedContract } from '../../contract/durable-admission.js';
 import { captureNativeContractSource } from '../../contract/native-source.js';
 import type { ContractRunner } from '../../contract/runner.js';
+import type { ContractIntegrationInspection } from '../../contract/integration-inspection-wire.js';
 import { isTerminalContractStatus, type ContractView } from '../../contract/types.js';
 import type { NativeContractCompositionOwner } from '../../runtime/contract-composition.js';
 import { NativeWorkExecutionError, parseNativeWorkExecutionRecord, parseNativeWorkExecutionIntent, type NativeWorkExecutionIntent, type NativeWorkExecutionRecord, type NativeWorkExecutionStorage, type NativeWorkExecutionTarget, type NativeWorkExecutionTransaction } from './native-execution-types.js';
@@ -29,7 +30,7 @@ export interface NativeExecutionScopeOwner {
   currentScope(root: string): NativeExecutionScope;
   withCurrentScope<T>(expected: NativeExecutionScope, callback: (assertCurrent: () => void) => T | Promise<T>): Promise<T>;
 }
-type NativeRunner = Pick<ContractRunner, 'startDurable' | 'resumeDurable' | 'get' | 'list' | 'cancel' | 'join' | 'inspectDurable' | 'joinDurable'>;
+type NativeRunner = Pick<ContractRunner, 'startDurable' | 'resumeDurable' | 'get' | 'list' | 'cancel' | 'join' | 'inspectDurable' | 'joinDurable' | 'inspectIntegration'>;
 export interface NativeWorkExecutionStatus {
   readonly kind: 'execution';
   readonly execution: NativeWorkExecutionRecord;
@@ -37,6 +38,7 @@ export interface NativeWorkExecutionStatus {
   readonly currentTarget: NativeWorkExecutionTarget | null;
   readonly currentAttempt: boolean;
   readonly recovery: 'available' | 'required' | 'terminal' | 'cancelled';
+  readonly integration: ContractIntegrationInspection;
   readonly settlement?: { readonly state: 'pending' | 'required' | 'failed' | 'published'; readonly evidenceId?: string; readonly reportSequence?: number; readonly evidenceSequence?: number };
 }
 export interface NativeWorkExecutionIntentStatus {
@@ -117,7 +119,7 @@ export function createNativeWorkExecutionHost(deps: {
   }
   function status(current: NativeWorkExecutionTransaction, authority: NativePairedExecutionAuthority): NativeWorkExecutionStatus {
     assertOpen(); const execution = current.record; if (!execution) throw new NativeWorkExecutionError('not-found');
-    inspectAuthority(execution, authority);
+    const authenticated = inspectAuthority(execution, authority);
     const contract = execution.receipt ? currentContract(execution) : null;
     const work = current.ledger.works.find(item => item.id === execution.target.workId);
     const attempt = current.ledger.attempts.find(item => item.id === execution.target.attemptId && item.workId === execution.target.workId);
@@ -127,7 +129,17 @@ export function createNativeWorkExecutionHost(deps: {
     const key = durableKeyHash(execution.request.key);
     const settlement: NativeWorkExecutionStatus['settlement'] = current.settlement ? { state: 'published', evidenceId: current.settlement.evidenceId, reportSequence: current.settlement.reportSequence, evidenceSequence: current.settlement.evidenceSequence }
       : settlements.has(key) ? { state: 'pending' } : settlementFailures.has(key) ? { state: 'failed' } : { state: 'required' };
-    return { kind: 'execution', execution, contract, currentTarget, currentAttempt: !!work && !!attempt && work.currentAttemptId === attempt.id && attempt.state === 'active', recovery, settlement };
+    const currentAttempt = !!work && !!attempt && work.currentAttemptId === attempt.id && attempt.state === 'active';
+    const integration: ContractIntegrationInspection = !execution.receipt ? { state: 'unavailable', reason: 'no-receipt' }
+      : !currentAttempt || !currentTarget || !equalTarget(execution.target, currentTarget) || attempt?.ownerId !== authenticated.current.principalId
+        || work?.reportedState === 'complete' || work?.reportedState === 'cancelled' ? { state: 'unavailable', reason: 'stale-attempt' }
+      : recovery === 'required' ? { state: 'unavailable', reason: 'recovery-required' }
+      : recovery === 'terminal' || recovery === 'cancelled' || execution.state !== 'launch-claimed' ? { state: 'unavailable', reason: 'not-live' }
+      : requireRunner().inspectIntegration?.(execution.receipt.contractId) ?? { state: 'unavailable', reason: 'unsupported-runner' };
+    // The narrow reader cannot select another receipt, including a stale attempt's live run.
+    if (integration.state !== 'unavailable' && integration.contractId !== execution.receipt?.contractId) throw new NativeWorkExecutionError('unavailable');
+    inspectAuthority(execution, authority);
+    return { kind: 'execution', execution, contract, currentTarget, currentAttempt, recovery, settlement, integration };
   }
   function track<T>(run: () => Promise<T>): Promise<T> {
     assertOpen(); const promise = Promise.resolve().then(run); pending.add(promise);

@@ -16815,12 +16815,6 @@
       "status": "public-engine-successor-accounting-pending"
     },
     {
-      "source": "src/runtime/execution-ledger.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/runtime/execution-ledger.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/runtime/memory-spine-adoption.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/runtime/memory-spine-adoption.ts",
@@ -16842,12 +16836,6 @@
       "source": "src/runtime/session-spine-rest-transport.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/runtime/session-spine-rest-transport.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/runtime/tool-permission-safety.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/runtime/tool-permission-safety.ts",
       "status": "public-engine-successor-accounting-pending"
     },
     {
@@ -18916,12 +18904,12 @@
     }
   ],
   "baselineMappingSummary": {
-    "mapped": 1157,
-    "unmapped": 445,
+    "mapped": 1159,
+    "unmapped": 443,
     "unmappedByDisposition": {
       "PORT": 176,
       "JEV": 44,
-      "HOIST": 225
+      "HOIST": 223
     }
   }
 }

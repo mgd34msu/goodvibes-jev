@@ -149,6 +149,8 @@ export function makeRepo(): string {
 
 /** What one scripted step of an agent's run can do. */
 export interface AgentStep {
+  /** Test-only barrier after real worker admission, before any scripted file write. */
+  readonly before?: (signal: AbortSignal) => Promise<void>;
   /** Files to write in the agent's working tree before the turn is reported. */
   readonly files?: Readonly<Record<string, string>>;
   /** The assistant text of the turn (and the output if it is the last). */
@@ -158,7 +160,7 @@ export interface AgentStep {
   /** Stop here: 'hang' never finishes, 'budget' fails on the turn budget, 'transport' fails with the message. */
   readonly stop?: { readonly kind: 'hang' } | { readonly kind: 'budget' } | { readonly kind: 'error'; readonly message: string };
   /** Awaited after the turn is reported, before the next step. */
-  readonly after?: () => Promise<void>;
+  readonly after?: (signal: AbortSignal) => Promise<void>;
 }
 
 /** The script for one agent run: its steps, taken in order; after a hold's continue, the next step runs. */
@@ -166,7 +168,7 @@ export type AgentScript = (record: AgentRecord, run: number) => readonly AgentSt
 
 export interface Harness {
   readonly root: string;
-  readonly runner: ContractRunner;
+  readonly runner: ReturnType<typeof createContractRunner>;
   readonly manager: AgentManager;
   readonly messageBus: AgentMessageBus;
   readonly bus: RuntimeEventBus;
@@ -226,7 +228,7 @@ export function makeHarness(options: HarnessOptions): Harness {
   const runs = new Map<string, number>();
   const config = configManager(options.contract ?? {});
   const ctx = { sessionId: 'test', traceId: 'test', source: 'test' };
-  let runner: ContractRunner;
+  let runner: ReturnType<typeof createContractRunner>;
 
   async function execute(record: AgentRecord): Promise<void> {
     const unitId = record.contractUnitId;
@@ -244,6 +246,10 @@ export function makeHarness(options: HarnessOptions): Harness {
     const steps = script(record, count);
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index]!;
+      if (step.before) {
+        const signal = manager.getCancellationSignal(record.id)!;
+        await step.before(signal); signal.throwIfAborted();
+      }
       for (const [path, text] of Object.entries(step.files ?? {})) {
         mkdirSync(dirname(join(cwd, path)), { recursive: true });
         writeFileSync(join(cwd, path), text);
@@ -273,7 +279,7 @@ export function makeHarness(options: HarnessOptions): Harness {
           assistantText: step.text,
         };
         runner.hooks().onTurnEnd(record, turn);
-        await step.after?.();
+        await step.after?.(manager.getCancellationSignal(record.id)!);
         continue;
       }
       record.fullOutput = step.text;
