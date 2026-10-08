@@ -36,7 +36,7 @@ async function fixture(options: { gate?: Promise<void>; sockets?: SnapshotSocket
   const owner = createEmailInboxOwner(ownerOptions);
   cleanups.push(() => owner.close());
   return { ...f, mailOwner: f.owner, owner, ownerOptions, sourceParts, reached, authority,
-    revoke() { allowed = false; }, revokeSource() { sourceAllowed = false; }, checkpoint: () => checkpoint,
+    revoke() { allowed = false; }, revokeSource() { sourceAllowed = false; }, restoreSource() { sourceAllowed = true; }, checkpoint: () => checkpoint,
     async seed() { const result = await owner.adapter.poll({ limit: 2 }); checkpoint = result.checkpointAdvance!.next; return result; },
     commit(next: ImapUidCheckpoint) { checkpoint = next; } };
 }
@@ -261,4 +261,123 @@ test('eligibility detaches account, mailbox and service options while canonical 
   f.config['email.mailbox'] = 'RETARGET';
   await expect(f.owner.verifyEligibility()).rejects.toThrow();
   expect(proof.signal.aborted).toBe(true);
+});
+
+test.each(['authentication', 'mailbox'] as const)('a suspended successful eligibility probe cannot restore authority after a newer %s refusal', async refusal => {
+  class DeniedSocket extends SnapshotSocket {
+    override async answer(command: string): Promise<void> {
+      if (command.includes(refusal === 'authentication' ? ' LOGIN ' : ' EXAMINE ')) {
+        this.feed(`${command.split(' ')[0]} NO ${refusal === 'authentication' ? '[AUTHENTICATIONFAILED]' : '[NONEXISTENT]'} rejected\r\n`);
+      }
+      else await super.answer(command);
+    }
+  }
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket(), new DeniedSocket(), new SnapshotSocket()] });
+  const original = await f.owner.verifyEligibility();
+  const reached = deferred<void>(), finish = deferred<void>();
+  cleanups.push(() => finish.resolve());
+  const actual = f.service.readInboxPage.bind(f.service);
+  let held = false;
+  const replacement = spyOn(f.service, 'readInboxPage').mockImplementation(async input => {
+    const result = await actual(input);
+    if (!held) { held = true; reached.resolve(); await finish.promise; }
+    return result;
+  });
+  cleanups.push(() => { replacement.mockRestore(); });
+  const pending = f.owner.verifyEligibility();
+  void pending.catch(() => {});
+  await reached.promise;
+  expect(await f.owner.adapter.poll({ limit: 1 })).toMatchObject({ state: 'unavailable', items: [] });
+  expect(original.signal.aborted).toBe(true);
+  finish.resolve();
+  await expect(pending).rejects.toThrow();
+  expect(f.connections()).toBe(3);
+  expect(f.checkpoint()).toBeNull(); expect(f.sourceParts).toEqual([]);
+  // Recovery needs a genuinely later authenticated read, not the held success.
+  const fresh = await f.owner.verifyEligibility();
+  expect(f.connections()).toBe(4);
+  expect(() => fresh.assertCurrent()).not.toThrow();
+});
+
+/** Suspend delivery after canonical authentication, observation and connection retirement. */
+function holdCompletedMetadata(f: Awaited<ReturnType<typeof fixture>>) {
+  const reached = deferred<void>(), finish = deferred<void>();
+  cleanups.push(() => finish.resolve());
+  const actual = f.service.readInboxPage.bind(f.service);
+  let held = false;
+  const replacement = spyOn(f.service, 'readInboxPage').mockImplementation(async input => {
+    const result = await actual(input);
+    if (!held) { held = true; reached.resolve(); await finish.promise; }
+    return result;
+  });
+  cleanups.push(() => { replacement.mockRestore(); });
+  return { reached: reached.promise, release: finish.resolve };
+}
+
+test.each(['credential ABA', 'config ABA', 'source assertion', 'shutdown'] as const)(
+  'completed eligibility evidence stays revoked across %s before result delivery', async revocation => {
+    const f = await fixture();
+    const original = await f.owner.verifyEligibility();
+    const held = holdCompletedMetadata(f);
+    const pending = f.owner.verifyEligibility();
+    void pending.catch(() => {});
+    await held.reached;
+    let closing: Promise<void> | undefined;
+    if (revocation === 'credential ABA') {
+      // The canonical lifecycle receives alias/secret mutations even if final values match.
+      f.mailOwner!.invalidate(); f.mailOwner!.invalidate();
+    } else if (revocation === 'config ABA') {
+      f.config['email.username'] = 'foreign@example.invalid'; f.mailOwner!.invalidate();
+      f.config['email.username'] = 'synthetic@example.invalid'; f.mailOwner!.invalidate();
+    } else if (revocation === 'source assertion') {
+      f.revokeSource();
+      expect(f.authority.signal.aborted).toBe(false);
+      expect(() => original.assertCurrent()).toThrow();
+      f.restoreSource();
+    } else {
+      closing = f.owner.close();
+    }
+    expect(original.signal.aborted).toBe(true);
+    held.release();
+    await expect(pending).rejects.toThrow();
+    await closing;
+    expect(f.connections()).toBe(2); expect(f.checkpoint()).toBeNull();
+    expect(f.sourceParts).toEqual([]);
+    if (revocation !== 'shutdown') {
+      const fresh = await f.owner.verifyEligibility();
+      expect(() => fresh.assertCurrent()).not.toThrow();
+      expect(f.connections()).toBe(3);
+    }
+  },
+);
+
+test('completed eligibility evidence survives a newer unknown transport failure without another read', async () => {
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket()] });
+  const original = await f.owner.verifyEligibility();
+  const held = holdCompletedMetadata(f);
+  const pending = f.owner.verifyEligibility();
+  await held.reached;
+  // No third synthetic socket: connection fails without a decoded refusal.
+  expect(await f.owner.adapter.poll({ limit: 1 })).toMatchObject({ state: 'unavailable', items: [] });
+  expect(original.signal.aborted).toBe(false);
+  held.release();
+  const proof = await pending;
+  expect(proof.signal).toBe(original.signal);
+  expect(() => proof.assertCurrent()).not.toThrow();
+  expect(f.connections()).toBe(3); expect(f.sourceParts).toEqual([]);
+});
+
+test('completed same-call UIDVALIDITY refresh may replace its retired predecessor when delivery resumes', async () => {
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket({ validity: 8 })] });
+  const original = await f.owner.verifyEligibility();
+  const held = holdCompletedMetadata(f);
+  const pending = f.owner.verifyEligibility();
+  await held.reached;
+  expect(original.signal.aborted).toBe(true);
+  held.release();
+  const fresh = await pending;
+  expect(fresh.signal).not.toBe(original.signal);
+  expect(() => fresh.assertCurrent()).not.toThrow();
+  expect(f.connections()).toBe(2); expect(f.checkpoint()).toBeNull();
+  expect(f.sourceParts).toEqual([]);
 });

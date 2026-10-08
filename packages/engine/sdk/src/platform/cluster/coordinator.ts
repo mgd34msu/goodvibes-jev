@@ -193,7 +193,11 @@ export class ClusterCoordinator {
         throw error;
       });
       stopping = work;
-      void work.then(() => { if (stopping === work) stopping = undefined; }, () => {});
+      void work.then(() => { if (stopping === work) stopping = undefined; }, () => {
+        // Legacy consumers historically restart after a failed stop. Only an
+        // owned drain is sticky: it must remain fenced rather than claim repair.
+        if (!strictDrain && stopping === work) stopping = undefined;
+      });
       return work;
     };
     const owned: ClusterConsumerGate = { ...gate,

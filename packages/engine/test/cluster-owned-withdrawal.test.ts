@@ -301,3 +301,18 @@ describe('owned cluster registration withdrawal', () => {
     await withdrawA(); await coordinator.stop();
   });
 });
+
+
+test('legacy registration restarts after its first stop rejects', async () => {
+  const { coordinator } = rig(false);
+  let starts = 0, stops = 0;
+  coordinator.register({ id: 'legacy-restart', surface,
+    async start() { starts++; },
+    async stop() { stops++; if (stops === 1) throw new Error('Synthetic legacy stop failure'); },
+  });
+  try {
+    await coordinator.start(); await coordinator.stop();
+    await coordinator.start(); expect(starts).toBe(2);
+  } finally { await coordinator.stop(); }
+  expect(stops).toBe(2);
+});

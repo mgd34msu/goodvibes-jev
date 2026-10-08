@@ -84,13 +84,18 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
   const active = new Set<Promise<unknown>>();
   let closed = false, closing: Promise<void> | undefined;
   let identityEpoch = 0;
+  // A completed canonical observation may survive a later failed login. Keep
+  // that refusal fence separate from UIDVALIDITY retirement, which a fresh
+  // successful metadata read can itself legitimately cause.
+  let authorityEpoch = 0;
   let commitEpoch: number | undefined;
   let eligibility: { readonly signal: AbortSignal; assertCurrent(): void } | undefined;
   let eligibilityLifetime: AbortController | undefined;
   let eligibilityObservation: EmailMailboxObservation | undefined;
   let detachEligibility: (() => void) | undefined;
-  const revokeEligibility = (): void => {
+  const revokeEligibility = (authorityChanged = false): void => {
     const retired = eligibilityLifetime;
+    if (authorityChanged) authorityEpoch += 1;
     identityEpoch += 1; commitEpoch = undefined;
     eligibility = undefined; eligibilityLifetime = undefined; eligibilityObservation = undefined;
     detachEligibility?.(); detachEligibility = undefined;
@@ -98,7 +103,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
   };
   const failedRead = (error: unknown): void => {
     if (error instanceof EmailCredentialUnavailableError || (error instanceof ImapOpenError
-      && (error.reason === 'authentication-rejected' || error.reason === 'mailbox-unavailable'))) revokeEligibility();
+      && (error.reason === 'authentication-rejected' || error.reason === 'mailbox-unavailable'))) revokeEligibility(true);
   };
   let screeningObservation: EmailMailboxObservation | undefined;
   let commitObservation: EmailMailboxObservation | undefined;
@@ -114,7 +119,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
         || (config.imapSecurity ?? 'tls') !== account.security) throw new Error('Email inbox account scope changed');
       sync(() => assertAuthority.call(authority));
       if (closed || signal.aborted) throw new Error('Email inbox scope is unavailable');
-    } catch { revokeEligibility(); throw new Error('Email inbox scope is unavailable'); }
+    } catch { revokeEligibility(true); throw new Error('Email inbox scope is unavailable'); }
   };
   current();
   const screening = createProtectedSourceOwner({ ...options.screening, authority: { ...authority, signal,
@@ -199,9 +204,11 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
     },
   };
   const verifyAccount = (): Promise<EmailMailboxObservation> => own(async () => {
+    const epoch = authorityEpoch;
     try {
       const result = await service.readInboxPage({ limit: 1, signal });
       current();
+      if (epoch !== authorityEpoch) throw new Error('Email inbox account verification was revoked');
       if (result.outcome === 'incomplete') throw new Error('Email inbox account scope is unavailable');
       const observation = service.getInboxMailboxObservation(result);
       if (!observation || observation.mailbox !== account.mailbox) throw new Error('Email inbox account scope is unavailable');
@@ -218,8 +225,10 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
   return {
     account, scopeId, adapter,
     async verifyEligibility() {
+      const epoch = authorityEpoch;
       const observation = await verifyAccount();
       current(); observation.assertCurrent();
+      if (epoch !== authorityEpoch) throw new Error('Email inbox account verification was revoked');
       // Refresh metadata without needlessly changing the live eligibility signal.
       if (eligibility) {
         try { eligibility.assertCurrent(); } catch { revokeEligibility(); }
