@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflow = Bun.YAML.parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')) as {
-  jobs: Record<string, { steps: Array<{ name?: string; run?: string; if?: string; 'continue-on-error'?: boolean }> }>;
+  jobs: Record<string, { 'timeout-minutes'?: number; steps: Array<{ name?: string; run?: string; if?: string; 'continue-on-error'?: boolean }> }>;
 };
 const bodies = {
   browser: workflow.jobs['webui-browser']!.steps.find((step) => step.name === 'Install official Playwright Chromium and OS dependencies')!.run!,
@@ -24,6 +24,24 @@ function live(pid: number): boolean {
 }
 
 describe('CI prerequisite acquisition', () => {
+  test('Agent and TUI use the same proven bounded terminal installer without weakening TUI proof', () => {
+    const agent = workflow.jobs['agent-tests']!.steps.find((step) => step.name === 'Install Agent terminal E2E prerequisite')!;
+    const tui = workflow.jobs['tui-host-pair-terminal']!;
+    const installer = tui.steps.find((step) => step.name === 'Install official terminal harness package')!;
+    // workflow-shape executes the Agent body through ready/missing/failure/hang
+    // fixtures. Exact equality requires both consumers to run that same program.
+    expect(agent.run).toBeDefined();
+    expect(installer.run).toBe(agent.run);
+    expect(installer.if).toBeUndefined();
+    expect(installer['continue-on-error']).toBeUndefined();
+    expect(tui['timeout-minutes']).toBe(10);
+    const proof = tui.steps.find((step) => step.name === 'Qualify host pairing, passive planning history and interruption recovery')!;
+    expect(proof.run).toBe('bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts src/test/e2e/host-pair-interactive.e2e.test.ts src/test/e2e/planning-history.e2e.test.ts');
+    expect(proof.if).toBeUndefined();
+    expect(proof['continue-on-error']).toBeUndefined();
+    expect(tui.steps.indexOf(installer)).toBeLessThan(tui.steps.indexOf(proof));
+  });
+
   test('browser uses the installed CLI, real smoke, and unchanged mandatory full suite', () => {
     expect(bodies.browser).toContain('node node_modules/@playwright/test/cli.js install chromium');
     expect(bodies.browser).not.toMatch(/bunx|SKIP_VALIDATE|continue-on-error|\|\| true/);
