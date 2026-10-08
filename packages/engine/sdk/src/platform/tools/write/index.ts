@@ -407,7 +407,7 @@ export function createWriteTool(options?: {
       async function rollbackAtomic(failedPath: string, failure: string): Promise<{ success: false; error: string; warnings?: string[] }> {
         const rolledBack: string[] = [];
         const rollbackFailures: string[] = [];
-        for (const written of [...new Map(results.map((result) => [result.resolved_path, result])).values()]) {
+        for (const written of [...new Map(results.filter((result) => !result.would_write).map((result) => [result.resolved_path, result])).values()]) {
           try {
             if (capturedAtomic) {
               await assertCapturedToolReadAccess(written.resolved_path);
@@ -483,19 +483,28 @@ export function createWriteTool(options?: {
       }
 
       for (const fileInput of input.files) {
-        if (!fileInput.path || typeof fileInput.path !== 'string') {
-          errors.push(`Invalid file entry: missing or invalid 'path' field.`);
+        if (!fileInput || !fileInput.path || typeof fileInput.path !== 'string') {
+          const error = "Invalid file entry: missing or invalid 'path' field.";
+          if (transactionMode === 'atomic') return await rollbackAtomic(String(fileInput?.path ?? '<invalid>'), error);
+          errors.push(error);
           continue;
         }
 
         if (!capturedAtomic && (captured || options.capturedReadAccess)) {
-          const path = resolveAndValidatePath(fileInput.path, projectRoot);
-          await assertCapturedToolReadAccess(path);
-          if (options.capturedReadAccess && !await options.capturedReadAccess(path)) {
-            errors.push('Captured write path is access-restricted');
-            continue;
+          try {
+            const path = resolveAndValidatePath(fileInput.path, projectRoot);
+            await assertCapturedToolReadAccess(path);
+            if (options.capturedReadAccess && !await options.capturedReadAccess(path)) {
+              const error = 'Captured write path is access-restricted';
+              if (transactionMode === 'atomic') return await rollbackAtomic(fileInput.path, error);
+              errors.push(error);
+              continue;
+            }
+            if (captured && fileInput.mode === 'backup') backups.set(fileInput, await prepareCapturedToolBackup(path, dryRun));
+          } catch (error) {
+            if (transactionMode === 'atomic') return await rollbackAtomic(fileInput.path, summarizeError(error));
+            throw error;
           }
-          if (captured && fileInput.mode === 'backup') backups.set(fileInput, await prepareCapturedToolBackup(path, dryRun));
         }
         let preparationError: string | undefined;
         try {
@@ -513,6 +522,7 @@ export function createWriteTool(options?: {
 
         // Capture before-content for undo and atomic transaction snapshots BEFORE the write happens
         let beforeContent: string | null = null;
+        let beforeBytes: Buffer | null = null;
         let existedBeforeWrite = false;
         if (!preparationError && !dryRun && fileInput.path) {
           let resolvedForUndo: string | undefined;
@@ -528,15 +538,13 @@ export function createWriteTool(options?: {
           if (resolvedForUndo && existsSync(resolvedForUndo)) {
             existedBeforeWrite = true;
             try {
-              beforeContent = readFileSync(resolvedForUndo, 'utf-8');
+              beforeBytes = readFileSync(resolvedForUndo);
+              beforeContent = beforeBytes.toString('utf-8');
             } catch (err) {
               const warning = `Failed to read existing content before writing '${fileInput.path}': ${summarizeError(err)}`;
               if (transactionMode === 'atomic') {
-                return {
-                  success: false,
-                  error: `Atomic transaction cannot safely snapshot '${fileInput.path}': ${summarizeError(err)}`,
-                  warnings: [warning],
-                };
+                const failure = await rollbackAtomic(fileInput.path, `Atomic transaction cannot safely snapshot '${fileInput.path}': ${summarizeError(err)}`);
+                return { ...failure, warnings: [warning, ...failure.warnings ?? []] };
               }
               appendWarning(warnings, `${warning}. Undo snapshot will not include original content.`);
               beforeContent = null;
@@ -544,7 +552,7 @@ export function createWriteTool(options?: {
           }
           // Store snapshot for atomic transaction rollback
           if (transactionMode === 'atomic' && resolvedForUndo && !snapshots.has(resolvedForUndo)) {
-            snapshots.set(resolvedForUndo, existedBeforeWrite ? beforeContent : null);
+            snapshots.set(resolvedForUndo, existedBeforeWrite ? beforeBytes : null);
             if (existedBeforeWrite) snapshotModes.set(resolvedForUndo, lstatSync(resolvedForUndo).mode & 0o777);
           }
         }
@@ -558,7 +566,7 @@ export function createWriteTool(options?: {
           logger.warn('write tool: file write failed', { path: fileInput.path, error: outcome.error });
 
           // Atomic transaction: rollback all successfully written files
-          if (transactionMode === 'atomic' && (capturedAtomic || results.length > 0)) return await rollbackAtomic(fileInput.path, outcome.error);
+          if (transactionMode === 'atomic') return await rollbackAtomic(fileInput.path, outcome.error);
 
           continue;
         }
@@ -699,7 +707,7 @@ export function createWriteTool(options?: {
           if (options?.fileUndoManager) {
             try {
               const snapshot = { path: outcome.result.resolved_path, beforeContent, afterContent: content, tool: 'write' as const };
-              if (capturedAtomic) pendingUndo.push(snapshot);
+              if (transactionMode === 'atomic') pendingUndo.push(snapshot);
               else options.fileUndoManager.snapshot(snapshot);
             } catch (err) {
               appendWarning(
