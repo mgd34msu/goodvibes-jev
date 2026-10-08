@@ -15,8 +15,35 @@ import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { createCapturedExecBunRuntimeAdmission } from '../sdk/src/platform/tools/exec/captured-bun-runtime-input.js';
 import { runCapturedCommand, type CapturedExecAuthority } from '../sdk/src/platform/tools/exec/captured-exec.js';
 
+const hostExistsSync = syncFs.existsSync;
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const restorers = new Set<() => void>();
+function ownRestore(restore: () => void): () => void {
+  let restored = false;
+  const owned = () => {
+    if (restored) return;
+    restored = true;
+    try { restore(); } finally { restorers.delete(owned); }
+  };
+  restorers.add(owned);
+  return owned;
+}
+const pendingCleanups = new Set<() => Promise<void>>();
+afterEach(async () => {
+  // A timed-out test does not necessarily finish its async finally block.
+  // Retire pending admission work before restoring every owned global seam.
+  const errors: unknown[] = [];
+  for (const cleanup of [...pendingCleanups].reverse()) {
+    try { await cleanup(); } catch (error) { errors.push(error); }
+  }
+  for (const restore of [...restorers].reverse()) {
+    try { restore(); } catch (error) { errors.push(error); }
+  }
+  for (const root of roots.splice(0)) {
+    try { rmSync(root, { recursive: true, force: true }); } catch (error) { errors.push(error); }
+  }
+  if (errors.length > 0) throw new AggregateError(errors, 'Synthetic Bun fixture cleanup failed');
+});
 async function fixture(filter: (path: string) => boolean | Promise<boolean> = () => true) {
   const dir = mkdtempSync(join(tmpdir(), 'captured-direct-bun-unit-')); roots.push(dir);
   const owner = join(dir, 'owner'); mkdirSync(owner);
@@ -35,11 +62,16 @@ async function fixture(filter: (path: string) => boolean | Promise<boolean> = ()
   return { dir, source, binding: { authority, root, readAccessFilter: async (path: string) => filter(path) } satisfies CapturedExecAuthority };
 }
 
-function boundary(onCommand?: () => void) {
+function boundary(onCommand?: () => void, aliases: ReadonlySet<string> = new Set()) {
   const launches: { argv: string[]; runtime: string | undefined }[] = [];
+  // This is a synthetic boundary, including its fixed executable-presence
+  // check. Real availability belongs to the required containment fixtures.
+  const presence = spyOn(syncFs, 'existsSync').mockImplementation(path => String(path) === '/usr/bin/bwrap' || aliases.has(String(path)) || hostExistsSync(path));
+  const restorePresence = ownRestore(() => presence.mockRestore());
   const original = childProcess.spawnSync;
   const sync = spyOn(childProcess, 'spawnSync').mockImplementation(((...args: Parameters<typeof original>) => args[0] === '/usr/bin/bwrap'
     ? { status: 0, stdout: '', stderr: '' } : original(...args)) as typeof childProcess.spawnSync);
+  const restoreSync = ownRestore(() => sync.mockRestore());
   const spawn = spyOn(childProcess, 'spawn').mockImplementation(((...args: Parameters<typeof childProcess.spawn>) => {
     const [command, argv] = args;
     if (command !== '/usr/bin/bwrap' || !Array.isArray(argv)) throw new Error('unexpected process in unit fixture');
@@ -54,7 +86,8 @@ function boundary(onCommand?: () => void) {
     });
     return child;
   }) as unknown as typeof childProcess.spawn);
-  return { launches, restore: () => { spawn.mockRestore(); sync.mockRestore(); } };
+  const restoreSpawn = ownRestore(() => spawn.mockRestore());
+  return { launches, restore: () => { restoreSpawn(); restoreSync(); restorePresence(); } };
 }
 const run = (binding: CapturedExecAuthority, signal?: AbortSignal) => runCapturedCommand(binding, 'bun test', {}, binding.root, 5000, signal);
 
@@ -74,15 +107,16 @@ test('direct Bun exec consumes its pinned admission without a prior REPL or vali
 });
 
 for (const admitted of [false, true]) test(`OS Bun aliases cannot substitute an ambient interpreter with ${admitted ? 'admitted' : 'unavailable'} Bun`, async () => {
-  const f = await fixture(); const mock = boundary();
+  const f = await fixture();
+  const aliases = new Set(['/usr/bin/bun', '/usr/bin/bunx']);
+  const mock = boundary(undefined, aliases);
   const bunRuntimeAdmission = admitted
     ? createCapturedExecBunRuntimeAdmission(f.binding, { bunExecutable: f.source })
     : async () => { throw new Error('unavailable'); };
-  const exists = syncFs.existsSync; const canonical = syncFs.realpathSync;
-  const aliases = new Set(['/usr/bin/bun', '/usr/bin/bunx']);
-  const existsTap = spyOn(syncFs, 'existsSync').mockImplementation(path => aliases.has(String(path)) || exists(path));
+  const canonical = syncFs.realpathSync;
   const canonicalTap = spyOn(syncFs, 'realpathSync').mockImplementation(((path: syncFs.PathLike, options?: unknown) =>
     aliases.has(String(path)) ? '/usr/bin/true' : canonical(path, options as Parameters<typeof canonical>[1])) as typeof canonical);
+  const restoreCanonical = ownRestore(() => canonicalTap.mockRestore());
   try {
     await run({ ...f.binding, bunRuntimeAdmission });
     const argv = mock.launches.at(-1)!.argv; const index = argv.indexOf('/usr/bin/true');
@@ -90,7 +124,7 @@ for (const admitted of [false, true]) test(`OS Bun aliases cannot substitute an 
     expect(argv[index - 2]).toBe('--ro-bind');
     expect(argv[index - 1]).toEndWith('/bun-runtime-unavailable');
     expect(argv.filter(part => part === '/usr/bin/true')).toHaveLength(1);
-  } finally { canonicalTap.mockRestore(); existsTap.mockRestore(); mock.restore(); }
+  } finally { restoreCanonical(); mock.restore(); }
 });
 
 for (const interruption of ['cancel', 'revoke', 'runtime-denial'] as const) test(`${interruption} after project output withholds delivery`, async () => {
@@ -118,13 +152,14 @@ for (const denied of ['source', 'canonical', 'alias'] as const) test(`direct Bun
   const admit = createCapturedExecBunRuntimeAdmission(f.binding, { bunExecutable: source });
   const mock = boundary(); const opened: string[] = []; const read = fs.readFile;
   const tap = spyOn(fs, 'readFile').mockImplementation(((path, ...args) => { opened.push(String(path)); return read(path, ...args); }) as typeof read);
+  const restoreRead = ownRestore(() => tap.mockRestore());
   try {
     await run({ ...f.binding, bunRuntimeAdmission: admit });
     expect(opened).not.toContain(source); expect(opened).not.toContain(f.source);
     expect(mock.launches).toHaveLength(1);
     expect(mock.launches[0]!.argv).not.toContain(process.execPath);
     expect(mock.launches[0]!.runtime).toContain('Captured Bun runtime is unavailable or access-restricted.');
-  } finally { tap.mockRestore(); mock.restore(); }
+  } finally { restoreRead(); mock.restore(); }
 });
 
 for (const admission of ['missing-declaration', 'failed', 'missing-token'] as const) test(`${admission} Bun admission leaves a refusal mount`, async () => {
@@ -169,13 +204,14 @@ for (const command of ['node script.js', 'npm test', 'sh -c "bun test"', 'echo "
 
 test('compiled host without a Bun capability never mounts its product executable', async () => {
   const f = await fixture(); const mock = boundary(); const main = Bun.main;
+  const restoreMain = ownRestore(() => { Reflect.set(Bun, 'main', main); });
   try {
     Reflect.set(Bun, 'main', '/$bunfs/root/compiled-product');
     await run(f.binding);
     expect(mock.launches).toHaveLength(1);
     expect(mock.launches[0]!.argv).not.toContain(process.execPath);
     expect(mock.launches[0]!.runtime).toContain('Captured Bun runtime is unavailable or access-restricted.');
-  } finally { Reflect.set(Bun, 'main', main); mock.restore(); }
+  } finally { restoreMain(); mock.restore(); }
 });
 
 test('forged and wrong-owner Bun capabilities are never retried or replaced', async () => {
@@ -210,12 +246,53 @@ for (const interruption of ['cancel', 'revoke'] as const) test(`${interruption} 
   const admit = createCapturedExecBunRuntimeAdmission(f.binding, { bunExecutable: f.source });
   const binding = { ...f.binding, bunRuntimeAdmission: async (signal?: AbortSignal) => { reached(); await gate; return admit(signal); } };
   const pending = run(binding, controller.signal);
+  let cleanup: Promise<void> | undefined;
+  const settle = (): Promise<void> => cleanup ??= (async () => {
+    controller.abort(); release();
+    try { await pending; }
+    finally { mock.restore(); pendingCleanups.delete(settle); }
+  })();
+  pendingCleanups.add(settle);
   try {
-    await waiting;
+    await Promise.race([waiting, pending.then(result => {
+      throw new Error(`Fixture command settled before its admission gate: ${JSON.stringify(result)}`);
+    })]);
     if (interruption === 'cancel') controller.abort(); else revokeContractInputAuthority(f.binding.authority);
     release(); const result = await pending;
     expect(result.denied).toBe(true); expect(result.stdout).toBe('');
     expect(mock.launches).toHaveLength(0);
     expect(existsSync(join(f.binding.root, 'late.txt'))).toBe(false);
-  } finally { controller.abort(); release(); await pending; mock.restore(); }
+  } finally { await settle(); }
+});
+
+
+test('synthetic boundary owns availability even when the host has no bubblewrap binary', async () => {
+  const originalPresence = hostExistsSync('/usr/bin/bwrap');
+  const absent = spyOn(syncFs, 'existsSync').mockImplementation(path => String(path) !== '/usr/bin/bwrap' && hostExistsSync(path));
+  const restoreAbsent = ownRestore(() => absent.mockRestore());
+  expect(syncFs.existsSync('/usr/bin/bwrap')).toBe(false);
+  let mock: ReturnType<typeof boundary> | undefined;
+  try {
+    const f = await fixture(); mock = boundary();
+    const bunRuntimeAdmission = createCapturedExecBunRuntimeAdmission(f.binding, { bunExecutable: f.source });
+    expect((await run({ ...f.binding, bunRuntimeAdmission })).success).toBe(true);
+    expect(mock.launches).toHaveLength(2);
+    mock.restore();
+    expect(syncFs.existsSync('/usr/bin/bwrap')).toBe(originalPresence);
+  } finally { mock?.restore(); restoreAbsent(); }
+});
+
+
+test('fixture cleanup restores native process functions after previous test settlement', async () => {
+  expect(restorers.size).toBe(0);
+  expect(pendingCleanups.size).toBe(0);
+  const child = childProcess.spawn(process.execPath, ['-e', 'process.stdout.write("NATIVE_PROCESS_BOUNDARY_RESTORED")'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+  const status = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  expect(status).toBe(0);
+  expect(output).toBe('NATIVE_PROCESS_BOUNDARY_RESTORED');
 });
