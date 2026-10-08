@@ -92,6 +92,14 @@ export interface ImapFetchResponse {
   readonly parseError: string | null;
 }
 
+// The ordinary compatibility reader deliberately collapses partial and repeated
+// sections. Provenance cannot: keep completeness outside the public read shape,
+// associated only with the exact parser result that observed the wire markers.
+const completeSections = new WeakMap<ImapFetchResponse, ReadonlySet<string>>();
+export function hasCompleteFetchSection(response: ImapFetchResponse, spec: string): boolean {
+  return completeSections.get(response)?.has(normalizeSpec(spec)) === true;
+}
+
 /** `* 3 FETCH `, the sequence number and the start of the data-item list. */
 const FETCH_START = /^\* (\d+) FETCH /;
 
@@ -122,10 +130,12 @@ interface OpenResponse {
   depth: number;
   inQuote: boolean;
   inBracket: boolean;
+  bracketIsBody: boolean;
   bracketAccum: string;
   structural: string;
   truncated: boolean;
   readonly sections: Map<string, string>;
+  readonly sectionCompleteness: Map<string, boolean>;
   /**
    * Set when a `BODY[...]` marker ended its line with no value on it, meaning
    * the payload is arriving on the following lines instead of as a folded
@@ -143,10 +153,12 @@ function newOpenResponse(seq: number): OpenResponse {
     depth: 0,
     inQuote: false,
     inBracket: false,
+    bracketIsBody: false,
     bracketAccum: '',
     structural: '',
     truncated: false,
     sections: new Map<string, string>(),
+    sectionCompleteness: new Map<string, boolean>(),
     pending: null,
     closed: false,
     error: null,
@@ -204,6 +216,8 @@ function readSectionValue(open: OpenResponse, chunk: string, from: number, liter
 
   // `<0.4096>`: the partial-section suffix. Part of the marker, not the key.
   const partial = /^<[0-9.]*>/.exec(chunk.slice(index));
+  open.sectionCompleteness.set(spec, open.bracketIsBody && partial === null
+    && chunk.charAt(index) !== '<' && !open.sectionCompleteness.has(spec));
   if (partial !== null) index += partial[0].length;
   while (chunk.charAt(index) === ' ' || chunk.charAt(index) === '\t') index += 1;
 
@@ -262,6 +276,7 @@ function consume(open: OpenResponse, chunk: string, literal?: string): void {
     }
     if (char === '[') {
       open.inBracket = true;
+      open.bracketIsBody = open.depth === 1 && /(?:^|[\s(])BODY$/i.test(chunk.slice(0, index));
       open.bracketAccum = '';
       index += 1;
       continue;
@@ -326,12 +341,19 @@ function seal(open: OpenResponse): ImapFetchResponse {
   }
   const uidMatch = error === null ? /\bUID (\d+)\b/.exec(open.structural) : null;
   const uid = uidMatch === null ? null : parseInt(uidMatch[1] ?? '0', 10);
-  return {
+  const response: ImapFetchResponse = {
     seq: open.seq,
     uid: uid !== null && uid > 0 ? uid : null,
     sections: open.sections,
     parseError: error,
   };
+  // More than one UID item is ambiguous even if the compatibility reader's
+  // first value happens to match the requested UID.
+  if (error === null && [...open.structural.matchAll(/\bUID (\d+)\b/g)].length === 1) {
+    completeSections.set(response, new Set([...open.sectionCompleteness]
+      .filter(([, complete]) => complete).map(([spec]) => spec)));
+  }
+  return response;
 }
 
 /**

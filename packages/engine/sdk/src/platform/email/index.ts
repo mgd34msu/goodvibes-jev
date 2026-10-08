@@ -236,3 +236,6 @@ export {
 } from './surface-config.js';
 
 export type { SurfaceEmailConfigProblem } from './surface-config.js';
+
+export { EmailReplySubjectSourceOwner } from './reply-subject-source.js';
+export type { EmailReplySubjectSource } from './reply-subject-source.js';

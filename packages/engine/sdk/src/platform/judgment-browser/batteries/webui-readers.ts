@@ -51,6 +51,12 @@ function decisionIds(ids: readonly (string | undefined)[]): { readonly decisionI
   return present.length === 0 ? {} : { decisionIds: present };
 }
 
+/** Screen the whole original subject before the cap; never clip, redact, or normalize it. */
+export function snapshotWebuiMailSubject(input: unknown): { readonly subject: string } {
+  const source = object(snapshotJudgmentInput(input), ['subject']);
+  return { subject: text(source['subject'], 4096, true) };
+}
+
 export function snapshotWebuiDaemonRefusal(input: unknown): ResolvedDaemonRefusal {
   // Inspect the COMPLETE source before caps, projection, any hash, or port use.
   const source = object(snapshotJudgmentInput(input), ['methodId', 'status', 'code', 'category', 'message']);

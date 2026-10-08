@@ -9139,7 +9139,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "contentType": "sample",
           "sizeBytes": 0
         }
-      ]
+      ],
+      "replySubjectRef": "sample"
     }
   },
   "email.send": {

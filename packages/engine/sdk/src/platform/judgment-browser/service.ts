@@ -3,7 +3,7 @@ import type { JudgmentPort, JudgmentResult, Questions } from '@goodvibes-jev/jud
 import {
   BrowserJudgmentError, BROWSER_JUDGMENT_LIMITS as LIMIT, parseBrowserJudgmentRequest, captureBrowserJudgmentJson, missingScopes,
   type AuthenticatedPrincipal, type BrowserJudgmentRequest,
-  type BrowserJudgmentErrorSource, type BrowserJudgmentChatSessions,
+  type BrowserJudgmentErrorSource, type BrowserJudgmentChatSessions, type BrowserJudgmentMailSubjectSource,
 } from '@goodvibes-jev/engine/daemon-sdk';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { BrowserJudgmentReferences } from './references.js';
@@ -23,6 +23,7 @@ export interface BrowserJudgmentServiceOptions {
   /** The trusted runtime owner issues bounded snapshots from canonical failures. */
   readonly issueErrorReference?: (input: BrowserJudgmentErrorSource) => string | undefined;
   readonly bindChatSessions?: (source: BrowserJudgmentChatSessions) => () => void;
+  readonly issueMailSubjectReference?: (source: BrowserJudgmentMailSubjectSource) => string | undefined;
 }
 type Evidence = Pick<JudgmentResult<Questions>, 'decisionId' | 'model' | 'requestedModel' | 'usage' | 'latencyMs'>;
 
@@ -49,6 +50,11 @@ export class BrowserJudgmentService {
   issueErrorReference(input: BrowserJudgmentErrorSource): string | undefined {
     if (this.#closing) return undefined;
     return this.options.issueErrorReference?.(input);
+  }
+
+  issueMailSubjectReference(input: BrowserJudgmentMailSubjectSource): string | undefined {
+    if (this.#closing) return undefined;
+    return this.options.issueMailSubjectReference?.(input);
   }
 
   bindChatSessions(source: BrowserJudgmentChatSessions): () => void {

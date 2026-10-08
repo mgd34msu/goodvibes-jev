@@ -147,6 +147,7 @@ export class ConfigManager {
   private hookDispatcher: Pick<HookDispatcher, 'fire'> | null = null;
   /** Owner-profile read fallback for UNSET keys. Injected; null unless installed. */
   private profileFallback: ConfigProfileFallbackReader | null = null;
+  private readonly invalidationListeners = new Set<() => void>();
   private readonly _listeners = new Map<string, Set<(newVal: unknown, oldVal: unknown) => void>>();
   /** Active config-file watch handle (external-edit live reload), or null. */
   private _fileWatch: ConfigFileWatchHandle | null = null;
@@ -311,9 +312,24 @@ export class ConfigManager {
     return Object.freeze(handle);
   }
 
+  /** Opaque pre-mutation lifetime signal, including category changes and reloads.
+   * Conservative: a failed or no-op mutation may invalidate too. No values leak.
+   */
+  onDidInvalidate(listener: () => void): () => void {
+    this.invalidationListeners.add(listener);
+    return () => { this.invalidationListeners.delete(listener); };
+  }
+
+  private invalidateLifetimes(): void {
+    for (const listener of [...this.invalidationListeners]) {
+      try { listener(); } catch { /* One subscriber must not defeat revocation. */ }
+    }
+  }
+
   /** Set a config value by dot-path key and auto-save to disk. */
   set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
     this.requireWritable();
+    this.invalidateLifetimes();
     if (this.hostSettings.has(key) && this.hostSettingHasProjectValue(key)) {
       (this.setProjectValue as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
       return;
@@ -375,6 +391,7 @@ export class ConfigManager {
    */
   setDaemonValues(patch: DaemonConfigPatch): void {
     this.requireWritable();
+    this.invalidateLifetimes();
     if (!this.daemonTierPath) throw new ConfigError('A daemon settings file is required for this update.');
     const prepared = Object.entries(patch).filter(([, value]) => value !== undefined).map(([rawKey, value]) => {
       const schema = CONFIG_SCHEMA.find((setting) => setting.key === rawKey);
@@ -426,6 +443,7 @@ export class ConfigManager {
    */
   setProjectValue<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
     this.requireWritable();
+    this.invalidateLifetimes();
     if (!this.projectConfigPath) {
       (this.set as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
       return;
@@ -697,6 +715,7 @@ export class ConfigManager {
 
   /** Load config from disk: global then project (project wins). Deep-merges with defaults. */
   load(): void {
+    this.invalidateLifetimes();
     const previousHost = this.hostSettings.snapshot(this.config);
     this.hostLoadValues = this.hostSettings.active ? this.hostSettings.defaults() : null;
     try {
@@ -900,6 +919,7 @@ export class ConfigManager {
    */
   mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void {
     this.requireWritable();
+    this.invalidateLifetimes();
     if (Object.keys(patch).some((key) => this.hostSettings.has(`${String(category)}.${key}`))) {
       throw new ConfigError('Registered host settings require the guarded scalar set API.');
     }
@@ -918,6 +938,7 @@ export class ConfigManager {
    */
   removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void {
     this.requireWritable();
+    this.invalidateLifetimes();
     const hostKey = `${String(category)}.${key}`;
     if (this.hostSettings.has(hostKey)) { this.reset(hostKey as ConfigKey); return; }
     const current = this.config[category]! as Record<string, unknown>;
@@ -941,6 +962,7 @@ export class ConfigManager {
   /** Reset one key (or all config) to defaults and persist the removal. */
   reset(key?: ConfigKey): void {
     this.requireWritable();
+    this.invalidateLifetimes();
     for (const definition of this.hostSettings.definitions) {
       if (key !== undefined && key !== definition.key) continue;
       this.resetHostSetting(definition.key as ConfigKey, definition.default);

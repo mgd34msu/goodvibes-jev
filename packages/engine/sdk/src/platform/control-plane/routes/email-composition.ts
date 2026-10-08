@@ -26,7 +26,8 @@
  * Every address in a log field is a digest. See `email/address-digest.ts` for
  * why that is not optional.
  */
-import { EmailService, type EmailServiceDeps } from '../../email/index.js';
+import type { BrowserJudgmentCapability } from '@goodvibes-jev/engine/daemon-sdk';
+import { EmailService, type EmailServiceDeps, type EmailReplySubjectSource } from '../../email/index.js';
 import {
   getProcessUntrustedContentLedger,
   type UntrustedContentLedger,
@@ -62,6 +63,7 @@ export type EmailGatewayLog = (
 
 /** The slice of the verb-group deps this composition needs. */
 export interface EmailCompositionDeps {
+  readonly browserJudgment?: BrowserJudgmentCapability | undefined;
   /** Test seam: overrides the whole service, so no real socket is opened. */
   readonly emailGateway?: EmailGatewayService | undefined;
   /** Everything `EmailService` needs. Absent in narrow compositions. */
@@ -122,7 +124,12 @@ async function guard<T>(run: () => Promise<T>): Promise<T> {
 
 /** The `EmailGatewayService` slice, served by a platform `EmailService`. */
 export function createServiceBackedGateway(service: EmailService): EmailGatewayService {
+  const sources = new WeakMap<EmailGatewayMessageDetail, EmailReplySubjectSource>();
   return {
+    getReplySubjectSource(message) {
+      const source = sources.get(message);
+      return source?.signal.aborted === false ? source : undefined;
+    },
     async listInbox(input: EmailGatewayListInput): Promise<EmailGatewayListResult> {
       return guard(async () => {
         const since = input.since === undefined ? undefined : new Date(input.since);
@@ -161,7 +168,7 @@ export function createServiceBackedGateway(service: EmailService): EmailGatewayS
       return guard(async () => {
         const message = await service.readMessage(uid);
         if (message === null) return null;
-        return {
+        const detail: EmailGatewayMessageDetail = {
           uid: message.uid,
           from: message.from,
           subject: message.subject,
@@ -171,6 +178,9 @@ export function createServiceBackedGateway(service: EmailService): EmailGatewayS
           ...(message.bodyHtml.length > 0 ? { bodyHtml: message.bodyHtml } : {}),
           ...(message.attachments.length > 0 ? { attachments: message.attachments } : {}),
         };
+        const source = service.getReplySubjectSource(message);
+        if (source) sources.set(detail, source);
+        return detail;
       });
     },
 
@@ -237,6 +247,9 @@ export function instrumentEmailGateway(
   }
 
   return {
+    ...(backend.getReplySubjectSource === undefined ? {} : {
+      getReplySubjectSource: (message: EmailGatewayMessageDetail) => backend.getReplySubjectSource?.(message),
+    }),
     async listInbox(input: EmailGatewayListInput): Promise<EmailGatewayListResult> {
       await ready();
       const result = await backend.listInbox(input);
@@ -337,5 +350,6 @@ export function registerDaemonEmailVerbs(
     getConfig === undefined
       ? new Set<string>()
       : resolveOwnerAddresses((key) => getConfig.get(key as never)),
+    deps.browserJudgment,
   );
 }

@@ -10,9 +10,10 @@ const ENV_KEYS = ['TYPESAFE_BASE_URL', 'TYPESAFE_DEFAULT_MODEL', 'TYPESAFE_API_K
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
 /**
- * The daemon's configured Jev service owns these three fixed WebUI purposes:
+ * The daemon's configured Jev service owns these fixed WebUI purposes:
  * ranking an operator's palette query against registered commands/host chat
- * titles, and interpreting an authenticated canonical daemon failure. This is
+ * titles, interpreting an authenticated canonical daemon failure, and deciding
+ * a reply prefix for an authenticated canonical mail-read subject. This is
  * the same settings-owned route and metadata-only decision log used by the
  * engine. Read scopes and browser text never grant an arbitrary destination,
  * prompt, source category, or retention store.
@@ -72,7 +73,9 @@ export function composeBrowserJudgment(input: {
       // proved by the source owner before this product policy is consulted.
       return battery === 'webui.palette.command-rank'
         ? sources.every((source) => source === 'palette-query' || source === 'chat-title') && sources.includes('palette-query')
-        : battery === 'webui.errors.daemon-refusal' && sources.length === 1 && sources[0] === 'daemon-error';
+        : battery === 'webui.errors.daemon-refusal'
+          ? sources.length === 1 && sources[0] === 'daemon-error'
+          : battery === 'webui.mail.reply-subject' && sources.length === 1 && sources[0] === 'mail-subject';
     },
   });
   input.disposal.add('browser judgment transport', async () => {

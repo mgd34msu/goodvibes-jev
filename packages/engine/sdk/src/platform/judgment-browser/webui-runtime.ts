@@ -1,6 +1,6 @@
 import {
   BrowserJudgmentError, missingScopes,
-  type AuthenticatedPrincipal, type BrowserJudgmentBatteryId, type BrowserJudgmentErrorSource, type BrowserJudgmentChatSessions,
+  type AuthenticatedPrincipal, type BrowserJudgmentBatteryId, type BrowserJudgmentErrorSource, type BrowserJudgmentChatSessions, type BrowserJudgmentMailSubjectSource,
 } from '@goodvibes-jev/engine/daemon-sdk';
 import type { GatewayMethodDescriptor } from '../control-plane/method-catalog-shared.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
@@ -8,15 +8,16 @@ import { BrowserJudgmentReferences } from './references.js';
 import { BrowserJudgmentRegistry } from './registry.js';
 import { BrowserJudgmentService } from './service.js';
 import type { BrowserJudgmentAuthorization, BrowserJudgmentRoute } from './types.js';
-import { createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter } from './batteries/webui-adapters.js';
+import { createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter, webuiMailReplySubjectAdapter } from './batteries/webui-adapters.js';
 import { WEBUI_BUILTIN_COMMANDS, WEBUI_COMMAND_CATALOG_VERSION } from './batteries/webui-command-catalog.js';
-import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal } from './batteries/webui-readers.js';
+import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiMailSubject } from './batteries/webui-readers.js';
 import type { ResolvedCommandCandidate } from './batteries/webui-types.js';
-import { granted } from './guards.js';
+import { granted, requireSynchronousAssertion } from './guards.js';
 
 const PALETTE = 'webui.palette.command-rank';
 const ERRORS = 'webui.errors.daemon-refusal';
-export type WebuiJudgmentSourceKind = 'palette-query' | 'chat-title' | 'daemon-error';
+const MAIL = 'webui.mail.reply-subject';
+export type WebuiJudgmentSourceKind = 'palette-query' | 'chat-title' | 'daemon-error' | 'mail-subject';
 
 /** Source/purpose permission is owned by the host, separately from read scopes. */
 export interface WebuiBrowserJudgmentOptions {
@@ -32,7 +33,7 @@ function canRead(principal: AuthenticatedPrincipal, scopes: readonly string[]): 
 
 /**
  * The real WebUI source owner. Only fixed builtin descriptors, host session
- * titles and canonical authenticated failures enter this closed registry.
+ * titles, canonical mail-read subjects and authenticated failures enter this closed registry.
  * Status enums stay in the pure catalog; no dynamic status issuer is invented.
  */
 export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions): BrowserJudgmentService {
@@ -112,6 +113,44 @@ export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions)
     },
   }));
   registry.register(webuiDaemonRefusalAdapter);
+  registry.register(webuiMailReplySubjectAdapter);
+
+  const issueMailSubjectReference = ({ principal, snapshot: source }: BrowserJudgmentMailSubjectSource): string | undefined => {
+    let id: string | undefined;
+    try {
+      const method = options.methods.get('email.inbox.read');
+      if (!method || method.metadata?.requiresFreshOperatorAuth !== true || method.access === 'remote-peer'
+        || (method.access === 'admin' && !principal.admin) || !canRead(principal, [...method.scopes, 'read:email', 'write:judgment'])
+        || !source.revision || source.signal.aborted) return undefined;
+      const scopes = [...method.scopes];
+      const access = method.access;
+      const assertCurrent = () => {
+        if (source.signal.aborted || options.methods.get('email.inbox.read') !== method || method.access !== access
+          || method.metadata?.requiresFreshOperatorAuth !== true || method.scopes.length !== scopes.length
+          || method.scopes.some((scope, index) => scope !== scopes[index])) return held();
+        requireSynchronousAssertion(source.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      };
+      assertCurrent();
+      // The complete sender-authored subject is the only model state. Screening
+      // may hold it, but may never turn a verdict about changed text into a
+      // prefix decision for the original message.
+      const subject = source.subject;
+      const snapshot = snapshotWebuiMailSubject({ subject });
+      if (snapshot.subject !== subject) return undefined;
+      id = remember(references.issue({ principalId: principal.principalId, battery: MAIL, revision: source.revision,
+        expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+        mayRead: (actor) => actor.principalKind === principal.principalKind && (access !== 'admin' || actor.admin)
+          && canRead(actor, [...scopes, 'read:email', 'write:judgment']),
+      }), principal, MAIL, ['mail-subject']);
+      const referenceId = id;
+      const revoke = () => references.revoke(referenceId);
+      source.signal.addEventListener('abort', revoke, { once: true });
+      const lease = references.resolve(id, () => principal, MAIL, snapshotWebuiMailSubject);
+      lease.signal!.addEventListener('abort', () => source.signal.removeEventListener('abort', revoke), { once: true });
+      assertCurrent();
+      return id;
+    } catch { if (id) references.revoke(id); return undefined; }
+  };
 
   const issueErrorReference = ({ principal, methodId, status, body }: BrowserJudgmentErrorSource): string | undefined => {
     try {
@@ -143,7 +182,7 @@ export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions)
       }), principal, ERRORS, ['daemon-error']);
     } catch { return undefined; }
   };
-  return new BrowserJudgmentService({ registry, references, currentRoute: options.currentRoute, issueErrorReference,
+  return new BrowserJudgmentService({ registry, references, currentRoute: options.currentRoute, issueErrorReference, issueMailSubjectReference,
     bindChatSessions(source) {
       const invalidate = () => {
         for (const [id, binding] of bindings) if (binding.sources.includes('chat-title')) references.revoke(id);

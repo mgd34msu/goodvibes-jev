@@ -23,6 +23,7 @@ export interface MailComposeProps {
   ready: boolean;
   sending: boolean;
   saving: boolean;
+  replySubjectState?: 'pending' | 'held' | undefined;
 }
 
 export function MailCompose({
@@ -40,6 +41,7 @@ export function MailCompose({
   ready,
   sending,
   saving,
+  replySubjectState,
 }: MailComposeProps) {
   const toRef = useRef<HTMLInputElement | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
@@ -76,6 +78,13 @@ export function MailCompose({
         <Field label="Subject">
           <Input value={subject} onChange={(event) => onSubjectChange(event.target.value)} />
         </Field>
+        {replySubjectState ? (
+          <p role="status" className="mail-compose__reply" data-testid="mail-reply-subject-status">
+            {replySubjectState === 'pending'
+              ? 'Preparing the reply subject. You can enter a subject yourself to continue.'
+              : 'The reply subject could not be prepared. Enter a subject to continue.'}
+          </p>
+        ) : null}
         <Field label="Message">
           <Textarea ref={bodyRef} value={body} onChange={(event) => onBodyChange(event.target.value)} rows={8} />
         </Field>
