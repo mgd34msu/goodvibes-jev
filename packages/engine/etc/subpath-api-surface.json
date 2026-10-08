@@ -26015,6 +26015,7 @@
         "constructor",
         "createDraft",
         "getInboxMailboxObservation",
+        "getInboxReadStatus",
         "getReplySubjectSource",
         "getStatus",
         "listInbox",
@@ -26025,7 +26026,7 @@
         "sendMail",
         "testConnection"
       ],
-      "text": "export declare class EmailService { #private; private readonly deps; getInboxMailboxObservation(result: EmailInboxListResult | EmailInboxBatchRead | EmailInboxPageRead): EmailMailboxObservation | undefined; private bindObservation; getReplySubjectSource(message: ImapMessageDetail): EmailReplySubjectSource | undefined; constructor(deps: EmailServiceDeps); getStatus(): { config: EmailConfig; errors: string[]; ready: boolean; }; checkInbox(limit?: number): Promise<EmailSummary[]>; listInbox(input?: EmailInboxListInput): Promise<EmailInboxListResult>; readInboxBatch(input?: EmailInboxBatchInput): Promise<EmailInboxBatchRead>; readInboxPage(input?: EmailInboxPageInput): Promise<EmailInboxPageRead>; readMessage(uid: number): Promise<ImapMessageDetail | null>; readMessageResult(uid: number): Promise<EmailMessageRead>; createDraft(input: EmailDraftInput): Promise<ImapAppendDraftResult>; private recordIngest; testConnection(): Promise<EmailConnectionTestResult>; sendMail(opts: SendMailOptions): Promise<SmtpSendResult>; private getValidatedConfig; private defaultSmtpSocketFactory; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class EmailService { #private; private readonly deps; getInboxMailboxObservation(result: EmailInboxListResult | EmailInboxBatchRead | EmailInboxPageRead): EmailMailboxObservation | undefined; private bindObservation; getReplySubjectSource(message: ImapMessageDetail): EmailReplySubjectSource | undefined; constructor(deps: EmailServiceDeps); getStatus(): { config: EmailConfig; errors: string[]; ready: boolean; }; getInboxReadStatus(): { config: EmailConfig; errors: string[]; ready: boolean; }; private redactedStatus; checkInbox(limit?: number): Promise<EmailSummary[]>; listInbox(input?: EmailInboxListInput): Promise<EmailInboxListResult>; readInboxBatch(input?: EmailInboxBatchInput): Promise<EmailInboxBatchRead>; readInboxPage(input?: EmailInboxPageInput): Promise<EmailInboxPageRead>; readMessage(uid: number): Promise<ImapMessageDetail | null>; readMessageResult(uid: number): Promise<EmailMessageRead>; createDraft(input: EmailDraftInput): Promise<ImapAppendDraftResult>; private recordIngest; testConnection(): Promise<EmailConnectionTestResult>; sendMail(opts: SendMailOptions): Promise<SmtpSendResult>; private getValidatedInboxConfig; private getValidatedConfig; private defaultSmtpSocketFactory; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "EmailServiceDeps",
@@ -26036,7 +26037,7 @@
         "secretsManager",
         "transport"
       ],
-      "text": "export interface EmailServiceDeps { readonly replySubjectSourceOwner?: EmailReplySubjectSourceOwner | undefined; readonly getConfig: (key: string) => unknown; readonly secretsManager: { readonly get: (key: string) => Promise<string | null>; }; readonly transport: EmailTransportPort; readonly describeSenderClaim: EmailSenderClaimDescriber; readonly imapSocketFactory?: EmailSocketFactory; readonly smtpSocketFactory?: EmailSocketFactory; readonly recordUntrustedIngest?: (ingest: { readonly surface: 'email'; readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface EmailServiceDeps { readonly replySubjectSourceOwner?: EmailReplySubjectSourceOwner | undefined; readonly getConfig: (key: string) => unknown; readonly getInboxConfig?: ((key: string) => unknown) | undefined; readonly secretsManager: { readonly get: (key: string) => Promise<string | null>; }; readonly transport: EmailTransportPort; readonly describeSenderClaim: EmailSenderClaimDescriber; readonly imapSocketFactory?: EmailSocketFactory; readonly smtpSocketFactory?: EmailSocketFactory; readonly recordUntrustedIngest?: (ingest: { readonly surface: 'email'; readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "EmailSocketFactory",
@@ -26424,6 +26425,11 @@
       "name": "createSurfaceEmailConfigReader",
       "kind": "function",
       "text": "export declare function createSurfaceEmailConfigReader(getConfig: ConfigReader): ConfigReader; ;; via ConfigReader = export type ConfigReader = (key: string) => unknown;"
+    },
+    {
+      "name": "createSurfaceEmailInboxConfigReader",
+      "kind": "function",
+      "text": "export declare function createSurfaceEmailInboxConfigReader(getConfig: ConfigReader): ConfigReader; ;; via ConfigReader = export type ConfigReader = (key: string) => unknown;"
     },
     {
       "name": "createSurfaceEmailSecretReader",
