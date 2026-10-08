@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '../../errors/src/index.js';
 import { ConfigManager } from '../../sdk/src/platform/config/index.js';
+import { judgmentInputBoundary } from '../../sdk/src/platform/gate/boundary.js';
 import { assertContractInputAuthority, getContractInputAuthority, revokeContractInputAuthority } from '../../sdk/src/platform/contract/input-authority.js';
 import { createContractRunner } from '../../sdk/src/platform/contract/runner.js';
 import { ContractStore } from '../../sdk/src/platform/contract/store.js';
@@ -122,6 +123,9 @@ async function fixture(mode: Mode, outcome: Outcome) {
   let memberContent: string | undefined;
   let backups: string[] = [];
   let checkedBeforeDelivery = false;
+  // Bounded, value-free observations of the actual original-owner read filter.
+  // Preserve the real permission answer; never log paths, source bytes or tokens.
+  const readChecks: { candidate: 'owner-source' | 'member-source' | 'other'; decision: 'allow' | 'restricted'; boundary: string; memberCalls: number }[] = [];
   const assertOwnerState = (): void => {
     expect(readFileSync(join(root, 'owner.txt'), 'utf8')).toBe('OWNER_UNSTAGED\n');
     expect(readFileSync(join(root, 'owner-untracked.txt'), 'utf8')).toBe('OWNER_UNTRACKED\n');
@@ -207,14 +211,25 @@ async function fixture(mode: Mode, outcome: Outcome) {
     decompositionRunner: createAgentManagerDecompositionRunner({ agentManager: runtime.agentManager }),
     createEngine: (input) => createOrchestrationEngine({
       agentManager: runtime.agentManager, configManager: config, runtimeBus: bus,
-      projectRoot: input.projectRoot, stateRoot: input.stateRoot, stateNamespace: input.stateNamespace,
+      projectRoot: input.projectRoot, stateRoot: input.stateRoot, stateNamespace: outcome === 'revoke-pending' ? 'ctr-797d133b' : input.stateNamespace,
       initializeWorktree: input.initializeWorktree, prepareInputAuthority: input.prepareInputAuthority,
       contractUnitSettlement: input.contractUnitSettlement, fleetCapacity: input.fleetCapacity, judgeAttempts: input.judgeAttempts,
       runWorktreeSetup: () => undefined,
     }),
     fleetCapacity: () => ({ active: 0, maxSize: 8, capKey: 'fleet.maxSize' }),
     priceUsage: () => 0, priceProvenance: () => ({ source: 'catalog', asOf: '2026-10-08' }), store,
-    readAccessFilter: async (path) => await runtime.permissionManager.readAccess(path) === 'allow',
+    readAccessFilter: async (path) => {
+      const decision = await runtime.permissionManager.readAccess(path);
+      if (readChecks.length < 64) {
+        const boundary = judgmentInputBoundary('read', { path }, root);
+        readChecks.push({
+          candidate: path === join(root, 'src/csv.ts') ? 'owner-source'
+            : path.endsWith('/src/csv.ts') && path.includes('/.worktrees/') ? 'member-source' : 'other',
+          decision, boundary: boundary.passed ? 'pass' : boundary.checks[0]?.detail ?? 'refused', memberCalls,
+        });
+      }
+      return decision === 'allow';
+    },
   });
   let runner = buildRunner();
   function bindRunner(): void {
@@ -249,7 +264,7 @@ async function fixture(mode: Mode, outcome: Outcome) {
     root, runtime, get runner() { return runner; }, results, requests, repairRequests, acceptance, repairEntered, releaseRepair, repairReturned, resumePaused,
     assertOwnerState, assertOwnerUnchanged, denyOriginal,
     member: () => runtime.agentManager.list().find((record) => record.contractRole === 'unit')!,
-    state: () => ({ memberCalls, plannerCalls, memberRoot, memberContent, backups, checkedBeforeDelivery }),
+    state: () => ({ memberCalls, plannerCalls, memberRoot, memberContent, backups, checkedBeforeDelivery, readChecks }),
     start() {
       id = runner.start({ ask: 'Add a CSV parser module', sessionId: 'actual-captured-heal-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' }).contract.id;
       return id;

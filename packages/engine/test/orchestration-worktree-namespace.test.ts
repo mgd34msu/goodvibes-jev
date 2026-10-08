@@ -1,5 +1,7 @@
 /** Namespace allocation, recovery and cleanup against real Git, without model calls. */
 import { afterEach, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { judgmentInputBoundary } from '../sdk/src/platform/gate/boundary.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -184,4 +186,23 @@ test('unrecorded initializer-owned orphan is retained with unknown readiness and
   expect(resumed.items[0]!.worktreePath).toBe(acquired.path); expect(resumed.items[0]!.worktreeInitialized).toBe(false);
   await expect(recovering.ensureWorktree(resumed, resumed.items[0]!)).rejects.toThrow('requires recovery');
   expect(existsSync(acquired.path)).toBe(true);
+});
+
+
+test('generated namespace avoids card-shaped path material without relaxing user path guards', () => {
+  const namespace = 'ctr-797d133b';
+  const digest = createHash('sha256').update(namespace).digest('hex');
+  expect(digest).toBe('75888a99b1bb430d24ec6e5252254e24cc576655375279564e8a22060a15fff8');
+  const root = '/tmp/namespace-regression';
+  const legacy = join(root, '.goodvibes', '.worktrees', 'ws-ns', digest, 'g1', 'u1', 'src', 'csv.ts');
+  const oldBoundary = judgmentInputBoundary('read', { path: legacy }, root);
+  expect(oldBoundary.passed).toBe(false);
+  expect(oldBoundary.checks[0]?.detail).toBe('card-material');
+  const generated = join(root, '.goodvibes', '.worktrees', itemWorktreeBranch('g1', 'u1', namespace), 'src', 'csv.ts');
+  expect(judgmentInputBoundary('read', { path: generated }, root).passed).toBe(true);
+  const syntheticCard = ['4111', '1111', '1111', '1111'].join('');
+  const userPath = join(generated, '..', `${syntheticCard}.txt`);
+  const userBoundary = judgmentInputBoundary('read', { path: userPath }, root);
+  expect(userBoundary.passed).toBe(false);
+  expect(userBoundary.checks[0]?.detail).toBe('card-material');
 });
