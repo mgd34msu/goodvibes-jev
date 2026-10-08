@@ -59,8 +59,9 @@ export function omittedReferencePattern(value: string): string {
  *
  * The existing sanitizer is NOT a semantic credential decision: arbitrary
  * undeclared URL parameter roles need a protected, name-only Jev screening seam.
- * No such source-URL seam is currently exposed; never send raw values to Jev or
- * borrow a ledger/journal judgment as authority for citation transmission.
+ * This synchronous compatibility helper supplies neither URL-role nor full
+ * source-privacy clearance. Actual consumers await prepareProtectedResearchReport;
+ * never borrow a ledger/journal judgment as citation transmission authority.
  */
 function citationUrl(value: string): string {
   try {
@@ -158,7 +159,7 @@ function source(value: unknown, omittedReferences?: RegExp): AgentResearchReport
   });
 }
 
-/** Shared pre-transmission preparation for both workspace prompts and tool calls. */
+/** Structural normalization only. Actual consumers must also await owned privacy/role screening. */
 export function prepareAgentResearchReportInput<T extends { readonly sources?: unknown }>(input: T): Omit<T, 'sources'> & {
   readonly sources: readonly AgentResearchReportSource[];
 } {
