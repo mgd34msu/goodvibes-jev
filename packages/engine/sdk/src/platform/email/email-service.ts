@@ -459,15 +459,18 @@ export class EmailService {
     if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
     const config = this.getValidatedConfig();
     const sourceRead = this.deps.replySubjectSourceOwner?.beginRead(config);
-    const { result, ingest } = await listEmailInbox(this.deps, config, sourceRead, input);
+    const { buildResult, ingest } = await listEmailInbox(this.deps, config, sourceRead, input);
     const current = (): void => {
       if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
       sourceRead?.assertCurrent();
     };
     current();
-    for (const entry of ingest) { current(); this.recordIngest([entry]); }
+    for (const entry of ingest) { current(); this.recordIngest([entry], current); }
+    current();
+    const result = buildResult();
     current();
     const observation = sourceRead?.completeMailboxObservation();
+    current();
     if (observation) this.#inboxObservations.set(result, this.bindObservation(observation, input.signal));
     return result;
   }
@@ -497,7 +500,7 @@ export class EmailService {
     for (const message of result.messages) {
       current();
       this.recordIngest([{ from: message.source.detail.from,
-        text: [message.source.rawHeaders, message.source.rawBodyStructure, ...message.source.textSections.map(section => section.text)].join('\n') }]);
+        text: [message.source.rawHeaders, message.source.rawBodyStructure, ...message.source.textSections.map(section => section.text)].join('\n') }], current);
     }
     current();
     this.#inboxObservations.set(result, this.bindObservation(observation, input.signal));
@@ -529,7 +532,7 @@ export class EmailService {
     if (result.outcome === 'complete') for (const message of result.messages) {
       current();
       this.recordIngest([{ from: message.source.detail.from,
-        text: [message.source.rawHeaders, message.source.rawBodyStructure, ...message.source.textSections.map(section => section.text)].join('\n') }]);
+        text: [message.source.rawHeaders, message.source.rawBodyStructure, ...message.source.textSections.map(section => section.text)].join('\n') }], current);
     }
     current();
     this.#inboxObservations.set(result, this.bindObservation(observation, signal));
@@ -630,12 +633,14 @@ export class EmailService {
    * surfaces. It is a useful label for the owner, never an identity check, the
    * claim is why the content is untrusted, not a reason to trust it.
    */
-  private recordIngest(entries: readonly { readonly from: string; readonly text?: string | undefined }[]): void {
+  private recordIngest(entries: readonly { readonly from: string; readonly text?: string | undefined }[], assertCurrent?: () => void): void {
     const recordIngest = this.deps.recordUntrustedIngest;
     if (!recordIngest) return;
     const at = new Date().toISOString();
     for (const entry of entries) {
+      assertCurrent?.();
       const claimed = this.deps.describeSenderClaim(entry.from).claimedAddress;
+      assertCurrent?.();
       const domain = claimed.includes('@') ? claimed.slice(claimed.lastIndexOf('@') + 1) : '';
       recordIngest({
         surface: 'email',
@@ -646,6 +651,7 @@ export class EmailService {
         // instruction from one that does not.
         ...(entry.text === undefined ? {} : { content: entry.text }),
       });
+      assertCurrent?.();
     }
   }
 

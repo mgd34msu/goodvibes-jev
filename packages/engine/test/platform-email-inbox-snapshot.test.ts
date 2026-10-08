@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Socket } from 'node:net';
 import { snapshotFixture, SnapshotSocket } from './_helpers/mail-inbox-snapshot.js';
+import { testDescribeSenderClaim } from './_helpers/platform-email-fixtures.js';
 import { deferred, tick } from './_helpers/mail-subject-source.js';
 
 const requireValue = <T>(value: T | undefined): T => { expect(value).toBeDefined(); return value!; };
@@ -154,4 +155,65 @@ test.each(['list', 'batch'] as const)('%s honors non-enumerable cancellation wit
   const input = Object.defineProperty({}, 'signal', { value: stop.signal });
   await expect(kind === 'list' ? f.service.listInbox(input) : f.service.readInboxBatch(input)).rejects.toThrow('cancelled');
   expect(f.connections()).toBe(0); expect(f.secrets()).toBe(0);
+});
+
+
+describe('compatible inbox callback order remains authority-fenced', () => {
+  test('all untrusted ingests precede summary descriptions after transport retirement', async () => {
+    const events: string[] = [];
+    const f = snapshotFixture({ deps: {
+      describeSenderClaim(from, checks) {
+        expect(f.sockets[0]!.closed).toBe(true);
+        events.push(checks === undefined ? 'ingest-claim' : 'summary-claim');
+        return testDescribeSenderClaim(from, checks);
+      },
+      recordUntrustedIngest() { events.push('record'); },
+    } });
+    await f.service.listInbox();
+    expect(events).toEqual(['ingest-claim', 'record', 'ingest-claim', 'record', 'summary-claim', 'summary-claim']);
+  });
+
+  test.each(['list', 'batch', 'page'] as const)('%s cannot emit ingest after the claim callback revokes authority', async method => {
+    const events: string[] = [];
+    const f = snapshotFixture({ sockets: [new SnapshotSocket(), new SnapshotSocket()], deps: {
+      describeSenderClaim(from, checks) {
+        events.push(checks === undefined ? 'ingest-claim' : 'summary-claim');
+        f.owner!.invalidate();
+        return testDescribeSenderClaim(from, checks);
+      },
+      recordUntrustedIngest() { events.push('record'); },
+    } });
+    let operation: Promise<unknown>;
+    if (method === 'page') {
+      const seed = await f.service.readInboxPage();
+      if (seed.outcome !== 'checkpoint-required') throw new Error('Expected seed');
+      operation = f.service.readInboxPage({ checkpoint: seed.next });
+    } else operation = method === 'list' ? f.service.listInbox() : f.service.readInboxBatch();
+    await expect(operation).rejects.toThrow();
+    expect(events).toEqual(['ingest-claim']);
+  });
+
+  test('summary callback revocation cannot permit another summary or publish a result', async () => {
+    const events: string[] = [];
+    const f = snapshotFixture({ deps: {
+      describeSenderClaim(from, checks) {
+        events.push(checks === undefined ? 'ingest-claim' : 'summary-claim');
+        if (checks !== undefined) f.owner!.invalidate();
+        return testDescribeSenderClaim(from, checks);
+      },
+      recordUntrustedIngest() { events.push('record'); },
+    } });
+    await expect(f.service.listInbox()).rejects.toThrow();
+    expect(events).toEqual(['ingest-claim', 'record', 'ingest-claim', 'record', 'summary-claim']);
+  });
+});
+
+
+test('observation eviction cannot publish a list after a synchronous authority revocation', async () => {
+  const f = snapshotFixture({ sockets: Array.from({ length: 257 }, () => new SnapshotSocket()) });
+  const first = requireValue(f.service.getInboxMailboxObservation(await f.service.listInbox()));
+  first.signal.addEventListener('abort', () => f.owner!.invalidate(), { once: true });
+  for (let i = 1; i < 256; i++) await f.service.listInbox();
+  await expect(f.service.listInbox()).rejects.toThrow('no longer current');
+  expect(first.signal.aborted).toBe(true);
 });
