@@ -4,6 +4,7 @@ import { writeSync } from 'node:fs';
 import { runClusterCommand, resolveRuntimeEndpointBinding } from '@goodvibes-jev/engine/terminal-shell';
 import { readOperatorTokenFile } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import { isDeclaredSecretBearingConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
+import { createNetworkFetch } from '@goodvibes-jev/engine/sdk/platform/runtime/transport';
 import { runConfigCommand } from '../daemon/config-command.js';
 import { runPairCommand } from '../daemon/pair-command.js';
 import { runSessionsCommand } from '../daemon/sessions-command.js';
@@ -93,10 +94,11 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
     const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
     const remoteFlags = { host: cli.flags.host, port: cli.flags.port, token: cli.flags.token, json: cli.flags.json };
     const remote = { configManager: config, daemonHomeDir: daemonHomeDirectory, controlPlaneConfigDir: config.getControlPlaneConfigDir() };
+    const httpRemote = { ...remote, fetchImpl: createNetworkFetch(globalThis.fetch, config) };
     switch (cli.command) {
       case 'config': return result(await runConfigCommand(cli.commandArgs, { configManager: config, json: cli.flags.json }));
-      case 'status': return result(await runStatusCommand({ ...remote, flags: remoteFlags }));
-      case 'update': return result(await runUpdateCommand({ ...remote, flags: { ...remoteFlags, check: cli.flags.check } }));
+      case 'status': return result(await runStatusCommand({ ...httpRemote, flags: remoteFlags }));
+      case 'update': return result(await runUpdateCommand({ ...httpRemote, flags: { ...remoteFlags, check: cli.flags.check } }));
       case 'sessions': return result(await runSessionsCommand({ ...remote, flags: { ...remoteFlags, all: cli.flags.all }, args: cli.commandArgs }));
       case 'pair': return result(await runPairCommand({ configManager: config, daemonHomeDir: daemonHomeDirectory,
         version: VERSION, readToken: readOperatorTokenFile, operatorToken: env.GOODVIBES_DAEMON_TOKEN,

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { rootCertificates } from 'node:tls';
 import * as tls from 'node:tls';
 import { logger } from '../../utils/logger.js';
@@ -42,6 +43,11 @@ export interface OutboundTlsConfigReader {
   get(path: string): unknown;
   getControlPlaneConfigDir(): string;
 }
+
+// An explicit client owns TLS policy throughout its fetch invocation, including
+// middleware that delegates to the product's installed global wrapper. Keep
+// that call chain intact; unwrapping it could bypass caller-owned guards.
+const scopedOutboundTls = new AsyncLocalStorage<OutboundTlsConfigReader>();
 
 function readMode(configManager: OutboundTlsConfigReader): OutboundTrustMode {
   return configManager.get('network.outboundTls.mode') as OutboundTrustMode;
@@ -187,7 +193,7 @@ async function executeNetworkFetch(
   init: RequestInit | undefined,
   configManager: OutboundTlsConfigReader,
 ): Promise<Response> {
-  const nextInit = applyOutboundTlsToFetchInit(input, init, configManager);
+  const nextInit = applyOutboundTlsToFetchInit(input, init, scopedOutboundTls.getStore() ?? configManager);
   const url = extractRequestUrl(input);
   const method = extractRequestMethod(input, nextInit);
   const shouldTrace = url ? shouldTraceProviderRequest(url, method) : false;
@@ -268,7 +274,7 @@ export function createNetworkFetch(
   configManager: OutboundTlsConfigReader,
 ): typeof globalThis.fetch {
   const wrapped = (async (input: RequestInfo | URL, init?: RequestInit) =>
-    executeNetworkFetch(fetchImpl, input, init, configManager)) as typeof globalThis.fetch;
+    scopedOutboundTls.run(configManager, () => executeNetworkFetch(fetchImpl, input, init, configManager))) as typeof globalThis.fetch;
   Object.assign(wrapped, fetchImpl);
   return wrapped;
 }

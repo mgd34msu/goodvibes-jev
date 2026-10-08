@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Apply the selected configuration's HTTPS trust to daemon status and update
+  commands. Keep explicit fetch policy isolated across concurrent calls and
+  existing global transport wrappers while retaining middleware guards and
+  ordinary certificate verification.
+
 - Render daemon startup pairing from the settled bundled WebUI listener and
   effective daemon token, only in an interactive terminal or an explicitly
   selected local pairing sink. Preserve explicit external WebUI origins,
