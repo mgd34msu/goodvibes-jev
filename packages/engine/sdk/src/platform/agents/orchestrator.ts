@@ -1,3 +1,4 @@
+import { createCapturedCodeContext } from './captured-code-context.js';
 import { admitCapturedRegistryContext, type CapturedRegistryContext } from '../tools/registry-tool/captured-source.js';
 import { join } from 'node:path';
 import { getContractActionSource, getContractActionPort, type ContractActionPort } from '../tools/agent/contract-binding.js';
@@ -121,6 +122,7 @@ type AgentOrchestratorToolDeps = {
   /** Supplying it registers the `profile` capture tool. See registerAllTools. */
   readonly personalCapture?: import('../personal-capture/index.js').PersonalCaptureHolder | undefined;
   readonly codeIndex?: import('./turn-knowledge-injection.js').TurnCodeIndexSource | undefined;
+  readonly memoryEmbeddingRegistry?: import('../state/memory-embeddings.js').MemoryEmbeddingProviderRegistry | undefined;
   readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined;
   readonly codeIndexReindexScheduler?:
     | Pick<import('../state/code-index-reindex.js').CodeIndexReindexScheduler, 'onToolExecuted'>
@@ -827,7 +829,7 @@ export class AgentOrchestrator {
       messageBus: this.messageBus,
       knowledgeService: this.toolDeps?.knowledgeService,
       memoryRegistry: this.toolDeps?.memoryRegistry,
-      codeIndex: authority ? undefined : this.toolDeps?.codeIndex,
+      codeIndex: authority ? createCapturedCodeContext({ authority, root: cwd, readAccessFilter: ownerReadAccess, registry: this.toolDeps?.memoryEmbeddingRegistry, signal }) : this.toolDeps?.codeIndex,
       isCodeInjectionSettingEnabled: this.toolDeps?.isCodeInjectionSettingEnabled,
       onToolExecuted:
         this.toolDeps?.codeIndexReindexScheduler || this.toolDeps?.toolExecutionObserver

@@ -22,7 +22,7 @@ const channelMethods = {
   lookupDirectory: 'async', queryDirectory: 'async', listGroupMembers: 'async', parseExplicitTarget: 'either', inferTargetConversationKind: 'either', resolveTarget: 'async', resolveSessionTarget: 'either', resolveParentConversationCandidates: 'async', listAgentTools: 'sync',
 } satisfies Modes<ChannelPlugin>;
 const deliveryMethods = { id: 'value', canHandle: 'sync', deliver: 'async' } satisfies Modes<ChannelDeliveryStrategy>;
-const memoryMethods = { id: 'value', label: 'value', dimensions: 'value', deterministic: 'value', local: 'value', embedSync: 'sync', embed: 'async', status: 'either' } satisfies Modes<MemoryEmbeddingProvider>;
+const memoryMethods = { capturedInputAdmission: 'value', id: 'value', label: 'value', dimensions: 'value', deterministic: 'value', local: 'value', embedSync: 'sync', embed: 'async', status: 'either' } satisfies Modes<MemoryEmbeddingProvider>;
 const voiceMethods = { id: 'value', label: 'value', capabilities: 'value', billing: 'value', status: 'either', listVoices: 'either', synthesize: 'async', synthesizeStream: 'either', transcribe: 'async', openRealtimeSession: 'async', resetEngineFailureState: 'sync' } satisfies Modes<VoiceProvider>;
 const mediaMethods = { id: 'value', label: 'value', capabilities: 'value', status: 'either', analyze: 'async', transform: 'async', generate: 'async' } satisfies Modes<MediaProvider>;
 const searchMethods = { id: 'value', label: 'value', capabilities: 'value', descriptor: 'sync', search: 'async' } satisfies Modes<WebSearchProvider>;

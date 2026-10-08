@@ -3182,7 +3182,13 @@
       "targets": [
         "products/agent/src/renderer/agent-workspace.ts"
       ],
-      "status": "judgment-migration-pending"
+      "status": "adapted-typed-editor-message",
+      "provenance": {
+        "previousStatus": "judgment-migration-pending",
+        "change": "THE-63 bounded delivered-record reconciliation",
+        "description": "The inventory editor-message blocking obligation consumes a typed, revision-bound reading rather than required/cannot substring guesses. Structural, security and layout checks remain deterministic. This does not close other renderer or product obligations.",
+        "evidence": "docs/audit/agent-delivered-record-reconciliation.md"
+      }
     },
     {
       "source": "src/renderer/autocomplete-overlay.ts",
@@ -9326,7 +9332,7 @@
     "Unmapped baseline files deleted upstream require explicit successor/retirement review; no missing test is silently marked DROP.",
     "JEV/HOIST obligations and genuine connected/live parity remain incomplete.",
     "The reviewed union has exact-head build, type, API, packaging and guarded interaction evidence. Full Agent aggregate retains seven canonical tmux/bubblewrap environment failures and one existing skip; no containment bypass or pass claim is permitted.",
-    "Compiled first-turn/exit is proven with strict local model/judgment fixtures; canonical tmux interaction and actual registry-to-exec cancellation remain environment-blocked. Hosted Stop still requires the separately reviewed engine turn-cancellation route and truthful client acknowledgment.",
+    "Compiled first-turn/exit has recorded strict local model/judgment fixture evidence. Actual registry-to-exec cancellation now has foreground/progress child-stop and policy/safety-gate preservation tests in src/test/runtime/exec-cancellation-wrappers.test.ts; it is no longer accurately described as missing or wholly environment-blocked. The canonical built-binary first-start registration test is retained in src/test/e2e/first-start-workspace.e2e.test.ts. These delivered tests do not establish a fresh canonical tmux aggregate pass or genuine connected/live parity; hosted Stop and client acknowledgment require their own route-specific evidence. See docs/audit/agent-delivered-record-reconciliation.md.",
     "Process-completion and typed host-setting SDK prerequisites are integrated from current main; stopped PR56 captured-view/pre-access authority work remains outside this recovery.",
     "Native work/intent/attention/evidence read-only adoption is implemented in the separately identified nativeReadIntegration revision, with focused rendering/transport/lifecycle evidence only. Current production typecheck, full Agent suite and package build remain resource-blocked; test typecheck was not run. No whole-product parity, mutation or ledger-to-runner admission is claimed; legacy status/owner metadata is not verification or authority."
   ],

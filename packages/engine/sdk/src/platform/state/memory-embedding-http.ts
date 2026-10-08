@@ -68,16 +68,20 @@ function createHttpEmbeddingProvider(definition: ProviderDefinition, context: Cr
   const env = context.env ?? process.env;
   const fetchImpl: EmbeddingFetchLike = context.fetchImpl ?? globalThis.fetch.bind(globalThis);
   return {
+    capturedInputAdmission: 'per-attempt',
     id: definition.id,
     label: definition.label,
     dimensions: DEFAULT_MEMORY_EMBEDDING_DIMS,
     local: definition.local,
     async embed(request: MemoryEmbeddingRequest): Promise<MemoryEmbeddingResult> {
+      request.signal?.throwIfAborted();
+      await request.beforeAttempt?.();
+      request.signal?.throwIfAborted();
       const config = definition.resolveConfig(env, request.dimensions);
       if (!config.configured) {
         throw new Error(config.detail);
       }
-      const response = await fetchImpl(config.endpoint, definition.buildRequest(config, request));
+      const response = await fetchImpl(config.endpoint, { ...definition.buildRequest(config, request), ...(request.signal ? { signal: request.signal } : {}), ...(request.beforeAttempt ? { redirect: 'error' as const } : {}) });
       const payload = await readJsonResponse(response, config.endpoint, definition.id);
       const result = definition.parseResponse(payload, request, config);
       return {
