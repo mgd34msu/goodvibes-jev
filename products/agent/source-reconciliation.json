@@ -18231,12 +18231,6 @@
       "status": "public-engine-successor-accounting-pending"
     },
     {
-      "source": "src/tools/agent-read-policy.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-read-policy.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/tools/agent-reminder-schedule-tool.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/tools/agent-reminder-schedule-tool.ts",
@@ -18892,12 +18886,12 @@
     }
   ],
   "baselineMappingSummary": {
-    "mapped": 1161,
-    "unmapped": 441,
+    "mapped": 1162,
+    "unmapped": 440,
     "unmappedByDisposition": {
       "PORT": 176,
       "JEV": 44,
-      "HOIST": 221
+      "HOIST": 220
     }
   }
 }

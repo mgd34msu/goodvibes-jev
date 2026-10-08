@@ -212,9 +212,11 @@ terminal API rollups are unchanged.
 This maps only the inventory's `agent-read-policy.ts` HOIST obligation. The
 platform guard's read branch is the required adjacent adaptation; its write/edit
 branches and the full tool-policy guard/types remain outstanding. Historical
-`source-reconciliation.json` recovery hashes, pending labels and aggregate counts
-are not rewritten as current implementation evidence. The new mapping and this
-checkpoint supply the current bounded record.
+`source-reconciliation.json` recovery hashes and materialization records are not
+rewritten as current implementation evidence. The current baseline partition
+removes only this adopted source from unresolved accounting and counts the new
+bounded mapping once; other pending labels and partial feature claims remain.
+The new mapping and this checkpoint supply the current bounded record.
 
 The complete repository test aggregate and connected/live calibration were not
 run. Previously recorded canonical environment/timeout caveats elsewhere in the
