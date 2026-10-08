@@ -56,6 +56,7 @@ import {
   normalizeAgentToolInvocationForAgentPolicy,
   wrapAgentToolForAgentPolicy,
 } from '../../tools/agent-tool-policy-guard.ts';
+import { AGENT_READ_ADMISSION_DENIAL_MESSAGE } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 // ---------------------------------------------------------------------------
@@ -846,7 +847,8 @@ describe('spawn mode', () => {
       image_mode: 'metadata-only',
       max_image_size: AGENT_MAX_READ_IMAGE_SIZE_BYTES,
     });
-    expect(allowed.success).toBe(true);
+    expect(allowed.success).toBe(false);
+    expect(allowed.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
 
     const tooManyFiles = Array.from({ length: AGENT_MAX_READ_FILES + 1 }, (_, index) => ({
       path: `src/example-${index}.ts`,
@@ -866,7 +868,7 @@ describe('spawn mode', () => {
     for (const [index, input] of blockedInputs.entries()) {
       const result = await registry.execute(`call-read-blocked-${index}`, 'read', input);
       expect(result.success).toBe(false);
-      expect(result.error).toBe(AGENT_READ_POLICY_DENIAL_MESSAGE);
+      expect(result.error).toBe(index < 5 ? AGENT_READ_ADMISSION_DENIAL_MESSAGE : AGENT_READ_POLICY_DENIAL_MESSAGE);
     }
   });
 

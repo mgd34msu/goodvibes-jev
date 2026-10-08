@@ -50,7 +50,7 @@ let door: DaemonDoor | null = null;
 let home: E2EHome | null = null;
 afterAll(async () => {
   agent?.stop();
-  door?.stop();
+  await door?.stop();
   await daemon?.stop();
   model.stop();
   removeHome(home);
@@ -93,7 +93,7 @@ describe('daemon drop and re-adoption', () => {
     const theDoor = createDaemonDoor(home.daemonPort);
     door = theDoor;
     daemon = await boot();
-    theDoor.open(daemon.port);
+    await theDoor.open(daemon.port);
 
     agent = launchAgent(home, { cols: 100, rows: 30, env: { GOODVIBES_CONNECTED_HOST_TOKEN: TOKEN } });
     await agent.waitForScreen('the main screen', inputAreaVisible, 45_000);
@@ -104,7 +104,7 @@ describe('daemon drop and re-adoption', () => {
     ), 30_000);
 
     // Drop: the daemon stops and nothing listens on the port.
-    theDoor.close();
+    await theDoor.close();
     await daemon.stop();
     daemon = null;
     const beforeReturn = theDoor.seen.length;
@@ -115,7 +115,7 @@ describe('daemon drop and re-adoption', () => {
 
     // Return: a new daemon process behind the same port.
     daemon = await boot();
-    theDoor.open(daemon.port);
+    await theDoor.open(daemon.port);
     await waitFor('the second attach', () => count(theDoor.seen.slice(beforeReturn), ATTACH) === 1, 30_000);
     await waitFor('the rewind host registered again and the input poll running again', () => {
       const after = theDoor.seen.slice(beforeReturn);

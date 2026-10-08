@@ -54,7 +54,9 @@ function ruleForEvaluation(record: StoredUserPermissionRule): PolicyRule {
 export class UserPermissionRuleStore {
   private readonly store: PersistentStore<UserRuleFile>;
   private records: StoredUserPermissionRule[] = [];
-  private loaded = false;
+  private initialization: Promise<void> | undefined;
+  private initializationFailure: { readonly error: unknown } | undefined;
+  private publicationRevision = 0;
   /** Whole mutations run one at a time, in call order. See StoreWriteQueue. */
   private readonly writes = new StoreWriteQueue();
 
@@ -62,9 +64,19 @@ export class UserPermissionRuleStore {
     this.store = new PersistentStore<UserRuleFile>(filePath);
   }
 
-  /** Load persisted rules. Safe to call more than once. */
-  async init(): Promise<void> {
-    if (this.loaded) return;
+  /** One shared initial load, retaining the legacy logged, empty-rule fallback. */
+  init(): Promise<void> {
+    // Publish the promise before entering the load, including reentrant callers.
+    return this.initialization ??= Promise.resolve().then(() => this.loadInitialRules());
+  }
+
+  /** Authoritative readiness cannot turn the legacy unavailable-store fallback into permission. */
+  async awaitReady(): Promise<void> {
+    await this.init();
+    if (this.initializationFailure) throw this.initializationFailure.error;
+  }
+
+  private async loadInitialRules(): Promise<void> {
     try {
       const data = await this.store.load();
       if (data && Array.isArray(data.rules)) {
@@ -80,9 +92,16 @@ export class UserPermissionRuleStore {
         error: summarizeError(error),
       });
       this.records = [];
+      // Keep init's legacy resolution, but retain failure for authoritative
+      // readiness. Neither path retries or publishes a successful empty load.
+      this.initializationFailure = { error };
+      return;
     }
-    this.loaded = true;
+    this.publicationRevision++;
   }
+
+  /** Monotonic committed-publication identity, including same-value replacements. */
+  getPublicationRevision(): number { return this.publicationRevision; }
 
   /** All stored rules, newest first. */
   list(): readonly StoredUserPermissionRule[] {
@@ -100,6 +119,7 @@ export class UserPermissionRuleStore {
       const next = [...this.records, record];
       await this.persist(next);
       this.records = next;
+      this.publicationRevision++;
     });
   }
 
@@ -114,6 +134,7 @@ export class UserPermissionRuleStore {
       if (next.length === this.records.length) return;
       await this.persist(next);
       this.records = next;
+      this.publicationRevision++;
       removed = true;
     });
     return removed;

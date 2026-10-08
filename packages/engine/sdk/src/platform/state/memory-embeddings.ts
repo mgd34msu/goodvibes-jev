@@ -7,6 +7,9 @@ export type MemoryEmbeddingProviderState = 'healthy' | 'degraded' | 'disabled' |
 export type MemoryEmbeddingUsage = 'record' | 'query' | 'doctor';
 
 export interface MemoryEmbeddingRequest {
+  /** Cancellation and fresh admission for owned embedding dispatch. */
+  readonly signal?: AbortSignal | undefined;
+  readonly beforeAttempt?: (() => void | Promise<void>) | undefined;
   readonly text: string;
   readonly dimensions: number;
   readonly usage: MemoryEmbeddingUsage;
@@ -33,6 +36,8 @@ export interface MemoryEmbeddingProviderStatus {
 }
 
 export interface MemoryEmbeddingProvider {
+  /** Trusted provider implementation guarantees signal handling and awaits beforeAttempt immediately before every transport attempt, including retries. Required only for captured source indexing. */
+  readonly capturedInputAdmission?: 'per-attempt' | undefined;
   readonly id: string;
   readonly label: string;
   readonly dimensions: number;

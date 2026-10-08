@@ -275,8 +275,10 @@ export interface WorkItem extends WorkItemContractFields {
    * terminal summary and events can name exactly where the unmerged work lives.
    */
   worktreePath?: string | undefined;
-  /** The item's branch name inside its worktree (worktree mode only), e.g. `ws/<wsShort>/<itemShort>`. */
+  /** The item's branch name inside its worktree (worktree mode only), `ws/...` for legacy engines or `ws-ns/<namespaceDigest>/...`. */
   worktreeBranch?: string | undefined;
+  /** False after Git allocation until initialization succeeds; incomplete trees require recovery. Undefined preserves legacy records. */
+  worktreeInitialized?: boolean | undefined;
   /**
    * Integration state of the item branch relative to the base branch (worktree
    * mode). `'pending'` from the moment the passed item enters the integration
@@ -754,7 +756,7 @@ export type OrchestrationEvent =
    */
   | { readonly type: 'item-worktree-evicted'; readonly workstreamId: string; readonly itemId: string; readonly path: string; readonly branch: string; readonly preservedCommit?: string | undefined }
   /**
-   * Reconciliation of an orphaned `ws/*` worktree found at import (a crash
+   * Reconciliation of an orphaned worktree in the engine's namespace found at import (a crash
    * artifact from a prior process). `disposition` is `'adopted'` when the
    * engine re-attached it to a re-queued item, or `'reported'` when it belongs
    * to no known item and was left in place for the operator (NEVER deleted on

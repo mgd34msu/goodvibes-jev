@@ -42,6 +42,21 @@ For how tool-call arguments are parsed, validated, and dropped when malformed, s
 | `channel` | Use channel-owned runtime tools | surface-specific tool bridge |
 | `web_search` | Run provider-backed web search | query, safe-search, evidence fetching |
 
+## Captured Bun commands
+
+Captured `exec` consumes its construction-owned ordinary Bun admission directly;
+it does not need an earlier REPL call or validator. Source hosts admit their
+interpreter, while compiled products use their packaged `.bun` sibling. Runtime
+source, canonical path and captured alias permissions, executable identity and
+owner/view lifetime are checked before execution and output delivery.
+
+A missing or refused runtime leaves an explicit refusal at the captured Bun
+alias. Shell and separately admitted Node commands remain available. A compiled
+product executable and known OS Bun aliases cannot substitute for that admission.
+No package download or interpreter-mode environment override is introduced.
+Authorized project Bun configuration and preloads retain their normal behavior;
+generated files publish only to the mutable member view through existing checks.
+
 ## Captured REPL evaluation
 
 Captured contract/Agent views support one-shot JavaScript and TypeScript eval

@@ -63,6 +63,7 @@ export {
   inputOriginIsOwnerDirect,
   startTurnForOwnerInput,
   startTurnForOwnerRequest,
+  withTurnSurface,
 } from './turn-boundary.js';
 export {
   CONTENT_DERIVATION_SITE,

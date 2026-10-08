@@ -23,15 +23,17 @@
  *   reconcileOrphans()   , at import (a resumed/crashed workstream), put any
  *                           passed item whose branch had not integrated back
  *                           on the integration lane, then find any
- *                           on-disk `ws/<wsShort>/*` worktree not already
+ *                           on-disk worktree in this manager's namespace not already
  *                           recorded on one of the imported items and either
  *                           ADOPT it (the item still has unresolved work) or
  *                           REPORT it (leave in place for the operator, NEVER
  *                           deleted on sight).
  *
  * Location + naming: worktrees live under
- * `<projectRoot>/.goodvibes/.worktrees/ws/<wsShort>/<itemShort>` on branch
- * `ws/<wsShort>/<itemShort>`, deterministic from (workstreamId, itemId), so
+ * `<projectRoot>/.goodvibes/.worktrees/<branch>`. Without a state namespace,
+ * branch names remain `ws/<wsShort>/<itemShort>`. Namespaced engines use
+ * `ws-ns/<sha256(namespace)>/<wsShort>/<itemShort>`, deterministic from the
+ * construction-owned namespace and (workstreamId, itemId), so
  * `ensureWorktree` and `reconcileOrphans` agree on where a given item's
  * worktree lives without any extra bookkeeping.
  *
@@ -57,6 +59,8 @@ export interface WorktreeIsolationManagerDeps {
   /** Shared with the engine so nested eviction and resumed integration are owned. */
   readonly ownedWork?: OwnedWork | undefined;
   readonly projectRoot: string;
+  /** Construction-owned engine identity; isolates repository-wide Git refs across contracts. */
+  readonly stateNamespace?: string | undefined;
   readonly emit: (event: OrchestrationEvent) => void;
   readonly now?: (() => number) | undefined;
   /** Bounds how many KEPT (conflict/dirty) worktrees are retained before oldest-first eviction. Default 20. */
@@ -116,12 +120,20 @@ function shortId(id: string): string {
   return createHash('sha1').update(id).digest('hex').slice(0, 8);
 }
 
-export function itemWorktreeBranch(workstreamId: string, itemId: string): string {
-  return `ws/${shortId(workstreamId)}/${shortId(itemId)}`;
+function workstreamBranchPrefix(workstreamId: string, stateNamespace?: string): string {
+  // Never shorten the namespace using an id suffix: independent contracts may
+  // share that suffix. The complete digest also keeps arbitrary namespace text
+  // out of Git ref names and paths. Keep the legacy namespace disjoint.
+  const root = stateNamespace === undefined ? 'ws' : `ws-ns/${createHash('sha256').update(stateNamespace).digest('hex')}`;
+  return `${root}/${shortId(workstreamId)}/`;
 }
 
-function itemWorktreeDir(projectRoot: string, workstreamId: string, itemId: string): string {
-  return join(projectRoot, '.goodvibes', '.worktrees', 'ws', shortId(workstreamId), shortId(itemId));
+export function itemWorktreeBranch(workstreamId: string, itemId: string, stateNamespace?: string): string {
+  return `${workstreamBranchPrefix(workstreamId, stateNamespace)}${shortId(itemId)}`;
+}
+
+function itemWorktreeDir(projectRoot: string, workstreamId: string, itemId: string, stateNamespace?: string): string {
+  return join(projectRoot, '.goodvibes', '.worktrees', ...itemWorktreeBranch(workstreamId, itemId, stateNamespace).split('/'));
 }
 
 interface KeptEntry {
@@ -158,21 +170,40 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
   function getOrCreateInstance(workstream: Workstream, item: WorkItem, path: string, branch: string): IsolatedWorktree {
     let instance = instances.get(item.id);
     if (!instance) {
-      instance = new IsolatedWorktree(deps.projectRoot, path, branch, resolveBaseBranch());
-      instances.set(item.id, instance);
+      instance = new class extends IsolatedWorktree {
+        override async create(startPoint?: string, checkout = true): Promise<void> {
+          await super.create(startPoint, checkout);
+          // Acquisition and initialization are distinct. An initializer may
+          // successfully create the Git worktree, then fail materializing its
+          // files. Own cleanup as soon as Git creation succeeds, but do not
+          // record it as ready for the next claim until initialization returns.
+          item.worktreePath = this.path;
+          item.worktreeBranch = this.branch;
+          item.worktreeInitialized = false;
+          instances.set(item.id, this);
+        }
+      }(deps.projectRoot, path, branch, resolveBaseBranch());
     }
     return instance;
   }
 
   async function ensureWorktree(workstream: Workstream, item: WorkItem): Promise<ItemWorktreeHandle> {
-    const path = item.worktreePath ?? itemWorktreeDir(deps.projectRoot, workstream.id, item.id);
-    const branch = item.worktreeBranch ?? itemWorktreeBranch(workstream.id, item.id);
+    if (item.worktreeInitialized === false) {
+      throw new Error('worktree initialization did not complete; retained resource requires recovery');
+    }
+    const path = item.worktreePath ?? itemWorktreeDir(deps.projectRoot, workstream.id, item.id, deps.stateNamespace);
+    const branch = item.worktreeBranch ?? itemWorktreeBranch(workstream.id, item.id, deps.stateNamespace);
     const instance = getOrCreateInstance(workstream, item, path, branch);
     if (!item.worktreePath) {
       if (deps.initializeWorktree === undefined) await instance.create();
       else await deps.initializeWorktree(instance);
       item.worktreePath = instance.path;
       item.worktreeBranch = instance.branch;
+      item.worktreeInitialized = true;
+      // Allocation must succeed before cleanup owns this resource. A failed
+      // `worktree add` can mean a user's branch or path already exists; caching
+      // the candidate before creation would let failure cleanup remove it.
+      instances.set(item.id, instance);
       deps.emit({ type: 'item-worktree-created', workstreamId: workstream.id, itemId: item.id, path: instance.path, branch: instance.branch });
       // Cold-start setup: install deps, run codegen, carry over untracked
       // files. Never fails worktree creation, the wiring records the honest
@@ -186,6 +217,9 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
           });
         }
       }
+    } else {
+      // Persisted names remain authoritative, including pre-namespace records.
+      instances.set(item.id, instance);
     }
     return { path: instance.path, commit: (message, paths) => instance.commit(message, paths) };
   }
@@ -235,6 +269,7 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
     }
     instances.delete(item.id);
     item.worktreePath = undefined;
+    if (!evicted) item.worktreeInitialized = undefined;
     item.worktreeKept = false;
     deps.emit(
       evicted
@@ -247,11 +282,12 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
   }
 
   async function integrateOne(workstream: Workstream, item: WorkItem): Promise<void> {
-    const path = item.worktreePath ?? itemWorktreeDir(deps.projectRoot, workstream.id, item.id);
-    const branch = item.worktreeBranch ?? itemWorktreeBranch(workstream.id, item.id);
+    const path = item.worktreePath ?? itemWorktreeDir(deps.projectRoot, workstream.id, item.id, deps.stateNamespace);
+    const branch = item.worktreeBranch ?? itemWorktreeBranch(workstream.id, item.id, deps.stateNamespace);
     const instance = getOrCreateInstance(workstream, item, path, branch);
     item.mergeState = 'pending';
     try {
+      if (item.worktreeInitialized === false) throw new Error('worktree initialization did not complete; retained resource requires recovery');
       const outcome = await instance.integrate();
       if (outcome.status === 'merged') {
         item.mergeState = 'merged';
@@ -343,7 +379,7 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
       logger.warn('worktree-isolation: orphan scan (worktree list) did not complete', { error: summarizeError(error) });
       return;
     }
-    const prefix = `ws/${shortId(workstream.id)}/`;
+    const prefix = workstreamBranchPrefix(workstream.id, deps.stateNamespace);
     const knownPaths = new Set(
       workstream.items.map((i) => i.worktreePath).filter((p): p is string => typeof p === 'string' && p.length > 0),
     );
@@ -352,7 +388,20 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
       const path = lines.find((l) => l.startsWith('worktree '))?.slice('worktree '.length) ?? '';
       const branchLine = lines.find((l) => l.startsWith('branch '));
       const branch = branchLine ? branchLine.slice('branch '.length).replace(/^refs\/heads\//, '') : '';
-      if (!path || !branch.startsWith(prefix)) continue;
+      if (!path || !branch) continue;
+      // Rehydrate explicitly recorded resources even when they retain legacy
+      // names. Cancellation can happen immediately after import, before a new
+      // claim calls ensureWorktree. Never replace a recorded branch identity.
+      const recorded = workstream.items.find((item) =>
+        (item.worktreePath === path && (item.worktreeBranch === undefined || item.worktreeBranch === branch))
+        || (item.worktreePath === undefined && item.worktreeBranch === branch));
+      if (recorded) {
+        recorded.worktreePath = path;
+        recorded.worktreeBranch = branch;
+        instances.set(recorded.id, new IsolatedWorktree(deps.projectRoot, path, branch, resolveBaseBranch()));
+        continue;
+      }
+      if (!branch.startsWith(prefix)) continue;
       if (knownPaths.has(path)) continue; // already tracked by an item's recorded worktreePath, not an orphan
       const itemShort = branch.slice(prefix.length);
       const item = workstream.items.find((i) => shortId(i.id) === itemShort);
@@ -360,9 +409,14 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
         (item.state !== 'passed' && item.state !== 'failed')
         || item.mergeState === 'pending'
       );
-      if (item && unresolved) {
+      if (item && unresolved && !item.worktreePath && (item.worktreeBranch === undefined || item.worktreeBranch === branch)) {
         item.worktreePath = path;
         item.worktreeBranch = branch;
+        // A crash can precede the snapshot that records custom initialization
+        // readiness. Git registration alone proves ownership, not that raw
+        // contract input finished materializing. Retain such orphans but never
+        // execute from them without explicit recovery.
+        if (deps.initializeWorktree !== undefined) item.worktreeInitialized = false;
         instances.set(item.id, new IsolatedWorktree(deps.projectRoot, path, branch, resolveBaseBranch()));
         deps.emit({ type: 'orphan-worktree-reconciled', workstreamId: workstream.id, path, branch, disposition: 'adopted' });
       } else {
