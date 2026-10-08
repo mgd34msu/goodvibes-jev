@@ -17169,12 +17169,6 @@
       "status": "upstream-deleted-successor-review-pending"
     },
     {
-      "source": "src/test/runtime/tool-permission-safety.test.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/test/runtime/tool-permission-safety.test.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/test/runtime/tools/contract-verifier.test.ts",
       "disposition": "JEV",
       "retainedPath": null,
@@ -18898,12 +18892,12 @@
     }
   ],
   "baselineMappingSummary": {
-    "mapped": 1160,
-    "unmapped": 442,
+    "mapped": 1161,
+    "unmapped": 441,
     "unmappedByDisposition": {
       "PORT": 176,
       "JEV": 44,
-      "HOIST": 222
+      "HOIST": 221
     }
   }
 }

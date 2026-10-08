@@ -7225,6 +7225,15 @@
       "status": "judgment-migration-pending"
     },
     {
+      "source": "src/test/runtime/tool-permission-safety.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/agent/src/test/runtime/tool-permission-safety.test.ts"
+      ],
+      "status": "adapted-authoritative-permission-composition",
+      "evidence": "docs/audit/agent-permission-test-accounting.md"
+    },
+    {
       "source": "src/test/runtime/turn-runtime-bus.test.ts",
       "disposition": "JEV",
       "targets": [
