@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Kitchen-sink gate: docs check, typecheck, browser compat, metadata,
+  # Integration gate: typecheck, browser compat, metadata,
   # no-any, pack check, install smoke. Deliberately self-contained, this is
   # the 'everything works atomically' integration check that matches what a
   # local developer runs via `bun run validate`.
@@ -176,8 +176,10 @@ jobs:
           path: /tmp/agent-test-manifest.json
           retention-days: 7
           if-no-files-found: error
-      - name: Build SDK
-        run: bun run build
+      - name: Build shared engine packages
+        # Product builds run once in validate. This artifact contains only the
+        # engine/judgment output and the separately built Agent E2E binary.
+        run: bun packages/engine/scripts/build.ts
       - name: Build Agent native E2E artifact
         run: bun run --cwd products/agent build:binary --target linux-x64
       - name: Record Agent artifact provenance
@@ -605,31 +607,19 @@ jobs:
           SHARDS_RESULT: ${{ needs.types-resolution-shards.result }}
         run: test "$BUILD_RESULT" = success && test "$SHARDS_RESULT" = success
 
+  # validate already runs publint over the staged publish manifests. Keep the
+  # required-check name without repeating checkout, install, restore and staging.
   publint-check:
     name: publint (package.json hygiene)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [build]
+    timeout-minutes: 2
+    if: always()
+    needs: [validate]
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Setup Bun + deps (cached)
-        uses: ./.github/actions/setup
-      - name: Download workspace package output
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: workspace-build-output
-          path: /tmp/workspace-build-output
-      - name: Restore workspace package output
-        run: |
-          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
-          # The artifact was built from this very SHA in this run's build job,
-          # it is fresh by construction. tar preserves build-time mtimes while
-          # the checkout stamps sources with checkout time, so mtime-based
-          # dist-freshness checks would misread the restore as staleness.
-          find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
-      - name: Run publint
-        run: bun run publint:check
+      - name: Require the validation lane including publint
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: test "$VALIDATE_RESULT" = success
 
   # ---------------------------------------------------------------------------
   # Packaged-artifact coherence gate: pack every workspace package exactly as

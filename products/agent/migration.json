@@ -1333,11 +1333,10 @@
     },
     {
       "source": "src/core/plain-language.ts",
-      "disposition": "JEV",
-      "targets": [
-        "products/agent/src/core/plain-language.ts"
-      ],
-      "status": "judgment-migration-pending"
+      "disposition": "DROP",
+      "targets": [],
+      "status": "removed",
+      "reason": "Owner-authorized removal of a test-only prose vocabulary gate; no runtime caller imports it."
     },
     {
       "source": "src/core/setup-incomplete-hint.ts",
@@ -6251,11 +6250,10 @@
     },
     {
       "source": "src/test/release-gates/plain-language-gate.test.ts",
-      "disposition": "JEV",
-      "targets": [
-        "products/agent/src/test/release-gates/plain-language-gate.test.ts"
-      ],
-      "status": "judgment-migration-pending"
+      "disposition": "DROP",
+      "targets": [],
+      "status": "removed",
+      "reason": "Owner-authorized removal of editorial vocabulary and capitalization assertions. Tool-label lookup and fallback behavior remain covered in src/test/renderer/tool-labels.test.ts."
     },
     {
       "source": "src/test/release-gates/runtime-substrate-gate.test.ts",
