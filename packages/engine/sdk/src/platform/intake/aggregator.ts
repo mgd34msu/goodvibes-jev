@@ -113,8 +113,8 @@ export interface InboxListQuery {
 
 /** Everything the aggregator reads from. Both are already-built collaborators. */
 export interface InboxAggregatorSources {
-  readonly store: InboxCursorStore;
-  readonly poller: InboundPoller;
+  readonly store: Pick<InboxCursorStore, 'listItems' | 'countItems' | 'countItemsByProvider' | 'maxReceivedAt' | 'getImapCheckpoint'>;
+  readonly poller: Pick<InboundPoller, 'snapshotStatuses' | 'isProviderRunning'>;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,8 +311,8 @@ export function aggregateInbox(
  * this list would be a hole the caller could not even see.
  */
 function describeProviders(input: {
-  poller: InboundPoller;
-  store: InboxCursorStore;
+  poller: InboxAggregatorSources['poller'];
+  store: InboxAggregatorSources['store'];
   requested: readonly string[] | undefined;
   storedByProvider: Map<string, number>;
   pageByProvider: Map<string, number>;
