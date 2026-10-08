@@ -4,6 +4,7 @@ import { isolatedEnv, type E2EHome } from '../e2e/harness.ts';
 test('isolated compiled TUI opts out through the supported wake-download policy', () => {
   const home: E2EHome = {
     root: '/fixture', home: '/fixture/home', workspace: '/fixture/workspace', daemonPort: 45678,
+    setDaemonPort: () => { throw new Error('environment generation does not write settings'); },
     setTuiSetting: () => { throw new Error('environment generation does not write settings'); },
   };
   const env = isolatedEnv(home);

@@ -205,6 +205,8 @@ export interface E2EHome {
   readonly home: string;
   readonly workspace: string;
   readonly daemonPort: number;
+  /** Point daemon discovery at a listener the fixture already owns. */
+  setDaemonPort(port: number): void;
   /** Write a settings key (dot path) into the TUI's own settings file. */
   setTuiSetting(key: string, value: unknown): void;
 }
@@ -261,16 +263,42 @@ export async function makeHome(model: StubModel): Promise<E2EHome> {
     }],
   }, null, 2));
 
-  const daemonPort = await freePort();
+  let daemonPort = await freePort();
   const settingsPath = join(tuiDir, 'settings.json');
   const e2eHome: E2EHome = {
-    root, home, workspace, daemonPort,
+    root, home, workspace,
+    get daemonPort() { return daemonPort; },
+    setDaemonPort(port) {
+      if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new RangeError('E2E: expected a bound TCP port');
+      mergeJson(join(daemonDir, 'settings.json'), 'controlPlane.port', port);
+      daemonPort = port;
+    },
     setTuiSetting: (key, value) => mergeJson(settingsPath, key, value),
   };
   e2eHome.setTuiSetting('provider.model', 'e2e-stub:stub-model');
-  mergeJson(join(daemonDir, 'settings.json'), 'controlPlane.port', daemonPort);
+  e2eHome.setDaemonPort(daemonPort);
   mergeJson(join(daemonDir, 'settings.json'), 'controlPlane.host', '127.0.0.1');
   return e2eHome;
+}
+
+/**
+ * Bind first, then configure discovery to use that continuously owned listener.
+ * makeHome's unused-port probe is not a reservation: another fixture may have
+ * claimed it since. The caller owns this native server and must await stop(true).
+ */
+export async function startHomeDaemonServer(
+  home: E2EHome,
+  fetch: (request: Request) => Response | Promise<Response>,
+): Promise<Bun.Server<undefined>> {
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch });
+  try {
+    home.setDaemonPort(server.port!);
+    return server;
+  } catch (error) {
+    try { await server.stop(true); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'E2E daemon listener setup and cleanup failed'); }
+    throw error;
+  }
 }
 
 /** The environment the binary runs in: the isolated home and nothing ambient. */
