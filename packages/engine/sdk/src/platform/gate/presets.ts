@@ -53,6 +53,11 @@ export interface GatePreset {
   readonly perTool: boolean;
 }
 
+/** A gate preset with its shared human-readable picker label. */
+export interface GatePresetDefinition extends GatePreset {
+  readonly label: string;
+}
+
 /** The families accept-edits treats as edits. */
 export const EDIT_FAMILIES: readonly GateRiskFamily[] = ['file-mutation', 'notebook-edit', 'config-mutation'];
 
@@ -67,9 +72,10 @@ export const EDIT_FAMILIES: readonly GateRiskFamily[] = ['file-mutation', 'noteb
  * | auto         | allow | allow  | allow | ask      |                                         |
  * | custom       | allow | ask    | ask   | ask      | per-tool settings decide first          |
  */
-export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> = {
+export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePresetDefinition>> = {
   normal: {
     name: 'normal',
+    label: 'Normal',
     mode: 'prompt',
     summary: 'Low-stakes calls run; anything that changes state asks first.',
     stakes: { low: 'allow', medium: 'ask', high: 'ask', critical: 'ask' },
@@ -78,6 +84,7 @@ export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> = {
   },
   'accept-edits': {
     name: 'accept-edits',
+    label: 'Accept edits',
     mode: 'accept-edits',
     summary: 'File, notebook and configuration edits run up to high stakes; other changes ask.',
     stakes: { low: 'allow', medium: 'ask', high: 'ask', critical: 'ask' },
@@ -87,6 +94,7 @@ export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> = {
   },
   plan: {
     name: 'plan',
+    label: 'Plan',
     mode: 'plan',
     summary: 'Read-only: calls that change anything or reach outside the machine are refused.',
     stakes: { low: 'allow', medium: 'ask', high: 'ask', critical: 'ask' },
@@ -95,6 +103,7 @@ export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> = {
   },
   auto: {
     name: 'auto',
+    label: 'Auto',
     mode: 'allow-all',
     summary: 'Everything below critical stakes runs; critical calls still ask.',
     stakes: { low: 'allow', medium: 'allow', high: 'allow', critical: 'ask' },
@@ -103,6 +112,7 @@ export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> = {
   },
   custom: {
     name: 'custom',
+    label: 'Custom',
     mode: 'custom',
     summary: 'Per-tool settings decide; tools without a setting follow the normal row.',
     stakes: { low: 'allow', medium: 'ask', high: 'ask', critical: 'ask' },
@@ -110,6 +120,29 @@ export const GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> = {
     perTool: true,
   },
 };
+
+/**
+ * Session picker order in the operator wire vocabulary. Custom remains readable
+ * but is not accepted by sessions.permissionMode.set. This is intentionally
+ * separate from the config-valued Shift+Tab cycle below.
+ */
+export const SESSION_GATE_PRESET_NAMES = ['plan', 'normal', 'accept-edits', 'auto'] as const satisfies readonly GatePresetName[];
+export type SettableGatePresetName = (typeof SESSION_GATE_PRESET_NAMES)[number];
+
+/** Exact operator preset membership; unknown values must not be relabeled normal. */
+export function isGatePresetName(value: string): value is GatePresetName {
+  return Object.hasOwn(GATE_PRESETS, value);
+}
+
+/** Whether sessions.permissionMode.set accepts this preset name. */
+export function isSettableGatePresetName(value: string): value is SettableGatePresetName {
+  return SESSION_GATE_PRESET_NAMES.some((name) => name === value);
+}
+
+/** A reported session preset's label, preserving unknown and absent wire values. */
+export function gatePresetLabel(name: string): string {
+  return isGatePresetName(name) ? GATE_PRESETS[name].label : (name || 'Unknown');
+}
 
 const PRESET_BY_MODE: Readonly<Record<PermissionMode, GatePresetName>> = {
   prompt: 'normal',

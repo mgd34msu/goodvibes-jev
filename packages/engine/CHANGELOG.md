@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Render WebUI session permission choices and current labels from the engine's
+  browser-safe gate preset table. Keep custom presets read-only and retain the
+  existing session-scoped get/set, pending, error and non-local-session behavior.
+
 - Preserve original IMAP literal byte boundaries through legacy email reads,
   body-capability checks and folder discovery. Reuse shared byte framing and
   keep opaque payloads separate from protocol syntax and message identity.

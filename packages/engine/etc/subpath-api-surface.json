@@ -26679,7 +26679,7 @@
     {
       "name": "GATE_PRESETS",
       "kind": "const",
-      "text": "GATE_PRESETS: Readonly<Record<GatePresetName, GatePreset>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "GATE_PRESETS: Readonly<Record<GatePresetName, GatePresetDefinition>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "GATE_SITE",
@@ -26727,6 +26727,14 @@
         "summary"
       ],
       "text": "export interface GatePreset { readonly name: GatePresetName; readonly mode: PermissionMode; readonly summary: string; readonly stakes: Readonly<Record<Stakes, GateAction>>; readonly readOnly: boolean; readonly edits?: { readonly families: readonly GateRiskFamily[]; readonly through: Stakes; }; readonly perTool: boolean; } ;; via PermissionMode = export type PermissionMode = 'prompt' | 'allow-all' | 'custom' | 'plan' | 'accept-edits'; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "GatePresetDefinition",
+      "kind": "interface",
+      "required": [
+        "label"
+      ],
+      "text": "export interface GatePresetDefinition extends GatePreset { readonly label: string; }"
     },
     {
       "name": "GatePresetName",
@@ -26810,9 +26818,19 @@
       "text": "export interface ReadToolCallInput { readonly port?: JudgmentPort | undefined; readonly toolName: string; readonly args: Record<string, unknown>; readonly workingDirectory?: string | undefined; readonly askKind?: boolean | undefined; readonly askObfuscated?: boolean | undefined; readonly signal?: AbortSignal | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; readonly health?: () => readonly JudgmentEndpointHealth[]; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
+      "name": "SESSION_GATE_PRESET_NAMES",
+      "kind": "const",
+      "text": "SESSION_GATE_PRESET_NAMES: readonly [\"plan\", \"normal\", \"accept-edits\", \"auto\"]"
+    },
+    {
       "name": "SIDE_EFFECT_KIND_OPTIONS",
       "kind": "const",
       "text": "SIDE_EFFECT_KIND_OPTIONS: { readonly read: \"Reads, lists, searches or inspects local files, state or records without changing them.\"; readonly write: \"Creates, edits, moves or deletes files, records or settings.\"; readonly shell: \"Runs a shell command, script or background process.\"; readonly network: \"Fetches from or sends to a web address or remote API.\"; readonly delegation: \"Starts, steers or hands work to another agent, workflow or remote runner.\"; readonly browser: \"Drives a browser, the desktop or a screen: navigating, clicking, typing, screenshots.\"; readonly other: \"None of the above.\"; }"
+    },
+    {
+      "name": "SettableGatePresetName",
+      "kind": "type",
+      "text": "export type SettableGatePresetName = (typeof SESSION_GATE_PRESET_NAMES)[number];"
     },
     {
       "name": "SideEffectKind",
@@ -26865,9 +26883,24 @@
       "text": "registry: BatteryRegistry"
     },
     {
+      "name": "gatePresetLabel",
+      "kind": "function",
+      "text": "export declare function gatePresetLabel(name: string): string;"
+    },
+    {
+      "name": "isGatePresetName",
+      "kind": "function",
+      "text": "export declare function isGatePresetName(value: string): value is GatePresetName;"
+    },
+    {
       "name": "isPlanMode",
       "kind": "function",
       "text": "export declare function isPlanMode(mode: PermissionModeValue | string | undefined): boolean;"
+    },
+    {
+      "name": "isSettableGatePresetName",
+      "kind": "function",
+      "text": "export declare function isSettableGatePresetName(value: string): value is SettableGatePresetName;"
     },
     {
       "name": "judgmentInputBoundary",
@@ -27737,6 +27770,163 @@
       "name": "wrapWebSearchToolForAgentPolicy",
       "kind": "function",
       "text": "export declare function wrapWebSearchToolForAgentPolicy(tool: Tool): void; ;; via Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
+    }
+  ],
+  "./platform/gate/presets": [
+    {
+      "name": "EDIT_FAMILIES",
+      "kind": "const",
+      "text": "EDIT_FAMILIES: readonly GateRiskFamily[] ;; via GateRiskFamily = export type GateRiskFamily = keyof typeof RISK_FAMILY_OPTIONS;"
+    },
+    {
+      "name": "GATE_PRESETS",
+      "kind": "const",
+      "text": "GATE_PRESETS: Readonly<Record<GatePresetName, GatePresetDefinition>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "GATE_STAKES",
+      "kind": "const",
+      "text": "GATE_STAKES: readonly Stakes[] ;; via Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "GateAction",
+      "kind": "type",
+      "text": "export type GateAction = 'allow' | 'ask' | 'deny';"
+    },
+    {
+      "name": "GatePreset",
+      "kind": "interface",
+      "required": [
+        "mode",
+        "name",
+        "perTool",
+        "readOnly",
+        "stakes",
+        "summary"
+      ],
+      "text": "export interface GatePreset { readonly name: GatePresetName; readonly mode: PermissionMode; readonly summary: string; readonly stakes: Readonly<Record<Stakes, GateAction>>; readonly readOnly: boolean; readonly edits?: { readonly families: readonly GateRiskFamily[]; readonly through: Stakes; }; readonly perTool: boolean; } ;; via GateRiskFamily = export type GateRiskFamily = keyof typeof RISK_FAMILY_OPTIONS; ;; PermissionMode = export type PermissionMode = 'prompt' | 'allow-all' | 'custom' | 'plan' | 'accept-edits'; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "GatePresetDefinition",
+      "kind": "interface",
+      "required": [
+        "label"
+      ],
+      "text": "export interface GatePresetDefinition extends GatePreset { readonly label: string; }"
+    },
+    {
+      "name": "GatePresetName",
+      "kind": "type",
+      "text": "export type GatePresetName = 'normal' | 'accept-edits' | 'plan' | 'auto' | 'custom';"
+    },
+    {
+      "name": "GateStakes",
+      "kind": "type",
+      "text": "export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "PERMISSION_MODE_CYCLE",
+      "kind": "const",
+      "text": "PERMISSION_MODE_CYCLE: readonly PermissionModeValue[]"
+    },
+    {
+      "name": "PermissionModeTone",
+      "kind": "type",
+      "text": "export type PermissionModeTone = 'neutral' | 'info' | 'caution';"
+    },
+    {
+      "name": "PermissionModeValue",
+      "kind": "type",
+      "text": "export type PermissionModeValue = PermissionMode; ;; via PermissionMode = export type PermissionMode = 'prompt' | 'allow-all' | 'custom' | 'plan' | 'accept-edits';"
+    },
+    {
+      "name": "PresetDecision",
+      "kind": "interface",
+      "required": [
+        "action",
+        "reason"
+      ],
+      "text": "export interface PresetDecision { readonly action: GateAction; readonly reason: 'stakes' | 'plan-read-only' | 'accepted-edit'; }"
+    },
+    {
+      "name": "PresetInput",
+      "kind": "interface",
+      "required": [
+        "changesState",
+        "family",
+        "stakes"
+      ],
+      "text": "export interface PresetInput { readonly stakes: Stakes; readonly family: GateRiskFamily; readonly changesState: boolean; } ;; via GateRiskFamily = export type GateRiskFamily = keyof typeof RISK_FAMILY_OPTIONS; ;; Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "SESSION_GATE_PRESET_NAMES",
+      "kind": "const",
+      "text": "SESSION_GATE_PRESET_NAMES: readonly [\"plan\", \"normal\", \"accept-edits\", \"auto\"]"
+    },
+    {
+      "name": "SettableGatePresetName",
+      "kind": "type",
+      "text": "export type SettableGatePresetName = (typeof SESSION_GATE_PRESET_NAMES)[number];"
+    },
+    {
+      "name": "decideByPreset",
+      "kind": "function",
+      "text": "export declare function decideByPreset(preset: GatePreset, input: PresetInput): PresetDecision;"
+    },
+    {
+      "name": "gatePresetLabel",
+      "kind": "function",
+      "text": "export declare function gatePresetLabel(name: string): string;"
+    },
+    {
+      "name": "isGatePresetName",
+      "kind": "function",
+      "text": "export declare function isGatePresetName(value: string): value is GatePresetName;"
+    },
+    {
+      "name": "isPlanMode",
+      "kind": "function",
+      "text": "export declare function isPlanMode(mode: PermissionModeValue | string | undefined): boolean;"
+    },
+    {
+      "name": "isSettableGatePresetName",
+      "kind": "function",
+      "text": "export declare function isSettableGatePresetName(value: string): value is SettableGatePresetName;"
+    },
+    {
+      "name": "maxStakes",
+      "kind": "function",
+      "text": "export declare function maxStakes(a: Stakes, b: Stakes): Stakes; ;; via Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "nextPermissionMode",
+      "kind": "function",
+      "text": "export declare function nextPermissionMode(current: PermissionModeValue | string | undefined): PermissionModeValue;"
+    },
+    {
+      "name": "permissionModeLabel",
+      "kind": "function",
+      "text": "export declare function permissionModeLabel(mode: PermissionModeValue | string | undefined): GatePresetName;"
+    },
+    {
+      "name": "permissionModeTone",
+      "kind": "function",
+      "text": "export declare function permissionModeTone(mode: PermissionModeValue | string | undefined): PermissionModeTone;"
+    },
+    {
+      "name": "presetForMode",
+      "kind": "function",
+      "text": "export declare function presetForMode(mode: PermissionMode | string | undefined): GatePreset; ;; via PermissionMode = export type PermissionMode = 'prompt' | 'allow-all' | 'custom' | 'plan' | 'accept-edits';"
+    },
+    {
+      "name": "raiseStakes",
+      "kind": "function",
+      "text": "export declare function raiseStakes(stakes: Stakes): Stakes; ;; via Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+    },
+    {
+      "name": "togglePlanMode",
+      "kind": "function",
+      "text": "export declare function togglePlanMode(current: PermissionModeValue | string | undefined): PermissionModeValue;"
     }
   ],
   "./platform/git": [

@@ -14,6 +14,7 @@ const runtimeNeutralEntries = [
   'sdk/dist/browser.js',
   'sdk/dist/browser-homeassistant.js',
   'sdk/dist/browser-knowledge.js',
+  'sdk/dist/platform/gate/presets.js',
   'sdk/dist/react-native.js',
   'sdk/dist/expo.js',
   // /auth subpath is used by RN consumers for token helpers, must be node:-free

@@ -844,6 +844,11 @@
       "types": "./sdk/dist/platform/gate/index.d.ts",
       "import": "./sdk/dist/platform/gate/index.js"
     },
+    "./sdk/platform/gate/presets": {
+      "bun": "./sdk/src/platform/gate/presets.ts",
+      "types": "./sdk/dist/platform/gate/presets.d.ts",
+      "import": "./sdk/dist/platform/gate/presets.js"
+    },
     "./sdk/platform/gate/policy": {
       "bun": "./sdk/src/platform/gate/policy/index.ts",
       "types": "./sdk/dist/platform/gate/policy/index.d.ts",

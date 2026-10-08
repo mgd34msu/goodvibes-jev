@@ -31,6 +31,7 @@ import type { TurnCancellationResult } from '../../core/turn-cancellation.js';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodHandler } from '../method-catalog-shared.js';
 import type { PermissionMode } from '../../config/schema-types.js';
+import { GATE_PRESETS, isSettableGatePresetName, type GatePresetName, type SettableGatePresetName } from '../../gate/presets.js';
 import { deriveContextUsage } from '../../runtime/context-usage.js';
 import { readCurrentContextWindow } from '../../providers/context-window-reading.js';
 import type { ContextWindowOrigin, ContextWindowProvenance } from '../../providers/registry-types.js';
@@ -43,8 +44,8 @@ import { readInvocationParams } from './invocation-params.js';
  * (surfaced by get when a session is in a custom rule set) and is never a
  * settable value.
  */
-export type OperatorPermissionMode = 'plan' | 'normal' | 'accept-edits' | 'auto' | 'custom';
-export type SettableOperatorPermissionMode = Exclude<OperatorPermissionMode, 'custom'>;
+export type OperatorPermissionMode = GatePresetName;
+export type SettableOperatorPermissionMode = SettableGatePresetName;
 
 /** Map the internal config permission mode onto the operator vocabulary. */
 export function toOperatorPermissionMode(mode: PermissionMode): OperatorPermissionMode {
@@ -64,23 +65,13 @@ export function toOperatorPermissionMode(mode: PermissionMode): OperatorPermissi
 
 /** Map a settable operator mode back onto the internal config permission mode. */
 export function toConfigPermissionMode(mode: string): PermissionMode {
-  switch (mode) {
-    case 'normal':
-      return 'prompt';
-    case 'auto':
-      return 'allow-all';
-    case 'plan':
-      return 'plan';
-    case 'accept-edits':
-      return 'accept-edits';
-    default:
-      throw new GatewayVerbError(
-        `Invalid permission mode: ${String(mode)} (expected one of plan, normal, accept-edits, auto)`,
-        'INVALID_ARGUMENT',
-        400,
-        'mode',
-      );
-  }
+  if (isSettableGatePresetName(mode)) return GATE_PRESETS[mode].mode;
+  throw new GatewayVerbError(
+    `Invalid permission mode: ${String(mode)} (expected one of plan, normal, accept-edits, auto)`,
+    'INVALID_ARGUMENT',
+    400,
+    'mode',
+  );
 }
 
 /** The measured/estimated context usage of a single session's live runtime. */

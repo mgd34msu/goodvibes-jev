@@ -146,15 +146,18 @@ the browser replays prove a real connected deployment, user account or provider.
    needs another invalidation or read; see the [provider API boundaries](../../packages/engine/docs/provider-model-api.md).
    The current source supplies the
    documented `display.theme` enum/default in the bounded follow-up below;
-   `display.treeGlyphs` still has no canonical schema entry. The session permission-mode verbs still expose fixed
-   mode enums, not the engine-owned gate-preset catalog needed by the replacement
-   sheet. Do not invent provenance, glyph config or a local preset policy; preserve deterministic current behavior while those contracts are
-   supplied and integrated.
+   `display.treeGlyphs` still has no canonical schema entry. The session picker now
+   consumes labels and settable preset names from the engine-owned, browser-safe
+   `sdk/platform/gate/presets` catalog. Existing session permission-mode get/set
+   verbs, custom read-only state and local-runtime scope remain intact. This
+   presentation migration does not close the remaining persisted glyph setting,
+   mail reply-subject judgment or broader semantic and connected-daemon work.
    Sources: [completed SDK context integration](sdk-nullable-context-windows.md),
    [session renderer](../../products/webui/src/views/work/SessionDetail.tsx),
    [session wire](../../packages/engine/sdk/src/platform/control-plane/method-catalog-control-core.ts),
    [canonical display schema](../../packages/engine/sdk/src/platform/config/schema-domain-core.ts),
-   [current mode consumer](../../products/webui/src/lib/permission-mode.ts).
+   [gate preset catalog](../../packages/engine/sdk/src/platform/gate/presets.ts),
+   [session preset sheet](../../products/webui/src/components/confirm/PermissionModeSheet.tsx).
 5. **Connected-daemon, live-provider and whole-product parity.** The successful
    CI matrix is real browser proof, but genuine daemon auth/status/session/chat,
    approved live-provider behavior, remaining visual/interaction parity and final
