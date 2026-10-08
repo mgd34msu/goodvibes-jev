@@ -156,6 +156,7 @@ export class PolicyRegistry {
   private _current: PolicyBundleVersion | null = null;
   private _candidate: PolicyBundleVersion | null = null;
   private _history: PolicyBundleVersion[] = [];
+  private _publicationRevision = 0;
 
   public readonly DEFAULT_HISTORY_SIZE = 10;
 
@@ -322,6 +323,7 @@ export class PolicyRegistry {
     };
 
     this._candidate = null;
+    this._publicationRevision++;
 
     return {
       ok: true,
@@ -360,6 +362,7 @@ export class PolicyRegistry {
     // Remove the restored version from history and set as current
     this._history = this._history.filter((v) => v !== previous);
     this._current = { ...previous, state: 'active', activatedAt: now };
+    this._publicationRevision++;
 
     return {
       ok: true,
@@ -437,6 +440,9 @@ export class PolicyRegistry {
   public getCurrent(): PolicyBundleVersion | null {
     return this._current;
   }
+
+  /** Only successful enforcement publications advance this lifetime. */
+  public getPublicationRevision(): number { return this._publicationRevision; }
 
   /** Returns the candidate bundle version, or null if none loaded. */
   public getCandidate(): PolicyBundleVersion | null {

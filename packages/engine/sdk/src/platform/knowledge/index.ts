@@ -322,3 +322,13 @@ export type {
 export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
 export type { KnowledgeNodeActivationOptions, NodeActivationReason } from './activation/types.js';
 export { KnowledgeNodeActivationHeldError } from './activation/types.js';
+
+export { createMemoryConsolidationGateway, classifyConsolidationFetchError } from './consolidation-gateway.js';
+export type {
+  MemoryConsolidationConnection,
+  MemoryConsolidationReceiptsResult,
+  MemoryConsolidationProposal,
+  MemoryConsolidationGateway,
+  MemoryConsolidationGatewayResolution,
+  MemoryConsolidationFetchFailure,
+} from './consolidation-gateway.js';

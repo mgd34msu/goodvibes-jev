@@ -29665,6 +29665,48 @@ export interface OperatorMethodOutputMap {
             contractId: string;
             ownerAgentId: string;
         };
+        integration?: {
+            state: "live";
+            contractId: string;
+            isolation: "worktree";
+            units: readonly ({
+                unitId: string;
+                groupId: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                unitStatus: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                latestCheck: null | {
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
+                };
+                item: {
+                    state: "recorded";
+                    itemId: string;
+                    workstreamId: string;
+                    integration: "conflict" | "merged" | "pending" | "unrecorded";
+                    mergeHash?: string;
+                    worktreePath?: string;
+                    worktreeBranch?: string;
+                    worktreeKept?: boolean;
+                    conflictFiles?: readonly string[];
+                } | {
+                    state: "unavailable";
+                    reason: "invalid-join" | "missing-item";
+                } | {
+                    state: "not-applicable";
+                    reason: "best-of-n-plan";
+                };
+            })[];
+        } | {
+            state: "unavailable";
+            reason: "invalid-data" | "limit" | "no-engine" | "no-receipt" | "not-live" | "recovery-required" | "stale-attempt" | "unsupported-runner";
+        } | {
+            state: "not-applicable";
+            contractId: string;
+            reason: "session-mode" | "shared-isolation";
+        };
         settlement?: {
             state: "failed" | "pending" | "published" | "required";
             evidenceId?: string;
@@ -29751,6 +29793,48 @@ export interface OperatorMethodOutputMap {
         receipt: null | {
             contractId: string;
             ownerAgentId: string;
+        };
+        integration?: {
+            state: "live";
+            contractId: string;
+            isolation: "worktree";
+            units: readonly ({
+                unitId: string;
+                groupId: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                unitStatus: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                latestCheck: null | {
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
+                };
+                item: {
+                    state: "recorded";
+                    itemId: string;
+                    workstreamId: string;
+                    integration: "conflict" | "merged" | "pending" | "unrecorded";
+                    mergeHash?: string;
+                    worktreePath?: string;
+                    worktreeBranch?: string;
+                    worktreeKept?: boolean;
+                    conflictFiles?: readonly string[];
+                } | {
+                    state: "unavailable";
+                    reason: "invalid-join" | "missing-item";
+                } | {
+                    state: "not-applicable";
+                    reason: "best-of-n-plan";
+                };
+            })[];
+        } | {
+            state: "unavailable";
+            reason: "invalid-data" | "limit" | "no-engine" | "no-receipt" | "not-live" | "recovery-required" | "stale-attempt" | "unsupported-runner";
+        } | {
+            state: "not-applicable";
+            contractId: string;
+            reason: "session-mode" | "shared-isolation";
         };
         settlement?: {
             state: "failed" | "pending" | "published" | "required";
@@ -29839,6 +29923,48 @@ export interface OperatorMethodOutputMap {
             contractId: string;
             ownerAgentId: string;
         };
+        integration?: {
+            state: "live";
+            contractId: string;
+            isolation: "worktree";
+            units: readonly ({
+                unitId: string;
+                groupId: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                unitStatus: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                latestCheck: null | {
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
+                };
+                item: {
+                    state: "recorded";
+                    itemId: string;
+                    workstreamId: string;
+                    integration: "conflict" | "merged" | "pending" | "unrecorded";
+                    mergeHash?: string;
+                    worktreePath?: string;
+                    worktreeBranch?: string;
+                    worktreeKept?: boolean;
+                    conflictFiles?: readonly string[];
+                } | {
+                    state: "unavailable";
+                    reason: "invalid-join" | "missing-item";
+                } | {
+                    state: "not-applicable";
+                    reason: "best-of-n-plan";
+                };
+            })[];
+        } | {
+            state: "unavailable";
+            reason: "invalid-data" | "limit" | "no-engine" | "no-receipt" | "not-live" | "recovery-required" | "stale-attempt" | "unsupported-runner";
+        } | {
+            state: "not-applicable";
+            contractId: string;
+            reason: "session-mode" | "shared-isolation";
+        };
         settlement?: {
             state: "failed" | "pending" | "published" | "required";
             evidenceId?: string;
@@ -29925,6 +30051,48 @@ export interface OperatorMethodOutputMap {
         receipt: null | {
             contractId: string;
             ownerAgentId: string;
+        };
+        integration?: {
+            state: "live";
+            contractId: string;
+            isolation: "worktree";
+            units: readonly ({
+                unitId: string;
+                groupId: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                unitStatus: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                latestCheck: null | {
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    result: "await-owner" | "native-decision" | "nudge" | "pass" | "recorded" | "stall";
+                };
+                item: {
+                    state: "recorded";
+                    itemId: string;
+                    workstreamId: string;
+                    integration: "conflict" | "merged" | "pending" | "unrecorded";
+                    mergeHash?: string;
+                    worktreePath?: string;
+                    worktreeBranch?: string;
+                    worktreeKept?: boolean;
+                    conflictFiles?: readonly string[];
+                } | {
+                    state: "unavailable";
+                    reason: "invalid-join" | "missing-item";
+                } | {
+                    state: "not-applicable";
+                    reason: "best-of-n-plan";
+                };
+            })[];
+        } | {
+            state: "unavailable";
+            reason: "invalid-data" | "limit" | "no-engine" | "no-receipt" | "not-live" | "recovery-required" | "stale-attempt" | "unsupported-runner";
+        } | {
+            state: "not-applicable";
+            contractId: string;
+            reason: "session-mode" | "shared-isolation";
         };
         settlement?: {
             state: "failed" | "pending" | "published" | "required";

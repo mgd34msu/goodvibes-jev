@@ -93,10 +93,16 @@ export const DEFAULT_TURN_INJECTION_RING_SIZE = 20;
  * not auto-inject", see collectCodeInjectionCandidates.
  */
 export type TurnCodeIndexSource = {
+  /** Captured sources prepare a fresh, bounded generation only behind caller gates. */
+  prepare?(): Promise<void>;
+  generation?(): string | undefined;
+  assertCurrent?(expected?: string): Promise<void>;
+  finishTurn?(): void;
+  dispose?(): void;
   search(query: string, opts?: { limit?: number }): Promise<readonly CodeContextResult[]>;
   stats(): Pick<
     CodeIndexStats,
-    'available' | 'indexedChunks' | 'embeddingProviderMismatch' | 'semanticRetrievalAvailable'
+    'available' | 'indexedChunks' | 'embeddingProviderMismatch' | 'semanticRetrievalAvailable' | 'error'
   >;
 };
 
@@ -225,6 +231,7 @@ export interface BuildPerTurnKnowledgeInjectionInput {
 
 export interface BuildPerTurnKnowledgeInjectionResult {
   readonly block: string | null;
+  readonly memoryBlock?: string | null;
   readonly record: TurnInjectionRecord;
 }
 
@@ -297,8 +304,9 @@ async function collectCodeInjectionCandidates(
 ): Promise<{ candidates: MergedCandidate[]; considered: number; skipped: string | undefined }> {
   if (!enabled || !codeIndex) return { candidates: [], considered: 0, skipped: undefined };
 
+  await codeIndex.prepare?.();
   const stats = codeIndex.stats();
-  if (!stats.available) return { candidates: [], considered: 0, skipped: 'code index unavailable' };
+  if (!stats.available) return { candidates: [], considered: 0, skipped: stats.error ?? 'code index unavailable' };
   if (stats.indexedChunks === 0) return { candidates: [], considered: 0, skipped: 'code index empty' };
   if (stats.embeddingProviderMismatch) return { candidates: [], considered: 0, skipped: stats.embeddingProviderMismatch };
   if (!stats.semanticRetrievalAvailable) return { candidates: [], considered: 0, skipped: 'no semantic embedding provider' };
@@ -307,7 +315,7 @@ async function collectCodeInjectionCandidates(
   const candidates: MergedCandidate[] = [];
   let considered = 0;
   for (const hit of hits) {
-    const id = codeHitId(hit);
+    const id = codeIndex.generation ? `${codeHitId(hit)}:${codeIndex.generation()}:${hit.chunk.contentHash}` : codeHitId(hit);
     if (alreadyInjectedIdSet.has(id)) continue;
     considered++;
     const score = hit.similarity * CODE_SIMILARITY_TO_SCORE_SCALE;
@@ -456,6 +464,7 @@ export async function buildPerTurnKnowledgeInjection(
   const block = renderTurnInjectionBlock(kept);
   return {
     block,
+    memoryBlock: renderTurnInjectionBlock(kept.filter(entry => entry.source === 'memory')),
     record: {
       ...baseRecordFields,
       injectedIds: kept.map((entry) => entry.id),

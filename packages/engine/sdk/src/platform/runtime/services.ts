@@ -901,6 +901,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     knowledgeService,
     memoryRegistry,
     codeIndex: codeIndexStore,
+    memoryEmbeddingRegistry,
     isCodeInjectionSettingEnabled: codeInjectionSettingEnabled,
     codeIndexReindexScheduler,
     toolExecutionObserver: (toolName, args, success) => ciAutoWatchObserver?.(toolName, args, success),

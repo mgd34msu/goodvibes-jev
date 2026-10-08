@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import type { ReadAccessFilter } from '../shared/read-access.js';
-import type { Tool, ToolDefinition } from '../../types/tools.js';
+import type { Tool, ToolDefinition, ToolExecuteOptions } from '../../types/tools.js';
+import { readExecutionGuard } from './admission.js';
 import { READ_TOOL_SCHEMA } from './schema.js';
 import { toRecord } from '../../utils/record-coerce.js';
 import type { ReadInput, ReadFileInput, ExtractMode, OutputFormat } from './schema.js';
@@ -49,7 +50,7 @@ export class ReadTool implements Tool {
     this.codeIntelligence = codeIntelligence ?? new CodeIntelligence({});
   }
 
-  async execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string }> {
+  async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
     if (!Array.isArray(args.files) || args.files.length === 0) {
       return { success: false, error: 'Missing or empty "files" array' };
     }
@@ -57,7 +58,11 @@ export class ReadTool implements Tool {
       return { success: false, error: `Too many files: maximum ${MAX_READ_FILES} per read call` };
     }
     try {
-      return await this._execute(args as unknown as ReadInput);
+      const assertCurrent = readExecutionGuard(args, options, this.projectIndex);
+      assertCurrent();
+      const result = await this._execute(args as unknown as ReadInput, assertCurrent);
+      assertCurrent();
+      return result;
     } catch (err) {
       const message = summarizeError(err);
       logger.error('read tool: unexpected error', { error: message });
@@ -65,7 +70,7 @@ export class ReadTool implements Tool {
     }
   }
 
-  private async _execute(input: ReadInput): Promise<{ success: boolean; output: string }> {
+  private async _execute(input: ReadInput, assertCurrent: () => void): Promise<{ success: boolean; output: string }> {
     const globalExtract: ExtractMode = input.extract ?? 'content';
     const format: OutputFormat = input.output?.format ?? 'standard';
     const includeLineNumbers: boolean = input.output?.include_line_numbers ?? true;
@@ -81,6 +86,7 @@ export class ReadTool implements Tool {
     let paginationInfo: ReadOutput['pagination'] | undefined;
 
     if (tokenBudget !== undefined) {
+      assertCurrent();
       const pages = paginateFiles(allFiles, tokenBudget, this.projectIndex.baseDir);
       const totalPages = Math.max(1, pages.length);
       const pageIdx = Math.min(page - 1, totalPages - 1);
@@ -101,8 +107,10 @@ export class ReadTool implements Tool {
       filesToProcess,
       MAX_PARALLEL_READ_FILES,
       async (f) => {
+        assertCurrent();
         if (this.capturedReadAccess && !await this.capturedReadAccess(resolve(this.projectIndex.baseDir, f.path))) throw new Error('captured input read is access-restricted');
-        return readOneFile(
+        assertCurrent();
+        const result = await readOneFile(
           f,
           globalExtract,
           format,
@@ -113,9 +121,13 @@ export class ReadTool implements Tool {
           globalImageMode,
           globalMaxImageSize,
           this.codeIntelligence,
+          assertCurrent,
         );
+        assertCurrent();
+        return result;
       },
     );
+    assertCurrent();
 
     if (maxTokens !== undefined) {
       let usedTokens = 0;

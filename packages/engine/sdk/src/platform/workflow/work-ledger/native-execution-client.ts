@@ -174,6 +174,33 @@ export function createOperatorNativeWorkExecutionClient(
         || ((operation === 'start' || operation === 'resume') && !sameRevision(snapshot.expectedRevision, identity.expectedRevision))) {
         throw new NativeWorkExecutionClientError('invalid_response');
       }
+      if (snapshot.kind === 'execution' && snapshot.integration && snapshot.integration.state !== 'unavailable') {
+        const integration = snapshot.integration;
+        if (integration.contractId !== snapshot.receipt?.contractId || snapshot.state !== 'launch-claimed' || snapshot.recovery !== 'available'
+          || !snapshot.currentAttempt || snapshot.stale || !snapshot.currentRevision || !sameRevision(snapshot.expectedRevision, snapshot.currentRevision)
+          || !snapshot.progress || ['passed', 'failed', 'cancelled'].includes(snapshot.progress.status)
+          || (integration.state === 'live' && snapshot.progress.sessionMode)) throw new NativeWorkExecutionClientError('invalid_response');
+        if (integration.state === 'not-applicable' && ((integration.reason === 'session-mode') !== snapshot.progress.sessionMode)) {
+          throw new NativeWorkExecutionClientError('invalid_response');
+        }
+        if (integration.state === 'live') {
+          const units = new Map(integration.units.map(unit => [unit.unitId, unit]));
+          const itemIds = integration.units.flatMap(unit => unit.item.state === 'recorded' ? [JSON.stringify([unit.item.workstreamId, unit.item.itemId])] : []);
+          if (units.size !== integration.units.length || new Set(itemIds).size !== itemIds.length || integration.units.some(unit =>
+            (unit.item.state === 'recorded' && (unit.item.workstreamId !== unit.groupId || (unit.item.mergeHash !== undefined && unit.item.integration !== 'merged')))
+            || (unit.attemptOf === undefined && unit.attemptIndex !== undefined)
+            || (unit.attemptOf !== undefined && (units.get(unit.attemptOf)?.groupId !== unit.groupId || units.get(unit.attemptOf)?.attemptOf !== undefined)))) {
+            throw new NativeWorkExecutionClientError('invalid_response');
+          }
+          for (const parent of units.values()) {
+            const attempts = integration.units.filter(unit => unit.attemptOf === parent.unitId);
+            const indexes = attempts.map(unit => unit.attemptIndex);
+            if (new Set(indexes).size !== indexes.length || indexes.some(index => index === undefined || index >= attempts.length)) {
+              throw new NativeWorkExecutionClientError('invalid_response');
+            }
+          }
+        }
+      }
       // status/cancel intentionally return the server's admitted revisions even
       // when the current caller has a different revision for this same attempt.
       active(controller.signal);

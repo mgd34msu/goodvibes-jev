@@ -1,85 +1,72 @@
-/**
- * The read guard must not refuse a dotted path this session's own tools wrote.
- *
- * A screenshot the agent saved to `~/.goodvibes-screen.png` was rejected as
- * secret-looking purely because the basename begins with a dot, and only became
- * readable after being copied to an undotted path. The hidden-name rule is now
- * waived for paths in the session write ledger; every other rule, secret-looking
- * segments, private-key extensions, known_hosts, and the credential dotfiles
- * that are never waived, still applies.
- */
-import { describe, test, expect, beforeEach } from 'bun:test';
+/** Standalone read observations use Jev; the write ledger is not read authority. */
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { forgetReadSecrets } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { isBlockedReadPath } from '@/tools/agent-read-policy.ts';
-import {
-  recordAgentSessionWrite,
-  wasWrittenInAgentSession,
-  clearAgentSessionWrites,
-  agentSessionWriteCount,
-} from '@/tools/agent-session-write-ledger.ts';
+import { recordAgentSessionWrite, wasWrittenInAgentSession, clearAgentSessionWrites, agentSessionWriteCount } from '@/tools/agent-session-write-ledger.ts';
 
-const SCREENSHOT = '/home/buzzkill/.goodvibes-screen.png';
-
+const SCREENSHOT = '/synthetic/home/.screen.png';
+const secretSubjects = new Set<string>();
+let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => {
-  clearAgentSessionWrites();
+  clearAgentSessionWrites(); forgetReadSecrets(); secretSubjects.clear();
+  previous = installJudgmentPort(fakePort((_name, _question, state) => {
+    const path = (state as { arguments?: { path?: string } }).arguments?.path ?? '';
+    return noulAnswer(secretSubjects.has(path) ? 0.999 : 0.001);
+  }).port);
 });
+afterEach(() => { installJudgmentPort(previous); forgetReadSecrets(); });
 
-describe('read guard: dotted paths this session wrote', () => {
-  test('a dotted path is blocked when the session did not write it', () => {
-    expect(isBlockedReadPath(SCREENSHOT)).toBe(true);
-  });
-
-  test('the same path is readable once the session has written it', () => {
+describe('read observations do not infer secrecy or authority from a filename or session write', () => {
+  test('an ordinary dotted path is readable before and after this session writes it', async () => {
+    expect(await isBlockedReadPath(SCREENSHOT)).toBe(false);
     recordAgentSessionWrite(SCREENSHOT);
-    expect(isBlockedReadPath(SCREENSHOT)).toBe(false);
+    expect(await isBlockedReadPath(SCREENSHOT)).toBe(false);
   });
-
-  test('a dotted directory on a session-written path is waived too', () => {
-    const path = '/home/buzzkill/.cache/goodvibes/report.txt';
-    expect(isBlockedReadPath(path)).toBe(true);
+  test('an ordinary secret-looking name is readable when its observation says non-secret', async () => {
+    expect(await isBlockedReadPath('novel/secret.txt')).toBe(false);
+  });
+  test('an ordinary-named secret is refused even if the session wrote it', async () => {
+    const path = 'deployment/ordinary-data.txt';
+    secretSubjects.add(path);
+    expect(await isBlockedReadPath(path)).toBe(true);
     recordAgentSessionWrite(path);
-    expect(isBlockedReadPath(path)).toBe(false);
+    expect(await isBlockedReadPath(path)).toBe(true);
   });
-
-  test('writing one dotted path does not unlock a different one', () => {
+  test('one path observation does not classify another subject', async () => {
+    secretSubjects.add('one.txt');
+    expect(await isBlockedReadPath('one.txt')).toBe(true);
+    expect(await isBlockedReadPath('two.txt')).toBe(false);
+  });
+  test('an ordinary dotted directory does not need a session-written waiver', async () => {
+    const path = '/synthetic/home/.cache/report.txt';
+    expect(await isBlockedReadPath(path)).toBe(false);
+    recordAgentSessionWrite(path);
+    expect(await isBlockedReadPath(path)).toBe(false);
+  });
+  test('writing one dotted file does not authorize a different classified secret', async () => {
+    const other = '/synthetic/home/.other-screen.png'; secretSubjects.add(other);
     recordAgentSessionWrite(SCREENSHOT);
-    expect(isBlockedReadPath('/home/buzzkill/.other-screen.png')).toBe(true);
+    expect(await isBlockedReadPath(other)).toBe(true);
   });
-});
-
-describe('read guard: the waiver does not reach real secrets', () => {
-  const stillBlocked = [
-    '/home/buzzkill/.netrc',
-    '/home/buzzkill/.npmrc',
-    '/home/buzzkill/.env',
-    '/home/buzzkill/.aws/config',
-    '/home/buzzkill/.ssh/notes.txt',
-    '/home/buzzkill/.gnupg/keys.txt',
-    '/home/buzzkill/.secrets/id_rsa',
-    '/home/buzzkill/.keys/service.pem',
-    '/home/buzzkill/.config/credentials.json',
-    '/home/buzzkill/.ssh/known_hosts',
-  ];
-
-  for (const path of stillBlocked) {
-    test(`${path} stays blocked even after the session writes it`, () => {
-      recordAgentSessionWrite(path);
-      expect(isBlockedReadPath(path)).toBe(true);
+  for (const path of ['.netrc', '.npmrc', '.env', '.aws/config', '.ssh/notes.txt', '.gnupg/keys.txt',
+    '.secrets/id_rsa', '.keys/service.pem', '.config/credentials.json', '.ssh/known_hosts']) {
+    test(`${path} remains refused when its observation identifies secrets despite a session write`, async () => {
+      secretSubjects.add(path); recordAgentSessionWrite(path);
+      expect(await isBlockedReadPath(path)).toBe(true);
     });
   }
-});
-
-describe('read guard: undotted paths are unaffected', () => {
-  test('an ordinary project file is allowed with or without a ledger entry', () => {
-    expect(isBlockedReadPath('src/main.ts')).toBe(false);
+  test('an ordinary project file is readable with or without a ledger entry', async () => {
+    expect(await isBlockedReadPath('src/main.ts')).toBe(false);
     recordAgentSessionWrite('src/main.ts');
-    expect(isBlockedReadPath('src/main.ts')).toBe(false);
+    expect(await isBlockedReadPath('src/main.ts')).toBe(false);
   });
-
-  test('a secret-looking undotted file stays blocked after a write', () => {
-    recordAgentSessionWrite('config/credentials.json');
-    expect(isBlockedReadPath('config/credentials.json')).toBe(true);
+  test('a classified undotted secret remains refused after a write', async () => {
+    secretSubjects.add('config/credentials.json'); recordAgentSessionWrite('config/credentials.json');
+    expect(await isBlockedReadPath('config/credentials.json')).toBe(true);
   });
 });
 
@@ -109,7 +96,6 @@ describe('session write ledger', () => {
     expect(agentSessionWriteCount()).toBe(1);
     clearAgentSessionWrites();
     expect(agentSessionWriteCount()).toBe(0);
-    expect(isBlockedReadPath(SCREENSHOT)).toBe(true);
   });
 
   test('the ledger is bounded and evicts the oldest entries', () => {

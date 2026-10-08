@@ -273,3 +273,11 @@ Dependency caches in the four recent TUI worktrees use audited read-only donor
 aliases after inode recovery. No package-manager install/remove/update or dependency
 mutation may run through those aliases; restore a private representation first.
 Verified archives and restoration receipts are retained in the proof directory.
+
+## Bounded memory receipt HOIST adoption (2026-10-08)
+
+The receipt gateway's typed invoke and SDK 404/501 classifier now live behind
+public engine knowledge exports, consumed by the existing lazy Memory modal
+adapter. Local tests and independent review qualify only this source obligation.
+The exact one-row mapping delta, integration evidence, and pending publication/API
+checks are in [the current receipt adoption review](../../docs/audit/tui-memory-receipt-adoption-2026-10-08.md).

@@ -1,4 +1,5 @@
 import { projectCapturedExecBunRuntime, type CapturedExecBunRuntimeInput } from './captured-bun-runtime-input.js';
+import { resolveProcessCapturedBunRuntimeExecutable } from '../../runtime/captured-bun-runtime.js';
 import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
 import { parseAST } from '../../runtime/permissions/normalization/parser.js';
 import { MAX_INPUT_LENGTH, MAX_TOKEN_COUNT, tokenize } from '../../runtime/permissions/normalization/tokenizer.js';
@@ -81,7 +82,8 @@ function runtimeArgv(nodeRuntime = false, bunRuntime = false): string[] {
     '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib'];
   if (existsSync('/usr/lib64')) argv.push('--ro-bind', '/usr/lib64', '/usr/lib64', '--symlink', 'usr/lib64', '/lib64');
   argv.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/captured');
-  if (!bunRuntime && (process.versions.bun || !nodeRuntime)) argv.push('--ro-bind', process.execPath, `/captured-runtime/bin/${process.versions.bun ? 'bun' : 'node'}`);
+  if (!bunRuntime && resolveProcessCapturedBunRuntimeExecutable() === process.execPath && (process.versions.bun || !nodeRuntime))
+    argv.push('--ro-bind', process.execPath, `/captured-runtime/bin/${process.versions.bun ? 'bun' : 'node'}`);
   return argv;
 }
 
@@ -169,7 +171,7 @@ export interface CapturedExecutionObserver {
  * command also requests the Node runtime. Unknown shell shapes take the full
  * construction-owned admission, never a guessed grant or a host fallback.
  */
-function needsNodeRuntime(command: string, input: ExecCommandInput): boolean {
+function needsRuntime(command: string, input: ExecCommandInput, runtime: 'node' | 'bun'): boolean {
   if (input.env?.PATH !== undefined) return true;
   if (command.length >= MAX_INPUT_LENGTH || command.includes('\n') || command.includes('\r')) return true;
   const tokens = tokenize(command.trim());
@@ -186,6 +188,7 @@ function needsNodeRuntime(command: string, input: ExecCommandInput): boolean {
   return nodes.some((node) => {
     if (node.tokens[0]?.type !== 'command' || !literal(node.tokens[0].value, node.command)) return true;
     if (primitives.has(node.command)) return false;
+    if (runtime === 'bun') return true;
     const argument = (index: number, word: string): boolean =>
       node.tokens[index]?.type === 'argument' && literal(node.tokens[index]?.value, word);
     return node.command !== 'bun' || !(argument(1, 'build') || argument(1, 'test') ||
@@ -259,10 +262,19 @@ export async function runCapturedCommand(
     if (cwd !== root) await authorize(cwd);
     // Runtime selection changes availability only. Fixed validators and every
     // selected command share the existing construction-owned pinned admission.
-    if (!binding.nodeRuntimeInput && binding.nodeRuntimeAdmission && needsNodeRuntime(command, input)) {
+    if (!binding.nodeRuntimeInput && binding.nodeRuntimeAdmission && needsRuntime(command, input, 'node')) {
       try {
         const nodeRuntimeInput = await executePolicyCheck(() => binding.nodeRuntimeAdmission!(operationSignal), operationSignal);
         binding = Object.freeze({ ...binding, nodeRuntimeInput });
+      } catch {
+        operationSignal.throwIfAborted();
+        await check();
+      }
+    }
+    if (!binding.bunRuntimeInput && binding.bunRuntimeAdmission && needsRuntime(command, input, 'bun')) {
+      try {
+        const bunRuntimeInput = await executePolicyCheck(() => binding.bunRuntimeAdmission!(operationSignal), operationSignal);
+        binding = Object.freeze({ ...binding, bunRuntimeInput });
       } catch {
         operationSignal.throwIfAborted();
         await check();
@@ -324,7 +336,7 @@ export async function runCapturedCommand(
     const filterPath = join(temporary, 'sockets.bpf');
     await writeFile(filterPath, socketFilter(network));
     const fd = openSync(filterPath, 'r');
-    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput || binding.nodeRuntimeAdmission), Boolean(binding.bunRuntimeInput));
+    const argv = runtimeArgv(Boolean(binding.nodeRuntimeInput || binding.nodeRuntimeAdmission), Boolean(binding.bunRuntimeInput || binding.bunRuntimeAdmission));
     argv.push(...nodeRuntime.argv, ...bunRuntime.argv);
     argv.push(contractInputAuthorityMutable(binding.authority) ? '--bind' : '--ro-bind', projection, root,
       '--chdir', cwd, '--seccomp', '3');

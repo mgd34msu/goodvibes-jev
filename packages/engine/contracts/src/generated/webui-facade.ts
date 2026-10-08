@@ -26487,6 +26487,39 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "contractId": "sample",
         "ownerAgentId": "sample"
       },
+      "integration": {
+        "state": "live",
+        "contractId": "sample",
+        "isolation": "worktree",
+        "units": [
+          {
+            "unitId": "sample",
+            "groupId": "sample",
+            "attemptOf": "sample",
+            "attemptIndex": 0,
+            "unitStatus": "pending",
+            "latestCheck": {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "result": "pass"
+            },
+            "item": {
+              "state": "recorded",
+              "itemId": "sample",
+              "workstreamId": "sample",
+              "integration": "unrecorded",
+              "mergeHash": "sample",
+              "worktreePath": "sample",
+              "worktreeBranch": "sample",
+              "worktreeKept": false,
+              "conflictFiles": [
+                "sample"
+              ]
+            }
+          }
+        ]
+      },
       "settlement": {
         "state": "pending",
         "evidenceId": "sample",
@@ -26546,6 +26579,39 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "receipt": {
         "contractId": "sample",
         "ownerAgentId": "sample"
+      },
+      "integration": {
+        "state": "live",
+        "contractId": "sample",
+        "isolation": "worktree",
+        "units": [
+          {
+            "unitId": "sample",
+            "groupId": "sample",
+            "attemptOf": "sample",
+            "attemptIndex": 0,
+            "unitStatus": "pending",
+            "latestCheck": {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "result": "pass"
+            },
+            "item": {
+              "state": "recorded",
+              "itemId": "sample",
+              "workstreamId": "sample",
+              "integration": "unrecorded",
+              "mergeHash": "sample",
+              "worktreePath": "sample",
+              "worktreeBranch": "sample",
+              "worktreeKept": false,
+              "conflictFiles": [
+                "sample"
+              ]
+            }
+          }
+        ]
       },
       "settlement": {
         "state": "pending",
@@ -26607,6 +26673,39 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "contractId": "sample",
         "ownerAgentId": "sample"
       },
+      "integration": {
+        "state": "live",
+        "contractId": "sample",
+        "isolation": "worktree",
+        "units": [
+          {
+            "unitId": "sample",
+            "groupId": "sample",
+            "attemptOf": "sample",
+            "attemptIndex": 0,
+            "unitStatus": "pending",
+            "latestCheck": {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "result": "pass"
+            },
+            "item": {
+              "state": "recorded",
+              "itemId": "sample",
+              "workstreamId": "sample",
+              "integration": "unrecorded",
+              "mergeHash": "sample",
+              "worktreePath": "sample",
+              "worktreeBranch": "sample",
+              "worktreeKept": false,
+              "conflictFiles": [
+                "sample"
+              ]
+            }
+          }
+        ]
+      },
       "settlement": {
         "state": "pending",
         "evidenceId": "sample",
@@ -26666,6 +26765,39 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "receipt": {
         "contractId": "sample",
         "ownerAgentId": "sample"
+      },
+      "integration": {
+        "state": "live",
+        "contractId": "sample",
+        "isolation": "worktree",
+        "units": [
+          {
+            "unitId": "sample",
+            "groupId": "sample",
+            "attemptOf": "sample",
+            "attemptIndex": 0,
+            "unitStatus": "pending",
+            "latestCheck": {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "result": "pass"
+            },
+            "item": {
+              "state": "recorded",
+              "itemId": "sample",
+              "workstreamId": "sample",
+              "integration": "unrecorded",
+              "mergeHash": "sample",
+              "worktreePath": "sample",
+              "worktreeBranch": "sample",
+              "worktreeKept": false,
+              "conflictFiles": [
+                "sample"
+              ]
+            }
+          }
+        ]
       },
       "settlement": {
         "state": "pending",

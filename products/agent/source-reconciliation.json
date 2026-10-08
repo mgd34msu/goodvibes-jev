@@ -16815,12 +16815,6 @@
       "status": "public-engine-successor-accounting-pending"
     },
     {
-      "source": "src/runtime/execution-ledger.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/runtime/execution-ledger.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/runtime/memory-spine-adoption.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/runtime/memory-spine-adoption.ts",
@@ -16836,18 +16830,6 @@
       "source": "src/runtime/memory-usage-wiring.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/runtime/memory-usage-wiring.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/runtime/session-spine-rest-transport.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/runtime/session-spine-rest-transport.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
-      "source": "src/runtime/tool-permission-safety.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/runtime/tool-permission-safety.ts",
       "status": "public-engine-successor-accounting-pending"
     },
     {
@@ -17185,12 +17167,6 @@
       "disposition": "PORT",
       "retainedPath": null,
       "status": "upstream-deleted-successor-review-pending"
-    },
-    {
-      "source": "src/test/runtime/tool-permission-safety.test.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/test/runtime/tool-permission-safety.test.ts",
-      "status": "public-engine-successor-accounting-pending"
     },
     {
       "source": "src/test/runtime/tools/contract-verifier.test.ts",
@@ -18255,12 +18231,6 @@
       "status": "public-engine-successor-accounting-pending"
     },
     {
-      "source": "src/tools/agent-read-policy.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/tools/agent-read-policy.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/tools/agent-reminder-schedule-tool.ts",
       "disposition": "HOIST",
       "retainedPath": "products/agent/src/tools/agent-reminder-schedule-tool.ts",
@@ -18916,12 +18886,12 @@
     }
   ],
   "baselineMappingSummary": {
-    "mapped": 1157,
-    "unmapped": 445,
+    "mapped": 1162,
+    "unmapped": 440,
     "unmappedByDisposition": {
       "PORT": 176,
       "JEV": 44,
-      "HOIST": 225
+      "HOIST": 220
     }
   }
 }
