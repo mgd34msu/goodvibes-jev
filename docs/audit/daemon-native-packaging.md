@@ -1,4 +1,4 @@
-# Local daemon native packaging
+# Daemon native packaging and Linux CI qualification
 
 THE-18 remains **In Progress**. The private daemon can now opt into compiling
 its actual `products/daemon/src/cli/entrypoint.ts`; ordinary `build` and `test`
@@ -66,9 +66,38 @@ shared toolchain tests own target resolution, required-addon failure, sidecar
 verification and post-build smoke internals. A separate negative probe invokes
 the actual shared build CLI with a missing entrypoint and requires its compiler
 failure to propagate as exit 1. Native verification
-is opt-in; it does not compile all platforms on every ordinary test invocation.
+is opt-in locally; CI builds only Linux x64 once in the daemon product-test leg.
+It does not compile all platforms on every ordinary test invocation.
 Only the Linux host artifact is exercised by this proof. The other three target
 rows retain their configured contract but have not been built or run here.
+
+## Linux CI artifact handoff
+
+The daemon leg of root `product-tests` restores the canonical `build` job's
+workspace outputs, completes the declared daemon suite, then builds the actual
+Linux x64 entrypoint once. It records and checks `native/ci-artifact.json` before
+uploading a tar archive of the executable, ordinary Bun runtime, runtime license
+and provenance, and sqlite-vec library. The manifest binds the exact checkout
+commit/tree and PR head (or main commit), plus each payload's SHA-256, byte size
+and mode. A dirty tracked source tree cannot be recorded as that commit.
+
+The separate `daemon-native` job uses the established `ubuntu-22.04` containment
+runner and probes real unprivileged namespaces, without relaxing host security
+or running the verifier as root. It requires a successful producer, restores the
+canonical workspace output and daemon archive, and checks their daemon manifest
+against its exact checkout before running the existing `verify:binary`. Missing
+files, source mismatch, tampering and mode loss fail before native execution.
+The consumer never rebuilds. Behavioral tests exercise tar restoration and
+negative payload/source cases; workflow checks preserve this ordering and the
+single build. A missing or skipped producer cannot produce a green consumer.
+
+The existing auto-release dependency graph now also requires this consumer;
+its trigger, `RELEASE_ARMED` condition and publication policy are unchanged.
+This adds private CI qualification only. It does not enable tags, registry
+publication, hosted sessions, a default serve composition or real-account sends.
+The serve/service refusals and synthetic loopback send remain part of the
+unchanged isolated verifier. Linux CI wiring is not evidence of a completed
+hosted CI run until the corresponding exact commit's checks have succeeded.
 
 ## Pinned source accounting and limits
 
