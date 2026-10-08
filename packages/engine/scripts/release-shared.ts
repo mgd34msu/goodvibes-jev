@@ -99,7 +99,7 @@ function assertAllowedPublishRegistry(registry: string): void {
     return;
   }
   throw new Error(
-    `Unsupported publish registry host: ${hostname}. Publish overrides are limited to npmjs.org or local Verdaccio dry-runs.`,
+    `Unsupported publish registry host: ${hostname}. Publish overrides are limited to npmjs.org or loopback test registries.`,
   );
 }
 
