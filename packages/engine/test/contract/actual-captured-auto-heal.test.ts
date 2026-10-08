@@ -297,7 +297,9 @@ async function fixture(mode: Mode, outcome: Outcome) {
             role: record.contractRole, status: record.status, error: record.error, progress: record.progress,
           })) }));
       }
-      await runner.join(id!);
+      // Awaiting-owner is an intentional pause, not a terminal worker join.
+      // The fixture's finally still cancels and joins before restoring owners.
+      if (runner.get(id!)!.status !== 'awaiting-owner') await runner.join(id!);
       return runner.get(id!)!;
     },
     async dispose() {
