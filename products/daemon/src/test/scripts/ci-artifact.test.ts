@@ -110,7 +110,7 @@ test('CI builds once after canonical restore, verifies before execution and gate
   const root = resolve(import.meta.dir, '../../../../..');
   interface Step { name: string; run?: string; if?: string; uses?: string; env?: Record<string, string>; with?: Record<string, unknown>; 'continue-on-error'?: boolean }
   const { jobs } = Bun.YAML.parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')) as {
-    jobs: Record<string, { steps: Step[]; needs?: string[]; if?: string }>;
+    jobs: Record<string, { steps: Step[]; needs?: string[]; if?: string; 'runs-on'?: string }>;
   };
   const steps = jobs['product-tests']!.steps;
   const restore = steps.findIndex(step => step.name === 'Restore workspace package output');
@@ -133,6 +133,13 @@ test('CI builds once after canonical restore, verifies before execution and gate
   expect(upload.with).toEqual({ name: 'daemon-native-linux-x64', path: '/tmp/daemon-native-linux-x64.tgz', 'retention-days': 7, 'if-no-files-found': 'error' });
   const consumer = jobs['daemon-native']!;
   expect(consumer.needs).toEqual(['build', 'product-tests']);
+  expect(consumer['runs-on']).toBe('ubuntu-22.04');
+  const isolation = consumer.steps.find(step => step.name === 'Install filesystem isolation harness')!;
+  expect(isolation.run).toContain('--unshare-user --unshare-pid --unshare-ipc --unshare-uts');
+  expect(isolation.run).toContain('--ro-bind / / --proc /proc --dev /dev -- /bin/true');
+  expect(isolation.run?.trim().split('\n').at(-1)).toBe('verify_host');
+  expect(isolation.run).not.toMatch(/sysctl|apparmor|sudo[^\n]*bwrap|\|\| true/);
+
   expect(consumer.if).toBe('always()');
   expect(consumer.steps[0]!.env).toEqual({ BUILD_RESULT: '${{ needs.build.result }}', PRODUCT_RESULT: '${{ needs.product-tests.result }}' });
   expect(consumer.steps[0]!.run).toBe('test "$BUILD_RESULT" = success && test "$PRODUCT_RESULT" = success');

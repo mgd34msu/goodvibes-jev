@@ -348,7 +348,8 @@ jobs:
 
   daemon-native:
     name: Daemon native artifact (isolated Linux)
-    runs-on: ubuntu-latest
+    # Match the existing live containment lanes: no host security relaxation.
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     needs: [build, product-tests]
     if: always()
@@ -368,13 +369,20 @@ jobs:
         uses: ./.github/actions/setup
       - name: Install filesystem isolation harness
         run: |
-          if command -v bwrap >/dev/null 2>&1 && timeout --signal=KILL 10s bwrap --version; then
+          verify_host() {
+            timeout --signal=KILL 10s bwrap --die-with-parent --new-session \
+              --unshare-user --unshare-pid --unshare-ipc --unshare-uts \
+              --ro-bind / / --proc /proc --dev /dev -- /bin/true
+          }
+          if verify_host; then
             exit 0
           fi
           apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
-          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" --error-on=any update
-          sudo -n timeout --signal=KILL 120s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap
-          timeout --signal=KILL 10s bwrap --version
+          if ! sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap; then
+            sudo -n timeout --signal=KILL 60s apt-get "${apt_options[@]}" --error-on=any update
+            sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap
+          fi
+          verify_host
       - name: Download workspace package output
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

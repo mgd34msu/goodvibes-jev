@@ -81,7 +81,9 @@ and provenance, and sqlite-vec library. The manifest binds the exact checkout
 commit/tree and PR head (or main commit), plus each payload's SHA-256, byte size
 and mode. A dirty tracked source tree cannot be recorded as that commit.
 
-The separate `daemon-native` job requires a successful producer, restores the
+The separate `daemon-native` job uses the established `ubuntu-22.04` containment
+runner and probes real unprivileged namespaces, without relaxing host security
+or running the verifier as root. It requires a successful producer, restores the
 canonical workspace output and daemon archive, and checks their daemon manifest
 against its exact checkout before running the existing `verify:binary`. Missing
 files, source mismatch, tampering and mode loss fail before native execution.
