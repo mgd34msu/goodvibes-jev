@@ -13,7 +13,7 @@
  *     retries (timer, focus-in, resize, input) and accepts late replies.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { installBackgroundThemeProbe, OSC11_QUERY } from '../../renderer/terminal-bg-probe.ts';
 import { PALETTE_QUERIES, sweepPaletteReplies } from '../../renderer/terminal-palette-probe.ts';
 import { TerminalPaletteReader } from '../../renderer/terminal-palette-reader.ts';
@@ -43,6 +43,38 @@ function tmuxReplies(background = 'rgb:1a1a/1b1b/2626'): string {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Own only the synchronous fixture's timers; never yield with globals replaced. */
+function withTimers(run: (advance: (ms: number) => void, pending: () => number) => void): void {
+  let now = 0;
+  const timers = new Map<ReturnType<typeof setTimeout>, { at: number; run: () => void }>();
+  const setTimer = spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: unknown[]) => void, delay = 0, ...args: unknown[]) => {
+    const handle = { unref() {} } as unknown as ReturnType<typeof setTimeout>;
+    timers.set(handle, { at: now + delay, run: () => callback(...args) });
+    return handle;
+  }) as typeof setTimeout);
+  const clearTimer = spyOn(globalThis, 'clearTimeout').mockImplementation((handle) => {
+    timers.delete(handle as ReturnType<typeof setTimeout>);
+  });
+  try {
+    run((ms) => {
+      const target = now + ms;
+      for (;;) {
+        const next = [...timers].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [handle, timer] = next;
+        now = timer.at;
+        timers.delete(handle);
+        timer.run();
+      }
+      now = target;
+    }, () => timers.size);
+  } finally {
+    timers.clear();
+    clearTimer.mockRestore();
+    setTimer.mockRestore();
+  }
+}
+
 function config(values: Record<string, unknown>): Pick<ConfigManager, 'get'> {
   return { get: ((key: string) => values[key]) as unknown as ConfigManager['get'] };
 }
@@ -55,7 +87,7 @@ interface Harness {
   readonly filter: (chunk: string) => string;
 }
 
-/** installBackgroundThemeProbe with the system theme, fast windows and a manual clock. */
+/** installBackgroundThemeProbe with the system theme and fast collection windows. */
 function install(values: Record<string, unknown>, retry: { retryDelayMs?: number; maxRounds?: number } = {}): Harness {
   const h: Harness = { writes: [], forwarded: [], repaints: 0, resize: () => {}, filter: (c) => c };
   // The startup seam (startup-theme-probe.ts) applies the configured theme first.
@@ -104,17 +136,40 @@ describe('system theme under tmux with no client attached at startup', () => {
     expect(h.writes).toEqual([BATCH, BATCH]);
   });
 
-  test('a timed retry after the first frame asks again without any input', async () => {
-    const h = install({ 'display.themeMode': 'dark' }, { retryDelayMs: 20 });
-    await wait(90);
-    expect(h.writes.length).toBeGreaterThanOrEqual(2);
-    expect(h.writes.every((w) => w === BATCH)).toBe(true);
+  test('a timed retry after the first frame asks again without any input', () => {
+    withTimers((advance, pending) => {
+      const h = install({ 'display.themeMode': 'dark' }, { retryDelayMs: 20 });
+      expect(h.writes).toEqual([BATCH]);
+      advance(15); // startup collection window closes before the retry delay starts
+      advance(19);
+      expect(h.writes).toEqual([BATCH]);
+      advance(1);
+      expect(h.writes).toEqual([BATCH, BATCH]);
+      expect(h.filter(tmuxReplies())).toBe('');
+      expect(pending()).toBe(0); // the complete reply cancels the collection timeout
+      advance(200);
+      expect(h.writes).toEqual([BATCH, BATCH]);
+    });
   });
 
-  test('rounds stop at the cap on a terminal that never answers', async () => {
-    const h = install({ 'display.themeMode': 'dark' }, { retryDelayMs: 5, maxRounds: 3 });
-    await wait(200);
-    expect(h.writes).toHaveLength(3);
+  test('rounds stop at the cap on a terminal that never answers', () => {
+    withTimers((advance, pending) => {
+      const h = install({ 'display.themeMode': 'dark' }, { retryDelayMs: 5, maxRounds: 3 });
+      expect(h.writes).toEqual([BATCH]);
+      for (let round = 1; round <= 3; round++) {
+        advance(15); // an unanswered round closes, then schedules its timed retry
+        advance(4);
+        expect(h.writes).toHaveLength(round);
+        advance(1);
+        expect(h.writes).toHaveLength(Math.min(round + 1, 3));
+      }
+      expect(pending()).toBe(0);
+      h.resize();
+      expect(h.filter('\x1b[I')).toBe('\x1b[I');
+      advance(200);
+      expect(h.writes).toEqual([BATCH, BATCH, BATCH]);
+      expect(pending()).toBe(0);
+    });
   });
 
   test('once the palette is in, nothing asks again', () => {
