@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { runOwnedTestChild } from '../scripts/owned-test-child.ts';
+import { RUNNER_ENV_FLAG } from '../scripts/test-run-tmp.ts';
 
 const root = resolve(import.meta.dir, '../../..');
 interface Step {
@@ -91,5 +93,38 @@ test('unknown containment lane fails without invoking any runner', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(1);
     expect(existsSync(marker)).toBe(false);
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+});
+
+
+test('required containment flag reaches the actual Agent child after isolation and preload', async () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'ci-agent-posture-environment-'));
+  const fixture = join(scratch, 'required-environment.test.ts');
+  const marker = join(scratch, 'proved');
+  writeFileSync(fixture, `
+    import { expect, test } from 'bun:test';
+    import { writeFileSync } from 'node:fs';
+    test('the required Agent fixture receives its actual environment', () => {
+      expect(process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT).toBe('1');
+      expect(process.env[${JSON.stringify(RUNNER_ENV_FLAG)}]).toBe('1');
+      expect(process.cwd()).toBe(${JSON.stringify(join(root, 'products/agent'))});
+      expect(process.env.TMPDIR).toContain('gv-agent-test-run-');
+      expect(process.env.GOODVIBES_DAEMON_HOME).toContain('goodvibes-agent-test-daemon-home-');
+      expect(process.env.TZ).toBe('UTC');
+      writeFileSync(${JSON.stringify(marker)}, 'required Agent preload observed');
+    });
+  `);
+  try {
+    // scripts/test.ts supplies these same arguments/environment to its owned
+    // child. Call that owner directly here to avoid taking its workspace lock
+    // recursively while this regression itself runs under scripts/test.ts.
+    const result = await runOwnedTestChild({
+      argv: ['--cwd', '../../products/agent', fixture],
+      cwd: join(root, 'packages/engine'),
+      env: { ...process.env, ...execution.env, [RUNNER_ENV_FLAG]: '1' },
+      ceilingMs: 10_000,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(marker, 'utf8')).toBe('required Agent preload observed');
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 });

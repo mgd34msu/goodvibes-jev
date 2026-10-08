@@ -78,6 +78,7 @@ async function runCommand(registry: ToolRegistry, cmd: string): Promise<{
   success: boolean;
   stdout: string;
   stderr: string;
+  sandbox: Record<string, unknown>;
 }> {
   const result = await registry.execute(`owner-terminal-${cmd.slice(0, 12)}`, 'exec', {
     commands: [{ cmd }],
@@ -85,9 +86,20 @@ async function runCommand(registry: ToolRegistry, cmd: string): Promise<{
   const output = JSON.parse(String(result.output ?? '{}')) as Record<string, unknown>;
   return {
     success: result.success,
+    sandbox: output,
     stdout: String(output['stdout'] ?? ''),
     stderr: `${String(output['stderr'] ?? '')}${String(result.error ?? '')}`,
   };
+}
+
+/** Required CI must observe the ordinary Agent boundary, never a host fallback. */
+function expectRequiredOrdinarySandbox(output: Record<string, unknown>): void {
+  const required = process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT;
+  if (required === undefined) return;
+  expect(required).toBe('1');
+  expect(output).toMatchObject({ sandboxed: true, sandbox_network: 'disabled' });
+  expect(output['sandbox_boundary']).toStartWith('bubblewrap: workspace ');
+  expect(output['captured_exec_availability']).toBeUndefined();
 }
 
 describe('a local agent turn and the owner\'s tmux', () => {
@@ -127,6 +139,7 @@ describe('a local agent turn and the owner\'s tmux', () => {
     expect(outcome.success, outcome.stderr).toBe(true);
     expect(readFileSync(marker, 'utf8')).toBe('probe-ran');
     expect(outcome.stdout).toContain('probe-ran');
+    expectRequiredOrdinarySandbox(outcome.sandbox);
   });
 
   test('driving the platform\'s OWN session stays allowed', async () => {
@@ -140,5 +153,6 @@ describe('a local agent turn and the owner\'s tmux', () => {
     expect(outcome.success, outcome.stderr).toBe(true);
     expect(readFileSync(marker, 'utf8')).toBe('probe-ran');
     expect(outcome.stdout).toContain('probe-ran');
+    expectRequiredOrdinarySandbox(outcome.sandbox);
   });
 });
