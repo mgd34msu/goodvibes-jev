@@ -7,7 +7,15 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 
 const receipts: MemoryConsolidationReceiptsResult = {
-  receipts: [],
+  receipts: [{
+    runId: 'fixture-run-1', ranAt: '2026-10-08T05:00:00.000Z', trigger: 'scheduled',
+    idle: false, scanned: 5,
+    merged: [{ ids: ['c', 'd'], retainedId: 'c' }],
+    archived: [{ id: 'e', reason: 'Expired fact.' }],
+    decayed: [{ id: 'a', previousConfidence: 80, confidence: 60 }],
+    proposed: [{ kind: 'contradiction', ids: ['a', 'b'], route: '/recall review', reason: 'Conflicting claims.' }],
+    usageSignalAvailable: true, note: 'Fixture retained run receipt.',
+  }],
   pendingProposals: [
     { kind: 'contradiction', ids: ['a', 'b'], route: '/recall review', reason: 'Conflicting claims.' },
     { kind: 'cross-scope-duplicate', ids: ['c', 'd'], route: '/recall review', reason: 'Shared fact.' },
@@ -21,7 +29,7 @@ describe('canonical memory consolidation receipt seam', () => {
       .toEqual({ available: false, reason: 'daemon disabled' });
   });
 
-  test('uses the typed receipt HTTP route lazily and preserves all proposals', async () => {
+  test('uses the typed receipt HTTP route lazily and preserves a retained run and all proposals', async () => {
     const requests: Array<{ url: string; method: string }> = [];
     const sdk = createGoodVibesSdk({ baseUrl: 'https://fixture.invalid', fetch: async (input, init) => {
       requests.push({ url: String(input), method: init?.method ?? 'GET' });

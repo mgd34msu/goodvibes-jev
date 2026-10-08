@@ -31,7 +31,7 @@ Repository test-runner commands:
 - `bun packages/engine/scripts/test.ts test/memory-consolidation-gateway.test.ts`
   passed 12 tests and 19 assertions.
 - `bun packages/engine/scripts/test.ts --cwd ../../products/tui src/test/views/memory-consolidation-gateway.test.ts src/test/views/modals/memory-modal.test.ts`
-  passed 31 tests and 104 assertions.
+  passed 31 tests and 109 assertions.
 - TUI `tsconfig.json` and `tsconfig.test.json` no-emit typechecks passed with zero
   diagnostics, serialized under the shared compiler lock at a 4096 MiB heap.
 - A focused engine-test no-emit typecheck, including the SDK ambient declarations,
@@ -40,14 +40,28 @@ Repository test-runner commands:
 - Independent review reran all 43 tests and found no correctness blocker against
   the bounded original HOIST requirement.
 
-The engine tests use the real SDK's typed route and response validation, check
+The engine tests use the real SDK's typed route and response validation, preserve
+a nonempty retained run receipt (including merged/archived/decayed metadata), check
 all three proposal kinds, preserve injected error descriptions, and distinguish
 SDK 404/501 from 401/403/500, network errors, and status-shaped ordinary objects.
 The product integration exercises synthetic loopback HTTP through the production
-adapter into the actual Memory modal: disabled then enabled on refresh, populated
-receipts, 404 unavailable, 401 error, then genuinely empty proposals. Existing modal
+adapter into the actual Memory modal: disabled then enabled on refresh, an actual
+nonempty retained receipt and pending proposal payload, 404 unavailable, 401 error,
+then genuinely empty pending proposals while the historical receipt remains.
+An observing wrapper records the unmodified real gateway result delivered to the
+modal and asserts the entire receipt/proposal payload. The modal renders the
+current pending proposal's reason and record ID; it does not render receipt history.
+A retained receipt's historical `proposed` entries must not repopulate the empty
+current proposal list. Existing modal
 fixtures preserve 501 behavior, proposal jump/correlation, compact rendering, and
 obsolete/closed fetch protections. No live account or production credential is used.
+
+### Receipt coverage correction
+
+The first local qualification at `220aad85` populated pending proposals but left
+receipt arrays empty. Its phrase "populated receipts" overstated the fixture
+coverage. The follow-up adds the nonempty receipt checks described above and
+separates gateway receipt preservation from the modal's proposal rendering.
 
 ## Exact current accounting delta and limits
 

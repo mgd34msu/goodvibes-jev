@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { createMemoryConsolidationGateway } from '../../views/memory-consolidation-gateway.ts';
+import { createMemoryConsolidationGateway, type MemoryConsolidationReceiptsResult } from '../../views/memory-consolidation-gateway.ts';
 import { createMemoryModalSurface } from '../../views/modals/memory-modal.ts';
 import { tabText } from './modals/modal-surface-test-helpers.ts';
 
@@ -12,11 +12,19 @@ test('the product gateway drives the real modal over HTTP and re-resolves after 
   const requests: string[] = [];
   let enabled = false;
   let status = 200;
-  let pendingProposals = [{ kind: 'stale-delete', ids: ['fixture-memory'], route: '/recall review', reason: 'Fixture retention expired.' }];
+  let pendingProposals: MemoryConsolidationReceiptsResult['pendingProposals'] = [{ kind: 'stale-delete', ids: ['fixture-memory'], route: '/recall review', reason: 'Fixture retention expired.' }];
+  const retainedReceipts: MemoryConsolidationReceiptsResult['receipts'] = [{
+    runId: 'fixture-retained-run', ranAt: '2026-10-08T05:00:00.000Z', trigger: 'scheduled',
+    idle: false, scanned: 3,
+    merged: [{ ids: ['fixture-a', 'fixture-b'], retainedId: 'fixture-a' }],
+    archived: [], decayed: [{ id: 'fixture-memory', confidence: 20 }],
+    proposed: pendingProposals, usageSignalAvailable: true, note: 'Retained historical receipt.',
+  }];
+  const delivered: MemoryConsolidationReceiptsResult[] = [];
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
     requests.push(`${request.method} ${new URL(request.url).pathname}`);
     return status === 200
-      ? Response.json({ receipts: [], pendingProposals })
+      ? Response.json({ receipts: retainedReceipts, pendingProposals })
       : Response.json({ error: 'fixture refused' }, { status });
   } });
   const configManager = { get(key: string) {
@@ -29,7 +37,16 @@ test('the product gateway drives the real modal over HTTP and re-resolves after 
       honestSearch: async () => ({ records: [], mode: 'literal', requestedSemantic: false, indexUnavailableReason: null, caveat: null, recallFiltered: false, excludedFlaggedCount: 0, excludedBelowFloorCount: 0, excludedOutOfWindowCount: 0, totalBeforeRecallFilter: 0, recallFloor: 60 }),
       reviewQueue: async () => [],
     },
-    resolveConsolidationGateway: () => createMemoryConsolidationGateway({ configManager, homeDirectory }),
+    resolveConsolidationGateway: () => {
+      const resolution = createMemoryConsolidationGateway({ configManager, homeDirectory });
+      if (!resolution.available) return resolution;
+      return { available: true, gateway: { fetchReceipts: async () => {
+        // Observe, without replacing, the real gateway result delivered to the modal.
+        const result = await resolution.gateway.fetchReceipts();
+        delivered.push(result);
+        return result;
+      } } };
+    },
   });
   async function refreshUntil(text: string) {
     surface.onClose?.();
@@ -47,6 +64,8 @@ test('the product gateway drives the real modal over HTTP and re-resolves after 
     enabled = true;
     await refreshUntil('Fixture retention expired.');
     expect(requests).toEqual(['GET /api/memory/consolidation/receipts']);
+    expect(delivered).toEqual([{ receipts: retainedReceipts, pendingProposals }]);
+    expect(tabText(surface.buildView(), 'proposals')).toContain('fixture-memory');
     status = 404;
     await refreshUntil('unavailable');
     expect(tabText(surface.buildView(), 'proposals')).not.toContain('Fixture retention expired.');
@@ -57,6 +76,10 @@ test('the product gateway drives the real modal over HTTP and re-resolves after 
     status = 200;
     pendingProposals = [];
     await refreshUntil('No pending proposals');
+    // Retained historical proposals do not become current pending proposals.
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]).toEqual({ receipts: retainedReceipts, pendingProposals: [] });
+    expect(tabText(surface.buildView(), 'proposals')).not.toContain('Fixture retention expired.');
     expect(requests.every(request => request === 'GET /api/memory/consolidation/receipts')).toBe(true);
   } finally {
     surface.onClose?.();
