@@ -55,6 +55,7 @@ import {
   resolveEmailPassword,
   smtpPasswordRefFor,
   validateEmailConfig,
+  validateEmailInboxConfig,
 } from './email-config.js';
 
 // Re-exported so the service stays the one entry point callers already import.
@@ -325,6 +326,8 @@ export interface EmailServiceDeps {
   readonly replySubjectSourceOwner?: EmailReplySubjectSourceOwner | undefined;
   /** Untyped config getter, reads the `email.*` namespace. */
   readonly getConfig: (key: string) => unknown;
+  /** Optional canonical read-only inbox projection; absent preserves generic email.enabled. */
+  readonly getInboxConfig?: ((key: string) => unknown) | undefined;
   /** SecretsManager-compatible interface for resolving secret refs. */
   readonly secretsManager: {
     readonly get: (key: string) => Promise<string | null>;
@@ -407,7 +410,16 @@ export class EmailService {
   /** Returns a redacted status summary, never includes secret values. */
   getStatus(): { config: EmailConfig; errors: string[]; ready: boolean } {
     const config = readEmailConfig(this.deps.getConfig);
-    const errors = validateEmailConfig(config);
+    return this.redactedStatus(config, validateEmailConfig(config));
+  }
+
+  /** Read-only readiness; does not enable sends or change ordinary mail status. */
+  getInboxReadStatus(): { config: EmailConfig; errors: string[]; ready: boolean } {
+    const config = readEmailConfig(this.deps.getInboxConfig ?? this.deps.getConfig);
+    return this.redactedStatus(config, validateEmailInboxConfig(config));
+  }
+
+  private redactedStatus(config: EmailConfig, errors: string[]): { config: EmailConfig; errors: string[]; ready: boolean } {
     return {
       config: {
         ...config,
@@ -471,7 +483,7 @@ export class EmailService {
     if (input.signal?.aborted) throw new Error('Mail read was cancelled.');
     const owner = this.deps.replySubjectSourceOwner;
     if (!owner) throw new Error('Mail snapshot requires an owned account lifetime.');
-    const config = this.getValidatedConfig();
+    const config = this.getValidatedInboxConfig();
     const sourceRead = owner.beginRead(config);
     const result = await readEmailInboxBatch(this.deps, config, sourceRead, input);
     const current = (): void => {
@@ -503,7 +515,7 @@ export class EmailService {
     if (signal?.aborted) throw new Error('Mail read was cancelled.');
     const owner = this.deps.replySubjectSourceOwner;
     if (!owner) throw new Error('Mail page requires an owned account lifetime.');
-    const config = this.getValidatedConfig();
+    const config = this.getValidatedInboxConfig();
     const sourceRead = owner.beginRead(config);
     const result = await readEmailInboxPage(this.deps, config, sourceRead, input);
     const current = (): void => {
@@ -737,6 +749,14 @@ export class EmailService {
   // -------------------------------------------------------------------------
   // Private
   // -------------------------------------------------------------------------
+
+  private getValidatedInboxConfig(): EmailConfig {
+    const config = readEmailConfig(this.deps.getInboxConfig ?? this.deps.getConfig);
+    if (!config.enabled) throw new Error('Email inbox reading is not enabled.');
+    const errors = validateEmailInboxConfig(config);
+    if (errors.length > 0) throw new Error(`Email inbox config is invalid:\n${errors.map(error => `  - ${error}`).join('\n')}`);
+    return config;
+  }
 
   private getValidatedConfig(): EmailConfig {
     const config = readEmailConfig(this.deps.getConfig);

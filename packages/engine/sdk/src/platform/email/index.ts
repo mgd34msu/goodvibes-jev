@@ -234,6 +234,7 @@ export {
   withSurfaceEmailConfig,
   describeSurfaceEmailConfigProblem,
   createSurfaceEmailConfigReader,
+  createSurfaceEmailInboxConfigReader,
   createSurfaceEmailSecretReader,
 } from './surface-config.js';
 

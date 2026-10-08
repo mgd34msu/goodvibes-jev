@@ -1,7 +1,7 @@
 /** Explicit single-account mail inbox; does not enable all-provider default serve. */
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createSurfaceEmailConfigReader } from '@goodvibes-jev/engine/sdk/platform/email';
+import { createSurfaceEmailInboxConfigReader } from '@goodvibes-jev/engine/sdk/platform/email';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import { createEmailInboxOwner, registerInboxSurface,
   type EmailInboxAccount, type InboxSurfaceRegistration } from '@goodvibes-jev/engine/sdk/platform/intake';
@@ -24,7 +24,7 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
     // The canonical daemon mailbox has no separate enable switch. Its shared
     // reader derives readiness from configured endpoint/account fields.
     const config: { get(key: string): unknown } = context.configManager;
-    const mailConfig = createSurfaceEmailConfigReader(key => config.get(key));
+    const mailConfig = createSurfaceEmailInboxConfigReader(key => config.get(key));
     const current = (): void => {
       if (context.configManager.get('cluster.enabled') !== false
         || mailConfig('email.enabled') !== true) throw new Error('Email inbox requires enabled single-node mode');

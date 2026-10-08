@@ -20,7 +20,12 @@ A trusted launcher supplies exact expected TLS host/port, username and mailbox,
 plus the real protected local-service identity/retention authority. Canonical
 configuration must already provide the mailbox endpoint/account and disable
 clustering. The existing canonical reader derives mailbox readiness; no separate
-email-enable switch is introduced. The root passes
+email-enable switch is introduced. The owned inbox uses a canonical read-only
+projection and validates only IMAP endpoint/account/reference prerequisites, so
+legacy IMAP-only configurations do not require or fabricate SMTP settings.
+Generic explicit `email.enabled=false` remains authoritative; ordinary mail
+status, listing, message reads and sends retain their prior full validation.
+Only the new owned batch/page APIs use read-only readiness. The root passes
 a narrow `createEmailService` capability into explicit inbox controls. That
 capability composes the existing `composeMailDeps` over actual config/secret
 managers and owns its lifecycle subscriptions. It exposes a service and close,

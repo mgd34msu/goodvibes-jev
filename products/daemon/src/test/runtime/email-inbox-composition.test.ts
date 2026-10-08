@@ -90,6 +90,10 @@ function remote() {
   let holdGreeting = false;
   const changes = new Set<(key: string) => void>();
   const sockets: MailSocket[] = [], sourceParts: string[][] = [], paths: string[] = [];
+  const services: EmailService[] = [], transportCalls: string[] = [];
+  const refuseTransport = (name: string) => async (): Promise<never> => {
+    transportCalls.push(name); throw new Error(`Unexpected native mail transport: ${name}`);
+  };
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     const path = new URL(request.url).pathname; paths.push(path);
     const data = await request.json() as { messages?: { content: string }[] };
@@ -107,7 +111,7 @@ function remote() {
     proposal: { endpoint: `http://127.0.0.1:${server.port}`, model: 'synthetic-proposer' },
     judgment: { endpoint: `http://127.0.0.1:${server.port}`, model: 'jev-1.13.0' }, timeoutMs: 5_000,
   };
-  return { screening, sockets, sourceParts, paths, changes,
+  return { screening, sockets, sourceParts, paths, changes, services, transportCalls,
     get secretReads() { return secretReads; }, get constructors() { return constructors; },
     createMail(configManager: ConfigManager): ReturnType<NonNullable<DaemonInboxControls['createEmailService']>> {
       constructors++; const disposers: Array<() => void> = []; let closed = false;
@@ -116,11 +120,16 @@ function remote() {
           onDidChange(listener) { changes.add(listener); return () => { changes.delete(listener); }; } },
         registerDispose(dispose) { disposers.push(dispose); },
       });
-      return { service: new EmailService({ ...emailServiceDeps, async imapSocketFactory(host, port) {
-        expect(host).toBe(configManager.get('surfaces.email.host')); expect(port).toBe(account.port);
+      const service = new EmailService({ ...emailServiceDeps, transport: {
+        connectImapTls: refuseTransport('imap-tls'), connectImapPlain: refuseTransport('imap-plain'),
+        connectSmtpTls: refuseTransport('smtp-tls'), connectSmtpStartTls: refuseTransport('smtp-starttls'),
+      }, async imapSocketFactory(host, port) {
+        expect(host).toBe(configManager.get('surfaces.email.host') || configManager.get('surfaces.email.imapHost')); expect(port).toBe(account.port);
         const socket = new MailSocket({ validity, uids: [...uids], ...(holdGreeting ? { hold: 'greeting' } : {}), closeGate: transportGate }, malformed);
         sockets.push(socket); setImmediate(() => socket.greet()); return socket as unknown as Socket;
-      } }), close() { if (closed) return; closed = true; for (const dispose of disposers.reverse()) dispose(); } };
+      } });
+      services.push(service);
+      return { service, close() { if (closed) return; closed = true; for (const dispose of disposers.reverse()) dispose(); } };
     },
     setMailbox(nextValidity: number, nextUids: number[]) { validity = nextValidity; uids = nextUids; },
     setMalformed(value?: 'search' | 'body' | 'unsupported') { malformed = value; },
@@ -131,15 +140,18 @@ function remote() {
   };
 }
 
-function fixture(provider = remote(), settings: { root?: string; account?: EmailInboxAccount; holdGate?: boolean } = {}) {
+function fixture(provider = remote(), settings: { root?: string; account?: EmailInboxAccount; holdGate?: boolean; imapOnly?: boolean } = {}) {
   const root = settings.root ?? makeOwnedTempDir('email-daemon-composition');
   const homeDirectory = join(root, 'home'), workingDir = join(root, 'workspace'), configDir = join(homeDirectory, '.goodvibes', 'daemon');
   mkdirSync(configDir, { recursive: true }); mkdirSync(workingDir, { recursive: true });
   const expected = settings.account ?? account;
   const configManager = new ConfigManager({ surfaceRoot: 'tui', configDir, workingDir, homeDir: homeDirectory });
   configManager.set('cluster.enabled', false); configManager.set('relay.enabled', false);
-  configManager.set('surfaces.email.host', expected.host);
-  configManager.set('surfaces.email.user', expected.username);
+  if (settings.imapOnly) {
+    configManager.set('surfaces.email.imapHost', expected.host); configManager.set('surfaces.email.imapUser', expected.username);
+  } else {
+    configManager.set('surfaces.email.host', expected.host); configManager.set('surfaces.email.user', expected.username);
+  }
   // Config mutations are driven explicitly; avoid a delayed file-watch echo of boot's migration.
   keep(spyOn(configManager, 'watchConfigFiles').mockImplementation(() => () => {}));
   const featureFlags = createFeatureFlagManager(); featureFlags.loadFromConfig({ flags: deriveFeatureStates(configManager) });
@@ -238,6 +250,24 @@ test('cold owned composition explicitly seeds before content; authenticated HTTP
   for (const raw of [sensitive, sender, account.username, account.host, 'synthetic-mail-secret', html]) expect(bytes).not.toContain(raw);
   for (const item of stored(f.storePath).items) expect(item.id).toMatch(/^email:[a-f0-9]{64}:0000000007:000000004[23]$/);
   expect(JSON.stringify(inbox)).not.toContain(sender); expect(f.provider.sockets.every(socket => socket.closed)).toBe(true);
+});
+
+test('legacy flat IMAP-only configuration seeds and serves redacted rows without enabling SMTP sends', async () => {
+  const f = fixture(undefined, { imapOnly: true }); await f.host.start();
+  const service = f.provider.services[0]!;
+  expect(service.getInboxReadStatus()).toMatchObject({ ready: true, errors: [], config: { enabled: true, imapHost: account.host, username: account.username, smtpHost: '' } });
+  expect(service.getStatus()).toMatchObject({ ready: false, config: { enabled: false, smtpHost: '' } });
+  expect(service.getStatus().errors).toContain('email.smtpHost is required');
+  expect(f.configManager.get('surfaces.email.host')).toBeFalsy(); expect(f.configManager.get('surfaces.email.user')).toBeFalsy();
+  expect(stored(f.storePath)).toMatchObject({ items: [], checkpoint: { uidValidity: 7, lastTerminalUid: null } });
+  expect(f.provider.sourceParts).toEqual([]);
+  expect(await f.inbox()).toMatchObject({ total: 0, providers: [{ state: 'pending' }] });
+  await f.poll(); const inbox = await f.inbox(); expect(inbox).toMatchObject({ total: 2, partial: false });
+  for (const item of inbox.items) expect(item).toMatchObject({ provider: 'email', subject: 'Review [redacted]', bodyPreview: redacted });
+  expect(stored(f.storePath).checkpoint?.lastTerminalUid).toBe(43);
+  const reads = f.provider.secretReads;
+  await expect(service.sendMail({ to: 'receiver@synthetic.invalid', subject: 'Synthetic refused send', body: 'Synthetic body', confirm: true })).rejects.toThrow('not enabled');
+  expect(service.getStatus().ready).toBe(false); expect(f.provider.secretReads).toBe(reads); expect(f.provider.transportCalls).toEqual([]);
 });
 
 test('durable UID checkpoint survives secret rotation and restart without repeating content or relying on Date headers', async () => {

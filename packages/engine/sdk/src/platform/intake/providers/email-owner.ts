@@ -80,7 +80,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
   const current = (): void => {
     if (closed || signal.aborted) throw new Error('Email inbox scope is unavailable');
     sync(assertScope);
-    const config = service.getStatus().config;
+    const config = service.getInboxReadStatus().config;
     if (!config.enabled || config.imapHost !== account.host || config.imapPort !== account.port
       || config.username !== account.username || (config.mailbox.trim() || 'INBOX') !== account.mailbox
       || (config.imapSecurity ?? 'tls') !== account.security) throw new Error('Email inbox account scope changed');
@@ -108,7 +108,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
       const operationSignal = AbortSignal.any([signal, ...(input.signal ? [input.signal] : [])]);
       commitObservation = undefined; pollSignal = operationSignal;
       const work = own(async (): Promise<ProviderPollResult> => {
-        if (!service.getStatus().ready) return unavailable(false);
+        if (!service.getInboxReadStatus().ready) return unavailable(false);
         const result = await service.readInboxPage({ checkpoint: input.checkpoint, limit: input.limit, signal: operationSignal });
         current(); if (operationSignal.aborted) return unavailable(true);
         if (result.outcome === 'incomplete') return unavailable(true);
