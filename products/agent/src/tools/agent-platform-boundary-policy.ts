@@ -40,6 +40,7 @@
 
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertAdmittedAgentRead, AGENT_READ_ADMISSION_DENIAL_MESSAGE } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 
 /**
  * A path segment naming a GoodVibes platform repository.
@@ -191,6 +192,15 @@ export function wrapToolForPlatformBoundary(
 ): void {
   const originalExecute = tool.execute.bind(tool);
   tool.execute = async (args, options) => {
+    // The READ path's exact subjects and original host source were read before
+    // the common admission. Preserve that scoped decision rather than asking
+    // the old name/prose heuristic again after its claim. Write/edit adoption
+    // remains separate and retains its current behavior below.
+    if (tool.definition.name === 'read') {
+      try { assertAdmittedAgentRead(args, options); }
+      catch { return { success: false, error: AGENT_READ_ADMISSION_DENIAL_MESSAGE }; }
+      return originalExecute(args, options);
+    }
     const denial = validatePlatformBoundaryForAgentPolicy({
       paths: readPathsFromToolArgs(args, listKey),
       lastUserMessage: getLastUserMessage(),

@@ -31,6 +31,8 @@ interface Authority {
   readonly root: string;
   readonly identity: string;
   readonly mutable: boolean;
+  /** Exact construction-selected generation membership; never a read grant. */
+  readonly inputFiles: readonly string[];
   readonly signal?: AbortSignal | undefined;
   readonly assertView: () => Promise<void>;
   revoked: boolean;
@@ -118,6 +120,7 @@ export async function createContractInputAuthority(
     root: view,
     identity: identity(stat),
     mutable: options.mutable === true,
+    inputFiles: Object.freeze(snapshot.files.filter(file => file.kind === 'file').map(file => file.path)),
     assertView,
     signal: options.signal,
     revoked: false,
@@ -215,6 +218,12 @@ export function contractInputAuthoritySourceRoot(token: ContractInputAuthority):
 }
 export function contractInputAuthorityMutable(token: ContractInputAuthority): boolean {
   return stateOf(token).mutable;
+}
+
+/** Immutable consumers may discover only the selected receipt's files. Mutable members enumerate their own authorized current files. */
+export function contractInputAuthorityFiles(token: ContractInputAuthority): readonly string[] | undefined {
+  const state = stateOf(token);
+  return state.mutable ? undefined : state.inputFiles;
 }
 
 /** Reject aliases and excluded runtime paths before any backend opens bytes. */

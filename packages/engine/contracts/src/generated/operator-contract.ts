@@ -129780,6 +129780,312 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     }
                   ]
                 },
+                "integration": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "live"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "isolation": {
+                          "type": "string",
+                          "enum": [
+                            "worktree"
+                          ]
+                        },
+                        "units": {
+                          "maxItems": 256,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "unitId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "groupId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptOf": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unitStatus": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "blocked",
+                                  "running",
+                                  "checking",
+                                  "held",
+                                  "nudged",
+                                  "fixing",
+                                  "awaiting-owner",
+                                  "held-merge",
+                                  "passed",
+                                  "failed",
+                                  "cancelled"
+                                ]
+                              },
+                              "latestCheck": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "at": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "trigger": {
+                                        "type": "string",
+                                        "enum": [
+                                          "turn-end",
+                                          "completion",
+                                          "agent-failed",
+                                          "fix-passed",
+                                          "resume",
+                                          "owner-amend"
+                                        ]
+                                      },
+                                      "result": {
+                                        "type": "string",
+                                        "enum": [
+                                          "pass",
+                                          "nudge",
+                                          "await-owner",
+                                          "native-decision",
+                                          "stall",
+                                          "recorded"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "at",
+                                      "trigger",
+                                      "result"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "item": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "recorded"
+                                        ]
+                                      },
+                                      "itemId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "workstreamId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "integration": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unrecorded",
+                                          "pending",
+                                          "merged",
+                                          "conflict"
+                                        ]
+                                      },
+                                      "mergeHash": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "worktreePath": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeBranch": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeKept": {
+                                        "type": "boolean"
+                                      },
+                                      "conflictFiles": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "maxLength": 12288
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "itemId",
+                                      "workstreamId",
+                                      "integration"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unavailable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "missing-item",
+                                          "invalid-join"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "not-applicable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "best-of-n-plan"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "unitId",
+                              "groupId",
+                              "unitStatus",
+                              "latestCheck",
+                              "item"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "isolation",
+                        "units"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "not-live",
+                            "no-engine",
+                            "no-receipt",
+                            "stale-attempt",
+                            "recovery-required",
+                            "unsupported-runner",
+                            "invalid-data",
+                            "limit"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "not-applicable"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "session-mode",
+                            "shared-isolation"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
                 "settlement": {
                   "type": "object",
                   "properties": {
@@ -130406,6 +130712,312 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     },
                     {
                       "type": "null"
+                    }
+                  ]
+                },
+                "integration": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "live"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "isolation": {
+                          "type": "string",
+                          "enum": [
+                            "worktree"
+                          ]
+                        },
+                        "units": {
+                          "maxItems": 256,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "unitId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "groupId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptOf": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unitStatus": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "blocked",
+                                  "running",
+                                  "checking",
+                                  "held",
+                                  "nudged",
+                                  "fixing",
+                                  "awaiting-owner",
+                                  "held-merge",
+                                  "passed",
+                                  "failed",
+                                  "cancelled"
+                                ]
+                              },
+                              "latestCheck": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "at": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "trigger": {
+                                        "type": "string",
+                                        "enum": [
+                                          "turn-end",
+                                          "completion",
+                                          "agent-failed",
+                                          "fix-passed",
+                                          "resume",
+                                          "owner-amend"
+                                        ]
+                                      },
+                                      "result": {
+                                        "type": "string",
+                                        "enum": [
+                                          "pass",
+                                          "nudge",
+                                          "await-owner",
+                                          "native-decision",
+                                          "stall",
+                                          "recorded"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "at",
+                                      "trigger",
+                                      "result"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "item": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "recorded"
+                                        ]
+                                      },
+                                      "itemId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "workstreamId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "integration": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unrecorded",
+                                          "pending",
+                                          "merged",
+                                          "conflict"
+                                        ]
+                                      },
+                                      "mergeHash": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "worktreePath": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeBranch": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeKept": {
+                                        "type": "boolean"
+                                      },
+                                      "conflictFiles": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "maxLength": 12288
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "itemId",
+                                      "workstreamId",
+                                      "integration"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unavailable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "missing-item",
+                                          "invalid-join"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "not-applicable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "best-of-n-plan"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "unitId",
+                              "groupId",
+                              "unitStatus",
+                              "latestCheck",
+                              "item"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "isolation",
+                        "units"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "not-live",
+                            "no-engine",
+                            "no-receipt",
+                            "stale-attempt",
+                            "recovery-required",
+                            "unsupported-runner",
+                            "invalid-data",
+                            "limit"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "not-applicable"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "session-mode",
+                            "shared-isolation"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "reason"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 },
@@ -131038,6 +131650,312 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     }
                   ]
                 },
+                "integration": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "live"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "isolation": {
+                          "type": "string",
+                          "enum": [
+                            "worktree"
+                          ]
+                        },
+                        "units": {
+                          "maxItems": 256,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "unitId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "groupId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptOf": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unitStatus": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "blocked",
+                                  "running",
+                                  "checking",
+                                  "held",
+                                  "nudged",
+                                  "fixing",
+                                  "awaiting-owner",
+                                  "held-merge",
+                                  "passed",
+                                  "failed",
+                                  "cancelled"
+                                ]
+                              },
+                              "latestCheck": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "at": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "trigger": {
+                                        "type": "string",
+                                        "enum": [
+                                          "turn-end",
+                                          "completion",
+                                          "agent-failed",
+                                          "fix-passed",
+                                          "resume",
+                                          "owner-amend"
+                                        ]
+                                      },
+                                      "result": {
+                                        "type": "string",
+                                        "enum": [
+                                          "pass",
+                                          "nudge",
+                                          "await-owner",
+                                          "native-decision",
+                                          "stall",
+                                          "recorded"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "at",
+                                      "trigger",
+                                      "result"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "item": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "recorded"
+                                        ]
+                                      },
+                                      "itemId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "workstreamId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "integration": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unrecorded",
+                                          "pending",
+                                          "merged",
+                                          "conflict"
+                                        ]
+                                      },
+                                      "mergeHash": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "worktreePath": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeBranch": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeKept": {
+                                        "type": "boolean"
+                                      },
+                                      "conflictFiles": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "maxLength": 12288
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "itemId",
+                                      "workstreamId",
+                                      "integration"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unavailable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "missing-item",
+                                          "invalid-join"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "not-applicable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "best-of-n-plan"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "unitId",
+                              "groupId",
+                              "unitStatus",
+                              "latestCheck",
+                              "item"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "isolation",
+                        "units"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "not-live",
+                            "no-engine",
+                            "no-receipt",
+                            "stale-attempt",
+                            "recovery-required",
+                            "unsupported-runner",
+                            "invalid-data",
+                            "limit"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "not-applicable"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "session-mode",
+                            "shared-isolation"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
                 "settlement": {
                   "type": "object",
                   "properties": {
@@ -131664,6 +132582,312 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     },
                     {
                       "type": "null"
+                    }
+                  ]
+                },
+                "integration": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "live"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "isolation": {
+                          "type": "string",
+                          "enum": [
+                            "worktree"
+                          ]
+                        },
+                        "units": {
+                          "maxItems": 256,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "unitId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "groupId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptOf": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "attemptIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unitStatus": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "blocked",
+                                  "running",
+                                  "checking",
+                                  "held",
+                                  "nudged",
+                                  "fixing",
+                                  "awaiting-owner",
+                                  "held-merge",
+                                  "passed",
+                                  "failed",
+                                  "cancelled"
+                                ]
+                              },
+                              "latestCheck": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "at": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "trigger": {
+                                        "type": "string",
+                                        "enum": [
+                                          "turn-end",
+                                          "completion",
+                                          "agent-failed",
+                                          "fix-passed",
+                                          "resume",
+                                          "owner-amend"
+                                        ]
+                                      },
+                                      "result": {
+                                        "type": "string",
+                                        "enum": [
+                                          "pass",
+                                          "nudge",
+                                          "await-owner",
+                                          "native-decision",
+                                          "stall",
+                                          "recorded"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "at",
+                                      "trigger",
+                                      "result"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "item": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "recorded"
+                                        ]
+                                      },
+                                      "itemId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "workstreamId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "integration": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unrecorded",
+                                          "pending",
+                                          "merged",
+                                          "conflict"
+                                        ]
+                                      },
+                                      "mergeHash": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      },
+                                      "worktreePath": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeBranch": {
+                                        "type": "string",
+                                        "maxLength": 12288
+                                      },
+                                      "worktreeKept": {
+                                        "type": "boolean"
+                                      },
+                                      "conflictFiles": {
+                                        "maxItems": 256,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "maxLength": 12288
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "itemId",
+                                      "workstreamId",
+                                      "integration"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unavailable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "missing-item",
+                                          "invalid-join"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "state": {
+                                        "type": "string",
+                                        "enum": [
+                                          "not-applicable"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "enum": [
+                                          "best-of-n-plan"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "state",
+                                      "reason"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "unitId",
+                              "groupId",
+                              "unitStatus",
+                              "latestCheck",
+                              "item"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "isolation",
+                        "units"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "not-live",
+                            "no-engine",
+                            "no-receipt",
+                            "stale-attempt",
+                            "recovery-required",
+                            "unsupported-runner",
+                            "invalid-data",
+                            "limit"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "not-applicable"
+                          ]
+                        },
+                        "contractId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "session-mode",
+                            "shared-isolation"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "contractId",
+                        "reason"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 },

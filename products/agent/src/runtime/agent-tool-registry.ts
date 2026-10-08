@@ -70,7 +70,7 @@ export interface AgentToolRegistry {
 
 export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentToolRegistry {
   const { services, configManager, homeDirectory, resolveSessionId, getLastUserMessage } = deps;
-  const toolRegistry = new ToolRegistry();
+  const toolRegistry = new ToolRegistry(services.permissionManager);
   const { fileCache, projectIndex } = registerAllTools(toolRegistry, {
     contractRunner: services.contractRunner,
     projectRoot: services.workingDirectory,
@@ -81,6 +81,7 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
     // namespace and nothing is keyed to a session that can be reaped.
     resolveSessionId,
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
+    readAdmissionPolicy: 'agent-main-conversation',
     // ONE file cache and ONE project index for the process. registerAllTools
     // built its own pair when none was passed, so the tools read one index while
     // `services.rerootStores` re-rooted a different one on a workspace swap,

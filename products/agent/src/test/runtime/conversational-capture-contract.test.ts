@@ -16,6 +16,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { AGENT_READ_ADMISSION_DENIAL_MESSAGE } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { CONVERSATIONAL_TURN_TOOLS } from '@goodvibes-jev/engine/sdk/platform/personal-capture';
 import {
@@ -288,36 +289,36 @@ describe('the boundary guard on a real tool', () => {
     const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
     const result = await tool!.execute(PLATFORM_READ as never);
     expect(result.success).toBe(false);
-    expect(result.error).toBe(AGENT_PLATFORM_BOUNDARY_DENIAL);
+    expect(result.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
     // And the underlying read never ran.
     expect(read.calls).toHaveLength(0);
   });
 
-  test('canonical package reads are denied until the owner asks about that source', async () => {
+  test('canonical package reads require genuine admission even when request prose names the source', async () => {
     const path = 'node_modules/@goodvibes-jev/engine/sdk/index.ts';
     const unrequested = guardedRegistry('check my email');
     const blocked = await unrequested.registry.execute('canonical-unrequested', 'read', { files: [{ path }] });
     expect(blocked.success).toBe(false);
-    expect(blocked.error).toBe(AGENT_PLATFORM_BOUNDARY_DENIAL);
+    expect(blocked.error).toBe(AGENT_READ_ADMISSION_DENIAL_MESSAGE);
     expect(unrequested.read.calls).toHaveLength(0);
     const requested = guardedRegistry(`read ${path}`);
-    expect((await requested.registry.execute('canonical-requested', 'read', { files: [{ path }] })).success).toBe(true);
-    expect(requested.read.calls).toHaveLength(1);
+    expect((await requested.registry.execute('canonical-requested', 'read', { files: [{ path }] })).success).toBe(false);
+    expect(requested.read.calls).toHaveLength(0);
   });
 
-  test('an explicitly named Windows package path authorizes the corresponding source read', async () => {
+  test('an explicitly named Windows path does not substitute for read admission', async () => {
     const path = 'C:\\project\\node_modules\\@goodvibes-jev\\engine\\src\\index.ts';
     expect(ownerAskedAboutPlatformSource(path)).toBe(true);
     const { registry, read } = guardedRegistry(path);
-    expect((await registry.execute('windows-requested', 'read', { files: [{ path }] })).success).toBe(true);
-    expect(read.calls).toHaveLength(1);
+    expect((await registry.execute('windows-requested', 'read', { files: [{ path }] })).success).toBe(false);
+    expect(read.calls).toHaveLength(0);
     expect(ownerAskedAboutPlatformSource('C:\\Documents\\engine\\notes.txt')).toBe(false);
   });
 
   test('the refusal tells it to propose in one line and get back to the real request', async () => {
     const { registry } = guardedRegistry('can you see your email?');
-    const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
-    const result = await tool!.execute(PLATFORM_READ as never);
+    const tool = registry.list().find((candidate) => candidate.definition.name === 'edit');
+    const result = await tool!.execute({ edits: PLATFORM_READ.files } as never);
     const error = String(result.error).toLowerCase();
     expect(error).toContain('one line');
     expect(error).toContain('ask whether he wants you to look into it');
@@ -338,22 +339,22 @@ describe('the boundary guard on a real tool', () => {
     expect(edit.calls).toHaveLength(0);
   });
 
-  test('it does NOT fire on a read he asked for', async () => {
+  test('a raw requested read still needs its genuine prepared admission', async () => {
     const { registry, read } = guardedRegistry(
       'read /home/x/Projects/goodvibes-sdk/packages/sdk/src/platform/google/oauth-wizard.ts',
     );
     const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
     const result = await tool!.execute(PLATFORM_READ as never);
-    expect(result.success).toBe(true);
-    expect(read.calls).toHaveLength(1);
+    expect(result.success).toBe(false);
+    expect(read.calls).toHaveLength(0);
   });
 
-  test('it does NOT fire on ordinary reads that have nothing to do with the platform', async () => {
+  test('ordinary raw reads cannot bypass the adopted admission surface', async () => {
     const { registry, read } = guardedRegistry('what is on my calendar tomorrow?');
     const tool = registry.list().find((candidate) => candidate.definition.name === 'read');
     const result = await tool!.execute({ files: [{ path: '/home/x/Documents/notes.md' }] } as never);
-    expect(result.success).toBe(true);
-    expect(read.calls).toHaveLength(1);
+    expect(result.success).toBe(false);
+    expect(read.calls).toHaveLength(0);
   });
 
   test('the check itself is path-then-permission, in that order', () => {

@@ -247,6 +247,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
 
   const worktreeIsolation: WorktreeIsolationManager = createWorktreeIsolationManager({
     projectRoot: deps.projectRoot,
+    stateNamespace: deps.stateNamespace,
     ownedWork,
     emit,
     now,

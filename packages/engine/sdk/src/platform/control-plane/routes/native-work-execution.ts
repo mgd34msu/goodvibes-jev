@@ -45,6 +45,7 @@ function project(status: NativeWorkExecutionObservation): NativeWorkExecutionSna
     value = { kind: 'execution', ...common, state: execution.state, recovery: status.recovery,
       ...(status.settlement ? { settlement: status.settlement } : {}),
       receipt: execution.receipt ? { contractId: execution.receipt.contractId, ownerAgentId: execution.receipt.ownerAgentId } : null,
+      integration: status.integration,
       progress: contract ? {
         status: contract.status, sessionMode: contract.sessionMode === true,
         semanticState: contract.nativeProgress?.state ?? null, stage: contract.nativeProgress?.stage ?? null,
@@ -54,6 +55,9 @@ function project(status: NativeWorkExecutionObservation): NativeWorkExecutionSna
           unmet: contract.criteria.filter(item => item.status === 'unmet').length, unshown: contract.criteria.filter(item => item.status === 'unshown').length },
       } : null,
     };
+  }
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > NATIVE_WORK_EXECUTION_MAX_RESPONSE_BYTES && value.kind === 'execution') {
+    value = { ...value, integration: { state: 'unavailable', reason: 'limit' } };
   }
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength > NATIVE_WORK_EXECUTION_MAX_RESPONSE_BYTES) throw new NativeWorkExecutionError('unavailable');
   return nativeWorkExecutionSnapshotSchema.parse(value);

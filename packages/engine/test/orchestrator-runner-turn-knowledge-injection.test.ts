@@ -568,3 +568,142 @@ describe('orchestrator-runner: per-turn passive knowledge injection', () => {
   });
 
 });
+
+// Captured code generations are independently refreshed; memory retains its existing lifecycle.
+test('captured same-line generations refresh without reranking memory and old attempts cannot reuse a released generation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'captured-injection-runner-'));
+  try {
+    const memory = makeCountingMemoryRegistry([]);
+    const record = makeRecord({ id: 'captured-generation-runner' });
+    const flags = createFeatureFlagManager(); flags.enable('agent-passive-code-injection');
+    let generation = 0; let active = false; let disposed = false;
+    const prompts: string[] = []; const reads: number[] = []; const attempts: (() => void | Promise<void>)[] = [];
+    const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+      prompts.push(request.systemPrompt ?? ''); reads.push(memory.counters.getAllCalls);
+      if (request.beforeAttempt) { attempts.push(request.beforeAttempt); await request.beforeAttempt(); }
+      return { content: 'done', toolCalls: prompts.length < 2 ? [{ id: 'c', name: 'nonexistent_tool', arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: prompts.length < 2 ? 'tool_call' : 'completed' };
+    } };
+    const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, featureFlagManager: flags, memoryRegistry: memory.registry });
+    const codeIndex: NonNullable<AgentOrchestratorRunContext['codeIndex']> = {
+      prepare: async () => { generation++; active = true; },
+      generation: () => active ? String(generation) : undefined,
+      assertCurrent: async (expected) => { if (!active || (expected !== undefined && expected !== String(generation))) throw new Error('stale code generation'); },
+      finishTurn: () => { active = false; }, dispose: () => { disposed = true; },
+      stats: () => ({ available: true, indexedChunks: 1, semanticRetrievalAvailable: true }),
+      search: async () => [{ chunk: { chunkId: String(generation), path: 'same.ts', lang: 'typescript', symbol: `symbolGeneration${generation}`, kind: 'function', startLine: 1, endLine: 3, contentHash: String(generation), fileHash: String(generation), mtimeMs: generation }, distance: 0, similarity: 1, label: 'semantic' }],
+    };
+    await runAgentTask({ ...base, codeIndex, beforeProviderRequest: async () => {} }, record);
+    expect(record.status).toBe('completed'); expect(generation).toBe(2); expect(disposed).toBe(true);
+    expect(prompts[0]).toContain('symbolGeneration1'); expect(prompts[1]).toContain('symbolGeneration2'); expect(prompts[1]).not.toContain('symbolGeneration1');
+    expect(reads[1]).toBe(reads[0]);
+    const codeIds = record.turnInjections!.map(r => r.injectedIds[0]); expect(codeIds[0]).not.toBe(codeIds[1]);
+    await expect(attempts[0]!()).rejects.toThrow('stale code generation');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('ordinary captured runs attach fresh async provider retry admission even without native or prepared prompts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'captured-retry-runner-'));
+  try {
+    const record = makeRecord({ id: 'captured-retry-only' });
+    let allowed = true; let attempts = 0;
+    const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+      expect(request.beforeAttempt).toBeDefined();
+      await request.beforeAttempt!(); attempts++;
+      allowed = false;
+      await expect(request.beforeAttempt!()).rejects.toThrow('original policy revoked');
+      return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    } };
+    const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider });
+    await runAgentTask({ ...base, beforeProviderRequest: async () => { await Promise.resolve(); if (!allowed) throw new Error('original policy revoked'); } }, record);
+    expect(attempts).toBe(1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('captured code-disabled turns retain independent memory when no code budget remains', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'captured-memory-budget-'));
+  try {
+    let reads = 0; let budget = 800; let preparation = 0;
+    const memoryRegistry = { ...makeCountingMemoryRegistry([]).registry, getAll: () => ++reads === 1 ? [] : [makeMemoryRecord({ id: 'retained-memory', summary: 'deployment docs use deployment templates', confidence: 90, reviewState: 'reviewed' })] };
+    const record = makeRecord({ id: 'captured-memory-only' });
+    const flags = createFeatureFlagManager(); flags.disable('agent-passive-code-injection');
+    const prompts: string[] = [];
+    const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+      prompts.push(request.systemPrompt ?? '');
+      if (prompts.length === 1) budget = record.turnInjections![0]!.tokenCost;
+      return { content: '', toolCalls: prompts.length < 2 ? [{ id: 'c', name: 'nonexistent_tool', arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: prompts.length < 2 ? 'tool_call' : 'completed' };
+    } };
+    const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, memoryRegistry, featureFlagManager: flags });
+    await runAgentTask({ ...base, get passiveKnowledgeInjectionBudgetTokens() { return budget; }, codeIndex: {
+      prepare: async () => { preparation++; }, stats: () => ({ available: false, indexedChunks: 0, semanticRetrievalAvailable: false }), search: async () => [],
+    } }, record);
+    expect(record.status).toBe('completed'); expect(prompts.length).toBe(2); expect(preparation).toBe(0); expect(reads).toBe(2);
+    expect(prompts[0]).toContain('deployment docs use deployment templates'); expect(prompts[1]).toBe(prompts[0]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('disabling the global passive flag after a captured turn cannot reuse released code pointers', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'captured-global-gate-'));
+  try {
+    const record = makeRecord({ id: 'captured-global-gate' });
+    const flags = createFeatureFlagManager(); flags.enable('agent-passive-code-injection');
+    let active = false; let prepares = 0;
+    const prompts: string[] = [];
+    const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+      prompts.push(request.systemPrompt ?? '');
+      flags.disable('agent-passive-knowledge-injection');
+      return { content: '', toolCalls: prompts.length < 2 ? [{ id: 'c', name: 'nonexistent_tool', arguments: {} }] : [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: prompts.length < 2 ? 'tool_call' : 'completed' };
+    } };
+    const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, memoryRegistry: makeCountingMemoryRegistry([]).registry, featureFlagManager: flags });
+    await runAgentTask({ ...base, codeIndex: {
+      prepare: async () => { prepares++; active = true; }, generation: () => active ? 'generation-1' : undefined, finishTurn: () => { active = false; },
+      stats: () => ({ available: true, indexedChunks: 1, semanticRetrievalAvailable: true }),
+      search: async () => [{ chunk: { chunkId: 'a', path: 'old.ts', lang: 'typescript', symbol: 'oldSymbol', kind: 'function', startLine: 1, endLine: 3, contentHash: 'old', fileHash: 'old', mtimeMs: 1 }, distance: 0, similarity: 1, label: 'semantic' }],
+    } }, record);
+    expect(record.status).toBe('completed'); expect(prepares).toBe(1);
+    expect(prompts[0]).toContain('oldSymbol'); expect(prompts[1]).not.toContain('oldSymbol'); expect(prompts[1]).not.toContain('## Injected Code Context');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test.each([false, true])('new-input zero-budget turn clears memory through later continuations (captured=%s)', async (captured) => {
+  const root = mkdtempSync(join(tmpdir(), 'captured-memory-clear-'));
+  const messageBus = new AgentMessageBus();
+  const record = makeRecord({ id: `memory-clear-${captured}` });
+  const processRegistry = createProcessRegistry(makeRegistryDeps(record, messageBus));
+  try {
+    let reads = 0;
+    let budget = 800;
+    let preparations = 0;
+    const memoryRegistry = { ...makeCountingMemoryRegistry([]).registry, getAll: () => ++reads === 1 ? [] : [makeMemoryRecord({
+      id: 'prior-deployment-memory', summary: 'deployment docs use deployment templates', confidence: 90, reviewState: 'reviewed',
+    })] };
+    const flags = createFeatureFlagManager();
+    flags.disable('agent-passive-code-injection');
+    const prompts: string[] = [];
+    const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+      prompts.push(request.systemPrompt ?? '');
+      if (prompts.length === 1) {
+        budget = 0;
+        processRegistry.steer(record.id, 'Now investigate the rate limiting behavior.');
+      }
+      const continuing = prompts.length < 3;
+      return { content: '', toolCalls: continuing ? [{ id: `c${prompts.length}`, name: 'nonexistent_tool', arguments: {} }] : [],
+        usage: { inputTokens: 1, outputTokens: 1 }, stopReason: continuing ? 'tool_call' : 'completed' };
+    } };
+    const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus, provider, memoryRegistry, featureFlagManager: flags });
+    await runAgentTask({ ...base, get passiveKnowledgeInjectionBudgetTokens() { return budget; }, ...(captured ? { codeIndex: {
+      prepare: async () => { preparations++; },
+      stats: () => ({ available: false, indexedChunks: 0, semanticRetrievalAvailable: false }), search: async () => [],
+    } } : {}) }, record);
+    expect(record.status).toBe('completed');
+    expect(prompts).toHaveLength(3);
+    expect(prompts[0]).toContain('deployment docs use deployment templates');
+    expect(prompts[1]).not.toContain('deployment docs use deployment templates');
+    expect(prompts[2]).not.toContain('deployment docs use deployment templates');
+    expect(reads).toBe(2);
+    expect(preparations).toBe(0);
+    expect(record.turnInjections).toHaveLength(1);
+  } finally {
+    processRegistry.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

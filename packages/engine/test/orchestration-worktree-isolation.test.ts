@@ -433,10 +433,10 @@ describe('WorktreeIsolationManager: fail/kill cleanup rules', () => {
       await expect(waitForAgents(ws, h, 1)).rejects.toThrow('worktree isolation setup failed:');
       expect(h.spawnedIds).toHaveLength(0);
       expect(ws.items[0]!.state).toBe('failed');
-      // Wait for the already-started cleanup before deleting the fixture repo.
-      await waitUntil(() => events.some((event) => event.type === 'item-worktree-removed'), {
-        label: 'failed preparation cleanup finished',
-      });
+      // Failed allocation owns no resource and must not announce removal of a
+      // branch/path that could have belonged to another run or the user.
+      await engine.join();
+      expect(events.some((event) => event.type === 'item-worktree-removed')).toBe(false);
     } finally {
       engine.dispose();
       rmSync(root, { recursive: true, force: true });

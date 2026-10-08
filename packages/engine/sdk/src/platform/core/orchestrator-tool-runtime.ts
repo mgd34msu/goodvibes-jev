@@ -4,7 +4,7 @@ import { UnknownPreparedToolError } from '../tools/preparation-error.js';
 import type { PreparedToolCall } from '../tools/registry.js';
 import type { ProjectedToolCall } from '../tools/input-projection.js';
 import type { AutonomousChoiceProjection } from '../permissions/autonomous-input-projection.js';
-import type { AutonomousPermissionAdmission } from '../permissions/manager.js';
+import { isAuthenticAutonomousAdmission, type AutonomousPermissionAdmission } from '../permissions/manager.js';
 import type { TurnHookOwner } from '../hooks/turn-ownership.js';
 import { ToolError, PermissionError } from '../types/errors.js';
 import type { HookEvent, HookEventPath, HookResult } from '../hooks/types.js';
@@ -88,7 +88,7 @@ export type ToolExecutionDeps = {
   turnSignal?: AbortSignal | undefined;
   toolRegistry: ToolRegistry;
   permissionManager: Pick<PermissionManager, 'checkDetailed' | 'check' | 'admitAutonomous' | 'autonomousPreparation'>
-    & Partial<Pick<PermissionManager, 'projectAutonomousChoices' | 'releaseAutonomousChoices'>>;
+    & Partial<Pick<PermissionManager, 'prepareAutonomousOwner' | 'projectAutonomousChoices' | 'releaseAutonomousChoices'>>;
   hookDispatcher: HookDispatcherLike | null;
   runtimeBus: RuntimeEventBus | null;
   sessionId: string;
@@ -170,6 +170,9 @@ export async function executeToolCalls(
     const admissionSignal = turnSignal && earlyCallSignal ? AbortSignal.any([turnSignal, earlyCallSignal]) : turnSignal ?? earlyCallSignal;
     try {
       if (autonomous) {
+        await deps.permissionManager.prepareAutonomousOwner?.(admissionSignal);
+        assertTurnActive();
+        admissionSignal?.throwIfAborted();
         const originalPreparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort);
         try {
           if (typeof deps.toolRegistry.projectCall === 'function') {
@@ -223,7 +226,7 @@ export async function executeToolCalls(
         let permittedRevisionIds: readonly string[] | undefined;
         while (true) {
           const currentPrepared = prepared;
-          admission = await deps.permissionManager.admitAutonomous(sourceId, currentPrepared.name, currentPrepared.args, { sourceOf: sourceOf!, decoratePort: deps.autonomousPort, signal: admissionSignal, hookOwner: deps.hookOwner, consumedRevisions, ...(permittedRevisionIds ? { permittedRevisionIds } : {}), ...(choiceProjection ? { choiceProjection } : {}), schemaRevision: currentPrepared.schemaRevision, preparationDecisionIds: currentPrepared.judgmentDecisionIds, assertPrepared: () => deps.toolRegistry.assertPrepared(currentPrepared) });
+          admission = await deps.permissionManager.admitAutonomous(sourceId, currentPrepared.name, currentPrepared.args, { sourceOf: sourceOf!, decoratePort: deps.autonomousPort, signal: admissionSignal, hookOwner: deps.hookOwner, consumedRevisions, ...(permittedRevisionIds ? { permittedRevisionIds } : {}), ...(choiceProjection ? { choiceProjection } : {}), schemaRevision: currentPrepared.schemaRevision, preparationDecisionIds: currentPrepared.judgmentDecisionIds, preparedCall: { registry: deps.toolRegistry, call: currentPrepared }, assertPrepared: () => deps.toolRegistry.assertPrepared(currentPrepared) });
           assertTurnActive();
           permittedRevisionIds ??= admission.revisionIds;
           checkResult = admission.result;
@@ -343,9 +346,18 @@ export async function executeToolCalls(
         // to this tool/MCP server rather than the agent's own reasoning.
         result = await withCostOriginAsync(
           { tool: call.name, callId: call.id, mcpServer: mcpServerOfToolName(call.name) },
-          () => prepared && admission
-            ? deps.toolRegistry.executePrepared(prepared, admission.claim, callSignal ? { signal: callSignal } : undefined)
-            : deps.toolRegistry.execute(call.id, call.name, checkResult.modifiedArgs ?? call.arguments, callSignal ? { signal: callSignal } : undefined),
+          () => {
+            if (!prepared || !admission) return deps.toolRegistry.execute(call.id, call.name,
+              checkResult.modifiedArgs ?? call.arguments, callSignal ? { signal: callSignal } : undefined);
+            // Older embedding managers own a callback-only admission contract.
+            // Permit it only on authenticated non-adopted registrations; it
+            // mints no strict-body proof. Any genuine brand (even stale) keeps
+            // exact registry/call validation rather than downgrading to legacy.
+            const preparedAdmission = isAuthenticAutonomousAdmission(admission)
+              || deps.toolRegistry.readPreparedAdmissionEvidence(prepared) !== undefined
+              ? admission : admission.claim;
+            return deps.toolRegistry.executePrepared(prepared, preparedAdmission, callSignal ? { signal: callSignal } : undefined);
+          },
         );
         if (checkResult.autonomousDecision) result = { ...result, autonomousDecision: checkResult.autonomousDecision };
         if (callSignal?.aborted) {

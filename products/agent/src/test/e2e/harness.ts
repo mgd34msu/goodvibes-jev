@@ -198,62 +198,7 @@ export function startStubModel(answer: (request: ModelRequest, index: number) =>
 
 // ── the daemon's front door ─────────────────────────────────────────────────
 
-export interface DaemonDoor {
-  readonly port: number;
-  /** Every request that reached the door while a daemon was behind it: path with query. */
-  readonly seen: string[];
-  /** Forward to a daemon on `upstreamPort` (null: nothing is listening, connections are refused). */
-  open(upstreamPort: number): void;
-  /** Close the door: the port refuses connections, as when the daemon is gone. */
-  close(): void;
-  stop(): void;
-}
-
-/**
- * The configured daemon port, held by the test: while open it forwards every
- * HTTP request to a real daemon on another port and records its path; while
- * closed nothing listens there. The Agent sees one daemon that goes away and
- * comes back; the test sees exactly which calls the Agent made and when.
- */
-export function createDaemonDoor(port: number): DaemonDoor {
-  const seen: string[] = [];
-  let server: ReturnType<typeof Bun.serve> | null = null;
-  const door: DaemonDoor = {
-    port,
-    seen,
-    open(upstreamPort) {
-      door.close();
-      server = Bun.serve({
-        port,
-        hostname: '127.0.0.1',
-        // The Agent holds a long-lived event stream open through the door.
-        idleTimeout: 0,
-        async fetch(req) {
-          const url = new URL(req.url);
-          seen.push(`${req.method} ${url.pathname}${url.search}`);
-          const target = `http://127.0.0.1:${upstreamPort}${url.pathname}${url.search}`;
-          const headers = new Headers(req.headers);
-          headers.delete('host');
-          const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();
-          try {
-            const upstream = await fetch(target, { method: req.method, headers, body, redirect: 'manual' });
-            return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
-          } catch {
-            return new Response('upstream unavailable', { status: 502 });
-          }
-        },
-      });
-    },
-    close() {
-      if (server) {
-        void server.stop(true);
-        server = null;
-      }
-    },
-    stop() { door.close(); },
-  };
-  return door;
-}
+export { createDaemonDoor, type DaemonDoor } from './daemon-door.ts';
 
 // ── the isolated home ───────────────────────────────────────────────────────
 

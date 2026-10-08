@@ -1,5 +1,4 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
-
 /**
  * CodeIndexStore, an incremental, tree-sitter-chunked, embedding-backed index
  * of a repo's source tree (Stage A; see CHANGELOG 0.38.0).
@@ -54,7 +53,6 @@
  * `stats`) returns whatever is currently indexed, it never waits on an
  * in-flight build.
  */
-
 import { dirname, join, relative, sep } from 'node:path';
 import { mkdirSync, statSync } from 'node:fs';
 import type { Database, SQLQueryBindings } from 'bun:sqlite';
@@ -105,7 +103,8 @@ import { openVersionedBunSqliteStore } from './store-versioning.js';
 import { rankLexicalChunks } from './code-index-lexical.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
-
+import { prepareAuthorizedCodeSnapshots, type AuthorizedCodePrepareInput, type AuthorizedCodeIndex } from './code-index-authorized.js';
+export type { AuthorizedCodePrepareInput, AuthorizedCodeSnapshot, AuthorizedIndexBoundary } from './code-index-authorized.js';
 // bun:sqlite is a Bun-only builtin; a static import makes this module unloadable
 // under Node (breaks the release install-smoke check). Lazily require the ctor so
 // the `bun:` specifier stays off the static graph, only pulled on the Bun-only
@@ -114,13 +113,7 @@ let bunDatabaseCtor: typeof import('bun:sqlite').Database | null = null;
 function bunSqliteDatabase(): typeof import('bun:sqlite').Database {
   return (bunDatabaseCtor ??= createRequire(import.meta.url)('bun:sqlite').Database);
 }
-
 export type { CodeChunk, CodeChunkMode } from './code-index-chunking.js';
-
-// ---------------------------------------------------------------------------
-// Public types (split to code-index-types.ts; re-exported for importers)
-// ---------------------------------------------------------------------------
-
 export type {
   CodeContextResult,
   CodeIndexBuildProgress,
@@ -136,12 +129,10 @@ import type {
   CodeIndexOptions,
   CodeIndexStats,
 } from './code-index-types.js';
-
 const DEFAULT_MAX_FILES = 5000;
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 const BUILD_ABORTED_BY_REROOT = 'build aborted by reroot';
-
 function distanceToSimilarity(distance: number): number {
   if (!Number.isFinite(distance)) return 0;
   return Math.max(0, Math.min(1, 1 - distance / 2));
@@ -168,9 +159,6 @@ function emptySkipReport(): MutableSkipReport {
   return { tooLarge: 0, overFileCap: 0, overTotalBytes: 0, binary: 0, ignoredByGitignore: 0, readErrors: 0, chunkedByWindow: 0 };
 }
 
-// ---------------------------------------------------------------------------
-// CodeIndexStore
-// ---------------------------------------------------------------------------
 
 export class CodeIndexStore {
   private db: Database | null = null;
@@ -193,6 +181,8 @@ export class CodeIndexStore {
    * write wrong-rooted chunks into a database opened for a different root.
    */
   private epoch = 0;
+  private authorizedRunUsed = false;
+  private authorizedIndex: AuthorizedCodeIndex | null = null;
 
   private rootDir: string;
   private dbPath: string;
@@ -208,7 +198,6 @@ export class CodeIndexStore {
     this.intelligence = new CodeIntelligence();
   }
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────
 
   /**
    * Opens the store. Never rejects: a failure leaves the store unavailable
@@ -279,6 +268,7 @@ export class CodeIndexStore {
    * store originally.
    */
   async reroot(newRootDir: string, newDbPath: string): Promise<void> {
+    if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     // An open still in flight finishes at the old path before it is closed.
     if (this.opening) await this.opening;
     this.epoch++;
@@ -293,7 +283,6 @@ export class CodeIndexStore {
     await this.init();
   }
 
-  // ── Status ───────────────────────────────────────────────────────────────
 
   isBuilding(): boolean {
     return this.building;
@@ -310,6 +299,7 @@ export class CodeIndexStore {
 
   /** True unless the only active embedding provider is the deterministic hashed fallback. */
   hasSemanticProvider(): boolean {
+    if (this.authorizedRunUsed) throw new Error('Use guarded authorized code index access');
     return this.embeddingRegistry.getDefaultProviderId() !== HASHED_MEMORY_EMBEDDING_PROVIDER.id;
   }
 
@@ -327,6 +317,7 @@ export class CodeIndexStore {
    * until the next build stamps it).
    */
   getProviderMismatch(): string | null {
+    if (this.authorizedRunUsed) throw new Error('Use guarded authorized code index access');
     if (!this.db || !this.available) return null;
     const stored = getCodeIndexMeta(this.db, EMBEDDING_PROVIDER_META_KEY);
     const current = this.embeddingRegistry.getDefaultProviderId();
@@ -335,6 +326,7 @@ export class CodeIndexStore {
   }
 
   stats(): CodeIndexStats {
+    if (this.authorizedRunUsed) throw new Error('Use guarded authorized code index access');
     const provider = this.embeddingRegistry.getDefaultProviderOrNull();
     const mismatch = this.getProviderMismatch();
     return {
@@ -355,9 +347,9 @@ export class CodeIndexStore {
     };
   }
 
-  // ── Search (Stage A explicit query) ─────────────────────────────────────
 
   async search(query: string, opts: { limit?: number } = {}): Promise<CodeContextResult[]> {
+    if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     if (!this.db || !this.available) return [];
     const trimmed = query.trim();
     if (!trimmed) return [];
@@ -403,6 +395,44 @@ export class CodeIndexStore {
     return results;
   }
 
+  /** One-shot semantic retrieval over receipt-authorized snapshots in a fresh in-memory store. */
+  async prepareAuthorizedSnapshots(input: AuthorizedCodePrepareInput): Promise<void> {
+    if (this.dbPath !== ':memory:' || this.authorizedRunUsed || this.building) {
+      throw new Error('Authorized code search requires a fresh per-run in-memory store');
+    }
+    this.authorizedRunUsed = true;
+    const epoch = this.epoch;
+    input = { ...input, snapshots: input.snapshots.map((snapshot) => ({ ...snapshot })) };
+    input.signal.throwIfAborted();
+    await input.guard('cache');
+    input.signal.throwIfAborted();
+    await this.init();
+    if (this.epoch !== epoch || this.dbPath !== ':memory:') throw new Error('Authorized code index lifecycle changed');
+    const db = this.db;
+    if (!db || !this.available) throw new Error('Authorized code index storage is unavailable');
+    const checkLifecycle = (): void => {
+      if (this.epoch !== epoch || this.db !== db || !this.available) {
+        throw new Error('Authorized code index lifecycle changed');
+      }
+    };
+    await input.guard('chunk');
+    input.signal.throwIfAborted();
+    checkLifecycle();
+    await this.ensureIntelligenceReady();
+    checkLifecycle();
+    this.authorizedIndex = await prepareAuthorizedCodeSnapshots(input, this.embeddingRegistry, db, this.intelligence, checkLifecycle);
+  }
+
+  async statsAuthorized(): Promise<CodeIndexStats> {
+    if (!this.authorizedIndex) throw new Error('Authorized code index has not been prepared');
+    return this.authorizedIndex.stats();
+  }
+
+  async searchAuthorized(query: string, options: { limit?: number } = {}): Promise<CodeContextResult[]> {
+    if (!this.authorizedIndex) throw new Error('Authorized code index has not been prepared');
+    return this.authorizedIndex.search(query, options);
+  }
+
   /**
    * Lexical search used when the vector path is disabled by a provider
    * mismatch. Recall is code: chunks whose symbol or path contains a query
@@ -412,6 +442,7 @@ export class CodeIndexStore {
    * left out. Labeled 'lexical', never 'semantic'.
    */
   private async searchLexical(query: string, limit: number): Promise<CodeContextResult[]> {
+    if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     if (!this.db) return [];
     const tokens = Array.from(new Set(
       query.toLowerCase().split(/[^a-z0-9_$]+/).filter((token) => token.length >= 2),
@@ -426,10 +457,10 @@ export class CodeIndexStore {
     return rankLexicalChunks(this.rootDir, query, rows.map(rowToChunk), limit);
   }
 
-  // ── Build / reindex ──────────────────────────────────────────────────────
 
   /** Fire-and-forget kickoff; concurrent/repeated calls while a build is running are no-ops. Never awaited by the caller, never blocks a turn. */
   scheduleBuild(): void {
+    if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     if (this.building) return;
     void this.buildFull().catch((err) => {
       logger.warn('Code index build failed', { error: summarizeError(err) });
@@ -438,6 +469,7 @@ export class CodeIndexStore {
 
   /** Full source-tree walk. Concurrent calls coalesce onto the same in-flight promise (mirrors MemoryStore.rebuildVectorIndexAsync). */
   async buildFull(): Promise<CodeIndexBuildStats> {
+    if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     if (!this.db || !this.available) {
       return this.lastBuild ?? emptyBuildStats();
     }
@@ -467,6 +499,7 @@ export class CodeIndexStore {
    * A no-op (chunks removed) if the path is gitignored or no longer exists.
    */
   async reindexFile(absPath: string): Promise<{ indexed: boolean; mode: CodeChunkMode }> {
+    if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     if (!this.db || !this.available) return { indexed: false, mode: 'empty' };
     const callEpoch = this.epoch;
     const rel = relative(this.rootDir, absPath);
