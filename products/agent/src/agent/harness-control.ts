@@ -575,7 +575,7 @@ export function resolveHarnessSetting(
     const resolvedLookup = { ...lookup, resolvedBy: 'case-insensitive-key' as const };
     return {
       status: 'found',
-      setting: describeHarnessSetting(configManager, caseInsensitiveMatches[0]!, { lookup: resolvedLookup }),
+      setting: describeHarnessSetting(configManager, caseInsensitiveMatches[0]!, { lookup: resolvedLookup, ...(view ? { view } : {}) }),
       lookup: resolvedLookup,
     };
   }
@@ -603,7 +603,7 @@ export function resolveHarnessSetting(
     const resolvedLookup = { ...lookup, resolvedBy: 'search' as const };
     return {
       status: 'found',
-      setting: describeHarnessSetting(configManager, searchMatches[0]!, { lookup: resolvedLookup }),
+      setting: describeHarnessSetting(configManager, searchMatches[0]!, { lookup: resolvedLookup, ...(view ? { view } : {}) }),
       lookup: resolvedLookup,
     };
   }

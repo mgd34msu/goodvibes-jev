@@ -15,6 +15,10 @@ function assertReadOnlyExecution(paths: readonly string[]): void {
   if (mutations.length) throw new Error(`Unexpected native execution mutation attempts: ${mutations.join(', ')}`);
 }
 
+function assertUnchangedIntegrationPane(expected: string, observed: string): void {
+  expect(observed).toBe(expected);
+}
+
 function live(snapshot: NativeWorkExecutionSnapshot) {
   if (snapshot.kind !== 'execution' || snapshot.integration?.state !== 'live') throw new Error('Expected real live native integration');
   return snapshot.integration;
@@ -216,6 +220,8 @@ test('compiled native Integration distinguishes current repair from recorded con
       const unit = unitFacts(text, conflicted.unitId);
       return unit.includes('Current unit status: passed') && unit.includes('fix-passed · pass') && unit.includes('Recorded integration: conflict') && unit.includes('Worktree kept: true');
     });
+    const repairedConflictPane = tui.screen();
+    expect(repairedConflictPane).toContain('Recorded integration: conflict');
     expect(live(await f.snapshot()).units.find(unit => unit.unitId === conflicted.unitId)?.item).toEqual(item);
     expect(await f.host.inspect()).toEqual({ remergeCalls: 0, escalations: 0, mutationCount: 1 });
 
@@ -247,11 +253,29 @@ test('compiled native Integration distinguishes current repair from recorded con
     expect(merged.item).toMatchObject({ integration: 'merged', worktreeKept: false });
     expect(merged.item.conflictFiles).toBeUndefined(); expect(merged.item.worktreePath).toBeUndefined();
     await scrollUntil(tui, 'real remerge hash', text => text.includes(`Merge hash: ${merged.item.state === 'recorded' ? merged.item.mergeHash : ''}`));
-    const beforeLateDelivery = tui.screen();
+    // A live header precedes deferred row adoption. The Down above and any
+    // scrollUntil Down can still be queued when the hash first becomes visible.
+    // A visible local filter marker acknowledges all earlier FIFO keys. Clearing
+    // it resets the viewport to its known origin; neither key reads the host.
+    const beforeFenceRequests = f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'));
+    const mergeHash = `Merge hash: ${merged.item.mergeHash}`;
+    expect(tui.screen()).toContain(mergeHash);
+    tui.type('q');
+    await tui.waitForScreen('native queued input acknowledged by local filter', screen => screen.includes('q▏'), 10_000);
+    tui.key('BSpace');
+    const beforeLateDelivery = await tui.waitForScreen('native input settled at merged viewport origin', screen =>
+      screen.includes('Filter integration') && screen.includes(mergeHash) && !screen.includes('Native rows changed')
+      && !/\d+ (?:more )?↑/.test(screen), 10_000);
+    expect(f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'))).toEqual(beforeFenceRequests);
+    expect(beforeLateDelivery).toContain('Recorded integration: merged');
+    // Negative witness uses the actual obsolete compiled conflict pane, not an
+    // injected response or fabricated final state. The same equality rejects it.
+    expect(() => assertUnchangedIntegrationPane(beforeLateDelivery, repairedConflictPane)).toThrow();
     expect(await f.host.releaseStatus()).toBe(staleOrdinal);
     // Assert before issuing any newer request: a refresh could mask stale adoption.
     await Bun.sleep(1_200);
-    expect(tui.screen()).toBe(beforeLateDelivery);
+    assertUnchangedIntegrationPane(beforeLateDelivery, tui.screen());
+    expect(f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'))).toEqual(beforeFenceRequests);
     await f.refresh(); await tui.waitForScreen('merged view survives late closed response', screen => screen.includes('Integration: live')); tui.key('Down');
     const integrated = await scrollUntil(tui, 'cleared recorded conflict', () => {
       const text = screenText(tui.screen());
