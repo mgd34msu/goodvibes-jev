@@ -14,7 +14,7 @@ import { EvalRunner } from '@/runtime/index.ts';
 import { BUILTIN_SUITES } from '@/runtime/index.ts';
 import { formatScorecard } from '@/runtime/index.ts';
 import { loadBaseline, captureBaseline, formatBaselineComparison, writeBaseline } from '@/runtime/index.ts';
-import type { EvalRegistry } from '../../views/eval-registry.ts';
+import type { EvalRegistry } from '@goodvibes-jev/engine/sdk/platform/observe';
 import { formatSuiteResult, formatGateResult } from '@/runtime/index.ts';
 import { requireShellPaths } from './runtime-services.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
