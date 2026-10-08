@@ -1,9 +1,11 @@
 # Owned tool-input projection prerequisite
 
 This THE-123 increment moves explicitly registered input projections ahead of
-ordinary tool readers and observers. It does not enable the existing Agent
-research-report consumers, screen arbitrary prose, or qualify a live local
-service. Those adoption/framing requirements and THE-35 remain open.
+ordinary tool readers and observers. Agent report consumers now adopt those
+hooks through [protected report preparation](research-report-protected-adoption.md).
+That separate adopter also requires full-source privacy receipts. This bounded
+framed-reference adapter alone does not screen arbitrary prose or qualify a live
+local service; THE-35 remains open.
 
 ## Registration and immutable input
 
@@ -107,12 +109,11 @@ retrieval permission, publication approval or complete content-privacy reading.
 
 Other argument fields are not privacy-cleared by this adapter. In particular,
 URL echoes in prose, unbound/control-split references and full report fields need
-the remaining value-safe framing design. The existing research editor and
-public report tools are not silently switched to this limited protocol. Their
-future adopter must preserve source positions/claim bindings, await editor
-capture, and handle edits, repeated Submit, Close and workspace replacement.
-It must reconcile the source owner's bounds with report limits without clipping
-the original or releasing a partially screened report.
+the remaining value-safe framing design. The Agent report adopter does not treat this limited protocol as complete
+privacy authority. Its full-source preparation preserves source positions,
+awaits editor capture, and handles edits, repeated Submit, Close and workspace
+replacement. Its bounded reports hold rather than clipping or releasing a
+partially screened report.
 
 All verification uses synthetic data, intercepted bodies and owned local
 fixtures. No live calibration, private source transfer, release or deployment

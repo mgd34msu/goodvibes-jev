@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+import { afterAll, describe, expect, test } from 'bun:test';
+afterAll(cleanupResearchScreeningFixtures);
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -25,6 +27,7 @@ function fakeTool(name: string, calls: Record<string, unknown>[], output?: unkno
 
 function makeTool(calls: Record<string, unknown>[] = [], commandContext: CommandContext = { workspace: {}, platform: {} } as CommandContext): Tool {
   return createAgentResearchTool({
+    sourceOwner: ordinaryResearchOwner(),
     commandRegistry: {} as CommandRegistry,
     commandContext,
     toolRegistry: new ToolRegistry(),
@@ -113,7 +116,7 @@ describe('research adapter', () => {
       captured = args;
       return { success: true, output: 'Saved report.' };
     };
-    const tool = createAgentResearchTool({ commandRegistry: {} as CommandRegistry,
+    const tool = createAgentResearchTool({ sourceOwner: ordinaryResearchOwner(), commandRegistry: {} as CommandRegistry,
       commandContext: { workspace: {}, platform: {} } as CommandContext,
       toolRegistry: new ToolRegistry(), reportTool });
     const result = await tool.execute({ action: 'report', title: 'Report', sources: [source] });

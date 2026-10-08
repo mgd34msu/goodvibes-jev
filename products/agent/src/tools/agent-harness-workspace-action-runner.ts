@@ -1,3 +1,4 @@
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { AgentHarnessToolArgs, AgentHarnessToolDeps } from './agent-harness-tool-types.ts';
 import { clearSetupCheckpoint, markSetupCheckpoint, setupCheckpointSummary } from './agent-harness-setup-posture.ts';
 import { runLocalWorkspaceAction } from './agent-harness-local-operations.ts';
@@ -11,6 +12,7 @@ import { writeOnboardingCheckMarker, writeOnboardingCompletionMarker } from '../
 export async function runWorkspaceAction(
   deps: AgentHarnessToolDeps,
   args: AgentHarnessToolArgs,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<{ readonly success: boolean; readonly output?: string; readonly error?: string }> {
   const resolved = resolveWorkspaceActionDetail(args);
   if (resolved?.status === 'ambiguous') return error(`Ambiguous Agent workspace action ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
@@ -98,7 +100,7 @@ export async function runWorkspaceAction(
   if (action.kind === 'editor' && action.editorKind) {
     const editor = createWorkspaceEditor(action.editorKind, buildWorkspaceEditorContext(deps.commandContext, args));
     if (!editor) return error(`No workspace editor route exists for ${action.editorKind}.`);
-    return runWorkspaceEditorAction(deps, action, editor, args);
+    return runWorkspaceEditorAction(deps, action, editor, args, options);
   }
   if (action.kind === 'local-selection' || action.kind === 'local-operation') {
     return runLocalWorkspaceAction(deps, action, args);

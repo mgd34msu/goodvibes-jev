@@ -1,3 +1,4 @@
+import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -134,7 +135,7 @@ function detailedHarnessModelAccessGuide(): Record<string, string> {
 }
 
 export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
-  return {
+  const tool: Tool = {
     definition: {
       name: 'agent_harness',
       description: 'Inspect or operate Agent harness surfaces; mode:"modes" lists all.',
@@ -668,7 +669,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           }
           return error(`Unknown Agent workspace action ${readString(args.actionId || args.command || args.target || args.query) || '<missing>'}. Use mode:"workspace_actions" to inspect available actions.`);
         }
-        if (dispatchMode === 'run_workspace_action') return runWorkspaceAction(deps, args);
+        if (dispatchMode === 'run_workspace_action') return runWorkspaceAction(deps, args, options);
         if (dispatchMode === 'tools') {
           const tools = searchHarnessModelTools(deps.toolRegistry, args);
           return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery, { relaxedQuery: tools.relaxed }));
@@ -792,6 +793,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       }
     },
   };
+  return protectAgentHarnessResearchTool(tool, deps.toolRegistry);
 }
 
 export function registerAgentHarnessTool(
@@ -800,5 +802,5 @@ export function registerAgentHarnessTool(
   commandContext: CommandContext,
   taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources,
 ): void {
-  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }));
+  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createAgentHarnessResearchProjector(registry) });
 }

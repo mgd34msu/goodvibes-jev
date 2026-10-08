@@ -64,3 +64,30 @@ describe('tool execution safety guard', () => {
     });
   });
 });
+
+test('late registration preserves required input projection before execution', async () => {
+  const registry = new ToolRegistry();
+  installToolExecutionSafetyGuard(registry);
+  let executions = 0;
+  const tool = okTool('protected_late');
+  tool.execute = async () => { executions++; return { success: true, output: 'not reached' }; };
+  registry.register(tool, { inputProjection: null });
+  await expect(registry.execute('held-call', 'protected_late', {})).rejects.toThrow('unconfigured');
+  expect(executions).toBe(0);
+});
+
+test('late registration projects inputs and drains the registered owner', async () => {
+  const registry = new ToolRegistry();
+  installToolExecutionSafetyGuard(registry);
+  const seen: unknown[] = [];
+  let released = 0;
+  const tool = okTool('projected_late');
+  tool.execute = async args => { seen.push(args); return { success: true }; };
+  registry.register(tool, { inputProjection: { async project() {
+    return { status: 'projected', args: {}, release: async () => { released++; } };
+  } } });
+  const result = await registry.execute('projected-call', 'projected_late', { original: 'synthetic-private' });
+  expect(result.success).toBe(true);
+  expect(seen).toEqual([{}]);
+  expect(released).toBe(1);
+});

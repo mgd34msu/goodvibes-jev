@@ -38,6 +38,7 @@ import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { AGENT_OWNER_TERMINAL_GUARD } from './agent-exec-posture.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { RuntimeServices } from './services.ts';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 
 /**
  * The main conversation's tool registry, composed exactly once, in one place:
@@ -50,6 +51,8 @@ import type { RuntimeServices } from './services.ts';
  * runs.
  */
 export interface AgentToolRegistryDeps {
+  /** Explicit trusted local service capability; absent keeps research report writes held. */
+  readonly researchSourceOwner?: ProtectedSourceOwner;
   readonly services: RuntimeServices;
   readonly configManager: ConfigManager;
   readonly homeDirectory: string;
@@ -173,7 +176,7 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
   registerAgentMediaGenerateTool(toolRegistry, services.mediaProviders, services.artifactStore);
   registerAgentResearchRunsTool(toolRegistry, services.shellPaths);
   registerAgentResearchSourcesTool(toolRegistry, services.shellPaths);
-  registerAgentResearchReportTool(toolRegistry, services.artifactStore);
+  registerAgentResearchReportTool(toolRegistry, services.artifactStore, deps.researchSourceOwner);
   registerAgentReviewPacketPresetsTool(toolRegistry, services.artifactStore);
   registerAgentReviewPacketShareTool(toolRegistry, services.artifactStore, services.channelDeliveryRouter);
   registerAgentModelCompareTool(toolRegistry, {

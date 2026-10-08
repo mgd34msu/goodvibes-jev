@@ -1,6 +1,15 @@
-import { describe, expect, test } from 'bun:test';
-import { buildAgentResearchReportToolArgs, buildAgentResearchReportPromptSubmission, createAgentResearchReportEditor } from '../../input/agent-workspace-research-report-editor.ts';
+import { cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { buildAgentResearchReportToolArgs, buildAgentResearchReportPromptSubmission as formatPrompt, createAgentResearchReportEditor, submitProtectedAgentResearchReport } from '../../input/agent-workspace-research-report-editor.ts';
 
+// Pure structural/formatting regressions. Protected runtime adoption is exercised
+// separately with the actual asynchronous owner and workspace controller.
+function buildAgentResearchReportPromptSubmission(editor: ReturnType<typeof createAgentResearchReportEditor>, read: (id: string) => string, available: boolean) {
+  try { return formatPrompt(editor, read, available, buildAgentResearchReportToolArgs(read, 'Save a reviewed source-grounded research report as an Agent artifact.')); }
+  catch { return formatPrompt(editor, read, available); }
+}
+
+afterAll(cleanupResearchScreeningFixtures);
 const fields = { title: 'Report', question: 'What is supported?', summary: 'Evidence [S1].', confirm: 'yes' };
 const reader = (sources: string) => (id: string): string => ({ ...fields, sources } as Record<string, string>)[id] ?? '';
 
@@ -120,12 +129,13 @@ describe('research report editor source containment', () => {
     expect(JSON.stringify(result)).not.toContain('sentinel');
   });
 
-  test.todo('contains unbound control-split prompt prose once a source-span screening boundary exists', () => {
-    const sources = 'See https://example.test/doc\tument?token=sentinel';
-    const args = buildAgentResearchReportToolArgs(reader(sources), 'Save the report.');
-    expect(JSON.stringify(args)).not.toContain('sentinel');
-    const result = buildAgentResearchReportPromptSubmission(createAgentResearchReportEditor(), reader(sources), true);
-    expect(result.kind).toBe('prompt');
+  test('contains unbound control-split prompt prose through the protected source-span boundary', async () => {
+    const reference = 'https://example.test/doc\tument?token=sentinel';
+    const sources = `See ${reference}`;
+    const fixture = researchScreeningFixture({ spans: exactSensitiveSpans([reference]) });
+    let result: ReturnType<typeof formatPrompt> | undefined;
+    await submitProtectedAgentResearchReport(createAgentResearchReportEditor(), { ...fields, sources }, true, fixture.owner, {}, value => { result = value; });
+    expect(result?.kind).toBe('prompt');
     expect(JSON.stringify(result)).not.toContain('sentinel');
   });
 

@@ -16,9 +16,9 @@ export function installToolExecutionSafetyGuard(registry: ToolRegistry): void {
   for (const tool of registry.list()) wrapToolExecutionSafety(tool);
 
   const originalRegister = registry.register.bind(registry);
-  registry.register = (tool: Tool): void => {
+  registry.register = (tool: Tool, options): void => {
     wrapToolExecutionSafety(tool);
-    originalRegister(tool);
+    originalRegister(tool, options);
   };
 }
 

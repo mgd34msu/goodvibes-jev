@@ -1,6 +1,8 @@
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { buildTestModelDefinition } from '../helpers/test-managers.ts';
 import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engine/sdk/platform/routing';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -53,6 +55,8 @@ import { listGoodVibesCliCommands } from '../../cli/parser.ts';
 import { compactRegisteredToolDefinitions } from '../../tools/tool-definition-compaction.ts';
 import type { AgentExecutionRecord } from '../../runtime/execution-ledger.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+afterAll(cleanupResearchScreeningFixtures);
 
 type ShellPaths = ReturnType<typeof createShellPathService>;
 type HarnessOpenSelection = NonNullable<CommandContext['openSelection']>;
@@ -156,6 +160,7 @@ function makeFixture(options: {
     configPath: paths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'keybindings.json'),
   });
   const toolRegistry = new ToolRegistry();
+  bindAgentResearchSourceOwner(toolRegistry, ordinaryResearchOwner());
   const processManager = new ProcessManager();
   const fixtureModel = { ...buildTestModelDefinition('openai', 'gpt-4.1'), contextWindow: 128_000 };
   const tierReading = { tier: 'standard', frontier: 0.01, small: 0.01 } satisfies TierRecord;
@@ -13234,7 +13239,7 @@ describe('agent_harness tool', () => {
     const artifacts = createHarnessArtifactStore();
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
-      fixture.toolRegistry.register(createAgentResearchReportTool(artifacts.store));
+      fixture.toolRegistry.register(createAgentResearchReportTool(artifacts.store, ordinaryResearchOwner()));
 
       const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',

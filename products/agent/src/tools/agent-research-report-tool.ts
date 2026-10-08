@@ -1,4 +1,6 @@
-import { prepareAgentResearchReportInput, type AgentResearchReportSource as ResearchSource } from '../agent/research-report-input.ts';
+import type { AgentResearchReportSource as ResearchSource } from '../agent/research-report-input.ts';
+import { prepareProtectedResearchReport, createAgentResearchReportProjector, bindAgentResearchSourceOwner, type PreparedResearchReport } from '../agent/protected-research-report.ts';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { ArtifactDescriptor, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -452,6 +454,7 @@ function coverageFromMetadata(metadata: ArtifactDescriptor['metadata']): Citatio
 
 export function createAgentResearchReportTool(
   artifactStore?: AgentResearchReportArtifactStore,
+  sourceOwner?: ProtectedSourceOwner,
 ): Tool {
   return {
     definition: {
@@ -504,10 +507,13 @@ export function createAgentResearchReportTool(
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: Record<string, unknown>) => {
+    execute: async (rawArgs: Record<string, unknown>, options) => {
       if (!artifactStore?.create) return failure('Research report export is unavailable because this runtime did not provide an artifact store.');
+      let prepared: PreparedResearchReport | undefined;
       try {
-        const args = prepareAgentResearchReportInput(rawArgs as AgentResearchReportToolArgs);
+        prepared = await prepareProtectedResearchReport(sourceOwner, rawArgs, { signal: options?.signal });
+        const args = prepared.args as unknown as AgentResearchReportToolArgs & { readonly sources: readonly ResearchSource[] };
+        prepared.assertCurrent();
         const descriptor = await saveResearchReport(artifactStore, args);
         const coverage = coverageFromMetadata(descriptor.metadata);
         const lines = [
@@ -529,7 +535,7 @@ export function createAgentResearchReportTool(
         return output(lines.join('\n'));
       } catch (error) {
         return failure(error instanceof Error ? error.message : String(error));
-      }
+      } finally { await prepared?.release(); }
     },
   };
 }
@@ -537,6 +543,8 @@ export function createAgentResearchReportTool(
 export function registerAgentResearchReportTool(
   registry: ToolRegistry,
   artifactStore?: AgentResearchReportArtifactStore,
+  sourceOwner?: ProtectedSourceOwner,
 ): void {
-  registry.register(createAgentResearchReportTool(artifactStore));
+  if (sourceOwner) bindAgentResearchSourceOwner(registry, sourceOwner);
+  registry.register(createAgentResearchReportTool(artifactStore, sourceOwner), { inputProjection: createAgentResearchReportProjector(sourceOwner) });
 }

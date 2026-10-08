@@ -1,3 +1,5 @@
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { submitProtectedAgentResearchReport } from './agent-workspace-research-report-editor.ts';
 import { WorkspaceEditorMessage } from './agent-workspace-editor-message.ts';
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
@@ -46,10 +48,13 @@ export class AgentWorkspace {
   public runtimeSnapshot: AgentWorkspaceRuntimeSnapshot | null = null;
   public lastActionResult: AgentWorkspaceActionResult | null = null;
   private _localEditor: AgentWorkspaceLocalEditor | null = null;
+  private researchSubmission: AbortController | null = null;
   private readonly editorMessage = new WorkspaceEditorMessage();
   get editorMessageState() { return this.editorMessage.state; }
   get localEditor(): AgentWorkspaceLocalEditor | null { return this._localEditor; }
   set localEditor(editor: AgentWorkspaceLocalEditor | null) {
+    this.researchSubmission?.abort();
+    this.researchSubmission = null;
     this._localEditor = editor;
     this.editorMessage.update(editor, () => this.context?.renderRequest?.());
   }
@@ -587,6 +592,10 @@ export class AgentWorkspace {
       return;
     }
     if (trySubmitDirectHostActionEditor(this, editor, this.context, (id) => this.editorField(id), requestRender)) return;
+    if (editor.kind === 'research-report') {
+      if (!this.researchSubmission) void this.submitResearchReport(editor, requestRender).catch(() => {});
+      return;
+    }
     if (isAgentWorkspaceCommandEditorKind(editor.kind)) {
       this.submitCommandEditor(editor);
       requestRender?.();
@@ -653,6 +662,35 @@ export class AgentWorkspace {
         title: `${editor.title} failed`,
         detail,
       };
+    }
+  }
+
+  private async submitResearchReport(editor: AgentWorkspaceLocalEditor, requestRender?: () => void): Promise<void> {
+    const controller = new AbortController();
+    this.researchSubmission = controller;
+    const context = this.context;
+    const dispatch = this.dispatchPrompt;
+    const fields = Object.freeze(Object.fromEntries(editor.fields.map(field => [field.id, field.value])));
+    const assertCurrent = () => {
+      if (controller.signal.aborted || this.researchSubmission !== controller || !this.active
+        || this.localEditor !== editor || this.context !== context || this.dispatchPrompt !== dispatch
+        || editor.fields.some(field => fields[field.id] !== field.value)) throw new Error('Research editor changed.');
+    };
+    this.status = 'Preparing research report privately...'; requestRender?.();
+    try {
+      await submitProtectedAgentResearchReport(editor, fields, this.hasPromptDispatch(),
+        agentResearchSourceOwner(context?.extensions?.toolRegistry), { signal: controller.signal, assertCurrent }, result => {
+          assertCurrent();
+          // Detach this operation before the editor setter invalidates edits.
+          this.researchSubmission = null;
+          this.localEditor = result.kind === 'editor' ? result.editor : null;
+          this.status = result.status;
+          if (result.actionResult) this.lastActionResult = result.actionResult;
+          if (result.kind === 'prompt') dispatch?.(result.prompt);
+          requestRender?.();
+        });
+    } finally {
+      if (this.researchSubmission === controller) this.researchSubmission = null;
     }
   }
 

@@ -26,7 +26,7 @@ function literalReferencePattern(value: string, foldCase = false): string {
 }
 
 /** Fold ASCII case only in scheme and hostname, never userinfo, path or query text. */
-function omittedReferencePattern(value: string): string {
+export function omittedReferencePattern(value: string): string {
   const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(value)?.[0] ?? '';
   // Rejected non-HTTP userinfo references use the same literal RFC authority
   // span as containment. Do not repair a backslash/control in userinfo into a

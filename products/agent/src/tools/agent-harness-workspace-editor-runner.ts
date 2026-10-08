@@ -1,9 +1,10 @@
+import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { buildAgentArtifactBrowserToolArgs, buildAgentArtifactExportToolArgs, buildAgentArtifactPackageToolArgs, buildAgentArtifactPromoteKnowledgeToolArgs, buildAgentArtifactShowToolArgs } from '../input/agent-workspace-artifact-browser-editor.ts';
 import { buildAgentDocumentReviewerReadinessToolArgs, buildAgentDocumentReviewPacketPresetRefreshToolArgs, buildAgentDocumentReviewPacketPresetToolArgs, buildAgentDocumentReviewPacketShareToolArgs, buildAgentDocumentReviewPacketWizardToolArgs } from '../input/agent-workspace-document-ops-editor.ts';
 import { buildAgentDocumentToolArgs } from '../input/agent-workspace-document-editor.ts';
 import { buildAgentWorkspaceCommandEditorSubmission, isAgentWorkspaceCommandEditorKind } from '../input/agent-workspace-command-editor.ts';
 import { buildAgentModelCompareAnalyticsToolArgs, buildAgentModelCompareApplyToolArgs, buildAgentModelCompareExportToolArgs, buildAgentModelCompareHandoffDiffToolArgs, buildAgentModelCompareJudgmentToolArgs, buildAgentModelCompareReviewToolArgs, buildAgentModelCompareRouteDecisionToolArgs, buildAgentModelCompareToolArgs } from '../input/agent-workspace-model-compare-editor.ts';
-import { buildAgentResearchReportToolArgs } from '../input/agent-workspace-research-report-editor.ts';
+import { captureAgentResearchReportToolArgs } from '../input/agent-workspace-research-report-editor.ts';
 import { buildAgentResearchRunToolArgs } from '../input/agent-workspace-research-run-editor.ts';
 import { buildAgentResearchSourceToolArgs } from '../input/agent-workspace-research-source-editor.ts';
 import { isAffirmative, splitList } from '../input/agent-workspace-editors.ts';
@@ -33,6 +34,7 @@ export async function runWorkspaceEditorAction(
   action: AgentWorkspaceAction,
   editor: AgentWorkspaceLocalEditor,
   args: AgentHarnessToolArgs,
+  options?: Parameters<Tool['execute']>[1],
 ): Promise<{ readonly success: boolean; readonly output?: string; readonly error?: string }> {
   const fields = readFieldMap(args.fields);
   const missing = missingRequiredEditorFields(editor, fields);
@@ -235,7 +237,7 @@ export async function runWorkspaceEditorAction(
         note: 'Type yes in the editor confirmation field before saving the sourced research report artifact.',
       });
     }
-    const researchToolArgs = buildAgentResearchReportToolArgs(
+    const researchToolArgs = captureAgentResearchReportToolArgs(
       fieldReader(editor, fields),
       readString(args.explicitUserRequest) || 'Save a reviewed source-grounded research report as an Agent artifact.',
     );
@@ -243,6 +245,7 @@ export async function runWorkspaceEditorAction(
       'agent-harness-workspace-research-report',
       'agent_research_report',
       researchToolArgs as unknown as Record<string, unknown>,
+      options,
     );
     return output({
       status: result.success ? 'executed_model_tool' : 'model_tool_failed',
