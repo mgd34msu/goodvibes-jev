@@ -115,7 +115,21 @@ export async function createNativeIntegrationFixture(options: {
     });
   } else host.attachRunner(harness.runner);
   let acquisitions = 0;
-  registerNativeWorkExecutionGatewayMethods(catalog, { projectId: 'project', acquire: async () => { acquisitions++; return host; } });
+  let selectedHost = host;
+  let replacement: { host: ReturnType<typeof createNativeWorkExecutionHost>; harness: Harness } | undefined;
+  registerNativeWorkExecutionGatewayMethods(catalog, { projectId: 'project', acquire: async () => { acquisitions++; return selectedHost; } });
+  function replaceHostForRecovery() {
+    if (replacement) throw new Error('Native fixture host was already replaced');
+    // Same durable source and paired authority, genuinely new host and runner.
+    // As in native-integration-lifecycle, observing never adopts the old run.
+    harness.store.flush();
+    const next = createNativeWorkExecutionHost(hostOptions);
+    const restarted = makeHarness({ root, scripts: {}, decisionLog: log, nativeDecisions: next.nativeOwner.decisions, durableAdmission: next.nativeOwner.admission });
+    next.attachRunner(restarted.runner);
+    selectedHost = next;
+    replacement = { host: next, harness: restarted };
+    return replacement;
+  }
   const binding = createLocalWorkLedgerReadBinding({ available: true, projectId: 'project', actorId: 'host:integration-reader', service: ledger.service, authority: ledger.authority });
   if (!binding.available) throw new Error('Native integration read binding unavailable');
   const reader = binding.client;
@@ -137,13 +151,15 @@ export async function createNativeIntegrationFixture(options: {
   let disposed = false;
   async function dispose() {
     if (disposed) return; disposed = true;
-    client.dispose(); reader.dispose(); await host.close();
+    client.dispose(); reader.dispose();
+    if (replacement) { await replacement.host.close(); replacement.harness.dispose(); }
+    await host.close();
     installJudgmentPort(previous); harness.dispose();
     await Promise.all(harness.runner.list({ includeTerminal: true }).map(contract => harness.runner.join(contract.id)));
     await ledger.service.close(); await store.close(); log[Symbol.dispose](); rmSync(root, { recursive: true, force: true });
   }
   return { root, ...owned, addWork, tokens, paired, helper, authority, catalog, scopes, store, storage, ledger, log, host, hostOptions,
-    harness, engines, client, sdk, fetch, reader, requests, get acquisitions() { return acquisitions; }, dispose };
+    harness, engines, client, sdk, fetch, reader, requests, replaceHostForRecovery, get acquisitions() { return acquisitions; }, dispose };
 }
 
 /** A conflict held at an actual source-bound Jev fix-plan request. A later group

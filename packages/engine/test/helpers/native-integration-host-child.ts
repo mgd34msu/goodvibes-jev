@@ -1,15 +1,36 @@
 /** Engine-owned test host. Product acceptance reaches it over the public HTTP
  * contract instead of importing private engine fixtures across workspaces. */
-import { createNativeIntegrationRepairFixture } from '../contract/native-integration-support.js';
+import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { waitFor } from '../contract/runner-support.js';
+import { terminal } from '../contract/steps-support.js';
+import { createNativeIntegrationRepairFixture, integrationBarrier } from '../contract/native-integration-support.js';
 import { createOperatorSdk } from '../../operator-sdk/src/client.js';
 import { createOperatorNativeWorkExecutionClient } from '../../sdk/src/platform/workflow/work-ledger/native-execution-client.js';
 
 const f = await createNativeIntegrationRepairFixture({ withoutInspection: process.argv.includes('--without-inspection') });
-const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: request => f.fetch(request) });
+const emit = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
+let hold: { gate: ReturnType<typeof integrationBarrier>; delivered: ReturnType<typeof integrationBarrier>; captured: boolean } | undefined;
+// Transport interruption only: capture the actual authenticated status bytes
+// before holding delivery. Neither product nor fixture fabricates an inspection.
+const server = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, async fetch(request) {
+  const response = await f.fetch(request);
+  const active = hold;
+  if (new URL(request.url).pathname === '/api/work-ledger/execution/status' && active && !active.captured) {
+    active.captured = true;
+    const body = await response.arrayBuffer();
+    emit({ kind: 'status-held' });
+    await active.gate.wait();
+    active.delivered.release();
+    return new Response(body, { status: response.status, headers: response.headers });
+  }
+  return response;
+} });
 const baseUrl = `http://127.0.0.1:${server.port}`;
 const client = createOperatorNativeWorkExecutionClient(createOperatorSdk({ baseUrl, authToken: f.paired.token, retry: { maxAttempts: 1 } }), 'project');
-const emit = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let remergeCalls = 0;
+let recovery: { starts: number; resumes: number; agents: () => number } | undefined;
 let stop = false;
 let stage = 'native-start';
 let contractId: string | undefined;
@@ -38,6 +59,49 @@ try {
       if (command === null || typeof command !== 'object' || Object.keys(command).length !== 1 || !('type' in command)) throw new Error('Invalid test-host control message');
       if (command.type === 'repair') {
         f.releaseRepair(); await f.waitForRepaired(contractId); emit({ kind: 'repaired' });
+      } else if (command.type === 'remerge') {
+        // Reconcile the genuine preserved branch, exactly as the engine-owned
+        // lifecycle acceptance does; only the real engine can clear conflict.
+        const inspection = f.harness.runner.inspectIntegration(contractId);
+        const unit = inspection.state === 'live' ? inspection.units.find(candidate => candidate.item.state === 'recorded' && candidate.item.integration === 'conflict') : undefined;
+        if (!unit || unit.item.state !== 'recorded' || !unit.item.worktreePath || unit.unitStatus !== 'passed') throw new Error('Missing repaired preserved branch');
+        const worktree = unit.item.worktreePath;
+        const branch = f.harness.runner.get(contractId)?.branch;
+        if (!branch) throw new Error('Missing native integration branch');
+        const merge = spawnSync('git', ['-C', worktree, 'merge', '--no-commit', branch], { encoding: 'utf8' });
+        if (merge.status !== 0 && merge.status !== 1) throw new Error('Native branch reconciliation failed');
+        writeFileSync(join(worktree, 'src/shared.ts'), 'both writers repaired\n');
+        for (const args of [['add', 'src/shared.ts'], ['commit', '--allow-empty', '-m', 'Reconcile original branch with native repair']]) {
+          if (spawnSync('git', ['-C', worktree, ...args], { encoding: 'utf8' }).status !== 0) throw new Error('Native branch reconciliation failed');
+        }
+        if (await engine.retryItemIntegration(unit.item.itemId) !== 'merged') throw new Error('Native remerge failed');
+        emit({ kind: 'remerged' });
+      } else if (command.type === 'finish') {
+        f.releaseTail();
+        await waitFor(() => terminal(f.harness, contractId!), 'native terminal completion', 15_000);
+        await f.harness.runner.join(contractId);
+        if (f.harness.runner.get(contractId)?.status !== 'passed') throw new Error('Native completion did not pass');
+        emit({ kind: 'finished' });
+      } else if (command.type === 'restart-host') {
+        const replacement = f.replaceHostForRecovery();
+        const counts = { starts: 0, resumes: 0, agents: () => replacement.harness.manager.list().length };
+        recovery = counts;
+        const start = replacement.harness.runner.startDurable.bind(replacement.harness.runner);
+        const resume = replacement.harness.runner.resumeDurable.bind(replacement.harness.runner);
+        replacement.harness.runner.startDurable = (...args) => { counts.starts++; return start(...args); };
+        replacement.harness.runner.resumeDurable = (...args) => { counts.resumes++; return resume(...args); };
+        emit({ kind: 'host-restarted' });
+      } else if (command.type === 'inspect-recovery') {
+        if (!recovery) throw new Error('Native fixture host was not replaced');
+        emit({ kind: 'recovery-inspection', starts: recovery.starts, resumes: recovery.resumes, agents: recovery.agents() });
+      } else if (command.type === 'hold-status') {
+        if (hold) throw new Error('A native status hold already exists');
+        hold = { gate: integrationBarrier(), delivered: integrationBarrier(), captured: false };
+        emit({ kind: 'holding' });
+      } else if (command.type === 'release-status') {
+        if (!hold?.captured) throw new Error('No captured native status reply');
+        hold.gate.release(); await hold.delivered.wait(); hold = undefined;
+        emit({ kind: 'status-released' });
       } else if (command.type === 'inspect') {
         emit({ kind: 'inspection', remergeCalls, escalations: f.harness.runner.get(contractId)?.escalations.length ?? -1,
           mutationCount: f.requests.filter(request => /\/(start|resume|cancel)$/.test(new URL(request.url).pathname)).length });
@@ -54,5 +118,5 @@ try {
     unitCount: run?.units.length ?? 0, fixRequestCount: f.fixRequests.length });
   throw new Error(`Native fixture failed during ${stage}`);
 } finally {
-  client.dispose(); await server.stop(true); await f.dispose();
+  hold?.gate.release(); client.dispose(); await server.stop(true); await f.dispose();
 }
