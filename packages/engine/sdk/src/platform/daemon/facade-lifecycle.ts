@@ -750,7 +750,15 @@ export class DaemonLifecycleRuntime {
       },
       restartService: async (actionSignal = signal) => {
         if (actionSignal?.aborted) return { status: 'unknown', detail: 'handover cancelled' };
-        if (platform === 'linux') return command(['systemctl', '--user', '--no-block', 'restart', `${serviceName}.service`], actionSignal);
+        if (platform === 'linux') {
+          try {
+            const manager = this.options.platformServiceManager.status().platform;
+            if (manager && manager !== 'systemd') return { status: 'unsupported', detail: `service restart is unsupported for ${manager}` };
+          } catch (error) {
+            return { status: 'unknown', detail: `could not verify systemd supervision: ${summarizeError(error)}` };
+          }
+          return command(['systemctl', '--user', '--no-block', 'restart', `${serviceName}.service`], actionSignal);
+        }
         if (platform !== 'darwin') return { status: 'unsupported', detail: 'no supported service restart handover' };
         try {
           if (this.options.platformServiceManager.status().platform !== 'launchd') {

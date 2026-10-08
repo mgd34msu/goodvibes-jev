@@ -217,7 +217,7 @@ function rollbackHarness(overrides: {
   readonly runner?: DaemonLifecycleRuntimeOptions['serviceCommandRunner'];
   readonly supervised?: boolean;
   readonly platform?: NodeJS.Platform;
-  readonly managerPlatform?: 'manual' | 'launchd';
+  readonly managerPlatform?: 'manual' | 'launchd' | 'systemd';
   readonly stopGracefully?: (() => Promise<void> | void) | undefined;
   /** Share one marker filesystem across two harnesses to model two PROCESSES. */
   readonly marker?: { io: LifecycleMarkerIo; files: Map<string, string> };
@@ -634,3 +634,20 @@ test('external close during rollback orderly stop fences all later commands', as
   expect(h.files.get(EXEC_PATH)).toBe('good-build');
   expect(h.receipts()[1]!.text).toContain('incomplete (unknown)');
 });
+
+
+for (const managerPlatform of ['manual', 'systemd'] as const) {
+  test(`Linux ${managerPlatform} supervision uses only its matching service manager`, async () => {
+    let commands = 0;
+    const h = rollbackHarness({ artifact: ARTIFACT, supervised: true, platform: 'linux', managerPlatform,
+      runner: async () => { commands++; return { status: 'accepted' }; },
+    });
+    for (let i = 0; i < 4; i++) h.runtime.onStarting();
+    await Bun.sleep(10);
+    expect(commands).toBe(managerPlatform === 'systemd' ? 1 : 0);
+    expect(h.exits).toEqual([]);
+    expect(h.files.get(EXEC_PATH)).toBe('good-build');
+    if (managerPlatform === 'manual') expect(h.receipts()[1]!.text).toContain('incomplete (unsupported)');
+    else expect(h.receipts()).toHaveLength(1);
+  });
+}
