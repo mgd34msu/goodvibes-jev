@@ -1,6 +1,7 @@
 /** Explicit account-owned email intake over canonical mail and source screening. */
 import { createHash } from 'node:crypto';
 import { types } from 'node:util';
+import { ImapOpenError } from '../../email/imap-open.js';
 import { EmailCredentialUnavailableError } from '../../email/email-config.js';
 import type { EmailService } from '../../email/email-service.js';
 import type { EmailMailboxObservation } from '../../email/reply-subject-source.js';
@@ -30,9 +31,16 @@ export interface EmailInboxOwner {
   readonly account: EmailInboxAccount;
   readonly scopeId: string;
   readonly adapter: InboundProviderAdapter;
+  /** Authenticated metadata only; independent of committed UID progress. */
+  verifyEligibility?(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
   assertReadCurrent(): Promise<void>;
   acquireReadLease(): Promise<() => Promise<void>>;
   close(): Promise<void>;
+}
+
+/** Concrete canonical owner adds metadata eligibility to the legacy read surface. */
+export interface VerifiedEmailInboxOwner extends EmailInboxOwner {
+  verifyEligibility(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
 }
 
 function captureAccount(input: EmailInboxAccount): EmailInboxAccount {
@@ -63,32 +71,52 @@ function unavailable(configured?: boolean): ProviderPollResult {
 }
 
 /** No credentials or provider calls happen during construction. */
-export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInboxOwner {
+export function createEmailInboxOwner(options: EmailInboxOwnerOptions): VerifiedEmailInboxOwner {
   const account = captureAccount(options.account);
   const service = options.service;
   const assertScope = options.assertCurrent;
+  const authority = options.screening.authority;
+  const assertAuthority = authority.assertCurrent;
   const getCheckpoint = options.getCheckpoint;
   const scopeId = createHash('sha256').update(JSON.stringify(['email-inbox', 1, account])).digest('hex');
   const lifetime = new AbortController();
   const signal = AbortSignal.any([lifetime.signal, options.screening.authority.signal, ...(options.signal ? [options.signal] : [])]);
   const active = new Set<Promise<unknown>>();
   let closed = false, closing: Promise<void> | undefined;
+  let identityEpoch = 0;
+  let commitEpoch: number | undefined;
+  let eligibility: { readonly signal: AbortSignal; assertCurrent(): void } | undefined;
+  let eligibilityLifetime: AbortController | undefined;
+  let eligibilityObservation: EmailMailboxObservation | undefined;
+  let detachEligibility: (() => void) | undefined;
+  const revokeEligibility = (): void => {
+    const retired = eligibilityLifetime;
+    identityEpoch += 1; commitEpoch = undefined;
+    eligibility = undefined; eligibilityLifetime = undefined; eligibilityObservation = undefined;
+    detachEligibility?.(); detachEligibility = undefined;
+    retired?.abort();
+  };
+  const failedRead = (error: unknown): void => {
+    if (error instanceof EmailCredentialUnavailableError || (error instanceof ImapOpenError
+      && (error.reason === 'authentication-rejected' || error.reason === 'mailbox-unavailable'))) revokeEligibility();
+  };
   let screeningObservation: EmailMailboxObservation | undefined;
   let commitObservation: EmailMailboxObservation | undefined;
   let pollSignal: AbortSignal | undefined;
   let polling: Promise<ProviderPollResult> | undefined;
   const current = (): void => {
-    if (closed || signal.aborted) throw new Error('Email inbox scope is unavailable');
-    sync(assertScope);
-    const config = service.getInboxReadStatus().config;
-    if (!config.enabled || config.imapHost !== account.host || config.imapPort !== account.port
-      || config.username !== account.username || (config.mailbox.trim() || 'INBOX') !== account.mailbox
-      || (config.imapSecurity ?? 'tls') !== account.security) throw new Error('Email inbox account scope changed');
-    if (closed || signal.aborted) throw new Error('Email inbox scope is unavailable');
+    try {
+      if (closed || signal.aborted) throw new Error('Email inbox scope is unavailable');
+      sync(assertScope);
+      const config = service.getInboxReadStatus().config;
+      if (!config.enabled || config.imapHost !== account.host || config.imapPort !== account.port
+        || config.username !== account.username || (config.mailbox.trim() || 'INBOX') !== account.mailbox
+        || (config.imapSecurity ?? 'tls') !== account.security) throw new Error('Email inbox account scope changed');
+      sync(() => assertAuthority.call(authority));
+      if (closed || signal.aborted) throw new Error('Email inbox scope is unavailable');
+    } catch { revokeEligibility(); throw new Error('Email inbox scope is unavailable'); }
   };
   current();
-  const authority = options.screening.authority;
-  const assertAuthority = authority.assertCurrent;
   const screening = createProtectedSourceOwner({ ...options.screening, authority: { ...authority, signal,
     assertCurrent() { current(); sync(() => assertAuthority.call(authority)); screeningObservation?.assertCurrent(); },
   } });
@@ -100,7 +128,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
     id: 'email', pollIntervalMs: POLL_CADENCE_MS.email, checkpointKind: 'imap-uid',
     assertCurrent() {
       current(); sync(() => assertAuthority.call(authority));
-      if (!commitObservation || pollSignal?.aborted) throw new Error('Email inbox poll source is unavailable');
+      if (!commitObservation || commitEpoch !== identityEpoch || pollSignal?.aborted) throw new Error('Email inbox poll source is unavailable');
       commitObservation.assertCurrent();
     },
     poll(input: ProviderPollOptions): Promise<ProviderPollResult> {
@@ -108,6 +136,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
       const operationSignal = AbortSignal.any([signal, ...(input.signal ? [input.signal] : [])]);
       commitObservation = undefined; pollSignal = operationSignal;
       const work = own(async (): Promise<ProviderPollResult> => {
+        const epoch = identityEpoch;
         if (!service.getInboxReadStatus().ready) return unavailable(false);
         const result = await service.readInboxPage({ checkpoint: input.checkpoint, limit: input.limit, signal: operationSignal });
         current(); if (operationSignal.aborted) return unavailable(true);
@@ -116,7 +145,8 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
         if (!observation || observation.mailbox !== account.mailbox) return unavailable(true);
         observation.assertCurrent();
         if (result.outcome === 'checkpoint-required') {
-          commitObservation = observation;
+          if (epoch !== identityEpoch) return unavailable(true);
+          commitObservation = observation; commitEpoch = identityEpoch;
           return { items: [], state: result.pending > 0 ? 'pending' : 'empty', configured: true, pendingMessages: result.pending,
             checkpointAdvance: { kind: 'imap-uid', transition: result.transition, previous: result.previous,
               next: result.next, coveredUids: [], terminal: [] } };
@@ -152,32 +182,65 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
             await retire(); screeningObservation = undefined;
           }
         }
-        current(); observation.assertCurrent(); if (operationSignal.aborted) return unavailable(true);
-        commitObservation = observation;
+        current(); observation.assertCurrent(); if (operationSignal.aborted || epoch !== identityEpoch) return unavailable(true);
+        commitObservation = observation; commitEpoch = identityEpoch;
         const finalUid = result.coveredUids.at(-1) ?? result.checkpoint.lastTerminalUid;
         return { items, state: items.length > 0 ? 'ready' : 'empty', configured: true, pendingMessages: result.pending - result.messages.length,
           checkpointAdvance: { kind: 'imap-uid', transition: 'advance', previous: result.checkpoint,
             next: { ...result.checkpoint, lastTerminalUid: finalUid }, coveredUids: result.coveredUids,
             terminal: result.coveredUids.map((uid, index) => ({ uid, disposition: 'published' as const, itemId: items[index]!.id })) } };
-      }).catch((error: unknown) => unavailable(error instanceof EmailCredentialUnavailableError ? false : undefined));
+      }).catch((error: unknown) => {
+        failedRead(error);
+        return unavailable(error instanceof EmailCredentialUnavailableError ? false : undefined);
+      });
       polling = work;
       void work.then(() => { if (polling === work) polling = undefined; });
       return work;
     },
   };
-  const verifyRead = (): Promise<EmailMailboxObservation> => own(async () => {
-    const result = await service.readInboxPage({ limit: 1, signal });
-    current();
-    if (result.outcome === 'incomplete') throw new Error('Email inbox account scope is unavailable');
-    const observation = service.getInboxMailboxObservation(result);
-    if (!observation) throw new Error('Email inbox account scope is unavailable');
-    observation.assertCurrent(); sync(() => assertAuthority.call(authority));
+  const verifyAccount = (): Promise<EmailMailboxObservation> => own(async () => {
+    try {
+      const result = await service.readInboxPage({ limit: 1, signal });
+      current();
+      if (result.outcome === 'incomplete') throw new Error('Email inbox account scope is unavailable');
+      const observation = service.getInboxMailboxObservation(result);
+      if (!observation || observation.mailbox !== account.mailbox) throw new Error('Email inbox account scope is unavailable');
+      observation.assertCurrent(); sync(() => assertAuthority.call(authority));
+      return observation;
+    } catch (error) { failedRead(error); throw error; }
+  });
+  const verifyRead = async (): Promise<EmailMailboxObservation> => {
+    const observation = await verifyAccount();
     const checkpoint = getCheckpoint();
     if (!checkpoint || checkpoint.uidValidity !== observation.uidValidity) throw new Error('Email inbox generation has not been committed');
     return observation;
-  });
+  };
   return {
     account, scopeId, adapter,
+    async verifyEligibility() {
+      const observation = await verifyAccount();
+      current(); observation.assertCurrent();
+      // Refresh metadata without needlessly changing the live eligibility signal.
+      if (eligibility) {
+        try { eligibility.assertCurrent(); } catch { revokeEligibility(); }
+      }
+      if (!eligibility) {
+        const controller = new AbortController();
+        eligibilityLifetime = controller;
+        eligibility = Object.freeze({ signal: AbortSignal.any([signal, controller.signal]), assertCurrent() {
+          current();
+          if (controller.signal.aborted || !eligibilityObservation) throw new Error('Email inbox eligibility was revoked');
+          try { eligibilityObservation.assertCurrent(); } catch { revokeEligibility(); throw new Error('Email inbox eligibility was revoked'); }
+        } });
+      }
+      detachEligibility?.();
+      eligibilityObservation = observation;
+      const revoke = (): void => revokeEligibility();
+      observation.signal.addEventListener('abort', revoke, { once: true });
+      detachEligibility = () => observation.signal.removeEventListener('abort', revoke);
+      eligibility.assertCurrent();
+      return eligibility;
+    },
     async assertReadCurrent() { await verifyRead(); },
     async acquireReadLease() {
       const original = await verifyRead();
@@ -194,6 +257,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInb
         closed = true;
         let resolve!: () => void, reject!: (reason: unknown) => void;
         closing = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+        revokeEligibility();
         lifetime.abort();
         const retiring = screening.close();
         void Promise.allSettled([...active]).then(() => retiring).then(resolve,

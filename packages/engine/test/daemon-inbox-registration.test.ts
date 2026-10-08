@@ -184,3 +184,77 @@ test('account scope is rechecked after the mirror snapshot before returning rows
     expect(reads).toBe(1);
   } finally { await Promise.allSettled([reading, registration.close()]); query.mockRestore(); }
 });
+
+test('default gated start waits for the admitted initial seed to complete', async () => {
+  const { ctx } = fixture(); const entered = deferred(), release = deferred();
+  let control!: InboxPollingControl, started = false;
+  const registration = registerInboxSurface(ctx, {
+    adapters: new Map([['fixture', adapter(async () => {
+      entered.resolve(); await release.promise;
+      return { items: [], state: 'empty', configured: true };
+    })]]), gatePolling(_id, offered) { control = offered; },
+  });
+  const starting = control.start().then(() => { started = true; });
+  void starting.catch(() => {});
+  try {
+    await entered.promise; await Promise.resolve();
+    expect(started).toBe(false);
+    release.resolve(); await starting;
+    expect(started).toBe(true);
+  } finally { release.resolve(); await Promise.allSettled([starting, registration.close()]); }
+});
+
+test.each(['stop', 'close'] as const)('admission-only start resolves while seed is held; %s drains and discards late rows', async retirement => {
+  const { ctx } = fixture(); const entered = deferred(), release = deferred();
+  let control!: InboxPollingControl, signal: AbortSignal | undefined, polls = 0;
+  const registration = registerInboxSurface(ctx, {
+    awaitInitialPoll: false,
+    adapters: new Map([['fixture', adapter(async input => {
+      polls++; signal = input.signal; entered.resolve(); await release.promise;
+      return { items: [{ id: 'late-seed-row', provider: 'fixture', kind: 'dm', fromDigest: 'synthetic',
+        subjectPreview: 'Synthetic late seed', bodyPreview: 'Synthetic body', receivedAt: Date.now(), unread: true }],
+      state: 'ready', configured: true };
+    })]]), gatePolling(_id, offered) { control = offered; },
+  });
+  try {
+    await registration.ready; await control.start();
+    // Startup completion is admission, not a detached unstarted task.
+    expect(polls).toBe(1); expect(signal?.aborted).toBe(false);
+    await entered.promise;
+    await control.start(); expect(polls).toBe(1);
+    expect(await invoke(ctx)).toMatchObject({ items: [], total: 0 });
+    let retired = false;
+    const retiring = (retirement === 'stop' ? control.stop() : registration.close()).then(() => { retired = true; });
+    await Promise.resolve();
+    expect(signal?.aborted).toBe(true); expect(retired).toBe(false);
+    release.resolve(); await retiring;
+    expect(retired).toBe(true); expect(polls).toBe(1);
+    if (retirement === 'stop') expect(await invoke(ctx)).toMatchObject({ items: [], total: 0 });
+    await registration.close();
+    const reopened = new InboxCursorStore(ctx.workingDirectory);
+    try {
+      await reopened.init();
+      expect(reopened.listItems({ limit: 10 })).toEqual([]);
+      expect(reopened.getCursor('fixture')).toBe(0);
+    } finally { await reopened.close(); }
+  } finally { release.resolve(); await registration.close(); }
+});
+
+test.each(['storage', 'gate'] as const)('admission-only startup cannot bypass %s preparation failure', async failure => {
+  const { ctx } = fixture(); let control!: InboxPollingControl, polls = 0;
+  const init = failure === 'storage'
+    ? spyOn(InboxCursorStore.prototype, 'init').mockRejectedValue(new Error('Synthetic initialization failure')) : undefined;
+  const registration = registerInboxSurface(ctx, {
+    awaitInitialPoll: false,
+    adapters: new Map([['fixture', adapter(async () => { polls++; return { items: [], state: 'empty' }; })]]),
+    gatePolling(_id, offered) {
+      control = offered;
+      if (failure === 'gate') throw new Error('Synthetic gate preparation failure');
+    },
+  });
+  try {
+    await expect(registration.ready).rejects.toMatchObject({ code: 'INBOX_SURFACE_START_FAILED' });
+    await expect(control.start()).rejects.toMatchObject({ code: 'INBOX_SURFACE_START_FAILED' });
+    expect(polls).toBe(0);
+  } finally { await registration.close(); init?.mockRestore(); }
+});

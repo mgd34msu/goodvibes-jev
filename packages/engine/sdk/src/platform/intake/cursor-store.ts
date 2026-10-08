@@ -309,6 +309,38 @@ export class InboxCursorStore {
     return inserted;
   }
 
+  /**
+   * Stage timestamp rows and their watermark together. Nothing becomes visible
+   * until the post-write synchronous fence authorizes atomic publication.
+   */
+  commitTimestampPoll(provider: string, inputItems: readonly InboundChannelItem[], assertCurrent: () => void): Promise<number> {
+    this.assertOpen();
+    // The persistence queue may yield; do not retain mutable adapter results.
+    const items = inputItems.map(item => ({ ...item }));
+    let nextSince = 0;
+    for (const item of items) {
+      if (item.provider !== provider) throw new Error('Timestamp inbox item belongs to another provider');
+      if (!Number.isFinite(item.receivedAt)) throw new Error('Invalid timestamp inbox item');
+      nextSince = Math.max(nextSince, Math.floor(item.receivedAt));
+    }
+    const pending = this.store.persistTransaction(transaction => {
+      for (const item of items) {
+        const existing = transaction.get<{ provider: string }>('SELECT provider FROM items WHERE id = ?', [item.id]);
+        if (existing && existing.provider !== provider) throw new Error('Timestamp inbox item id belongs to another provider');
+      }
+      const inserted = upsertRows(transaction, items);
+      if (nextSince > 0) transaction.run(`INSERT INTO cursors (provider, nextSince) VALUES (?, ?)
+        ON CONFLICT(provider) DO UPDATE SET nextSince = MAX(cursors.nextSince, excluded.nextSince)`, [provider, nextSince]);
+      return inserted;
+    }, () => { this.assertOpen(); const result = assertCurrent(); this.assertOpen(); return result; });
+    // Closing must drain this transaction, without marking later ordinary
+    // mutations clean or releasing the underlying lifetime lock early.
+    const tracked = pending.then(() => {});
+    this.flushing.add(tracked);
+    void tracked.then(() => this.flushing.delete(tracked), () => this.flushing.delete(tracked));
+    return pending;
+  }
+
   /** Account scoping belongs to the owning store path, never to mailbox data. */
   getImapCheckpoint(provider: string): ImapUidCheckpoint | null {
     this.assertOpen();

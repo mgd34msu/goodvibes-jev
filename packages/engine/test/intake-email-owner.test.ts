@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { createEmailInboxOwner } from '../sdk/src/platform/intake/providers/email-owner.js';
 import type { ImapUidCheckpoint } from '../sdk/src/platform/intake/provider-adapter.js';
 import { SnapshotSocket, snapshotFixture } from './_helpers/mail-inbox-snapshot.js';
@@ -26,16 +26,16 @@ async function fixture(options: { gate?: Promise<void>; sockets?: SnapshotSocket
   cleanups.push(() => server.stop(true));
   const f = snapshotFixture({ sockets: options.sockets ?? Array.from({ length: 6 }, () => new SnapshotSocket()) });
   let checkpoint: ImapUidCheckpoint | null = null;
-  let allowed = true;
+  let allowed = true, sourceAllowed = true;
   const authority = new AbortController();
   const owner = createEmailInboxOwner({ account: { host: 'fixture.invalid', port: 993, username: 'synthetic@example.invalid', mailbox: 'INBOX', security: 'tls' },
     service: f.service, getCheckpoint: () => checkpoint, assertCurrent() { if (!allowed) throw new Error('Scope changed'); },
-    screening: { authority: { ownerId: 'fixture-local-services', revision: '1', retention: 'ephemeral-no-log', signal: authority.signal, assertCurrent() {} },
+    screening: { authority: { ownerId: 'fixture-local-services', revision: '1', retention: 'ephemeral-no-log', signal: authority.signal, assertCurrent() { if (!sourceAllowed) throw new Error('Source changed'); } },
       proposal: { endpoint: `http://127.0.0.1:${server.port}`, model: 'fixture-proposer' },
       judgment: { endpoint: `http://127.0.0.1:${server.port}`, model: 'jev-1.13.0' }, timeoutMs: 500 } });
   cleanups.push(() => owner.close());
   return { ...f, mailOwner: f.owner, owner, sourceParts, reached, authority,
-    revoke() { allowed = false; }, checkpoint: () => checkpoint,
+    revoke() { allowed = false; }, revokeSource() { sourceAllowed = false; }, checkpoint: () => checkpoint,
     async seed() { const result = await owner.adapter.poll({ limit: 2 }); checkpoint = result.checkpointAdvance!.next; return result; },
     commit(next: ImapUidCheckpoint) { checkpoint = next; } };
 }
@@ -102,4 +102,131 @@ test('an in-flight mirror read lease cannot switch to a newly committed UIDVALID
   const reset = await f.owner.adapter.poll({ limit: 2, checkpoint: f.checkpoint()! });
   f.commit(reset.checkpointAdvance!.next);
   await expect(validate()).rejects.toThrow();
+});
+
+test('eligibility without a committed checkpoint authenticates metadata only with stable observation', async () => {
+  const f = await fixture();
+  const first = await f.owner.verifyEligibility();
+  const second = await f.owner.verifyEligibility();
+  expect(first.signal).toBe(second.signal);
+  expect(f.checkpoint()).toBeNull();
+  expect(f.sourceParts).toEqual([]); expect(f.ingests).toEqual([]);
+  expect(f.sockets.slice(0, 2).every(socket => socket.commands.some(command => command.includes('LOGIN '))
+    && socket.commands.some(command => command.includes(' EXAMINE '))
+    && !socket.commands.some(command => command.includes('FETCH')))).toBe(true);
+  expect(() => first.assertCurrent()).not.toThrow();
+  await expect(f.owner.assertReadCurrent()).rejects.toThrow('committed');
+});
+
+test('canonical same-account credential invalidation revokes eligibility before reauthentication', async () => {
+  const f = await fixture();
+  const proof = await f.owner.verifyEligibility();
+  f.mailOwner!.invalidate();
+  expect(proof.signal.aborted).toBe(true);
+  expect(() => proof.assertCurrent()).toThrow();
+  const next = await f.owner.verifyEligibility();
+  expect(next.signal).not.toBe(proof.signal);
+  expect(f.connections()).toBe(2);
+});
+
+test('connection outage preserves prior email eligibility without a committed checkpoint', async () => {
+  const f = await fixture({ sockets: [new SnapshotSocket()] });
+  const proof = await f.owner.verifyEligibility();
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(false);
+  expect(() => proof.assertCurrent()).not.toThrow();
+});
+
+test('new UID generation revokes eligibility but can prove a new metadata-only candidate', async () => {
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket({ validity: 9 })] });
+  const proof = await f.owner.verifyEligibility();
+  const next = await f.owner.verifyEligibility();
+  expect(proof.signal.aborted).toBe(true);
+  expect(next.signal).not.toBe(proof.signal);
+  expect(() => next.assertCurrent()).not.toThrow();
+  expect(f.checkpoint()).toBeNull();
+});
+
+test('decoded authentication refusal revokes email eligibility and a completed commit fence', async () => {
+  class DeniedSocket extends SnapshotSocket {
+    override async answer(command: string): Promise<void> {
+      if (command.includes(' LOGIN ')) {
+        this.feed(`${command.split(' ')[0]} NO [AUTHENTICATIONFAILED] rejected\r\n`);
+      } else await super.answer(command);
+    }
+  }
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket(), new DeniedSocket()] });
+  const proof = await f.owner.verifyEligibility();
+  await f.seed();
+  expect(() => f.owner.adapter.assertCurrent!()).not.toThrow();
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
+  expect(() => f.owner.adapter.assertCurrent!()).toThrow();
+});
+
+test('source authority assertion revokes email eligibility without waiting for its abort signal', async () => {
+  const f = await fixture();
+  const proof = await f.owner.verifyEligibility();
+  f.revokeSource();
+  expect(f.authority.signal.aborted).toBe(false);
+  expect(() => proof.assertCurrent()).toThrow();
+  expect(proof.signal.aborted).toBe(true);
+});
+
+test('stale canonical metadata read cannot restore eligibility after account ABA', async () => {
+  const gate = deferred<void>();
+  cleanups.push(() => gate.resolve());
+  const socket = new SnapshotSocket({ hold: ' SEARCH ', gate: gate.promise });
+  const f = await fixture({ sockets: [socket, new SnapshotSocket()] });
+  const pending = f.owner.verifyEligibility();
+  void pending.catch(() => {});
+  await socket.reached.promise;
+  f.mailOwner!.invalidate();
+  gate.resolve();
+  await expect(pending).rejects.toThrow();
+  const proof = await f.owner.verifyEligibility();
+  expect(() => proof.assertCurrent()).not.toThrow();
+});
+
+test('held semantic screening retains eligibility across metadata refresh without advancing progress', async () => {
+  const gate = deferred<void>(); cleanups.push(() => gate.resolve());
+  const f = await fixture({ gate: gate.promise });
+  const proof = await f.owner.verifyEligibility();
+  await f.seed();
+  const pending = f.owner.adapter.poll({ limit: 2, checkpoint: f.checkpoint()! });
+  await f.reached.promise;
+  const refreshed = await f.owner.verifyEligibility();
+  expect(refreshed.signal).toBe(proof.signal);
+  expect(() => proof.assertCurrent()).not.toThrow();
+  expect(f.checkpoint()!.lastTerminalUid).toBeNull();
+  gate.resolve();
+  expect((await pending).state).toBe('ready');
+});
+
+test('a completed but suspended seed cannot restore commit authority after concurrent authentication denial', async () => {
+  class DeniedSocket extends SnapshotSocket {
+    override async answer(command: string): Promise<void> {
+      if (command.includes(' LOGIN ')) this.feed(`${command.split(' ')[0]} NO [AUTHENTICATIONFAILED] rejected\r\n`);
+      else await super.answer(command);
+    }
+  }
+  const f = await fixture({ sockets: [new SnapshotSocket(), new SnapshotSocket(), new DeniedSocket()] });
+  const proof = await f.owner.verifyEligibility();
+  const reached = deferred<void>(), finish = deferred<void>();
+  cleanups.push(() => finish.resolve());
+  const actual = f.service.readInboxPage.bind(f.service);
+  let held = false;
+  const replacement = spyOn(f.service, 'readInboxPage').mockImplementation(async input => {
+    const result = await actual(input);
+    if (!held) { held = true; reached.resolve(); await finish.promise; }
+    return result;
+  });
+  cleanups.push(() => { replacement.mockRestore(); });
+  const pending = f.owner.adapter.poll({ limit: 2 });
+  await reached.promise;
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
+  finish.resolve();
+  expect(await pending).toMatchObject({ state: 'unavailable', items: [] });
+  expect(() => f.owner.adapter.assertCurrent!()).toThrow();
 });

@@ -17,6 +17,7 @@
  * message routing between channel surfaces. This one is only about who on the
  * LAN is allowed to contest which inbound consumer.)
  */
+import { OwnedClusterDrainError } from './owned-drain-error.js';
 import { surfaceIdFor, surfaceLabel, type ClusterSurfaceKey } from './surface-id.js';
 import type { ClusterConsumerGate, ClusterConsumerStartContext, ClusterLogger } from './types.js';
 
@@ -37,6 +38,7 @@ interface MutableSurface {
 }
 
 export class ClusterSurfaceRegistry {
+  private readonly ownedGates = new WeakSet<ClusterConsumerGate>();
   private readonly surfaces = new Map<string, MutableSurface>();
   /**
    * Surfaces whose last consumer has been unregistered but whose election has
@@ -50,7 +52,7 @@ export class ClusterSurfaceRegistry {
    * election has actually stopped.
    */
   private readonly retiring = new Map<string, MutableSurface>();
-  private readonly listeners = new Set<(surfaceId: string) => void>();
+  private readonly listeners = new Set<(surfaceId: string) => void | Promise<void>>();
 
   constructor(private readonly logger: ClusterLogger) {}
 
@@ -62,6 +64,17 @@ export class ClusterSurfaceRegistry {
    * the reverse, so a consumer another depends on is up first and down last.
    */
   register(gate: ClusterConsumerGate): () => void {
+    const withdraw = this.registerConsumer(gate);
+    return () => { void withdraw().catch(() => {}); };
+  }
+
+  /** Removal is immediate; completion includes the exact listener retirement. */
+  registerOwned(gate: ClusterConsumerGate): () => Promise<void> {
+    this.ownedGates.add(gate);
+    return this.registerConsumer(gate);
+  }
+
+  private registerConsumer(gate: ClusterConsumerGate): () => Promise<void> {
     const surfaceId = surfaceIdFor(gate.surface);
     // A surface re-registered before its stand-down completed is servable
     // again; it must not be dropped underneath the new consumer.
@@ -77,15 +90,15 @@ export class ClusterSurfaceRegistry {
       this.surfaces.set(surfaceId, surface);
     }
     surface.gates.push(gate);
-    this.notify(surfaceId);
-    return () => {
+    void this.notify(surfaceId);
+    return async () => {
       const current = this.surfaces.get(surfaceId);
       if (!current) return;
       const index = current.gates.indexOf(gate);
       if (index < 0) return;
       if (current.gates.length > 1) {
         current.gates.splice(index, 1);
-        this.notify(surfaceId);
+        await this.notify(surfaceId);
         return;
       }
       // The LAST consumer for this surface. It leaves the servable set and,
@@ -96,12 +109,12 @@ export class ClusterSurfaceRegistry {
       // before it broadcasts a RESIGN saying it did.
       this.surfaces.delete(surfaceId);
       this.retiring.set(surfaceId, current);
-      this.notify(surfaceId);
+      await this.notify(surfaceId);
     };
   }
 
   /** Called whenever the servable set changes, with the surface that moved. */
-  onChange(listener: (surfaceId: string) => void): () => void {
+  onChange(listener: (surfaceId: string) => void | Promise<void>): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -152,10 +165,12 @@ export class ClusterSurfaceRegistry {
   async stopSurface(surfaceId: string, reason: string): Promise<void> {
     const surface = this.surfaces.get(surfaceId) ?? this.retiring.get(surfaceId);
     if (!surface) return;
+    let ownedFailure = false;
     for (const gate of [...surface.gates].reverse()) {
       try {
         await gate.stop(reason);
       } catch (error) {
+        if (this.ownedGates.has(gate)) ownedFailure = true;
         this.logger.error('cluster: an inbound consumer did not stop cleanly', {
           surface: surface.label,
           consumer: gate.id,
@@ -164,6 +179,7 @@ export class ClusterSurfaceRegistry {
         });
       }
     }
+    if (ownedFailure) throw new OwnedClusterDrainError();
   }
 
   /** Drop a retired surface once its election has finished standing down. */
@@ -171,15 +187,15 @@ export class ClusterSurfaceRegistry {
     this.retiring.delete(surfaceId);
   }
 
-  private notify(surfaceId: string): void {
-    for (const listener of [...this.listeners]) {
+  private async notify(surfaceId: string): Promise<void> {
+    await Promise.all([...this.listeners].map(async (listener) => {
       try {
-        listener(surfaceId);
+        await listener(surfaceId);
       } catch (error) {
         this.logger.error('cluster: a surface registry listener failed', {
           error: error instanceof Error ? error.message : String(error),
         });
       }
-    }
+    }));
   }
 }

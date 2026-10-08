@@ -54,8 +54,8 @@ describe('inbound poller owned generations', () => {
     const { store, poller } = await fixture(async () => ({ state: 'ready', configured: true, items: [item('accepted')] }));
     const writing = deferred<void>();
     const release = deferred<void>();
-    const original = store.flush.bind(store);
-    const flush = spyOn(store, 'flush').mockImplementation(async () => { await original(); writing.resolve(); await release.promise; });
+    const original = store.commitTimestampPoll.bind(store);
+    const flush = spyOn(store, 'commitTimestampPoll').mockImplementation(async (...args) => { const count = await original(...args); writing.resolve(); await release.promise; return count; });
     cleanups.push(() => flush.mockRestore());
     const polling = poller.pollOnce();
     await writing.promise;
@@ -160,7 +160,7 @@ describe('inbound poller owned generations', () => {
 
   test('storage failure preserves explicit adapter-reported configuration', async () => {
     const { poller, store } = await fixture(async () => empty);
-    const flush = spyOn(store, 'flush').mockRejectedValueOnce(new Error('fixture persistence failed'));
+    const flush = spyOn(store, 'commitTimestampPoll').mockRejectedValueOnce(new Error('fixture persistence failed'));
     cleanups.push(() => flush.mockRestore());
     await poller.pollOnce();
     expect(poller.snapshotStatuses()[0]).toMatchObject({ state: 'unavailable', configured: true });

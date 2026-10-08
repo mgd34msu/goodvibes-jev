@@ -213,7 +213,7 @@ export class InboundPoller {
       const assertCommitCurrent = (): void => {
         if (!current()) throw new Error('Inbound poll is no longer current');
         // HandlerSqliteStore rejects any non-void/async result from this fence.
-        const result = assertAdapterCurrent!.call(adapter);
+        const result = assertAdapterCurrent?.call(adapter);
         if (!current()) throw new Error('Inbound poll is no longer current');
         return result;
       };
@@ -255,13 +255,7 @@ export class InboundPoller {
           ? await this.store.commitImapPoll(id, result.items, result.checkpointAdvance, assertCommitCurrent)
           : 0;
       } else {
-        newCount = this.store.upsertItems(result.items);
-        let maxReceived = since ?? 0;
-        for (const item of result.items) {
-          if (item.receivedAt > maxReceived) maxReceived = item.receivedAt;
-        }
-        if (maxReceived > 0) this.store.advanceCursor(id, maxReceived);
-        await this.store.flush();
+        newCount = await this.store.commitTimestampPoll(id, result.items, assertCommitCurrent);
       }
       if (!current()) return;
       this.setStatus(id, {
