@@ -37,11 +37,11 @@ import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool, ToolCall, ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { composeAgentToolRegistry } from '../../runtime/agent-tool-registry.ts';
+import { composeAgentPermissionManager } from '../../runtime/bootstrap-core.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { installAgentMcpCallRoute } from '../../tools/agent-mcp-call-route.ts';
 import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.ts';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
-import { installPermissionManagerSafetyGuard } from '../../runtime/tool-permission-safety.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 /** What the owner said this turn; the platform-boundary guard reads it. */
@@ -54,9 +54,11 @@ function execReadings() {
   return fakePort((name, question, state) => {
     if (name === 'disposition' && question.type === 'choice') return choiceAnswer(question, Object.hasOwn(question.criteria, 'act') ? 'act' : 'reject', 0.99);
     const foreignTerminal = JSON.stringify(state).includes('tmux -L gv-exec-refusal-');
+    const readsFile = (state as { tool?: string }).tool === 'read';
     if (name === 'family' || name === 'capability') return choiceAnswer(question, 'generic', 0.99);
-    if (name === 'kind') return choiceAnswer(question, 'other', 0.99);
-    if (name === 'mutates') return noulAnswer(0.999);
+    if (name === 'kind') return choiceAnswer(question, readsFile ? 'read' : 'other', 0.99);
+    if (name === 'mutates') return noulAnswer(readsFile ? 0.001 : 0.999);
+    if (name === 'platform_source' || name === 'platform_requested') return noulAnswer(0.001);
     if (name === 'acts_on_session') return noulAnswer(foreignTerminal ? 0.999 : 0.001);
     if (name === 'owned_targets') return noulAnswer(foreignTerminal ? 0.001 : 0.999);
     if (name === 'credential') return noulAnswer(/key|token|secret|password|credential/i.test(String((state as { name?: string }).name)) ? 0.999 : 0.001);
@@ -131,7 +133,7 @@ function composeAgentExecPipeline(services: RuntimeServices): ToolRegistry {
     resolveSessionId: () => 'exec-refusal-and-kill',
     getLastUserMessage: () => LAST_USER_MESSAGE,
   });
-  installPermissionManagerSafetyGuard(services.permissionManager);
+  composeAgentPermissionManager(services);
   return toolRegistry;
 }
 
@@ -166,7 +168,24 @@ function agentPipeline(prefix: string, permissionMode: 'allow-all' | 'plan'): Pi
   services.configManager.set('permissions.mode', permissionMode);
   const toolRegistry = composeAgentExecPipeline(services);
   const signals = new CallSignals();
-  const deps: ToolExecutionDeps = {
+  const deps = agentExecutionDeps(services, toolRegistry, signals);
+  return {
+    workspace,
+    signals,
+    async run(call) {
+      const [result] = await executeToolCalls(deps, 'turn-exec-refusal-and-kill', [call]);
+      if (!result) throw new Error('executeToolCalls returned no result');
+      return result;
+    },
+  };
+}
+
+function agentExecutionDeps(
+  services: RuntimeServices,
+  toolRegistry: ToolRegistry,
+  signals: NonNullable<ToolExecutionDeps['toolCallSignals']>,
+): ToolExecutionDeps {
+  return {
     autonomousSource: () => ({ goal: LAST_USER_MESSAGE, criteria: [] }),
     toolRegistry,
     permissionManager: services.permissionManager,
@@ -177,15 +196,6 @@ function agentPipeline(prefix: string, permissionMode: 'allow-all' | 'plan'): Pi
       throw new Error('runtimeBus is null, so no emitter context is requested');
     },
     toolCallSignals: signals,
-  };
-  return {
-    workspace,
-    signals,
-    async run(call) {
-      const [result] = await executeToolCalls(deps, 'turn-exec-refusal-and-kill', [call]);
-      if (!result) throw new Error('executeToolCalls returned no result');
-      return result;
-    },
   };
 }
 
@@ -371,13 +381,14 @@ describe('a command killed through the agent exec pipeline', () => {
 function composeWithRecorders(services: RuntimeServices): { registry: ToolRegistry; received: Map<string, AbortSignal | undefined> } {
   const received = new Map<string, AbortSignal | undefined>();
   const register = ToolRegistry.prototype.register;
-  ToolRegistry.prototype.register = function registerWithRecorder(this: ToolRegistry, tool: Tool): void {
+  ToolRegistry.prototype.register = function registerWithRecorder(this: ToolRegistry, tool: Tool, options): void {
     const name = tool.definition.name;
     tool.execute = async (_args, options) => {
       received.set(name, options?.signal);
       return { success: true, output: 'recorded' };
     };
-    register.call(this, tool);
+    // Preserve the real input projector and its captured read-resource evidence.
+    register.call(this, tool, options);
   };
   let registry: ToolRegistry;
   try {
@@ -418,9 +429,11 @@ const DELEGATES_TO: Readonly<Record<string, string>> = {
 
 describe('the cancel signal reaches the tool through every agent wrapper chain', () => {
   test('each registered tool receives the call signal after every agent wrapper ran', async () => {
-    const { services } = agentRuntime('exec-cancel-every-chain');
+    const { services, workspace } = agentRuntime('exec-cancel-every-chain');
     services.configManager.set('permissions.mode', 'allow-all');
     const { registry, received } = composeWithRecorders(services);
+    const readPath = join(workspace, 'ordinary.txt');
+    writeFileSync(readPath, 'SYNTHETIC ORDINARY FILE');
     const tools = registry.list();
     expect(tools.length).toBeGreaterThan(20);
     const dropped: string[] = [];
@@ -430,15 +443,50 @@ describe('the cancel signal reaches the tool through every agent wrapper chain',
       const inner = DELEGATES_TO[name] ?? name;
       const controller = new AbortController();
       received.clear();
-      await tool.execute({}, { signal: controller.signal });
+      if (name === 'read') {
+        // Adopted READ needs the same owner readiness, resource preparation and
+        // admission as a live turn; a direct empty call must never reach it.
+        const deps = agentExecutionDeps(services, registry, {
+          open: () => controller.signal,
+          close: () => {},
+        });
+        const [result] = await executeToolCalls(deps, 'turn-read-wrapper-signal', [{
+          id: 'read-wrapper-signal', name, arguments: { files: [{ path: readPath }] },
+        }]);
+        expect(result?.success).toBe(true);
+        expect(result?.autonomousDecision?.outcome).toBe('act');
+        for (const site of ['engine.gate.agent-read-secrets', 'engine.gate.agent-read-scope']) {
+          const evidence = judgmentLog.query({ site });
+          expect(evidence).toHaveLength(1);
+          const request = answers.requests.find(request => request.context?.site === site);
+          expect(JSON.stringify(request?.state)).toContain(readPath);
+        }
+      } else {
+        await tool.execute({}, { signal: controller.signal });
+      }
       if (!received.has(inner)) neverReached.push(name);
       else if (received.get(inner) !== controller.signal) dropped.push(name);
     }
-    // Every chain reached its platform tool (empty arguments pass every agent
-    // wrapper's validation), and every one delivered the call's own signal.
+    // Every chain reached its platform tool, including genuinely admitted READ,
+    // and every one delivered the call's own signal.
     expect(neverReached).toEqual([]);
     expect(dropped).toEqual([]);
   }, 60_000);
+
+  test('a direct READ with a real ordinary path still cannot reach its recorder without admission', async () => {
+    const { services, workspace } = agentRuntime('exec-cancel-direct-read');
+    services.configManager.set('permissions.mode', 'allow-all');
+    const { registry, received } = composeWithRecorders(services);
+    const path = join(workspace, 'ordinary.txt');
+    writeFileSync(path, 'SYNTHETIC ORDINARY FILE');
+    const read = registry.list().find(tool => tool.definition.name === 'read');
+    expect(read).toBeDefined();
+    const result = await read!.execute({ files: [{ path }] }, { signal: new AbortController().signal });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('unadmitted read authority');
+    expect(received.has('read')).toBe(false);
+    expect(answers.requests).toHaveLength(0);
+  });
 
   test('an MCP call that never answers settles as cancelled as soon as its signal aborts', async () => {
     const { services } = agentRuntime('exec-cancel-mcp-call');

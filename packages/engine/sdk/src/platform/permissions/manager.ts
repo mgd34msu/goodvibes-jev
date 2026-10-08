@@ -1,11 +1,13 @@
 import { readSettingsWriteEvidence } from '../gate/policy/settings-write-evidence.js';
+import { readAgentReadEvidence } from '../gate/policy/agent-read-evidence.js';
 import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
 import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
-import type { ToolRegistry } from '../tools/registry.js';
+import type { PreparedToolCall, ToolRegistry } from '../tools/registry.js';
+import { projectionProperty } from '../tools/input-projection.js';
 import type { JevDecisionBinding, JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
@@ -71,7 +73,7 @@ type PermissionConfigSnapshot = Readonly<Pick<ReturnType<typeof getConfigSnapsho
 
 export interface PermissionConfigReader {
   /** Coherent owner-held frame. Must read owned state without invoking observers or host callbacks. */
-  getAutonomousSnapshot?(): Readonly<{ permissions: PermissionConfigSnapshot['permissions']; autoApprove: boolean; directory: string | null }>;
+  getAutonomousSnapshot?(): Readonly<{ permissions: PermissionConfigSnapshot['permissions']; autoApprove: boolean; directory: string | null; incarnation?: number }>;
   isAutoApproveEnabled(): boolean;
   getSnapshot(): PermissionConfigSnapshot;
   getWorkingDirectory(): string | null;
@@ -250,6 +252,42 @@ export interface AutonomousPermissionOptions extends PermissionExecutionOptions 
   readonly schemaRevision?: string;
   readonly preparationDecisionIds?: readonly string[];
   readonly assertPrepared?: () => void;
+  /** Exact registry-owned call. Required to authenticate a strict tool body. */
+  readonly preparedCall?: Readonly<{ registry: ToolRegistry; call: PreparedToolCall }> | undefined;
+}
+
+interface AuthenticAutonomousAdmission {
+  readonly issuer: PermissionManager;
+  readonly registry: ToolRegistry;
+  readonly call: PreparedToolCall;
+  readonly claim: () => void;
+  readonly assertCurrent: () => void;
+  consumed: boolean;
+}
+
+// The only writer lives after this manager's successful recorded act decision.
+// Public admission objects and claim callbacks are not themselves capabilities.
+const authenticAutonomousAdmissions = new WeakMap<AutonomousPermissionAdmission, AuthenticAutonomousAdmission>();
+
+/** @internal Identity-only compatibility query. Never validates, consumes or creates authority. */
+export function isAuthenticAutonomousAdmission(admission: unknown): boolean {
+  // Retain the brand after consumption or revocation: a stale genuine admission
+  // must still take strict object validation, never the legacy callback path.
+  return admission !== null && typeof admission === 'object'
+    && authenticAutonomousAdmissions.has(admission as AutonomousPermissionAdmission);
+}
+
+/** @internal Consume-only bridge for the registry; deliberately no token factory. */
+export function consumeAutonomousAdmission(admission: AutonomousPermissionAdmission, registry: ToolRegistry,
+  call: PreparedToolCall, expectedIssuer?: PermissionManager): () => void {
+  const record = authenticAutonomousAdmissions.get(admission);
+  if (!record || record.consumed || record.registry !== registry || record.call !== call
+    || (expectedIssuer !== undefined && record.issuer !== expectedIssuer)) {
+    throw new Error('Autonomous admission does not authenticate this prepared tool call');
+  }
+  record.consumed = true;
+  record.claim();
+  return record.assertCurrent;
 }
 
 export class PermissionManager {
@@ -260,12 +298,13 @@ export class PermissionManager {
   private readonly autonomousDeferred = new Map<string, { readonly inputRevision: string; readonly until: JevVersionRef }>();
   /** Explicit session-tier decisions only; durable rules are always matched live. */
   private sessionApprovals = new Map<string, boolean>();
+  private sessionApprovalRevision = 0;
   private readonly requestPermission: PermissionRequestHandler;
   private readonly configReader: PermissionConfigReader;
   private readonly hookDispatcher: Pick<HookDispatcher, 'fire'> | null;
   private readonly policyRuntimeState: Pick<PolicyRuntimeState, 'recordPermissionRequest' | 'recordPermissionDecision' | 'getRegistry'>;
   private readonly featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null;
-  private readonly userRuleStore: Pick<UserPermissionRuleStore, 'rules' | 'add'> | null;
+  private readonly userRuleStore: (Pick<UserPermissionRuleStore, 'rules' | 'add'> & Partial<Pick<UserPermissionRuleStore, 'init' | 'awaitReady' | 'getPublicationRevision'>>) | null;
   private readonly gate: GateOptions;
 
   constructor(
@@ -274,7 +313,7 @@ export class PermissionManager {
     policyRuntimeState: Pick<PolicyRuntimeState, 'recordPermissionRequest' | 'recordPermissionDecision' | 'getRegistry'>,
     hookDispatcher: Pick<HookDispatcher, 'fire'> | null = null,
     featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null = null,
-    userRuleStore: Pick<UserPermissionRuleStore, 'rules' | 'add'> | null = null,
+    userRuleStore: (Pick<UserPermissionRuleStore, 'rules' | 'add'> & Partial<Pick<UserPermissionRuleStore, 'init' | 'awaitReady' | 'getPublicationRevision'>>) | null = null,
     gate: GateOptions = {},
   ) {
     this.requestPermission = requestPermission;
@@ -286,6 +325,17 @@ export class PermissionManager {
     this.gate = { surfaceOf: currentTurnSurfaceId, ...gate };
   }
 
+  /** Wait for the existing rule owner before taking any autonomous authority snapshot. */
+  async prepareAutonomousOwner(signal?: AbortSignal): Promise<void> {
+    assertPermissionActive(signal);
+    const owner = this.userRuleStore;
+    // Production stores distinguish load failure from their legacy empty-rule
+    // fallback. Older embedding stores retain their existing init contract.
+    const ready = owner?.awaitReady ?? owner?.init;
+    if (ready) await awaitPermission(() => ready.call(owner), signal);
+    assertPermissionActive(signal);
+  }
+
   private autonomousAuthority(sourceId: string, sourceOf: () => AutonomousToolSource, choiceProjection?: AutonomousChoiceProjection) {
     // Stage host callbacks first. The subsequent source/config/store copies are
     // owned data reads, not a sequence interleaving observers with sampled fields.
@@ -293,14 +343,17 @@ export class PermissionManager {
     const surface = this.gate.surfaceOf?.();
     const source = sourceOf();
     const rules = this.userRuleStore?.rules() ?? [];
-    const policyRules = this.policyRuntimeState.getRegistry().getCurrent()?.rules ?? [];
+    const rulePublication = this.userRuleStore?.getPublicationRevision?.() ?? 0;
+    const policyRegistry = this.policyRuntimeState.getRegistry();
+    const policyRules = policyRegistry.getCurrent()?.rules ?? [];
+    const policyPublication = policyRegistry.getPublicationRevision?.() ?? 0;
     const policyEnabled = this.featureFlags?.isEnabled('permissions-policy-engine') === true;
     const exposure = (this.gate.ledger ?? getProcessUntrustedContentLedger()).ingestedThisTurn();
     const scope = this.configReader.getAutonomousSnapshot?.();
     if (!scope) throw new Error('Autonomous execution requires a coherent permission owner snapshot');
     assertAutonomousData(scope);
-    const frame = { ...scope, source, surface, rules, policyRules, policyEnabled,
-      sessionGrants: [...this.sessionApprovals], exposure };
+    const frame = { ...scope, source, surface, rules, rulePublication, policyRules, policyPublication, policyEnabled,
+      sessionGrants: [...this.sessionApprovals], sessionPublication: this.sessionApprovalRevision, exposure };
     assertAutonomousData(choices);
     assertAutonomousData(frame);
     const capturedSource = captureAutonomousSource(source);
@@ -368,7 +421,10 @@ export class PermissionManager {
     const epoch = (this.autonomousEpochs.get(sourceId) ?? 0) + 1;
     this.autonomousEpochs.set(sourceId, epoch);
     this.autonomousPending.add(sourceId);
-    try { return await this.decideAutonomous(sourceId, toolName, preparedArgs, options, epoch); }
+    try {
+      await this.prepareAutonomousOwner(options.signal);
+      return await this.decideAutonomous(sourceId, toolName, preparedArgs, options, epoch);
+    }
     finally { this.autonomousPending.delete(sourceId); }
   }
 
@@ -378,9 +434,31 @@ export class PermissionManager {
     const args = snapshotJudgmentInput(preparedArgs, toolName) as Record<string, unknown>;
     const sourceOf = options.sourceOf;
     const choiceProjection = options.choiceProjection;
+    const schemaRevision = options.schemaRevision;
+    const suppliedPrepared = projectionProperty(options, 'preparedCall');
+    if (suppliedPrepared !== undefined && (!suppliedPrepared || typeof suppliedPrepared !== 'object')) {
+      throw new Error('Autonomous admission requires a registry-owned prepared call');
+    }
+    const preparedCall = suppliedPrepared === undefined ? undefined : Object.freeze({
+      registry: projectionProperty(suppliedPrepared as object, 'registry') as ToolRegistry,
+      call: projectionProperty(suppliedPrepared as object, 'call') as PreparedToolCall,
+    });
+    if (preparedCall) {
+      preparedCall.registry.assertPrepared(preparedCall.call);
+      if (preparedCall.call.name !== toolName || preparedCall.call.args !== preparedArgs
+        || preparedCall.call.schemaRevision !== schemaRevision) throw new Error('Autonomous admission prepared call binding changed');
+    }
+    const admissionEvidence = preparedCall?.registry.readPreparedAdmissionEvidence(preparedCall.call);
     const ledger = this.gate.ledger ?? getProcessUntrustedContentLedger();
     const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection);
-    const capturedAuthority = authority() as { source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'] };
+    // A running selected projection is already claimed. Its body compares the
+    // raw owner frame rather than re-entering preclaim catalog/source guards.
+    const rawAuthority = this.autonomousAuthority(sourceId, sourceOf);
+    const rawAuthorityRevision = hashState(rawAuthority as unknown as EntryType);
+    const capturedAuthority = (choiceProjection === undefined ? rawAuthority : Object.freeze({ ...rawAuthority,
+      autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, rawAuthority) })) as {
+        source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'];
+      };
     const source = capturedAuthority.source;
     const sourceRevision = hashState(source as unknown as EntryType);
     const authorityRevision = hashState(capturedAuthority as unknown as EntryType);
@@ -388,9 +466,9 @@ export class PermissionManager {
     const directory = capturedAuthority.directory ?? undefined;
     // Raw action/source/scope data was inspected above. Schema revisions and
     // source handles are typed protocol identities and retain that validation.
-    const schemaRevision = options.schemaRevision;
     captureAutonomousChoices({ resumeConditions: [{ id: sourceId, revision: schemaRevision ?? 'unversioned-schema' }] });
-    const inputRevision = hashState({ toolName, args, directory, schemaRevision, source } as unknown as EntryType);
+    const inputRevision = hashState({ toolName, args, directory, schemaRevision, source,
+      ...(admissionEvidence ? { admissionEvidence } : {}) } as unknown as EntryType);
     // A source condition is a typed protocol reference, not raw action text.
     // Keep its canonical identity intact: prefixing a generated SHA can make
     // an incidental digit run look like card material to the raw-input guard.
@@ -415,10 +493,13 @@ export class PermissionManager {
     const assertCurrent = () => {
       assertPermissionActive(signal);
       if (this.autonomousEpochs.get(sourceId) !== epoch) throw new Error('Autonomous admission was superseded');
+      // Stage the compatibility callback before the final owner snapshot: it
+      // may publish a revocation even when it returns normally.
+      assertPrepared?.();
       const current = authority();
       assertPermissionActive(signal);
       if (hashState(current as unknown as EntryType) !== authorityRevision) throw new Error('Autonomous admission authority, source or scope changed');
-      assertPrepared?.();
+      if (preparedCall) preparedCall.registry.assertPrepared(preparedCall.call);
       if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
       const latestDeferral = this.autonomousDeferred.get(sourceId);
       if (latestDeferral && latestDeferral !== deferred) throw new Error('A concurrent admission deferred this source');
@@ -450,6 +531,9 @@ export class PermissionManager {
     if (reading) analysis = withReading(analysis, reading, category);
     const boundary = await runBoundary({ toolName, args, reading, surfaceId: this.gate.surfaceOf?.(), ledger, signal, port: scopedPort });
     assertCurrent();
+    const agentRead = admissionEvidence?.kind === 'agent-read'
+      ? await readAgentReadEvidence(admissionEvidence, source, scopedPort, signal) : null;
+    assertCurrent();
     const settings = toolName === 'goodvibes_settings' ? await readSettingsWriteEvidence(args, scopedPort, signal) : null;
     assertCurrent();
     if (settings && !settings.judgmentDecisionId) throw new Error('Settings evidence has no recorded judgment provenance');
@@ -463,6 +547,7 @@ export class PermissionManager {
       ? this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, reading ? classificationFromReading(reading) : 'read'), analysis)
       : null;
     const allowAct = boundary.passed && !explicitToolDeny && durable?.approved !== false && policy?.approved !== false
+      && agentRead?.allowed !== false
       && !(preset.readOnly && reading !== null && (reading.mutates || reading.outward));
     if (offered.resumeConditions?.some(condition => condition.id === sourceCondition.id || condition.id === legacySourceConditionId)) throw new Error('Host condition conflicts with the source condition');
     const choices = {
@@ -475,10 +560,12 @@ export class PermissionManager {
       port: scopedPort, binding,
       state: readingArguments({ tool: toolName, arguments: args, source: autonomousSourceEvidence(source), ...(directory ? { workingDirectory: directory } : {}),
         evidence: { boundary: boundaryRecord(boundary), ...(reading ? { reading: readingRecord(reading) } : {}),
+          ...(agentRead && admissionEvidence ? { agentRead: { root: admissionEvidence.root, paths: agentRead.paths, allowed: agentRead.allowed } } : {}),
           ...(settings ? { settings: { key: settings.key, hazard: settings.hazard.choice, hazardOutcome: settings.hazard.outcome,
             requested: settings.requested?.verdict ?? null, requestedOutcome: settings.requested?.outcome ?? null } } : {}),
           constraints: { allowAct, mode, explicitToolDeny: explicitToolDeny === true, durableEffect: durable?.approved ?? null } } }) as import('@goodvibes-jev/judgment').EntryType,
-      evidence: [{ id: 'prepared-tool-input', revision: inputRevision }, { id: 'source-goal-and-criteria', revision: sourceRevision }, { id: 'live-authority', revision: authorityRevision }],
+      evidence: [{ id: 'prepared-tool-input', revision: inputRevision }, { id: 'source-goal-and-criteria', revision: sourceRevision }, { id: 'live-authority', revision: authorityRevision },
+        ...(admissionEvidence ? [{ id: 'agent-read-subjects', revision: admissionEvidence.revision }] : [])],
       supportingDecisionIds: [...supportingIds],
       choices, allowAct, assertCurrent, signal,
     });
@@ -504,7 +591,7 @@ export class PermissionManager {
       && item.toolName === selectedRevision.toolName
       && hashState(item.args as EntryType) === hashState(selectedRevision.args as EntryType)) : undefined;
     if (selectedRevision && !revision) throw new Error('Autonomous selected revision is no longer offered');
-    return {
+    const admission: AutonomousPermissionAdmission = Object.freeze({
       result, revisionIds: Object.freeze(decision.context.continuations.map(item => item.id)), ...(revision ? { revision } : {}),
       claim: () => {
         decision.assertCurrent();
@@ -516,7 +603,24 @@ export class PermissionManager {
         this.autonomousClaims.add(sourceId);
         this.autonomousDeferred.delete(sourceId);
       },
-    };
+    });
+    if (receipt.outcome === 'act' && preparedCall) {
+      authenticAutonomousAdmissions.set(admission, {
+        issuer: this, registry: preparedCall.registry, call: preparedCall.call, claim: admission.claim, consumed: false,
+        assertCurrent: () => {
+          assertPermissionActive(signal);
+          if (this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
+            throw new Error('Autonomous execution admission is stale');
+          }
+          const current = this.autonomousAuthority(sourceId, sourceOf);
+          assertPermissionActive(signal);
+          if (hashState(current as unknown as EntryType) !== rawAuthorityRevision) {
+            throw new Error('Autonomous execution authority, source or scope changed');
+          }
+        },
+      });
+    }
+    return admission;
   }
 
   /** Resolves to true when the gate approves the call. */
@@ -780,6 +884,7 @@ export class PermissionManager {
     let persisted = false;
     if (tier === 'session') {
       this.sessionApprovals.set(key, approved);
+      this.sessionApprovalRevision++;
       persisted = true;
     } else if (rule && tier && this.userRuleStore) {
       // Never copy a durable decision into the session map: its key may be

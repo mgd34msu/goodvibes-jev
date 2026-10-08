@@ -14,6 +14,9 @@
 import { executePolicyCheck } from '../execute-policy-check.js';
 import type { Tool } from '../../types/tools.js';
 import { readTouchesSecrets } from '../../permissions/credential-read-defaults.js';
+import { assertAdmittedAgentRead } from '../../tools/read/admission.js';
+import { AGENT_READ_IMAGE_MODES, AGENT_MAX_READ_FILES, AGENT_MAX_READ_IMAGE_SIZE_BYTES } from '../../tools/read/policy-contract.js';
+export { assertAdmittedAgentRead } from '../../tools/read/admission.js';
 
 type ReadFileArgs = {
   readonly path?: unknown;
@@ -28,21 +31,19 @@ type ReadToolArgs = {
   readonly [key: string]: unknown;
 };
 
-const READ_IMAGE_MODES = ['default', 'metadata-only', 'thumbnail-only'] as const;
+const READ_IMAGE_MODES = AGENT_READ_IMAGE_MODES;
 const READ_IMAGE_MODE_SET = new Set<string>(READ_IMAGE_MODES);
-const MAX_READ_FILES = 10;
-const MAX_READ_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_READ_FILES = AGENT_MAX_READ_FILES;
+const MAX_READ_IMAGE_SIZE_BYTES = AGENT_MAX_READ_IMAGE_SIZE_BYTES;
 
 const READ_POLICY_DENIAL = [
   'GoodVibes Agent only exposes bounded, non-secret project reads from the main conversation.',
-  'Hidden paths, secret-looking files, broad batches, unoptimized image extraction, and oversized image reads are disabled here.',
-  'Use explicit Agent CLI/slash commands or GoodVibes TUI delegation when the user intentionally asks for sensitive or deeper local inspection.',
+  'The current admission must establish non-secret, in-scope subjects; broad batches, unoptimized extraction, and oversized image reads are disabled.',
 ].join(' ');
 
-export const AGENT_READ_IMAGE_MODES = READ_IMAGE_MODES;
-export const AGENT_MAX_READ_FILES = MAX_READ_FILES;
-export const AGENT_MAX_READ_IMAGE_SIZE_BYTES = MAX_READ_IMAGE_SIZE_BYTES;
+export { AGENT_READ_IMAGE_MODES, AGENT_MAX_READ_FILES, AGENT_MAX_READ_IMAGE_SIZE_BYTES } from '../../tools/read/policy-contract.js';
 export const AGENT_READ_POLICY_DENIAL_MESSAGE = READ_POLICY_DENIAL;
+export const AGENT_READ_ADMISSION_DENIAL_MESSAGE = 'Agent read held: missing, stale, cancelled or unadmitted read authority.';
 
 export function wrapReadToolForAgentPolicy(tool: Tool): void {
   narrowReadToolDefinitionForAgentPolicy(tool);
@@ -59,6 +60,30 @@ export function wrapReadToolForAgentPolicy(tool: Tool): void {
 
 export async function validateReadToolInvocationForAgentPolicy(args: ReadToolArgs, signal?: AbortSignal): Promise<string | null> {
   signal?.throwIfAborted();
+  const mechanical = validateAgentReadMechanics(args);
+  if (mechanical) return mechanical;
+  if (!Array.isArray(args.files)) return null;
+  for (const file of args.files) {
+    if (isRecord(file) && typeof file.path === 'string' && await isBlockedReadPath(file.path, signal)) return READ_POLICY_DENIAL;
+  }
+  return null;
+}
+
+/** The adopted runtime wrapper never performs a second semantic decision. */
+export function wrapReadToolForAdmittedAgentPolicy(tool: Tool): void {
+  narrowReadToolDefinitionForAgentPolicy(tool);
+  const execute = tool.execute.bind(tool);
+  tool.execute = async (args, options) => {
+    const denial = validateAgentReadMechanics(args);
+    if (denial) return { success: false, error: denial };
+    try { assertAdmittedAgentRead(args, options); }
+    catch { return { success: false, error: AGENT_READ_ADMISSION_DENIAL_MESSAGE }; }
+    return execute(args, options);
+  };
+}
+
+/** Published resource limits, separate from standalone legacy semantic validation. */
+export function validateAgentReadMechanics(args: ReadToolArgs): string | null {
   if (Array.isArray(args.files) && args.files.length > MAX_READ_FILES) return READ_POLICY_DENIAL;
   if (args.image_mode === 'unoptimized') return READ_POLICY_DENIAL;
   if (typeof args.image_mode === 'string' && !READ_IMAGE_MODE_SET.has(args.image_mode)) return READ_POLICY_DENIAL;
@@ -74,7 +99,6 @@ export async function validateReadToolInvocationForAgentPolicy(args: ReadToolArg
     if (typeof fileArgs.image_mode === 'string' && !READ_IMAGE_MODE_SET.has(fileArgs.image_mode)) {
       return READ_POLICY_DENIAL;
     }
-    if (typeof fileArgs.path === 'string' && (await isBlockedReadPath(fileArgs.path, signal))) return READ_POLICY_DENIAL;
   }
 
   return null;
@@ -96,14 +120,14 @@ function narrowReadToolDefinitionForAgentPolicy(tool: Tool): void {
   const files = properties.files;
   if (isRecord(files)) {
     files.maxItems = MAX_READ_FILES;
-    files.description = 'Ordinary non-hidden, non-secret-looking project files to read. Sensitive paths require explicit user-directed workflows.';
+    files.description = 'Bounded project files whose current admission establishes non-secret, requested scope.';
     const itemSchema = files.items;
     if (isRecord(itemSchema)) {
       const fileProperties = itemSchema.properties;
       if (isRecord(fileProperties)) {
         const pathProperty = fileProperties.path;
         if (isRecord(pathProperty)) {
-          pathProperty.description = 'Relative or absolute path to a non-hidden, non-secret-looking project file.';
+          pathProperty.description = 'Relative or absolute project path. The current owner checks each actual read subject.';
         }
         narrowImageModeProperty(fileProperties, 'image_mode');
       }

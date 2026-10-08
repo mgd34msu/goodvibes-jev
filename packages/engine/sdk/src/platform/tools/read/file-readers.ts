@@ -163,6 +163,7 @@ function formatNotebook(raw: string): string {
 }
 
 export interface ReadExecutionContext {
+  readonly assertCurrent?: (() => void) | undefined;
   format: OutputFormat;
   includeLineNumbers: boolean;
   maxPerItem?: number | undefined;
@@ -213,6 +214,7 @@ async function readImageFile(
 ): Promise<FileReadResult> {
   let imgBuffer: Buffer;
   try {
+    context.assertCurrent?.();
     imgBuffer = readFileSync(target.resolvedPath);
   } catch (err) {
     const message = summarizeError(err);
@@ -269,6 +271,7 @@ async function readImageFile(
   let originalFormat: string | undefined;
 
   const convertResult = await convertToPortableFormat(imgBuffer, extname(target.resolvedPath));
+  context.assertCurrent?.();
   if (convertResult.converted) {
     processedBuffer = convertResult.buffer;
     mediaType = convertResult.mediaType;
@@ -279,6 +282,7 @@ async function readImageFile(
   const resizeTarget = RESIZE_TARGETS[imageMode]!;
   if (resizeTarget !== null) {
     const resizeResult = await resizeImage(processedBuffer, mediaType, resizeTarget);
+    context.assertCurrent?.();
     if (resizeResult.resized) {
       processedBuffer = resizeResult.buffer;
       resized = true;
@@ -305,6 +309,7 @@ async function readImageFile(
 function readArchiveFile(target: ReadTarget, context: ReadExecutionContext): FileReadResult {
   let archiveBuffer: Buffer;
   try {
+    context.assertCurrent?.();
     archiveBuffer = readFileSync(target.resolvedPath);
   } catch (err) {
     const message = summarizeError(err);
@@ -321,6 +326,7 @@ function readPdfFile(target: ReadTarget, context: ReadExecutionContext, fileInpu
   let pdfRaw: string;
   let pdfByteSize = 0;
   try {
+    context.assertCurrent?.();
     const buf = readFileSync(target.resolvedPath);
     pdfByteSize = buf.length;
     pdfRaw = buf.toString('binary');
@@ -340,6 +346,7 @@ function readNotebookFile(target: ReadTarget, context: ReadExecutionContext): Fi
   let nbRaw: string;
   let nbByteSize = 0;
   try {
+    context.assertCurrent?.();
     nbRaw = readFileSync(target.resolvedPath, 'utf-8');
     nbByteSize = Buffer.byteLength(nbRaw, 'utf-8');
   } catch (err) {
@@ -357,6 +364,7 @@ function readNotebookFile(target: ReadTarget, context: ReadExecutionContext): Fi
 async function readTextFile(target: ReadTarget, context: ReadExecutionContext, fileInput: ReadFileInput): Promise<FileReadResult> {
   let fullBuf: Buffer;
   try {
+    context.assertCurrent?.();
     fullBuf = readFileSync(target.resolvedPath);
   } catch (err) {
     const message = summarizeError(err);
@@ -409,6 +417,7 @@ async function readTextFile(target: ReadTarget, context: ReadExecutionContext, f
     }
   }
 
+  context.assertCurrent?.();
   const result: FileReadResult = {
     ...createReadBaseResult(target, byteSize, tokenEstimate),
     content: extractedContent,
@@ -434,7 +443,9 @@ export async function readOneFile(
   globalImageMode?: ImageMode,
   globalMaxImageSize?: number,
   codeIntelligence?: Pick<CodeIntelligence, 'getOutline' | 'getSymbols'>,
+  assertCurrent?: () => void,
 ): Promise<FileReadResult> {
+  assertCurrent?.();
   const extract: ExtractMode = fileInput.extract ?? globalExtract;
 
   let resolvedPath: string;
@@ -456,6 +467,7 @@ export async function readOneFile(
     globalImageMode,
     maxImageSize: globalMaxImageSize ?? IMAGE_SIZE_LIMIT,
     codeIntelligence,
+    assertCurrent,
   };
 
   const ext = extname(resolvedPath);

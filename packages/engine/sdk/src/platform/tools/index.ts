@@ -13,6 +13,8 @@ import type { ConfigManager } from '../config/manager.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ToolLLM } from '../config/tool-llm.js';
 import { ReadTool } from './read/index.js';
+import { createAgentReadInputProjector } from './read/admission.js';
+import type { ToolRegistrationOptions } from './input-projection.js';
 import { createWriteTool } from './write/index.js';
 import { createEditTool } from './edit/index.js';
 import { TypeScriptSyntaxDiagnosticsProvider } from './shared/post-edit-diagnostics.js';
@@ -85,10 +87,10 @@ export type {
   UnavailableConfigRead,
 } from './goodvibes-runtime/config-routing.js';
 
-export { ToolRegistry } from './registry.js';
+export { ToolRegistry, assertCurrentToolExecution } from './registry.js';
 export { ToolInputProjectionError } from './input-projection.js';
 export type {
-  ProjectedToolCall, ToolInputProjectionProblem, ToolInputProjectionRequest,
+  ProjectedToolCall, ToolAdmissionEvidence, ToolInputProjectionProblem, ToolInputProjectionRequest,
   ToolInputProjectionResult, ToolInputProjector, ToolRegistrationOptions, ToolInputProjectionOptions,
 } from './input-projection.js';
 export { ProcessManager } from './shared/process-manager.js';
@@ -215,17 +217,18 @@ export function registerToolWithContractGate(
   registry: ToolRegistry,
   tool: Tool,
   featureFlags?: ToolContractFeatureFlags | null,
+  registration?: ToolRegistrationOptions,
 ): void {
   const verifyContracts = featureFlags?.isEnabled('tool-contract-verification') ?? true;
   if (!verifyContracts) {
-    registry.register(tool);
+    registry.register(tool, registration);
     return;
   }
 
   registry.registerWithContract(tool, {
     strictIdempotency: false,
     strictPermissionClass: false,
-  });
+  }, registration);
 }
 
 /**
@@ -277,6 +280,8 @@ export function registerAllTools(
     sandboxSessionRegistry?: SandboxSessionRegistry | undefined;
     workingDirectory: string;
     surfaceRoot: string;
+    /** Restrictive, construction-owned Agent read surface; never an execution option. */
+    readAdmissionPolicy?: 'agent-main-conversation' | undefined;
     /**
      * How the settings tools reach the runtime that OWNS a given key. Without
      * it a client writes daemon-owned settings into its own store, where they
@@ -446,8 +451,8 @@ export function registerAllTools(
     throw new Error('registerAllTools requires surfaceRoot');
   }
   const projectIndex = deps?.projectIndex ?? new ProjectIndex(workingDirectory);
-  const registerTool = (tool: Tool): void => {
-    registerToolWithContractGate(registry, tool, deps.featureFlags);
+  const registerTool = (tool: Tool, registration?: ToolRegistrationOptions): void => {
+    registerToolWithContractGate(registry, tool, deps.featureFlags, registration);
   };
 
   registerTool(
@@ -490,7 +495,9 @@ export function registerAllTools(
       }),
     );
   }
-  registerTool(new ReadTool(projectIndex, fileCache, undefined, deps.capturedReadAccess));
+  registerTool(new ReadTool(projectIndex, fileCache, undefined, deps.capturedReadAccess),
+    deps.readAdmissionPolicy === 'agent-main-conversation'
+      ? { inputProjection: createAgentReadInputProjector(projectIndex) } : undefined);
   // One post-edit diagnostics provider shared by write and edit. Default: the
   // in-process tree-sitter syntax provider (no process spawn). `null` disables.
   const diagnosticsProvider =

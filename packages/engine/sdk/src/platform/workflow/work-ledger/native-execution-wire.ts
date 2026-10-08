@@ -1,6 +1,7 @@
 /** Transport-only projection. Never import host execution or authority modules here. */
 import { boolean, union, enum as enumSchema, literal, number, strictObject, string, type z } from 'zod/v4';
 import { CONTRACT_STATUSES } from '../../../events/contract.js';
+import { contractIntegrationInspectionSchema } from '../../contract/integration-inspection-wire.js';
 
 export const NATIVE_WORK_EXECUTION_MAX_REQUEST_BYTES = 4_096;
 export const NATIVE_WORK_EXECUTION_MAX_RESPONSE_BYTES = 16_384;
@@ -35,6 +36,8 @@ export const nativeWorkExecutionExecutionSnapshotSchema = strictObject({
   state: enumSchema(['prepared', 'launch-claimed', 'cancelled']),
   recovery: enumSchema(['available', 'required', 'terminal', 'cancelled']),
   receipt: strictObject({ contractId: id, ownerAgentId: id }).nullable(),
+  /** Optional for older hosts; current hosts always report availability explicitly. */
+  integration: contractIntegrationInspectionSchema.optional(),
   settlement: strictObject({ state: enumSchema(['pending', 'required', 'failed', 'published']), evidenceId: id.optional(), reportSequence: count.optional(), evidenceSequence: count.optional() }).optional(),
   progress: strictObject({
     status: enumSchema(CONTRACT_STATUSES),

@@ -65,7 +65,8 @@ export type ApprovalRaiser = (input: {
  * approvals locally while the daemon keeps the canonical `permissions.rules.*`
  * store, the two are the same contract, and neither has to be the other.
  */
-export type UserPermissionRuleAccess = Pick<UserPermissionRuleStore, 'rules' | 'add'>;
+export type UserPermissionRuleAccess = Pick<UserPermissionRuleStore, 'rules' | 'add'>
+  & Partial<Pick<UserPermissionRuleStore, 'init' | 'awaitReady' | 'getPublicationRevision'>>;
 
 /**
  * Build the durable user-origin permission-rule store at the control-plane

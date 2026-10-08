@@ -1,4 +1,5 @@
 import { nativeWorkExecutionLines, type NativeWorkExecutionAction } from '../../runtime/native-work-execution.ts';
+import { nativeWorkIntegrationView } from '../../runtime/native-work-integration.ts';
 import { NativeWorkLedgerModel, type NativeWorkLedgerSelectionReader } from '../../runtime/native-work-ledger.ts';
 import type { ConfigModalSurface, ConfigModalView, ConfigModalRow } from '../../input/config-modal-types.ts';
 
@@ -31,6 +32,7 @@ export function createNativeWorkLedgerModalSurface(select: NativeWorkLedgerSelec
     buildView(): ConfigModalView {
       model.synchronize();
       const snapshot = model.snapshot;
+      const integration = nativeWorkIntegrationView(model.execution);
       const work: ConfigModalRow[] = []; const intent: ConfigModalRow[] = [];
       const attention: ConfigModalRow[] = []; const evidence: ConfigModalRow[] = []; const imports: ConfigModalRow[] = [];
       for (const view of snapshot?.works ?? []) {
@@ -71,11 +73,13 @@ export function createNativeWorkLedgerModalSurface(select: NativeWorkLedgerSelec
       return { title: model.executionAvailable ? 'Native Work' : 'Native Work (read-only)', bindingIdentity: model.identity, scrollInformationalLines: true,
         deferredStructureMessage: 'Native rows changed; press an arrow key to show the current layout.',
         ...(model.reason ? { degraded: safe(model.reason) } : {}),
-        tabs: [['work', 'Work', work], ['intent', 'Intent', intent], ['attention', 'Attention', attention], ['evidence', 'Evidence', evidence], ['imports', 'Legacy imports', imports]].map(([id, label, rows]) => ({
+        tabs: [['work', 'Work', work], ['intent', 'Intent', intent], ['attention', 'Attention', attention], ['evidence', 'Evidence', evidence], ['imports', 'Legacy imports', imports], ['integration', 'Integration', integration.rows]].map(([id, label, rows]) => ({
           id: id as string, label: label as string, rows: rows as ConfigModalRow[],
-          header: [snapshot ? safe(`project ${snapshot.projectId} · durable cursor ${snapshot.cursor}`) : 'No native host data.', model.executionAvailable ? 'Select a control row for explicit execution. Ledger criteria and verification remain authoritative.' : 'Read-only. Planning approvals do not authorize native execution.'],
+          header: [snapshot ? safe(`project ${snapshot.projectId} · durable cursor ${snapshot.cursor}`) : 'No native host data.', id === 'integration'
+            ? model.executionAvailable ? integration.status : 'Integration unavailable: native execution status is not connected.'
+            : model.executionAvailable ? 'Select a control row for explicit execution. Ledger criteria and verification remain authoritative.' : 'Read-only. Planning approvals do not authorize native execution.'],
           emptyText: safe(model.reason) || 'No native records in this view.',
-        })), hints: ['Esc detaches local requests; c explicitly cancels the selected attempt. Reopen to reconnect.'],
+        })), hints: ['Esc detaches local requests. Execution controls are on Work. Reopen to reconnect.'],
       };
     },
   };

@@ -1,10 +1,11 @@
 /** Ordinary Bun is an explicit, pinned runtime input, never a PATH fallback. */
-import { accessSync, constants, lstatSync, realpathSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, realpathSync } from 'node:fs';
 import { chmod, lstat, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { assertContractInputAuthority, contractInputAuthorityRoot, registerContractInputReadAssertion } from '../../contract/input-authority.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
+import { resolveProcessCapturedBunRuntimeExecutable } from '../../runtime/captured-bun-runtime.js';
 import { probeCapturedBunRuntime, type CapturedExecAuthority } from './captured-exec.js';
 
 type Binding = Pick<CapturedExecAuthority, 'authority' | 'root' | 'readAccessFilter' | 'signal'>;
@@ -43,6 +44,7 @@ export function createCapturedExecBunRuntimeAdmission(
   } catch (error) { initialError = error; }
   let admission: Promise<CapturedExecBunRuntimeInput> | undefined;
   return (signal?: AbortSignal) => {
+    signal?.throwIfAborted();
     admission ??= (async () => {
       if (initialError) throw initialError;
       if (!pinned) throw new Error('Bun runtime declaration is unavailable');
@@ -92,13 +94,39 @@ export function createCapturedExecBunRuntimeAdmission(
 export async function projectCapturedExecBunRuntime(binding: CapturedExecAuthority, temporary: string, signal?: AbortSignal): Promise<{
   argv: string[]; check: (signal?: AbortSignal) => Promise<void>;
 }> {
-  if (!binding.bunRuntimeInput) return { argv: [], check: async () => {} };
-  const state = states.get(binding.bunRuntimeInput);
-  if (!state || state.binding.authority !== binding.authority || state.binding.root !== binding.root || state.binding.readAccessFilter !== binding.readAccessFilter)
+  if (!binding.bunRuntimeInput && !binding.bunRuntimeAdmission && resolveProcessCapturedBunRuntimeExecutable() === process.execPath)
+    return { argv: [], check: async () => {} };
+  signal = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal ?? signal;
+  signal?.throwIfAborted();
+  const state = binding.bunRuntimeInput ? states.get(binding.bunRuntimeInput) : undefined;
+  if (binding.bunRuntimeInput && (!state || state.binding.authority !== binding.authority || state.binding.root !== binding.root || state.binding.readAccessFilter !== binding.readAccessFilter))
     throw new Error('Bun runtime has no matching construction-owned admission');
-  await state.check(signal);
+  await state?.check(signal);
+  signal?.throwIfAborted();
+  // Only the pinned /captured-runtime alias carries Bun authority. An absent
+  // or denied runtime leaves shell/Node usable, without invoking the compiled
+  // product or another interpreter supplied by the OS substrate.
+  const refusal = join(temporary, 'bun-runtime-unavailable');
+  await writeFile(refusal, '#!/bin/sh\nprintf "%s\\n" "Captured Bun runtime is unavailable or access-restricted." >&2\nexit 126\n', { mode: 0o755 });
+  signal?.throwIfAborted();
+  await chmod(refusal, 0o755);
+  signal?.throwIfAborted();
+  const aliases: string[] = [];
+  const targets = new Set<string>();
+  for (const name of ['bun', 'bunx']) {
+    const alias = `/usr/bin/${name}`;
+    if (!existsSync(alias)) continue;
+    const target = realpathSync(alias);
+    if (!['/usr/bin', '/usr/lib', '/usr/lib64'].some((root) => {
+      const path = relative(root, target);
+      return !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`);
+    }) || targets.has(target)) continue;
+    targets.add(target);
+    aliases.push('--ro-bind', refusal, target);
+  }
+  if (!state) return { argv: ['--ro-bind', refusal, TARGET, ...aliases], check: async () => {} };
   const staged = join(temporary, 'bun-runtime');
   await writeFile(staged, state.data, { mode: state.mode }); await chmod(staged, state.mode);
   await state.check(signal);
-  return { check: () => state.check(signal), argv: ['--ro-bind', staged, TARGET] };
+  return { check: () => state.check(signal), argv: ['--ro-bind', staged, TARGET, ...aliases] };
 }
