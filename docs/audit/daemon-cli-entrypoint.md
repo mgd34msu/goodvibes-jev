@@ -65,6 +65,11 @@ Startup pairing display is subsequently adapted with actual served-origin and
 effective-token proof in [its bounded audit](daemon-functional-pairing-startup.md).
 Token cleanup, public-URL persistence and service adoption remain separate work.
 
+The status/update HTTP callers now use selected-config outbound TLS through the
+existing scoped fetch helper; see [the caller and isolation proof](daemon-cli-http-trust.md).
+This retires only those HTTPS caller omissions. WebSocket trust and the other
+unmapped global transport callers remain separate work.
+
 ## Verification and live-proof boundary
 
 The emitted entrypoint tests exercise help/version/completion and argument
