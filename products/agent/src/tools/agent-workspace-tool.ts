@@ -1,3 +1,4 @@
+import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool, isResearchReportEditor } from './agent-research-ingress.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -190,6 +191,11 @@ function commandArgs(mode: 'command' | 'run_command' | 'cli_command', args: Agen
   });
 }
 
+function isWorkspaceReport(args: Record<string, unknown>): boolean {
+  if (readAction(args) === 'run') return isResearchReportEditor(workspaceActionArgs('run_workspace_action', args));
+  return isResearchReportEditor({ fields: args.fields });
+}
+
 export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
   const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
     commandRegistry: deps.commandRegistry,
@@ -197,7 +203,7 @@ export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'workspace',
       description: 'Inspect/open workspace actions, UI, commands, and keys.',
@@ -237,14 +243,14 @@ export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentWorkspaceToolArgs;
       const action = readAction(args);
 
       if (action === 'status') return harnessTool.execute(compactArgs({ mode: 'workspace', target: args.target, query: args.query, includeParameters: args.includeParameters }));
       if (action === 'actions') return harnessTool.execute({ mode: 'workspace_actions', ...workspaceDiscoveryArgs(args) });
       if (action === 'action') return harnessTool.execute(workspaceActionArgs('workspace_action', args));
-      if (action === 'run') return harnessTool.execute(workspaceActionArgs('run_workspace_action', args));
+      if (action === 'run') return harnessTool.execute(workspaceActionArgs('run_workspace_action', args), options);
       if (action === 'surfaces') return harnessTool.execute(compactArgs({ mode: 'ui_surfaces', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
       if (action === 'surface') return harnessTool.execute(surfaceArgs('ui_surface', args));
       if (action === 'open') return harnessTool.execute(surfaceArgs('open_ui_surface', args));
@@ -263,6 +269,7 @@ export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
       return error('Unknown workspace action. Use action:"status" or action:"actions" to inspect the workspace.');
     },
   };
+  return protectAgentHarnessResearchTool(tool, deps.toolRegistry, isWorkspaceReport);
 }
 
 export function registerAgentWorkspaceTool(
@@ -270,5 +277,7 @@ export function registerAgentWorkspaceTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('workspace')) registry.register(createAgentWorkspaceTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('workspace')) registry.register(createAgentWorkspaceTool({ commandRegistry, commandContext, toolRegistry: registry }), {
+    inputProjection: createAgentHarnessResearchProjector(registry, isWorkspaceReport),
+  });
 }

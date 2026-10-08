@@ -1,3 +1,5 @@
+import { prepareProtectedResearchReport, type ResearchReportOperation } from '../agent/protected-research-report.ts';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import { prepareAgentResearchReportInput } from '../agent/research-report-input.ts';
 import type { AgentWorkspaceActionResult, AgentWorkspaceLocalEditor } from './agent-workspace-types.ts';
 
@@ -69,10 +71,10 @@ export function createAgentResearchReportEditor(): AgentWorkspaceLocalEditor {
   };
 }
 
-export function buildAgentResearchReportToolArgs(
+export function captureAgentResearchReportToolArgs(
   readField: AgentWorkspaceFieldReader,
   explicitUserRequest: string,
-): AgentResearchReportWorkspaceToolArgs {
+): Omit<AgentResearchReportWorkspaceToolArgs, 'sources'> & { readonly sources: string } {
   const summary = readField('summary').trim();
   const reportMarkdown = readField('reportMarkdown').trim();
   const findings = splitList(readField('findings'));
@@ -83,7 +85,7 @@ export function buildAgentResearchReportToolArgs(
   const visualReport = isAffirmative(readField('visualReport'));
   const requireCitationCoverage = isAffirmative(readField('requireCitationCoverage'));
   const tags = splitTags(readField('tags'));
-  return prepareAgentResearchReportInput({
+  return {
     title: readField('title').trim(),
     question: readField('question').trim(),
     ...(summary ? { summary } : {}),
@@ -99,13 +101,19 @@ export function buildAgentResearchReportToolArgs(
     ...(tags.length > 0 ? { tags } : {}),
     confirm: true as const,
     explicitUserRequest,
-  });
+  };
+}
+
+/** Structural preparation is retained for local compatibility helpers only. */
+export function buildAgentResearchReportToolArgs(readField: AgentWorkspaceFieldReader, explicitUserRequest: string): AgentResearchReportWorkspaceToolArgs {
+  return prepareAgentResearchReportInput(captureAgentResearchReportToolArgs(readField, explicitUserRequest));
 }
 
 export function buildAgentResearchReportPromptSubmission(
   editor: AgentWorkspaceLocalEditor,
   readField: AgentWorkspaceFieldReader,
   promptDispatchAvailable: boolean,
+  preparedArgs?: AgentResearchReportWorkspaceToolArgs,
 ): {
   readonly kind: 'editor';
   readonly editor: AgentWorkspaceLocalEditor;
@@ -144,10 +152,8 @@ export function buildAgentResearchReportPromptSubmission(
 
   let args: AgentResearchReportWorkspaceToolArgs;
   try {
-    args = buildAgentResearchReportToolArgs(
-      readField,
-      'Save a reviewed source-grounded research report as an Agent artifact.',
-    );
+    if (!preparedArgs) throw new Error('Owned asynchronous research preparation required.');
+    args = preparedArgs;
   } catch {
     const detail = 'Research report input was refused by the protected-input boundary before transmission.';
     return {
@@ -191,4 +197,48 @@ export function buildAgentResearchReportPromptSubmission(
       safety: 'safe',
     },
   };
+}
+
+/** Capture every raw field before trimming/splitting, then commit under the owned lifetime. */
+export async function submitProtectedAgentResearchReport(
+  editor: AgentWorkspaceLocalEditor,
+  fields: Readonly<Record<string, string>>,
+  promptDispatchAvailable: boolean,
+  owner: ProtectedSourceOwner | undefined,
+  operation: ResearchReportOperation,
+  commit: (result: ReturnType<typeof buildAgentResearchReportPromptSubmission>) => void,
+): Promise<void> {
+  const read = (id: string) => fields[id] ?? '';
+  if (!isAffirmative(read('confirm')) || !promptDispatchAvailable) {
+    operation.assertCurrent?.();
+    commit(buildAgentResearchReportPromptSubmission(editor, read, promptDispatchAvailable));
+    return;
+  }
+  let prepared: Awaited<ReturnType<typeof prepareProtectedResearchReport>> | undefined;
+  try {
+    prepared = await prepareProtectedResearchReport(owner, {
+      ...fields, confirm: true,
+      explicitUserRequest: 'Save a reviewed source-grounded research report as an Agent artifact.',
+    }, operation);
+    const view = prepared.args;
+    const text = (id: string) => typeof view[id] === 'string' ? view[id] as string : '';
+    const args: AgentResearchReportWorkspaceToolArgs = {
+      title: text('title').trim(), question: text('question').trim(), summary: text('summary').trim(),
+      reportMarkdown: text('reportMarkdown').trim(), sources: view.sources as unknown as AgentResearchReportWorkspaceToolArgs['sources'],
+      findings: splitList(text('findings')), gaps: splitList(text('gaps')), recommendations: splitList(text('recommendations')),
+      methodology: text('methodology').trim(), confidence: text('confidence').trim(), tags: splitTags(text('tags')),
+      visualReport: isAffirmative(text('visualReport')), requireCitationCoverage: isAffirmative(text('requireCitationCoverage')),
+      confirm: true, explicitUserRequest: text('explicitUserRequest'),
+    };
+    const result = buildAgentResearchReportPromptSubmission(editor, read, promptDispatchAvailable, args);
+    prepared.assertCurrent(); operation.assertCurrent?.(); operation.signal?.throwIfAborted();
+    commit(result);
+  } catch {
+    // Stale/cancelled operations must not resurrect an old editor or its status.
+    operation.assertCurrent?.(); operation.signal?.throwIfAborted();
+    const detail = owner ? 'Research report preparation is held. No prompt was submitted.'
+      : 'Research report preparation is unavailable until a trusted local screening owner is configured.';
+    commit({ kind: 'editor', editor: { ...editor, message: detail }, status: detail,
+      actionResult: { kind: 'error', title: 'Research report held', detail, safety: 'safe' } });
+  } finally { await prepared?.release(); }
 }

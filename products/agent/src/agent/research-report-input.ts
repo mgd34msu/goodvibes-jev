@@ -26,7 +26,7 @@ function literalReferencePattern(value: string, foldCase = false): string {
 }
 
 /** Fold ASCII case only in scheme and hostname, never userinfo, path or query text. */
-function omittedReferencePattern(value: string): string {
+export function omittedReferencePattern(value: string): string {
   const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(value)?.[0] ?? '';
   // Rejected non-HTTP userinfo references use the same literal RFC authority
   // span as containment. Do not repair a backslash/control in userinfo into a
@@ -59,8 +59,9 @@ function omittedReferencePattern(value: string): string {
  *
  * The existing sanitizer is NOT a semantic credential decision: arbitrary
  * undeclared URL parameter roles need a protected, name-only Jev screening seam.
- * No such source-URL seam is currently exposed; never send raw values to Jev or
- * borrow a ledger/journal judgment as authority for citation transmission.
+ * This synchronous compatibility helper supplies neither URL-role nor full
+ * source-privacy clearance. Actual consumers await prepareProtectedResearchReport;
+ * never borrow a ledger/journal judgment as citation transmission authority.
  */
 function citationUrl(value: string): string {
   try {
@@ -158,7 +159,7 @@ function source(value: unknown, omittedReferences?: RegExp): AgentResearchReport
   });
 }
 
-/** Shared pre-transmission preparation for both workspace prompts and tool calls. */
+/** Structural normalization only. Actual consumers must also await owned privacy/role screening. */
 export function prepareAgentResearchReportInput<T extends { readonly sources?: unknown }>(input: T): Omit<T, 'sources'> & {
   readonly sources: readonly AgentResearchReportSource[];
 } {

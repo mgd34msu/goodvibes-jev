@@ -1,5 +1,6 @@
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { prepareAgentResearchReportInput } from '../agent/research-report-input.ts';
+import { prepareProtectedResearchReport, agentResearchSourceOwner, createAgentResearchReportProjector, inheritPreparedResearchReport, type PreparedResearchReport } from '../agent/protected-research-report.ts';
+import type { ProtectedSourceOwner } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -94,6 +95,7 @@ export interface AgentResearchToolArgs {
 }
 
 interface AgentResearchToolDeps {
+  readonly sourceOwner?: ProtectedSourceOwner;
   readonly commandRegistry: CommandRegistry;
   readonly commandContext: CommandContext;
   readonly toolRegistry: ToolRegistry;
@@ -346,7 +348,7 @@ function sourceMutationArgs(args: AgentResearchToolArgs, mode: string): Record<s
 }
 
 function reportArgs(args: AgentResearchToolArgs): Record<string, unknown> {
-  return compactArgs({
+  const projected = compactArgs({
     runId: args.runId ?? args.id,
     title: args.title,
     question: args.question ?? args.query,
@@ -363,9 +365,12 @@ function reportArgs(args: AgentResearchToolArgs): Record<string, unknown> {
     tags: args.tags,
     ...confirmedArgs(args),
   });
+  inheritPreparedResearchReport(args, projected);
+  return projected;
 }
 
 export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
+  const sourceOwner = deps.sourceOwner ?? agentResearchSourceOwner(deps.toolRegistry);
   const shellPaths = deps.commandContext.workspace?.shellPaths;
   const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
     commandRegistry: deps.commandRegistry,
@@ -374,7 +379,7 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
   });
   const runsTool = deps.runsTool ?? createAgentResearchRunsTool(shellPaths);
   const sourcesTool = deps.sourcesTool ?? createAgentResearchSourcesTool(shellPaths);
-  const reportTool = deps.reportTool ?? createAgentResearchReportTool(deps.commandContext.platform?.artifactStore);
+  const reportTool = deps.reportTool ?? createAgentResearchReportTool(deps.commandContext.platform?.artifactStore, sourceOwner);
   const artifactTool = deps.artifactTool
     ?? deps.toolRegistry.list().find((entry) => entry.definition.name === 'agent_artifacts')
     ?? createAgentArtifactsTool(deps.commandContext.platform?.artifactStore);
@@ -477,17 +482,20 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
       let args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentResearchToolArgs;
       let action: AgentResearchAction;
+      let prepared: PreparedResearchReport | undefined;
       try {
         action = readAction(args);
         if (action === 'report') {
-          args = prepareAgentResearchReportInput(args);
+          prepared = await prepareProtectedResearchReport(sourceOwner, args, { signal: options?.signal });
+          args = prepared.args;
           // A caller Proxy cannot switch its declared route during capture.
           if (readAction(args) !== 'report') throw new Error('Unsupported research input.');
         }
       } catch {
+        await prepared?.release();
         return error('Research input was refused by the protected-input boundary before dispatch.');
       }
 
@@ -520,7 +528,10 @@ export function createAgentResearchTool(deps: AgentResearchToolDeps): Tool {
       if (action === 'reject_source') return sourcesTool.execute(sourceMutationArgs(args, 'reject'));
       if (action === 'use_source') return sourcesTool.execute(sourceMutationArgs(args, 'use'));
       if (action === 'delete_source') return sourcesTool.execute(sourceMutationArgs(args, 'delete'));
-      if (action === 'report') return reportTool.execute(reportArgs(args));
+      if (action === 'report') {
+        try { prepared!.assertCurrent(); return await reportTool.execute(reportArgs(args), options); }
+        finally { await prepared!.release(); }
+      }
 
       return error('Unknown research action. Use action:"plan" for research routing.');
     },
@@ -532,5 +543,8 @@ export function registerAgentResearchTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('research')) registry.register(createAgentResearchTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('research')) registry.register(createAgentResearchTool({ commandRegistry, commandContext, toolRegistry: registry }), {
+    inputProjection: createAgentResearchReportProjector(agentResearchSourceOwner(registry), args => readAction(args) === 'report'
+      || ['sources', 'reportMarkdown', 'findings', 'gaps', 'recommendations', 'methodology', 'requireCitationCoverage', 'visualReport'].some(key => Object.hasOwn(args, key))),
+  });
 }

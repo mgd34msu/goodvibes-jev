@@ -171,11 +171,12 @@ adds an explicit framed-reference adapter and earlier registered-tool ingress;
 it does not turn this query-role receipt into full source-privacy clearance.
 Unbound control-split reference boundaries cannot be inferred from URL parsing:
 the same newline can divide an interrupted URL or separate a complete URL from
-ordinary prose. The current editor, prompt and artifact paths remain unchanged.
-Adoption must preserve source IDs and claim bindings, cover all actual report
-text and aliases, await complete preparation before dispatch/persistence, and
-reject stale or cancelled work. The two desired unbound-reference controls
-remain open. Synthetic name-role responses do not qualify a live model or
+ordinary prose. The [Agent report adopter](research-report-protected-adoption.md) now uses
+full-source screening alongside these name-only receipts across its editor,
+prompt, registered ingress and artifact paths. It preserves source IDs and
+claim bindings, covers report text and aliases, awaits complete preparation,
+and rejects stale or cancelled work. Both unbound-reference controls run with
+synthetic verified spans; whitespace is never treated as URL provenance. Synthetic name-role responses do not qualify a live model or
 establish the configured local services' identity/no-retention behavior.
 
 ## Inbox mapper adoption
@@ -213,5 +214,5 @@ Transport tests cover exact routes, redirects, byte bounds, cleanup and proxy re
 The local services' identity/no-retention capability and genuine Jev calibration
 need explicit live proof under THE-35. THE-123's name-only declared-URL role
 capability now has synthetic containment tests, including raw-value absence and
-distinct receipt scopes. Unbound research-reference controls and adoption by
-existing research consumers remain open. No release or deployment is implied.
+distinct receipt scopes. Agent report consumers now have explicit fail-closed adoption and active
+synthetic unbound-reference controls; live screening deployment remains open. No release or deployment is implied.
