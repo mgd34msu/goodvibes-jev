@@ -15,8 +15,8 @@ function run(command: string, args: readonly string[], label?: string): void {
   });
 }
 
-run('bun', ['packages/engine/scripts/generate-api-docs.ts', '--check'], 'api-docs:check');
-run('bun', ['packages/engine/scripts/docs-completeness-check.ts'], 'docs:completeness');
+// Editorial checks remain opt-in (`docs:check`, `changelog:check`, `todo:check`).
+// Required validation exercises code, contracts, types and installable artifacts.
 run('bun', ['run', 'error:check'], 'error:check');
 run('bun', ['run', 'products:check'], 'products:check');
 // Check credential classification in CI as well as the local pre-commit hook.
@@ -28,9 +28,7 @@ run('bun', ['run', 'credential-scope:check'], 'credential-scope:check');
 // engine source asks Jev only through registered decisions. Source and
 // fixtures only, no model call and no build.
 run('bun', ['run', 'judgment:lint'], 'judgment:lint');
-run('bun', ['run', 'changelog:check'], 'changelog:check');
 run('bun', ['run', 'version:check'], 'version:check');
-run('bun', ['run', 'todo:check'], 'todo:check');
 run('bun', ['run', 'internal-id:check'], 'internal-id:check');
 run('bun', ['run', 'architecture:check'], 'architecture:check');
 run('bun', ['run', 'platform-console:check'], 'platform-console:check');
