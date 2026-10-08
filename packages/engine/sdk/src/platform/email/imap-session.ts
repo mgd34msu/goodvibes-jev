@@ -42,20 +42,21 @@
  *
  * Literals are counted in BYTES
  * ─────────────────────────────
- * `{n}` in IMAP is a byte count (RFC 3501 §4.3), and the socket is read with
- * `setEncoding('utf8')`, so the string this class accumulates has FEWER
- * characters than the server's byte count whenever the payload is not pure
- * ASCII. Taking `n` characters would swallow the bytes that follow the literal
- *, the closing `)` and, after it, the tagged completion line, and the read
- * would hang until it timed out. `takeUtf8Bytes` walks code points and counts
- * their UTF-8 width instead, which is what makes reading a message body with
- * an accented character in it work at all.
+ * Original socket octets are framed before decoding. Each literal stays an
+ * opaque value beside its announcing syntax through all internal FETCH readers.
+ * Legacy string methods are presentation-only compatibility projections.
  *
  * The same arithmetic runs on the way out: `commandWithLiteral` declares
  * `Buffer.byteLength(payload)`, never `payload.length`.
  */
 
 import type { Socket } from 'node:net';
+import type { ImapFetchFrame } from './imap-fetch-response.js';
+import { wireLines } from './imap-wire-frames.js';
+
+function legacyLine(frame: ImapFetchFrame): string {
+  return frame.literal === undefined ? frame.syntax : `${frame.syntax} ${frame.literal}`;
+}
 
 const CRLF = '\r\n';
 
@@ -214,7 +215,7 @@ interface Waiter<T> {
 
 interface PendingCommand {
   readonly tag: string;
-  readonly lines: string[];
+  readonly lines: ImapFetchFrame[];
   /**
    * Whether untagged lines are collected for this command at all.
    *
@@ -229,7 +230,7 @@ interface PendingCommand {
   completionLine: string;
   /** Continuation requests received but not yet consumed by a waiter. */
   continuations: number;
-  waiter: Waiter<string[]> | null;
+  waiter: Waiter<ImapFetchFrame[]> | null;
   continuationWaiter: Waiter<void> | null;
 }
 
@@ -248,12 +249,9 @@ export class ImapSession implements ImapConnection {
   private readonly timeoutMs: number;
   private readonly literalCap: number;
 
-  private buffer = '';
+  private buffer: Buffer = Buffer.alloc(0);
   private tagCounter = 0;
-
-  private literalBytesRemaining = 0;
-  private literalAccum = '';
-  private literalOwnerLine = '';
+  private draining = false;
 
   private readonly pending = new Map<string, PendingCommand>();
   private readonly untaggedListeners = new Set<ImapUntaggedListener>();
@@ -265,8 +263,8 @@ export class ImapSession implements ImapConnection {
   private failure: Error | null = null;
   private destroyed = false;
 
-  private readonly onData = (chunk: string): void => {
-    this.buffer += chunk;
+  private readonly onData = (chunk: Uint8Array): void => {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
     this.drain();
   };
 
@@ -285,7 +283,6 @@ export class ImapSession implements ImapConnection {
     this.socket = socket;
     this.timeoutMs = timeoutMs;
     this.literalCap = literalCap;
-    this.socket.setEncoding('utf8');
     this.socket.on('data', this.onData);
     this.socket.on('error', this.onSocketError);
     this.socket.on('close', this.onSocketClose);
@@ -297,73 +294,32 @@ export class ImapSession implements ImapConnection {
 
   /** Turn buffered bytes into complete logical lines and route each one. */
   private drain(): void {
-    if (this.failure !== null) {
-      this.buffer = '';
-      return;
-    }
-    for (;;) {
-      if (this.literalBytesRemaining > 0) {
-        if (this.buffer.length === 0) return;
-        // Byte-counted, not character-counted, see the file header.
-        const { taken, bytes } = takeUtf8Bytes(this.buffer, this.literalBytesRemaining);
-        if (taken.length === 0) return; // need more data to complete a character
-        this.literalAccum += taken;
-        this.buffer = this.buffer.slice(taken.length);
-        this.literalBytesRemaining -= bytes;
-        if (this.literalBytesRemaining <= 0) {
-          this.literalBytesRemaining = 0;
-          const record = `${this.literalOwnerLine}${this.literalAccum}`;
-          this.literalAccum = '';
-          this.literalOwnerLine = '';
-          this.route(record);
+    if (this.failure !== null) { this.buffer = Buffer.alloc(0); return; }
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      for (;;) {
+        let consumed = 0;
+        for (const frame of wireLines(this.buffer, false, this.literalCap)) {
+          // Advance before dispatch. A subscriber may synchronously cause more
+          // bytes to arrive; the active reader owns their later dispatch too.
+          this.buffer = this.buffer.subarray(frame.end - consumed);
+          consumed = frame.end;
+          this.route(frame);
           if (this.failure !== null) return;
         }
-        continue;
+        if (consumed === 0) return;
       }
-
-      const pos = this.buffer.indexOf('\n');
-      if (pos === -1) return;
-      const line = this.buffer.slice(0, pos).replace(/\r$/, '');
-      this.buffer = this.buffer.slice(pos + 1);
-
-      const literalMatch = /\{(\d+)\}$/.exec(line);
-      if (literalMatch) {
-        const requested = parseInt(literalMatch[1] ?? '0', 10);
-        // Cap server-supplied literal size to prevent memory exhaustion. The
-        // stream cannot be parsed past a literal we refuse to read, so this
-        // ends the connection rather than one command.
-        if (requested > this.literalCap) {
-          this.failStream(new Error(
-            `IMAP server sent an oversized literal ({${requested}} bytes, ` +
-            `max allowed: ${this.literalCap}). The operation has been aborted.`,
-          ));
-          return;
-        }
-        const ownerLine = line.slice(0, line.lastIndexOf('{')) + ' ';
-        if (requested === 0) {
-          // `{0}` is legal and means an empty payload, a server answering
-          // BODY[HEADER.FIELDS ...] for a message carrying none of the fields
-          // asked for sends exactly this. There are no bytes to wait for, so
-          // the owner line is routed now. Falling through to the literal branch
-          // would leave `literalBytesRemaining` at zero, and the owner line,
-          // the `* n FETCH (...` line itself, would be dropped and the whole
-          // response lost.
-          this.route(ownerLine);
-          if (this.failure !== null) return;
-          continue;
-        }
-        this.literalBytesRemaining = requested;
-        this.literalOwnerLine = ownerLine;
-        continue;
-      }
-
-      this.route(line);
-      if (this.failure !== null) return;
+    } catch (error) {
+      this.failStream(error instanceof Error ? error : new Error('Invalid IMAP response framing'));
+    } finally {
+      this.draining = false;
     }
   }
 
   /** Send one complete response line to whoever it belongs to. */
-  private route(line: string): void {
+  private route(frame: ImapFetchFrame): void {
+    const line = frame.syntax;
     if (!this.greetingSeen && !line.startsWith('+') && line.startsWith('* ')) {
       // The greeting arrives unprompted, so it may well be here before
       // `readGreeting()` is called. Recorded either way.
@@ -390,12 +346,12 @@ export class ImapSession implements ImapConnection {
       return;
     }
 
-    const tagged = /^(\S+) (OK|NO|BAD)\b/.exec(line);
+    const tagged = frame.literal === undefined ? /^(\S+) (OK|NO|BAD)\b/.exec(line) : null;
     const taggedTag = tagged?.[1] ?? '';
     const command = taggedTag.length > 0 ? this.pending.get(taggedTag) : undefined;
     if (command !== undefined && command.completion === null) {
       const status = tagged?.[2];
-      command.lines.push(line);
+      command.lines.push(frame);
       command.completion = status === 'NO' ? 'NO' : status === 'BAD' ? 'BAD' : 'OK';
       command.completionLine = line;
       this.settle(command);
@@ -412,9 +368,9 @@ export class ImapSession implements ImapConnection {
         ));
         return;
       }
-      open.lines.push(line);
+      open.lines.push(frame);
     }
-    if (line.startsWith('*')) this.dispatchUntagged(line);
+    if (line.startsWith('*')) this.dispatchUntagged(legacyLine(frame));
   }
 
   /** The command whose response lines are currently arriving, if any. */
@@ -491,7 +447,7 @@ export class ImapSession implements ImapConnection {
   private failStream(error: Error): void {
     if (this.failure !== null) return;
     this.failure = error;
-    this.buffer = '';
+    this.buffer = Buffer.alloc(0);
     this.rejectAll(error, error);
     this.closeSocket();
   }
@@ -599,6 +555,12 @@ export class ImapSession implements ImapConnection {
     return this.awaitTag(tag);
   }
 
+  /** Internal FETCH path: never project an opaque literal back into syntax. */
+  async commandFrames(text: string): Promise<ImapFetchFrame[]> {
+    const tag = await this.sendCommand(text);
+    return this.awaitTagFrames(tag);
+  }
+
   /**
    * Send a tagged command and hand back its tag without waiting.
    *
@@ -649,6 +611,10 @@ export class ImapSession implements ImapConnection {
    * long as the caller's own bound allows.
    */
   async awaitTag(tag: string, options: ImapReadOptions = {}): Promise<string[]> {
+    return (await this.awaitTagFrames(tag, options)).map(legacyLine);
+  }
+
+  private async awaitTagFrames(tag: string, options: ImapReadOptions = {}): Promise<ImapFetchFrame[]> {
     const command = this.pending.get(tag);
     if (command === undefined) {
       throw new Error(
@@ -661,7 +627,7 @@ export class ImapSession implements ImapConnection {
       if (command.completion === 'OK') return [...command.lines];
       throw new Error(`IMAP command failed: ${command.completionLine}`);
     }
-    return this.wait<string[]>(
+    return this.wait<ImapFetchFrame[]>(
       options,
       `IMAP command ${tag} timed out`,
       (waiter) => { command.waiter = waiter; },

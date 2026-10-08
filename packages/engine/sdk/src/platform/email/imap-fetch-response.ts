@@ -16,19 +16,10 @@
  *
  *     )
  *
- * `ImapSession` reads the count, takes the bytes, and hands the response up as
- * ONE string with the payload welded onto the line that announced it. That is
- * the correct thing to do, the payload is not lines, it is bytes, and it may
- * contain anything including a line that looks like a response. But it means
- * every reader downstream sees a `* 3 FETCH (` line with a whole header block
- * hanging off the end of it, and a reader that expected the payload on lines of
- * its own finds nothing.
- *
- * The old `parseFetchHeaders` did worse than find nothing: it tested whether
- * the text after `* n FETCH ` started with `(` and discarded it if so. Against
- * a folded literal that text is `(UID 307 BODY[...] From: a@b.test…`, so the
- * whole header block went out with the data items it was welded to, and the
- * client built envelopes with every field empty while reporting success.
+ * `ImapSession` isolates the original byte-counted literal before decoding,
+ * and hands its text up as a separate opaque value beside the syntax. The
+ * explicit frame form is used by every transport-backed FETCH caller. String
+ * inputs remain for existing scripted/parser callers, not transport framing.
  *
  * Where the UID is, is the server's choice
  * ────────────────────────────────────────
@@ -66,7 +57,7 @@
 /** A transport-framed syntax segment followed by an optional opaque literal.
  * The syntax excludes the {N} marker; literal text must never be rescanned as
  * quoted strings, NIL, UIDs, parentheses or tagged command completions.
- * Legacy string inputs remain supported for existing email-session callers.
+ * Legacy string inputs remain supported for existing scripted/parser callers.
  */
 export interface ImapFetchFrame {
   readonly syntax: string;
