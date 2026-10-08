@@ -5,9 +5,10 @@ import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSurfaceEmailInboxConfigReader } from '@goodvibes-jev/engine/sdk/platform/email';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
-import { createEmailInboxOwner, registerInboxSurface,
+import { createEmailInboxOwner, registerInboxSurface, createOwnedInboxSource,
   type EmailInboxAccount, type EmailInboxOwner, type InboxSurfaceRegistration } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { ProtectedSourceOwnerOptions } from '@goodvibes-jev/engine/sdk/platform/security';
+import type { DaemonInboxSourceFactory } from './multiowner-inbox-composition.js';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
 export interface EmailDaemonInboxOptions {
@@ -22,8 +23,25 @@ export interface EmailDaemonInboxFactories {
   readonly eligibilityClock?: ClusterClock;
 }
 
+/** Independently owned email account, with no canonical method binding. */
+export interface EmailDaemonInboxSourceFactories extends Omit<EmailDaemonInboxFactories, 'registerSurface'> {
+  readonly createSource?: typeof createOwnedInboxSource;
+}
+
+export function createEmailDaemonInboxSourceFactory(options: EmailDaemonInboxOptions,
+  factories: EmailDaemonInboxSourceFactories = {}): DaemonInboxSourceFactory {
+  return createEmailAccountFactory(options, factories, factories.createSource ?? createOwnedInboxSource);
+}
+
 export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
   factories: EmailDaemonInboxFactories = {}): DaemonInboxFactory {
+  return createEmailAccountFactory(options, factories, factories.registerSurface ?? registerInboxSurface);
+}
+
+function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: EmailDaemonInboxOptions,
+  factories: Pick<EmailDaemonInboxFactories, 'createOwner' | 'eligibilityClock'>,
+  register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1]) => T,
+): (...args: Parameters<DaemonInboxFactory>) => Promise<T> {
   return async (context, _routing, controls) => {
     // The canonical daemon mailbox has no separate enable switch. Its shared
     // reader derives readiness from configured endpoint/account fields.
@@ -43,7 +61,7 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
     let eligibility: ReturnType<typeof ownInboxEligibility> | undefined;
     let owner: EmailInboxOwner | undefined;
     let release: (() => void) | undefined;
-    let surface: InboxSurfaceRegistration | undefined;
+    let surface: T | undefined;
     try {
       owner = (factories.createOwner ?? createEmailInboxOwner)({ account: options.account, service: mail.service,
         screening: options.screening, assertCurrent: current,
@@ -58,7 +76,7 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
         { strictOwnership: true, totalTimeoutMs: 100 });
       current();
       const selectedOwner = owner;
-      surface = (factories.registerSurface ?? registerInboxSurface)({ ...context, workingDirectory }, {
+      surface = register({ ...context, workingDirectory }, {
         adapters: new Map([['email', selectedOwner.adapter]]), storeFileName, ...(clustered ? { awaitInitialPoll: false } : {}),
         acquireReadLease: () => selectedOwner.acquireReadLease(),
         gatePolling: (_provider, control) => {
@@ -78,21 +96,24 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
     const selectedOwner = owner;
     const unlock = release;
     let closing: Promise<void> | undefined;
+    const close = (): Promise<void> => {
+      if (!closing) {
+        closing = Promise.resolve().then(async () => {
+          const results = await Promise.allSettled([registration.close(), selectedOwner.close()]);
+          let mailFailure = false;
+          try { mail.close(); } catch { mailFailure = true; }
+          // Storage retirement failure retains the lifetime lease.
+          if (results[0]!.status === 'fulfilled') unlock();
+          if (mailFailure || results.some(result => result.status === 'rejected')) throw new Error('Email inbox composition did not close cleanly');
+        });
+      }
+      return closing;
+    };
     return {
+      ...registration,
+      unregister() { void close().catch(() => {}); },
       ready: Promise.all([registration.ready, eligibility?.ready]).then(() => {}),
-      close() {
-        if (!closing) {
-          closing = Promise.resolve().then(async () => {
-            const results = await Promise.allSettled([registration.close(), selectedOwner.close()]);
-            let mailFailure = false;
-            try { mail.close(); } catch { mailFailure = true; }
-            // Storage retirement failure retains the lifetime lease.
-            if (results[0]!.status === 'fulfilled') unlock();
-            if (mailFailure || results.some(result => result.status === 'rejected')) throw new Error('Email inbox composition did not close cleanly');
-          });
-        }
-        return closing;
-      },
+      close,
     };
   };
 }

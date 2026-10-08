@@ -10,7 +10,7 @@
  * orderly stop, and collectReceipts() for the /status payload.
  */
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { observeServiceCommand, runServiceCommand, type ServiceCommandRunner, type ServiceHandoverOutcome } from './service-handover.js';
 import { flushActivityLogSync, logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ConfigManager } from '../config/manager.js';
@@ -134,7 +134,8 @@ export interface DaemonLifecycleRuntimeOptions {
   /**
    * The daemon's own orderly stop, run before an update or crash-loop-rollback
    * restart hands over, so shutdown hooks fire on those restarts instead of
-   * being skipped by a bare exit. Absent = nothing to wind down.
+   * being skipped by a bare exit. Absent = nothing to wind down. Reentrant
+   * lifecycle stops use the explicit forHandover=true path to avoid self-wait.
    */
   readonly stopGracefully?: (() => Promise<void> | void) | undefined;
   /** Injectable marker filesystem; tests drive the crash-loop counter in memory. */
@@ -178,10 +179,15 @@ export interface DaemonLifecycleRuntimeOptions {
    * tests) means the ERROR log line is the whole record.
    */
   readonly alertOwner?: ((text: string) => void) | undefined;
+  /** Observed, bounded service-manager commands; injectable without touching a real service. */
+  readonly serviceCommandRunner?: ServiceCommandRunner | undefined;
+  readonly serviceCommandTimeoutMs?: number | undefined;
+  readonly servicePlatform?: NodeJS.Platform | undefined;
 }
 
 export class DaemonLifecycleRuntime {
   private autoUpdater: DaemonAutoUpdater | null = null;
+  private appliedUpdater: DaemonAutoUpdater | null = null;
   private store: DaemonReceiptStore | null = null;
   /** Why the self-update loop is not running. Empty once it is. */
   private updateLoopOffReason = 'the daemon has not finished starting';
@@ -202,6 +208,13 @@ export class DaemonLifecycleRuntime {
    * takes no further part in this process's life.
    */
   private reachedFullyStarted = false;
+  private promotionTask: Promise<void> | null = null;
+  private promotionAbort: AbortController | null = null;
+  private promotionAttempted = false;
+  private rollbackHandover: Promise<void> | null = null;
+  private rollbackApplied = false;
+  private stopping = false;
+  private rollbackAbort: AbortController | null = null;
 
   constructor(private readonly options: DaemonLifecycleRuntimeOptions) {}
 
@@ -305,6 +318,7 @@ export class DaemonLifecycleRuntime {
   onStarting(): boolean {
     const artifact = this.options.updateArtifact;
     if (!artifact) return false;
+    if (this.rollbackApplied) return true;
     // An in-process restart cycle (a control-plane binding change re-enters
     // start()) is not a boot. See `reachedFullyStarted`.
     if (this.reachedFullyStarted) return false;
@@ -376,8 +390,15 @@ export class DaemonLifecycleRuntime {
       return false;
     }
 
+    // Set before any receipt/marker I/O: a failed record must never swap back
+    // over the successful disk restoration on a duplicate start in this process.
+    this.rollbackApplied = true;
     const at = (this.options.now ?? Date.now)();
-    this.receiptStore().record(crashLoopRollbackReceipt({ failedStarts, restored: result.restored, at }));
+    try {
+      this.receiptStore().record(crashLoopRollbackReceipt({ failedStarts, restored: result.restored, at }));
+    } catch (error) {
+      logger.warn('DaemonServer: could not persist completed disk rollback receipt', { error: summarizeError(error) });
+    }
     const rejectedVersion = this.options.updateArtifact?.version;
     try {
       // Naming the rejected version is what stops the self-update loop from
@@ -412,31 +433,42 @@ export class DaemonLifecycleRuntime {
       `goodvibes daemon: ${failedStarts} starts in a row did not finish, rolled back to the kept previous version`
       + ` (${result.restored.map((target) => target.path).join(', ')}) and handing over to it`,
     );
-    void this.handOverAfterRollback();
+    this.rollbackHandover = this.handOverAfterRollback().catch((error: unknown) => {
+      this.reportIncompleteHandover('rollback', { status: 'failed', detail: summarizeError(error) });
+    });
     return true;
   }
 
   /** The same handover the update swap uses: orderly stop first, then restart onto the restored binary. */
   private async handOverAfterRollback(): Promise<void> {
+    const abort = new AbortController();
+    this.rollbackAbort = abort;
     try {
-      await this.options.stopGracefully?.();
-    } catch (error) {
-      logger.warn('DaemonServer: orderly stop before the rollback restart failed; handing over anyway', {
-        error: summarizeError(error),
-      });
+      try {
+        await this.options.stopGracefully?.();
+      } catch (error) {
+        logger.warn('DaemonServer: orderly stop before the rollback restart failed; requesting handover anyway', {
+          error: summarizeError(error),
+        });
+      }
+      if (abort.signal.aborted) {
+        this.reportIncompleteHandover('rollback', { status: 'unknown', detail: 'handover cancelled during orderly stop' });
+        return;
+      }
+      const actions = this.buildServiceActions(abort.signal);
+      const supervised = actions.isSupervised();
+      let outcome = await (supervised ? actions.restartService() : actions.adoptIntoService());
+      if (abort.signal.aborted) outcome = { status: 'unknown', detail: 'handover cancelled' };
+      if (outcome?.status !== 'accepted') {
+        this.reportIncompleteHandover('rollback', outcome ?? { status: 'unknown', detail: 'no outcome returned' });
+        return;
+      }
+      if (supervised) return;
+      flushActivityLogSync();
+      (this.options.exitProcess ?? ((code: number) => process.exit(code)))(0);
+    } finally {
+      this.rollbackAbort = null;
     }
-    const actions = this.buildServiceActions();
-    if (actions.isSupervised()) {
-      actions.restartService();
-      return;
-    }
-    actions.adoptIntoService();
-    // The rollback is the whole reason this process is stopping, and the ERROR
-    // line naming the restored binary was written moments ago. It has to be on
-    // disk before the exit, or the record of an automatic rollback reads as a
-    // daemon that stopped for no stated reason.
-    flushActivityLogSync();
-    (this.options.exitProcess ?? ((code: number) => process.exit(code)))(0);
   }
 
   /**
@@ -447,6 +479,7 @@ export class DaemonLifecycleRuntime {
    * update loop.
    */
   onStarted(): void {
+    this.stopping = false;
     // Only the FIRST fully-started moment in a process can discover that the
     // process before it died: an in-process restart cycle is looking at the
     // marker THIS process wrote, which of course still says `running`. Without
@@ -486,19 +519,44 @@ export class DaemonLifecycleRuntime {
     this.promoteToServiceAtBoot();
   }
 
+  /** Fence handovers before the facade awaits any shutdown hooks. Never self-drains. */
+  beginStopping(forHandover = false): void {
+    this.stopping = true;
+    this.promotionAbort?.abort();
+    if (!forHandover) this.rollbackAbort?.abort();
+    this.autoUpdater?.stop(forHandover);
+    this.appliedUpdater?.stop(forHandover);
+  }
+
+  /** A repeated facade close still owns the existing handover; own stops never self-wait. */
+  drainHandovers(forHandover = false): Promise<void> {
+    return Promise.all([
+      this.promotionTask,
+      forHandover ? null : this.rollbackHandover,
+      (this.autoUpdater ?? this.appliedUpdater)?.drainHandover(forHandover),
+    ]).then(() => {});
+  }
+
   /**
    * During stop(): halt the update loop; on a real shutdown (not a
    * config-driven in-process restart cycle) stamp the clean-shutdown marker
    * so the next start does not record a crash receipt.
    */
-  onStopping(restarting: boolean): void {
-    this.autoUpdater?.stop();
-    this.autoUpdater = null;
+  onStopping(restarting: boolean, forHandover = false): Promise<void> {
+    this.beginStopping(forHandover);
+    const updater = this.autoUpdater;
+    if (updater && updater.snapshot().appliedVersion != null) this.appliedUpdater = updater;
+    // Retain the old loop while a transactional apply is settling. It can still
+    // acquire the completed-disk latch, and a new loop must not race it.
+    const drained = this.drainHandovers(forHandover).then(() => {
+      if (updater && updater.snapshot().appliedVersion != null) this.appliedUpdater = updater;
+      if (this.autoUpdater === updater) this.autoUpdater = null;
+    });
     if (this.promotionTimer) {
       clearInterval(this.promotionTimer);
       this.promotionTimer = null;
     }
-    if (restarting) return;
+    if (restarting) return drained;
     try {
       recordDaemonCleanShutdown(this.markerPath(), {
         ...this.markerOptions(),
@@ -507,6 +565,7 @@ export class DaemonLifecycleRuntime {
     } catch (error) {
       logger.warn('DaemonServer: could not record the clean-shutdown marker', { error: summarizeError(error) });
     }
+    return drained;
   }
 
   /**
@@ -520,6 +579,9 @@ export class DaemonLifecycleRuntime {
    */
   private startAutoUpdater(): void {
     if (this.autoUpdater) return;
+    // An on-disk update is terminal for this process, including after a failed
+    // handover and a host's in-process start/stop cycle. Keep its evidence.
+    if (this.appliedUpdater) return;
     const { configManager } = this.options;
     const auto = configManager.get('update.auto');
     if (auto !== true) {
@@ -601,7 +663,7 @@ export class DaemonLifecycleRuntime {
    * week, and the difference between those is the whole question.
    */
   updateStatus(): DaemonUpdateStatus {
-    const updater = this.autoUpdater;
+    const updater = this.autoUpdater ?? this.appliedUpdater;
     const rejectedVersion = this.rejectedUpdateVersion();
     if (!updater) {
       return {
@@ -619,8 +681,8 @@ export class DaemonLifecycleRuntime {
     }
     const snapshot = updater.snapshot();
     return {
-      armed: true,
-      offReason: '',
+      armed: snapshot.appliedVersion == null,
+      offReason: snapshot.appliedVersion == null ? '' : `v${snapshot.appliedVersion} is installed on disk; service handover ${snapshot.handover?.status ?? 'pending'}; replacement health is unknown`,
       currentVersion: snapshot.currentVersion,
       releasesUrl: snapshot.releasesUrl,
       checkIntervalMs: snapshot.checkIntervalMs,
@@ -648,16 +710,14 @@ export class DaemonLifecycleRuntime {
   }
 
   /** The service-manager actions shared by the update swap and boot promotion. */
-  private buildServiceActions(): AutoUpdateServiceActions {
+  private buildServiceActions(signal?: AbortSignal): AutoUpdateServiceActions {
     const serviceName = String(this.options.configManager.get('service.serviceName') ?? 'goodvibes').trim() || 'goodvibes';
-    const spawnDetached = (argv: readonly string[]): void => {
-      try {
-        const child = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: 'ignore' });
-        child.unref();
-      } catch (error) {
-        logger.warn('DaemonServer: service-manager command failed to spawn', { argv, error: summarizeError(error) });
-      }
-    };
+    const platform = this.options.servicePlatform ?? process.platform;
+    const configuredTimeout = this.options.serviceCommandTimeoutMs ?? 10_000;
+    const timeoutMs = Number.isFinite(configuredTimeout) ? Math.max(1, Math.min(60_000, configuredTimeout)) : 10_000;
+    const command = (argv: readonly string[], actionSignal?: AbortSignal): Promise<ServiceHandoverOutcome> => observeServiceCommand(
+      this.options.serviceCommandRunner ?? runServiceCommand, argv, timeoutMs, actionSignal,
+    );
     return {
       isSupervised: () => {
         try {
@@ -667,36 +727,52 @@ export class DaemonLifecycleRuntime {
           return false;
         }
       },
-      adoptIntoService: () => {
-        // Adoption: write the unit (with the survival contract) and enqueue
-        // a start. The old process exits right after; if the first start
-        // races the dying listener, Restart=on-failure retries until the
-        // port is free.
+      adoptIntoService: async (actionSignal = signal) => {
+        // No supported enqueue path means no unit should be installed either.
+        if (platform !== 'linux') return { status: 'unsupported', detail: 'service adoption is only supported on systemd' };
+        if (actionSignal?.aborted) return { status: 'unknown', detail: 'handover cancelled' };
         try {
+          const status = this.options.platformServiceManager.status();
+          if (status.platform && status.platform !== 'systemd') return { status: 'unsupported', detail: `service adoption is unsupported for ${status.platform}` };
           const installed = this.options.platformServiceManager.install();
+          if (installed.installed === false) return { status: 'failed', detail: 'service unit installation was not confirmed' };
+          if (installed.actionError) return { status: 'failed', detail: installed.actionError };
           if (installed.lingerNote) logger.info(`DaemonServer: ${installed.lingerNote}`);
         } catch (error) {
-          logger.warn('DaemonServer: service unit install failed during adoption', { error: summarizeError(error) });
-          return;
+          return { status: 'failed', detail: `service unit install failed: ${summarizeError(error)}` };
         }
-        if (process.platform === 'linux') {
-          spawnDetached(['systemctl', '--user', 'daemon-reload']);
-          spawnDetached(['systemctl', '--user', '--no-block', 'enable', '--now', `${serviceName}.service`]);
-        }
+        const reload = await command(['systemctl', '--user', 'daemon-reload'], actionSignal);
+        if (reload.status !== 'accepted') return reload;
+        if (actionSignal?.aborted) return { status: 'unknown', detail: 'handover cancelled' };
+        // --no-block observes enqueue acceptance without waiting on the replacement
+        // to bind the listener still owned by this process.
+        return command(['systemctl', '--user', '--no-block', 'enable', '--now', `${serviceName}.service`], actionSignal);
       },
-      restartService: () => {
-        if (process.platform === 'linux') {
-          // Non-blocking: the restart job outlives this process, which
-          // systemd stops as part of the restart.
-          spawnDetached(['systemctl', '--user', '--no-block', 'restart', `${serviceName}.service`]);
-          return;
+      restartService: async (actionSignal = signal) => {
+        if (actionSignal?.aborted) return { status: 'unknown', detail: 'handover cancelled' };
+        if (platform === 'linux') {
+          try {
+            const manager = this.options.platformServiceManager.status().platform;
+            if (manager && manager !== 'systemd') return { status: 'unsupported', detail: `service restart is unsupported for ${manager}` };
+          } catch (error) {
+            return { status: 'unknown', detail: `could not verify systemd supervision: ${summarizeError(error)}` };
+          }
+          return command(['systemctl', '--user', '--no-block', 'restart', `${serviceName}.service`], actionSignal);
         }
-        // launchd (KeepAlive=true) and manual supervision both respawn the
-        // (already-swapped) binary when this process exits cleanly. The log
-        // lands first: an exit taken as a handover has to be distinguishable
-        // in the record from an exit nobody chose.
-        flushActivityLogSync();
-        process.exit(0);
+        if (platform !== 'darwin') return { status: 'unsupported', detail: 'no supported service restart handover' };
+        try {
+          if (this.options.platformServiceManager.status().platform !== 'launchd') {
+            return { status: 'unsupported', detail: 'restart-by-exit requires launchd supervision' };
+          }
+        } catch (error) {
+          return { status: 'unknown', detail: `could not verify launchd supervision: ${summarizeError(error)}` };
+        }
+        // Being listed by launchd does not acknowledge a replacement job.
+        // Desired restartOnFailure and the plist on disk do not establish the
+        // policy loaded by launchd; KeepAlive may be disabled or stale. Until
+        // an observed launchd handover exists, never turn that inference into
+        // a successful exit (even when both desired and on-disk values are true).
+        return { status: 'unknown', detail: 'launchd restart-by-exit has no observed manager acknowledgement; loaded KeepAlive policy is unverified' };
       },
     };
   }
@@ -744,27 +820,45 @@ export class DaemonLifecycleRuntime {
       return; // no service manager on this platform, nothing to promote into
     }
     if (status.installed && status.running) return; // already supervised
-    const actions = this.buildServiceActions();
-    const exitProcess = this.options.exitProcess ?? ((code: number) => process.exit(code));
-    const attempt = (): boolean => {
-      if (!this.options.isIdle()) return false;
-      logger.info('DaemonServer: unsupervised daemon, installing the service unit and handing over (boot promotion)');
-      actions.adoptIntoService();
-      flushActivityLogSync();
-      exitProcess(0);
-      return true;
+    if (this.promotionAttempted || this.promotionTask || this.promotionTimer || this.stopping) return;
+    const attempt = (): void => {
+      if (this.stopping || this.promotionAttempted || !this.options.isIdle()) return;
+      this.promotionAttempted = true;
+      if (this.promotionTimer) clearInterval(this.promotionTimer);
+      this.promotionTimer = null;
+      const abort = new AbortController();
+      this.promotionAbort = abort;
+      const actions = this.buildServiceActions(abort.signal);
+      this.promotionTask = (async () => {
+        try {
+          const outcome = await actions.adoptIntoService();
+          if (abort.signal.aborted || this.stopping) return;
+          if (outcome?.status !== 'accepted') {
+            this.reportIncompleteHandover('boot promotion', outcome ?? { status: 'unknown', detail: 'no outcome returned' });
+            return;
+          }
+          logger.info('DaemonServer: service start enqueue accepted; handing over (replacement health not yet known)');
+          flushActivityLogSync();
+          (this.options.exitProcess ?? ((code: number) => process.exit(code)))(0);
+        } catch (error) {
+          if (!abort.signal.aborted) this.reportIncompleteHandover('boot promotion', { status: 'failed', detail: summarizeError(error) });
+        }
+      })().finally(() => { this.promotionTask = null; this.promotionAbort = null; });
     };
-    if (attempt()) return;
-    // Busy at boot (e.g. sessions reconnected immediately): keep checking for
-    // the same idle moment the update swap waits for. The timer never keeps
-    // the process alive and stops with the lifecycle.
+    attempt();
+    if (this.promotionAttempted) return;
     const retryMs = Math.max(1_000, this.options.promotionRetryMs ?? 60_000);
-    this.promotionTimer = setInterval(() => {
-      if (attempt() && this.promotionTimer) {
-        clearInterval(this.promotionTimer);
-        this.promotionTimer = null;
-      }
-    }, retryMs);
+    this.promotionTimer = setInterval(attempt, retryMs);
     (this.promotionTimer as { unref?: () => void }).unref?.();
+  }
+
+  private reportIncompleteHandover(context: string, outcome: ServiceHandoverOutcome): void {
+    const disk = context === 'rollback' ? ' The kept previous files were restored on disk; no further rollback was attempted.' : '';
+    const text = `${context} handover incomplete (${outcome.status}): ${outcome.detail ?? 'no completion evidence'}.${disk} Replacement health is unknown; this process did not exit for a successful handover.`;
+    try { this.receiptStore().record(text); } catch (error) {
+      logger.warn('DaemonServer: could not record incomplete handover receipt', { error: summarizeError(error) });
+    }
+    this.alertOwner(text);
+    this.announceOnStderr(text);
   }
 }

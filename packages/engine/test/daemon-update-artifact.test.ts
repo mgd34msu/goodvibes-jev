@@ -12,8 +12,11 @@ import { afterEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DaemonServer } from '../sdk/src/platform/daemon/facade.ts';
 import { DaemonLifecycleRuntime, type DaemonLifecycleRuntimeOptions } from '../sdk/src/platform/daemon/facade-lifecycle.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
+import type { ServiceCommandRunner } from '../sdk/src/platform/daemon/service-handover.ts';
+import { updateConfigDefaults } from '../sdk/src/platform/config/schema-domain-update.js';
 import { VERSION } from '../sdk/src/platform/version.ts';
 
 const scratchDirs: string[] = [];
@@ -33,6 +36,10 @@ interface LifecycleHarness {
 function lifecycleWith(
   updateArtifact?: DaemonLifecycleRuntimeOptions['updateArtifact'],
   overrides: {
+    readonly install?: (() => object) | undefined;
+    readonly runner?: ServiceCommandRunner | undefined;
+    readonly platform?: NodeJS.Platform | undefined;
+    readonly timeoutMs?: number | undefined;
     readonly configOverrides?: Record<string, unknown>;
     readonly status?: (() => { installed: boolean; running: boolean }) | undefined;
     readonly isIdle?: (() => boolean) | undefined;
@@ -57,11 +64,15 @@ function lifecycleWith(
   const exits: number[] = [];
   const platformServiceManager = {
     status: overrides.status ?? (() => ({ installed: false, running: false })),
-    install: () => { installs.push(Date.now()); return {}; },
+    install: () => { installs.push(Date.now()); return overrides.install?.() ?? {}; },
   } as unknown as DaemonLifecycleRuntimeOptions['platformServiceManager'];
   const runtime = new DaemonLifecycleRuntime({
     configManager,
     platformServiceManager,
+    servicePlatform: overrides.platform ?? 'linux',
+    serviceCommandRunner: overrides.runner ?? (async () => ({ status: 'accepted' })),
+    serviceCommandTimeoutMs: overrides.timeoutMs ?? 100,
+    stderr: { write: () => {} },
     isIdle: overrides.isIdle ?? (() => true),
     // Boot promotion hands over by exiting, tests OBSERVE the exit.
     exitProcess: (code: number) => { exits.push(code); },
@@ -154,11 +165,12 @@ describe('no silent gates: every reason the update loop stays off is logged', ()
 describe('boot-edge service promotion (independent of updates)', () => {
   const artifact = { version: '999.0.0-host-artifact' };
 
-  test('a standalone unsupervised idle daemon installs the unit and hands over at boot', () => {
+  test('a standalone unsupervised idle daemon installs the unit and hands over at boot', async () => {
     const { runtime, installs, exits } = lifecycleWith(artifact);
     runtime.onStarted();
     try {
       expect(installs).toHaveLength(1);
+      await Bun.sleep(10);
       expect(exits).toEqual([0]);
     } finally {
       runtime.onStopping(false);
@@ -235,9 +247,195 @@ describe('boot-edge service promotion (independent of updates)', () => {
       idle = true;
       await Bun.sleep(1_200);
       expect(installs).toHaveLength(1);
+      await Bun.sleep(10);
       expect(exits).toEqual([0]);
     } finally {
       runtime.onStopping(false);
     }
   });
+});
+
+
+describe('observed service handover', () => {
+  const artifact = { version: '999.0.0-host-artifact' };
+  for (const thrown of [new Error('install unavailable'), undefined]) {
+    test(`install throwing ${String(thrown)} never exits`, async () => {
+      const commands: string[][] = [];
+      const h = lifecycleWith(artifact, { install: () => { throw thrown; }, runner: async (argv) => { commands.push([...argv]); return { status: 'accepted' }; } });
+      h.runtime.onStarted();
+      await Bun.sleep(10);
+      expect(h.exits).toEqual([]);
+      expect(commands).toEqual([]);
+      expect(h.runtime.receiptStore().list().some((r) => r.text.includes('handover incomplete (failed)'))).toBe(true);
+      await h.runtime.onStopping(false);
+    });
+  }
+  for (const outcome of ['failed', 'unknown', 'unsupported'] as const) {
+    test(`reload ${outcome} never enables or exits`, async () => {
+      const commands: string[][] = [];
+      const h = lifecycleWith(artifact, { runner: async (argv) => { commands.push([...argv]); return { status: outcome }; } });
+      h.runtime.onStarted();
+      await Bun.sleep(10);
+      expect(h.exits).toEqual([]);
+      expect(commands).toEqual([['systemctl', '--user', 'daemon-reload']]);
+      await h.runtime.onStopping(false);
+    });
+  }
+  test('reload is completed before start enqueue; duplicate starts make one handover', async () => {
+    let release!: (outcome: { status: 'accepted' }) => void;
+    const commands: string[][] = [];
+    const h = lifecycleWith(artifact, { runner: async (argv) => {
+      commands.push([...argv]);
+      if (commands.length === 1) return new Promise((resolve) => { release = resolve; });
+      return { status: 'accepted' };
+    } });
+    h.runtime.onStarted();
+    h.runtime.onStarted();
+    await Bun.sleep(1);
+    expect(commands).toHaveLength(1);
+    expect(h.exits).toEqual([]);
+    release({ status: 'accepted' });
+    await Bun.sleep(10);
+    expect(commands).toEqual([['systemctl', '--user', 'daemon-reload'], ['systemctl', '--user', '--no-block', 'enable', '--now', 'goodvibes-test.service']]);
+    expect(h.installs).toHaveLength(1);
+    expect(h.exits).toEqual([0]);
+    h.runtime.onStarted();
+    await Bun.sleep(1);
+    expect(h.exits).toEqual([0]);
+    await h.runtime.onStopping(false);
+  });
+  for (const stage of ['reload', 'start'] as const) {
+    for (const failure of ['failed', 'throw', 'timeout'] as const) {
+      test(`${stage} ${failure} stays alive and owns errors`, async () => {
+        let calls = 0;
+        const h = lifecycleWith(artifact, { timeoutMs: 10, runner: async () => {
+          calls++;
+          if (stage === 'start' && calls === 1) return { status: 'accepted' };
+          if (failure === 'throw') throw new Error('spawn failed');
+          if (failure === 'timeout') return new Promise(() => {});
+          return { status: 'failed', detail: 'nonzero' };
+        } });
+        h.runtime.onStarted();
+        await Bun.sleep(25);
+        expect(h.exits).toEqual([]);
+        expect(calls).toBe(stage === 'start' ? 2 : 1);
+        expect(h.runtime.receiptStore().list().some((r) => r.text.includes('handover incomplete'))).toBe(true);
+        await h.runtime.onStopping(false);
+      });
+    }
+  }
+  test('unsupported platform never installs a unit or exits', async () => {
+    const h = lifecycleWith(artifact, { platform: 'win32' });
+    h.runtime.onStarted();
+    await Bun.sleep(10);
+    expect(h.installs).toEqual([]);
+    expect(h.exits).toEqual([]);
+    await h.runtime.onStopping(false);
+  });
+  test('close cancels and drains pending reload, owns late rejection, never starts or exits', async () => {
+    let reject!: (reason: unknown) => void;
+    let commands = 0;
+    let aborted = false;
+    const h = lifecycleWith(artifact, { runner: (_argv, signal) => {
+      commands++;
+      signal.addEventListener('abort', () => { aborted = true; });
+      return new Promise((_resolve, rejectPromise) => { reject = rejectPromise; });
+    } });
+    h.runtime.onStarted();
+    await Bun.sleep(1);
+    await h.runtime.onStopping(false);
+    expect(aborted).toBe(true);
+    reject(new Error('late error after cancellation'));
+    await Bun.sleep(10);
+    expect(commands).toBe(1);
+    expect(h.exits).toEqual([]);
+  });
+});
+
+test('early shutdown fence cancels promotion before slower shutdown hooks drain', async () => {
+  let release!: (outcome: { status: 'accepted' }) => void;
+  const h = lifecycleWith({ version: '999.0.0-host-artifact' }, { runner: () => new Promise((resolve) => { release = resolve; }) });
+  h.runtime.onStarted();
+  await Bun.sleep(1);
+  h.runtime.beginStopping();
+  release({ status: 'accepted' });
+  await Bun.sleep(5); // Simulate the facade awaiting other shutdown hooks.
+  expect(h.exits).toEqual([]);
+  await h.runtime.onStopping(false);
+});
+
+test('a stopped applied updater remains reachable for cancellation and cannot re-arm in process', async () => {
+  const h = lifecycleWith({ version: '999.0.0-host-artifact' }, { configOverrides: { 'service.enabled': false } });
+  let stops = 0;
+  let drains = 0;
+  const applied = {
+    stop: () => { stops++; },
+    drainHandover: async () => { drains++; },
+    snapshot: () => ({ appliedVersion: '1000.0.0', handover: { status: 'unknown' } }),
+  };
+  (h.runtime as unknown as { autoUpdater: unknown }).autoUpdater = applied;
+  await h.runtime.onStopping(false); // The updater's own graceful stop.
+  h.runtime.beginStopping(); // A later external close still reaches it.
+  await h.runtime.onStopping(false);
+  expect(stops).toBe(3);
+  expect(drains).toBe(2);
+  h.runtime.onStarted();
+  expect(updaterOf(h.runtime)).toBeNull();
+  expect(h.runtime.updateStatus().armed).toBe(false);
+  expect(h.runtime.updateStatus().offReason).toContain('1000.0.0 is installed on disk');
+  await h.runtime.onStopping(false);
+});
+
+
+test('handover repair does not activate the shipped default update configuration without an artifact', async () => {
+  const defaults = updateConfigDefaults.update;
+  expect(defaults.auto).toBe(true);
+  expect(defaults.releasesUrl).toBe('https://github.com/mgd34msu/goodvibes-daemon/releases/latest');
+  const h = lifecycleWith(undefined, { configOverrides: { 'update.auto': defaults.auto, 'update.releasesUrl': defaults.releasesUrl } });
+  h.runtime.onStarted();
+  expect(updaterOf(h.runtime)).toBeNull();
+  expect(h.installs).toEqual([]);
+  expect(h.exits).toEqual([]);
+  await h.runtime.onStopping(false);
+});
+
+
+test('an already-torn-down facade still fences and drains a pending lifecycle handover', async () => {
+  let release!: (outcome: { status: 'accepted' }) => void;
+  const h = lifecycleWith({ version: '999.0.0-host-artifact' }, { runner: () => new Promise((resolve) => { release = resolve; }) });
+  h.runtime.onStarted();
+  await Bun.sleep(1);
+  // No server construction or listener: exercise only the actual duplicate-stop path.
+  const facade = Object.assign(Object.create(DaemonServer.prototype) as object, {
+    lifecycle: h.runtime, tornDown: true,
+  }) as unknown as DaemonServer;
+  await facade.stop();
+  release({ status: 'accepted' });
+  await Bun.sleep(1);
+  expect(h.exits).toEqual([]);
+  await h.runtime.onStopping(false);
+});
+
+
+test('close retains a settling update until its completed disk latch is visible', async () => {
+  const h = lifecycleWith({ version: '999.0.0-host-artifact' }, { configOverrides: { 'service.enabled': false } });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let appliedVersion: string | null = null;
+  const applying = {
+    stop: () => {},
+    drainHandover: () => pending,
+    snapshot: () => ({ appliedVersion, handover: { status: 'unknown' } }),
+  };
+  (h.runtime as unknown as { autoUpdater: unknown }).autoUpdater = applying;
+  const close = h.runtime.onStopping(false);
+  h.runtime.onStarted();
+  expect((h.runtime as unknown as { autoUpdater: unknown }).autoUpdater).toBe(applying);
+  appliedVersion = '1000.0.0';
+  release();
+  await close;
+  h.runtime.onStarted();
+  expect(updaterOf(h.runtime)).toBeNull();
+  expect(h.runtime.updateStatus().offReason).toContain('1000.0.0 is installed on disk');
+  await h.runtime.onStopping(false);
 });
