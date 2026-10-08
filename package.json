@@ -152,7 +152,8 @@
     "js-yaml": "^4.3.1",
     "ip-address": "^10.4.0",
     "http-cache-semantics": "file:vendor/http-cache-semantics",
-    "compression": "1.8.2"
+    "compression": "1.8.2",
+    "handlebars": "4.7.10"
   },
   "overridesRationale": {
     "sharp": "Require 0.35.5 or later in the 0.35.x line to close GHSA-wq5f-xc86-pv6w (librsvg CVE-2026-96889). The prebuilt sharp-libvips 1.3.4 artifacts include patched librsvg 2.63.2. Miniflare 4.20260430.0, used directly and by Wrangler 4.87.0, still requests vulnerable sharp ^0.34.5; remove this override when the dependency graph requires a patched release.",
@@ -169,6 +170,7 @@
     "ws": "Pinned to 8.21.0 to close GHSA-96hv-2xvq-fx4p (memory-exhaustion DoS from tiny fragments). Minor bump within the 8.x line forced across miniflare, node-edge-tts, and the openai ws peer.",
     "undici": "Pinned to 7.28.0 to close GHSA-vmh5-mc38-953g, GHSA-vxpw-j846-p89q, and GHSA-hm92-r4w5-c3mj (TLS bypass, WebSocket DoS, SOCKS5 routing). Kept on the 7.x line that jsdom (^7.25.0) and miniflare require; 8.x would be a breaking major.",
     "http-cache-semantics": "Vendored 4.2.0 with explicit cache-reuse guards for GHSA-ch52-4w7c-c8xp. No fixed upstream version exists as of 2026-10-03. Regression tests, original source integrity and removal criteria live with the vendor patch; do not replace this with an audit exemption.",
-    "compression": "Pinned to 1.8.2 to close GHSA-vc2v-76pw-4v95 (request-driven response compression denial of service). Verdaccio 6.5.2 pins vulnerable 1.8.1 exactly; remove this override when its dependency requires the patched release."
+    "compression": "Pinned to 1.8.2 to close GHSA-vc2v-76pw-4v95 (request-driven response compression denial of service). Verdaccio 6.5.2 pins vulnerable 1.8.1 exactly; remove this override when its dependency requires the patched release.",
+    "handlebars": "Pinned to 4.7.10 to close GHSA-8r5x-fm3f-whwj and GHSA-p8wg-vrv2-v86f (JavaScript injection through AST type confusion and own-property check bypass). Verdaccio 6.5.2 depends on @verdaccio/hooks 8.0.0-next-8.37, which pins vulnerable 4.7.9 exactly; remove this override when that dependency requires a patched release."
   }
 }
