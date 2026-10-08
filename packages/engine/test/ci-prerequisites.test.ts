@@ -11,7 +11,7 @@ const workflow = Bun.YAML.parse(readFileSync(join(root, '.github/workflows/ci.ym
   jobs: Record<string, { 'timeout-minutes'?: number; steps: Array<{ name?: string; run?: string; if?: string; 'continue-on-error'?: boolean }> }>;
 };
 const bodies = {
-  browser: workflow.jobs['webui-browser']!.steps.find((step) => step.name === 'Install official Playwright Chromium and OS dependencies')!.run!,
+  browser: workflow.jobs['webui-browser-partitions']!.steps.find((step) => step.name === 'Install official Playwright Chromium and OS dependencies')!.run!,
   containment: workflow.jobs['exec-containment-proof']!.steps.find((step) => step.name === 'Install official sandbox and PTY packages')!.run!,
 };
 
@@ -42,12 +42,16 @@ describe('CI prerequisite acquisition', () => {
     expect(tui.steps.indexOf(installer)).toBeLessThan(tui.steps.indexOf(proof));
   });
 
-  test('browser uses the installed CLI, real smoke, and unchanged mandatory full suite', () => {
+  test('browser partitions use the installed CLI, real smoke, and mandatory verified suite', () => {
     expect(bodies.browser).toContain('node node_modules/@playwright/test/cli.js install chromium');
     expect(bodies.browser).not.toMatch(/bunx|SKIP_VALIDATE|continue-on-error|\|\| true/);
     expect(bodies.browser).toContain('timeout --signal=KILL 30s bun scripts/ci-browser-smoke.ts');
-    const testStep = workflow.jobs['webui-browser']!.steps.find((step) => step.name === 'Exercise the production app with synthetic daemon fixtures')!;
-    expect(testStep.run).toContain('--project=phone --project=desktop --project=lan-origin --workers=2');
+    const testStep = workflow.jobs['webui-browser-partitions']!.steps.find((step) => step.name === 'Exercise the production app with synthetic daemon fixtures')!;
+    expect(testStep.run).toContain('bun scripts/ci-browser-partitions.ts run "$BROWSER_PARTITION"');
+    const discovery = workflow.jobs['webui-browser-partitions']!.steps.find((step) => step.name === 'Verify complete disjoint browser discovery')!;
+    expect(discovery.run).toBe('bun scripts/ci-browser-partitions.ts discover');
+    expect(discovery.if).toBeUndefined();
+    expect(discovery['continue-on-error']).toBeUndefined();
     expect(testStep.if).toBeUndefined();
     expect(testStep['continue-on-error']).toBeUndefined();
   });
