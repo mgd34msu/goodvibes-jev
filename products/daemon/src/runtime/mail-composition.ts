@@ -20,6 +20,7 @@ import {
   withSurfaceEmailConfig,
   describeSurfaceEmailConfigProblem,
   describeSenderClaimNeutrally,
+  EmailReplySubjectSourceOwner,
   type EmailServiceDeps,
   type SurfaceEmailConfigProblem,
 } from '@goodvibes-jev/engine/sdk/platform/email';
@@ -27,8 +28,16 @@ import { nodeEmailTransport } from '@goodvibes-jev/engine/sdk/platform/email/nod
 
 /** The narrow slices this composition needs; the real managers satisfy them. */
 interface MailCompositionInput {
-  readonly configManager: { get(key: string): unknown };
-  readonly secretsManager: { get(key: string): Promise<string | null> };
+  readonly configManager: {
+    get(key: string): unknown;
+    onDidInvalidate?(listener: () => void): () => void;
+  };
+  readonly secretsManager: {
+    get(key: string): Promise<string | null>;
+    onDidChange?(listener: (key: string) => void): () => void;
+  };
+  /** Required to issue source snapshots, optional for existing narrow embedders. */
+  readonly registerDispose?: ((dispose: () => void) => void) | undefined;
 }
 
 /**
@@ -46,7 +55,23 @@ export function composeMailDeps(input: MailCompositionInput): {
   readonly describeEmailConfigProblem: () => Promise<SurfaceEmailConfigProblem | null>;
 } {
   const getConfig = (key: string): unknown => input.configManager.get(key);
+  let replySubjectSourceOwner: EmailReplySubjectSourceOwner | undefined;
+  if (input.configManager.onDidInvalidate && input.secretsManager.onDidChange && input.registerDispose) {
+    const owner = new EmailReplySubjectSourceOwner();
+    const stopConfig = input.configManager.onDidInvalidate(() => owner.invalidate());
+    // Stored credentials can be references to other local secret keys. The
+    // dependency chain is deliberately not read here; any secret mutation
+    // conservatively retires this account's observed snapshots, including ABA.
+    const stopSecrets = input.secretsManager.onDidChange(() => owner.invalidate());
+    input.registerDispose(() => {
+      owner.dispose();
+      stopConfig();
+      stopSecrets();
+    });
+    replySubjectSourceOwner = owner;
+  }
   const emailServiceDeps = withSurfaceEmailConfig({
+    replySubjectSourceOwner,
     getConfig,
     secretsManager: input.secretsManager,
     transport: nodeEmailTransport,

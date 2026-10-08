@@ -326,6 +326,8 @@ export interface MockDaemonOptions {
    * one session. Pass '' to make every session answer SESSION_NOT_LOCAL instead.
    */
   localSessionId?: string;
+  /** Initial session-scoped mode, including the read-only custom rule-set state. */
+  initialPermissionMode?: OperatorMethodOutput<'sessions.permissionMode.get'>['mode'];
   /**
    * Seed override for the mutable approvals list (default: [PENDING_APPROVAL]).
    * Pass several pending records to prove the queue renders every one, or an
@@ -988,7 +990,7 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
   // sessions.permissionMode.get/set + sessions.contextUsage.get in-memory state, a
   // fresh copy per installMockDaemon call, mutated by set() exactly like the daemon's
   // real single-writer config value.
-  let permissionMode: 'plan' | 'normal' | 'accept-edits' | 'auto' | 'custom' = 'normal';
+  let permissionMode: OperatorMethodOutput<'sessions.permissionMode.get'>['mode'] = options.initialPermissionMode ?? 'normal';
   const contextUsageState = { estimatedContextTokens: 4200, contextWindow: 200000 };
 
   function sessionNotLocal(route: Route, sessionId: string) {

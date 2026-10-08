@@ -401,7 +401,7 @@ export interface CommandOpsServices
 export interface CommandExtensionRegistryServices {
   readonly toolRegistry: ToolRegistry;
   readonly mcpRegistry: McpRegistry;
-  readonly evalRegistry?: import('../views/eval-registry.ts').EvalRegistry;
+  readonly evalRegistry?: import('@goodvibes-jev/engine/sdk/platform/observe').EvalRegistry;
 }
 
 export interface CommandExtensionServices

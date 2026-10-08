@@ -2,10 +2,11 @@
 export const BROWSER_JUDGMENT_PROTOCOL_VERSION = 1;
 export const BROWSER_JUDGMENT_PATH = '/api/judgment/batteries/run';
 export const BROWSER_JUDGMENT_BATTERY_IDS = [
-  'webui.errors.daemon-refusal', 'webui.status.badge-tone', 'webui.palette.command-rank',
+  'webui.errors.daemon-refusal', 'webui.status.badge-tone', 'webui.palette.command-rank', 'webui.mail.reply-subject',
 ] as const;
 export type BrowserJudgmentBatteryId = typeof BROWSER_JUDGMENT_BATTERY_IDS[number];
 export interface BrowserJudgmentInputMap {
+  'webui.mail.reply-subject': { readonly subjectRef: string };
   'webui.errors.daemon-refusal': { readonly errorRef: string };
   'webui.status.badge-tone': {
     readonly vocabulary: 'badge' | 'library-dot';
@@ -18,6 +19,7 @@ export interface BrowserJudgmentInputMap {
   };
 }
 export interface BrowserJudgmentValueMap {
+  'webui.mail.reply-subject': { readonly alreadyReply: boolean };
   'webui.errors.daemon-refusal': {
     readonly session_not_found: boolean; readonly session_closed: boolean; readonly session_active: boolean;
     readonly session_not_local: boolean; readonly method_unknown: boolean;

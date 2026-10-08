@@ -569,13 +569,14 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
 
     // Terminal-shell wrapper over the SDK registerGatewayVerbGroups (gateway-verbs.ts); checkin.*/fleet-needs-input/pairing.* register only when their deps are present. memoryGovernor lights up ops.memory.get; voiceSetup lights up voice.local.status/install.
     // calendar.*/email.* are platform-served; these two let it register (mail-composition.ts).
-    const { emailServiceDeps, describeEmailConfigProblem } = composeMailDeps({ configManager, secretsManager });
+    const { emailServiceDeps, describeEmailConfigProblem } = composeMailDeps({ configManager, secretsManager,
+      registerDispose: (dispose) => { disposalScope.registry.add('mail reply subject sources', dispose); } });
     attachWsOnlyGatewayVerbHandlers(gatewayMethods, {
       // The surface segment every control-plane store path is built from
       // (SDK control-plane-store-paths.ts). Required, not defaulted: a default
       // is what let these stores write to the unscoped orphan directory.
       surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT,
-      homeDirectory, emailServiceDeps, describeEmailConfigProblem, processRegistry,
+      homeDirectory, emailServiceDeps, describeEmailConfigProblem, processRegistry, browserJudgment,
       onBrowserCheckout: browserCheckoutSeam.set,
       // The registration-gated surface, not the raw manager: an explicit create in
       // an unregistered workspace refuses with something actionable.

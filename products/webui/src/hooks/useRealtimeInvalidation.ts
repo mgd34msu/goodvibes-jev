@@ -45,7 +45,7 @@ const DOMAIN_INVALIDATIONS: Record<string, readonly (readonly unknown[])[]> = {
   // "invalidate off the frame, never render straight from it" idiom the rest of this
   // map already uses. queryKeys.config is NOT invalidated here anymore: nothing reads
   // permission mode off config.get() since SessionsView moved to the session-scoped
-  // sessions.permissionMode.get/set verbs (lib/permission-mode.ts).
+  // sessions.permissionMode.get/set verbs (the engine gate preset contract).
   gate: [queryKeys.approvals, queryKeys.sessions, queryKeys.permissionRules],
   // Model changes and provider metadata updates can replace a known context
   // window with an unknown one. Re-read the mounted session usage from the same

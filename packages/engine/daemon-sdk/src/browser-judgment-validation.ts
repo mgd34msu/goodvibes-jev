@@ -69,6 +69,8 @@ export function parseBrowserJudgmentRequest(value: unknown): BrowserJudgmentRequ
   if (request.batteryVersion !== 1) throw new BrowserJudgmentError('JUDGMENT_BATTERY_VERSION_UNSUPPORTED');
   if (battery === 'webui.errors.daemon-refusal') {
     const input = judgmentRecord(request.input, ['errorRef']); judgmentText(input.errorRef);
+  } else if (battery === 'webui.mail.reply-subject') {
+    const input = judgmentRecord(request.input, ['subjectRef']); judgmentText(input.subjectRef);
   } else if (battery === 'webui.status.badge-tone') {
     const input = judgmentRecord(request.input, ['vocabulary', 'source']);
     if (input.vocabulary !== 'badge' && input.vocabulary !== 'library-dot') return invalid();

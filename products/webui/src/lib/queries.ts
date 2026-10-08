@@ -9,7 +9,7 @@ export const queryKeys = {
   // The daemon's full config tree (config.get), shared cache key with
   // SettingsModal/ModelWorkspaceModal/useSharedVoiceConfig, all of which already
   // used the literal ['config'] array. Centralized here so the session-view
-  // permission-mode reader (lib/permission-mode.ts) invalidates/dedupes against
+  // permission-mode reader (the engine gate preset contract) invalidates/dedupes against
   // the SAME cache entry rather than a second, silently-diverging one.
   config: ['config'] as const,
   // Revision is local, contains no credentials, and changes on token/relay identity

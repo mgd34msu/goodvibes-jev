@@ -50,7 +50,7 @@ function array(value: unknown, max: number): readonly unknown[] {
 }
 
 /**
- * Strict pre-log answer projection for the first three WebUI batteries.
+ * Strict pre-log answer projection for the fixed WebUI batteries.
  * Unlike the foundation wire check this rejects extensions, omitted/extra
  * options, non-maximal choices, and non-normalized distributions.
  */

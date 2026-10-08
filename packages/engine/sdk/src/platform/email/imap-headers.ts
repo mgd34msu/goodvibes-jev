@@ -50,6 +50,7 @@ export interface DeliveryEvidence {
 interface HeaderField {
   readonly name: string;
   readonly value: string;
+  readonly complete: boolean;
 }
 
 /** Defensive bound on a single unfolded header value. */
@@ -71,7 +72,7 @@ function parseHeaderFields(rawHeaders: string): HeaderField[] {
   const fields: HeaderField[] = [];
   if (typeof rawHeaders !== 'string' || rawHeaders.length === 0) return fields;
 
-  const unfolded: string[] = [];
+  const unfolded: { text: string; complete: boolean }[] = [];
   for (const line of rawHeaders.split(/\r\n|\n|\r/)) {
     if (line.length === 0) {
       // Leading blank lines are tolerated; a blank line after real headers
@@ -83,20 +84,23 @@ function parseHeaderFields(rawHeaders: string): HeaderField[] {
       // Continuation of the previous field (RFC 5322 §2.2.3 unfolding).
       const owner = unfolded.length - 1;
       if (owner < 0) continue; // continuation with no owner, malformed, drop
-      const merged = `${unfolded[owner] ?? ''} ${line.trim()}`;
-      unfolded[owner] = merged.slice(0, MAX_HEADER_VALUE_CHARS);
+      const previous = unfolded[owner]!;
+      const merged = `${previous.text} ${line.trim()}`;
+      unfolded[owner] = { text: merged.slice(0, MAX_HEADER_VALUE_CHARS),
+        complete: previous.complete && merged.length <= MAX_HEADER_VALUE_CHARS };
       continue;
     }
-    unfolded.push(line.slice(0, MAX_HEADER_VALUE_CHARS));
+    unfolded.push({ text: line.slice(0, MAX_HEADER_VALUE_CHARS), complete: line.length <= MAX_HEADER_VALUE_CHARS });
   }
 
-  for (const entry of unfolded) {
+  for (const unfoldedField of unfolded) {
+    const entry = unfoldedField.text;
     const colon = entry.indexOf(':');
     if (colon <= 0) continue; // no field name, malformed, drop
     const name = entry.slice(0, colon).trim().toLowerCase();
     // RFC 5322 field names are printable US-ASCII excluding ':'.
     if (name.length === 0 || /[^\x21-\x39\x3b-\x7e]/.test(name)) continue;
-    fields.push({ name, value: entry.slice(colon + 1).trim() });
+    fields.push({ name, value: entry.slice(colon + 1).trim(), complete: unfoldedField.complete });
   }
   return fields;
 }
@@ -108,6 +112,20 @@ export function extractHeader(rawHeaders: string, name: string): string {
     if (field.name === wanted) return field.value;
   }
   return '';
+}
+
+/**
+ * Ordinary display historically clips long fields and leaves RFC 2047 encoded
+ * words undecoded. Neither can stand for a complete subject in a judgment.
+ * Duplicate subjects or replacement decoding are ambiguous too. This does not
+ * change display; it only fences the optional exact-source capability.
+ */
+export function hasCompleteSubjectHeader(rawHeaders: string, subject: string): boolean {
+  const fields = parseHeaderFields(rawHeaders).filter((field) => field.name === 'subject');
+  if (fields.length === 0) return subject === '';
+  const field = fields[0]!;
+  return fields.length === 1 && field.complete && field.value === subject
+    && !/=\?|\ufffd/.test(field.value);
 }
 
 const DELIVERY_HEADER_NAMES: readonly DeliveryEvidenceSource[] = [

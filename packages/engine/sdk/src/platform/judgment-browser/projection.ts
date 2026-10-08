@@ -50,6 +50,9 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
       // No invented fifth reading: omission needs this exact server-owned HTTP fact.
       judgmentRecord(result.readings, non404Basis && !Object.hasOwn(result.readings, 'method_unknown') ? errorNames.slice(0, -1) : errorNames);
       if (readings.some((reading) => reading.kind !== 'yes-no')) return invalid();
+    } else if (request.battery === 'webui.mail.reply-subject') {
+      judgmentRecord(result.readings, ['already_reply']);
+      if (readings[0]?.kind !== 'yes-no') return invalid();
     } else if (request.battery === 'webui.status.badge-tone') {
       const name = request.input.vocabulary === 'badge' ? 'badge' : 'library_dot';
       judgmentRecord(result.readings, [name]);
@@ -79,6 +82,10 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
       // requires both an actual yes reading and the resolved server's HTTP 404.
       if (value.method_unknown && (method?.kind !== 'yes-no' || method.verdict !== 'yes'
         || !state || typeof state !== 'object' || !('status' in state) || state.status !== 404)) return invalid();
+    } else if (request.battery === 'webui.mail.reply-subject') {
+      const value = judgmentRecord(result.value, ['alreadyReply']);
+      if (typeof value.alreadyReply !== 'boolean' || readings[0]?.kind !== 'yes-no'
+        || value.alreadyReply !== (readings[0].verdict === 'yes')) return invalid();
     } else if (request.battery === 'webui.status.badge-tone') {
       const value = judgmentRecord(result.value, ['vocabulary', 'tone']);
       if (value.vocabulary !== request.input.vocabulary) return invalid();

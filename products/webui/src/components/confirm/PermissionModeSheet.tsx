@@ -6,15 +6,15 @@
  * after onSelect fires and owns pendingMode (the list is disabled while a write
  * is in flight).
  *
- * Only SETTABLE_PERMISSION_MODES render as choices: 'custom' is a read-only wire
+ * Only the engine's SESSION_GATE_PRESET_NAMES render as choices: 'custom' is a read-only wire
  * state (a bespoke rule set), never a value `sessions.permissionMode.set`
- * accepts (lib/permission-mode.ts). In custom mode no choice is marked current,
+ * accepts. In custom mode no choice is marked current,
  * which is honest: none of them is.
  */
 import { Check } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
-import { SETTABLE_PERMISSION_MODES, permissionModeLabel, type SettablePermissionMode } from '../../lib/permission-mode';
+import { GATE_PRESETS, SESSION_GATE_PRESET_NAMES, type SettableGatePresetName } from '@goodvibes-jev/engine/sdk/platform/gate/presets';
 
 export interface PermissionModeSheetProps {
   open: boolean;
@@ -22,7 +22,7 @@ export interface PermissionModeSheetProps {
   currentMode: string;
   /** The mode a write is currently in flight for, if any; disables the list. */
   pendingMode?: string;
-  onSelect: (mode: SettablePermissionMode) => void;
+  onSelect: (mode: SettableGatePresetName) => void;
   onCancel: () => void;
 }
 
@@ -38,7 +38,7 @@ export function PermissionModeSheet({ open, currentMode, pendingMode, onSelect, 
       footer={<Button variant="secondary" onClick={onCancel} disabled={busy}>Close</Button>}
     >
       <div className="gv-choice-list" role="group" aria-label="Permission modes">
-        {SETTABLE_PERMISSION_MODES.map((mode) => {
+        {SESSION_GATE_PRESET_NAMES.map((mode) => {
           const current = mode === currentMode;
           return (
             <button
@@ -50,7 +50,7 @@ export function PermissionModeSheet({ open, currentMode, pendingMode, onSelect, 
               onClick={() => onSelect(mode)}
             >
               <span className="gv-choice__label">
-                {permissionModeLabel(mode)}
+                {GATE_PRESETS[mode].label}
                 {mode === pendingMode ? '…' : ''}
               </span>
               {current && <Check className="gv-choice__check" aria-hidden="true" />}

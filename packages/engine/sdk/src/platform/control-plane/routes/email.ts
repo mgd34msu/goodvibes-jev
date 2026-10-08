@@ -44,6 +44,7 @@ import { evaluateOutwardEffect } from '../../security/untrusted-content.js';
 import { isSendToOwnerOnly } from '../../security/owner-identity.js';
 import { refuseNonUserRequest } from './explicit-user-request.js';
 import { readInvocationParams } from './invocation-params.js';
+import { missingScopes, type BrowserJudgmentCapability, type BrowserJudgmentMailSubjectSnapshot } from '@goodvibes-jev/engine/daemon-sdk';
 
 /** One inbox message, in the shape `email.inbox.list` advertises. */
 export interface EmailGatewayMessageSummary {
@@ -72,6 +73,8 @@ export interface EmailGatewayMessageDetail {
   readonly bodyText: string;
   readonly bodyHtml?: string;
   readonly attachments?: readonly EmailGatewayAttachment[];
+  /** Opaque server-issued source; never supplied or inferred from sender headers. */
+  readonly replySubjectRef?: string;
 }
 
 export interface EmailGatewayListInput {
@@ -149,6 +152,8 @@ export interface EmailGatewayService {
   readMessage(uid: number): Promise<EmailGatewayMessageDetail | null>;
   createDraft(input: EmailGatewayDraftInput): Promise<EmailGatewayDraftResult>;
   send(input: EmailGatewaySendInput): Promise<EmailGatewaySendResult>;
+  /** Exact result-object lookup owned by the canonical read implementation. */
+  getReplySubjectSource?(message: EmailGatewayMessageDetail): BrowserJudgmentMailSubjectSnapshot | undefined;
 }
 
 function readOptionalString(value: unknown): string | undefined {
@@ -202,7 +207,7 @@ export function createEmailInboxListHandler(service: EmailGatewayService): Gatew
   };
 }
 
-export function createEmailInboxReadHandler(service: EmailGatewayService): GatewayMethodHandler {
+export function createEmailInboxReadHandler(service: EmailGatewayService, judgment?: BrowserJudgmentCapability): GatewayMethodHandler {
   return async (invocation) => {
     const uid = readUid(readInvocationParams(invocation).uid);
     const message = await service.readMessage(uid);
@@ -214,7 +219,24 @@ export function createEmailInboxReadHandler(service: EmailGatewayService): Gatew
         404,
       );
     }
-    return message;
+    // Normal mail reads remain available in narrower compositions. Neither a
+    // backend's serialized ref nor browser-supplied subject text can mint
+    // judgment authority. Only the canonical result-object lease is eligible.
+    const { replySubjectRef: _untrustedReference, ...result } = message;
+    const context = invocation.context;
+    try {
+      const scopes = context.scopes ?? [];
+      if (!judgment?.issueMailSubjectReference || !context.principalId || !context.principalKind
+        || context.principalKind === 'remote-peer' || invocation.signal?.aborted
+        || (context.admin !== true && missingScopes(scopes, ['read:email', 'write:judgment']).length > 0)
+        || invocation.isAuthorized?.(['read:email', 'write:judgment']) !== true) return result;
+      const snapshot = service.getReplySubjectSource?.(message);
+      if (!snapshot || snapshot.subject !== message.subject) return result;
+      const replySubjectRef = judgment.issueMailSubjectReference({ snapshot, principal: {
+        principalId: context.principalId, principalKind: context.principalKind, admin: context.admin === true, scopes,
+      } });
+      return replySubjectRef ? { ...result, replySubjectRef } : result;
+    } catch { return result; }
   };
 }
 
@@ -378,13 +400,14 @@ export function registerEmailGatewayMethods(
   ledger: UntrustedContentLedger = getProcessUntrustedContentLedger(),
   /** See createEmailSendHandler. Empty means the exemption cannot fire. */
   ownerAddresses: ReadonlySet<string> = new Set(),
+  judgment?: BrowserJudgmentCapability,
 ): void {
   const attach = (id: string, handler: GatewayMethodHandler): void => {
     const descriptor = catalog.get(id);
     if (descriptor) catalog.register(descriptor, handler, { replace: true });
   };
   attach('email.inbox.list', createEmailInboxListHandler(service));
-  attach('email.inbox.read', createEmailInboxReadHandler(service));
+  attach('email.inbox.read', createEmailInboxReadHandler(service, judgment));
   attach('email.draft.create', createEmailDraftCreateHandler(service));
   attach('email.send', createEmailSendHandler(service, ledger, ownerAddresses));
 }

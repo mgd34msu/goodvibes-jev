@@ -12,6 +12,19 @@ export interface BrowserJudgmentCapability {
   issueErrorReference?(input: BrowserJudgmentErrorSource): string | undefined;
   /** Binds the actual host chat store; the returned release fences that store's lifetime. */
   bindChatSessions?(source: BrowserJudgmentChatSessions): () => void;
+  /** Canonical mailbox read snapshot only; never constructed from browser JSON. */
+  issueMailSubjectReference?(source: BrowserJudgmentMailSubjectSource): string | undefined;
+}
+/** An immutable completed-read lease, not proof of current remote existence or send authority. */
+export interface BrowserJudgmentMailSubjectSnapshot {
+  readonly revision: string;
+  readonly subject: string;
+  readonly signal: AbortSignal;
+  readonly assertCurrent: () => void;
+}
+export interface BrowserJudgmentMailSubjectSource {
+  readonly principal: AuthenticatedPrincipal;
+  readonly snapshot: BrowserJudgmentMailSubjectSnapshot;
 }
 export interface BrowserJudgmentChatSessions {
   getSession(id: string): { readonly id: string; readonly title: string; readonly createdAt: number; readonly updatedAt: number } | null;

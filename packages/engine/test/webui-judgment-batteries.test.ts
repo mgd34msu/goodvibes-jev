@@ -5,7 +5,7 @@ import {
 } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { validateWebuiAnswers, withWebuiAnswerBoundary } from '../sdk/src/platform/judgment-browser/batteries/webui-answers.ts';
-import { commandRankBattery, daemonRefusalBattery, statusToneBattery, WEBUI_BATTERY_QUESTIONS } from '../sdk/src/platform/judgment-browser/batteries/webui-specs.ts';
+import { commandRankBattery, daemonRefusalBattery, statusToneBattery, mailReplySubjectBattery, WEBUI_BATTERY_QUESTIONS } from '../sdk/src/platform/judgment-browser/batteries/webui-specs.ts';
 import { readCommandRank, readDaemonRefusal, readStatusTone, readStructuredDaemonRefusal } from '../sdk/src/platform/judgment-browser/batteries/webui-readers.ts';
 import { REFUSAL_ITEMS, type ResolvedCommandRank, type ResolvedDaemonRefusal, type ResolvedStatus } from '../sdk/src/platform/judgment-browser/batteries/webui-types.ts';
 
@@ -29,18 +29,19 @@ function configured(answer: Parameters<typeof fakePort>[0]) {
 }
 
 describe('fixed WebUI batteries', () => {
-  test('IDs, versions and complete fixed question maps match the three registrations', () => {
-    expect([daemonRefusalBattery, statusToneBattery, commandRankBattery].map(({ name, version }) => [name, version])).toEqual([
-      ['webui.errors.daemon-refusal', 1], ['webui.status.badge-tone', 1], ['webui.palette.command-rank', 1],
+  test('IDs, versions and complete fixed question maps match the registrations', () => {
+    expect([daemonRefusalBattery, statusToneBattery, commandRankBattery, mailReplySubjectBattery].map(({ name, version }) => [name, version])).toEqual([
+      ['webui.errors.daemon-refusal', 1], ['webui.status.badge-tone', 1], ['webui.palette.command-rank', 1], ['webui.mail.reply-subject', 1],
     ]);
     expect(Object.keys(WEBUI_BATTERY_QUESTIONS[daemonRefusalBattery.name]!)).toEqual([...REFUSAL_ITEMS]);
     expect(Object.keys(WEBUI_BATTERY_QUESTIONS[statusToneBattery.name]!)).toEqual(['badge', 'library_dot']);
     expect(Object.keys(WEBUI_BATTERY_QUESTIONS[commandRankBattery.name]!)).toEqual(['match']);
+    expect(Object.keys(WEBUI_BATTERY_QUESTIONS[mailReplySubjectBattery.name]!)).toEqual(['already_reply']);
   });
 
   test('synthetic calibration fixtures cover negation, missing resources, both vocabularies and nonlexical intent', async () => {
     // Fixture-driven answer replay checks plumbing and coverage, not live accuracy.
-    for (const battery of [daemonRefusalBattery, statusToneBattery, commandRankBattery]) {
+    for (const battery of [daemonRefusalBattery, statusToneBattery, commandRankBattery, mailReplySubjectBattery]) {
       const expectations = new Map(battery.fixtures.map((fixture) => [JSON.stringify(fixture.state), fixture.expect]));
       const { port } = fakePort((name, question, state) => {
         const expected = expectations.get(JSON.stringify(state)) as Record<string, string> | undefined;

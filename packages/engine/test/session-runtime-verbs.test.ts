@@ -8,6 +8,7 @@
  * `estimated`).
  */
 import { describe, expect, test } from 'bun:test';
+import { GATE_PRESETS, SESSION_GATE_PRESET_NAMES, isGatePresetName, isSettableGatePresetName, gatePresetLabel } from '@goodvibes-jev/engine/sdk/platform/gate/presets';
 import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import { deriveContextUsage } from '../sdk/src/platform/runtime/context-usage.js';
@@ -97,6 +98,36 @@ describe('permission mode vocabulary', () => {
 // ── get / set handlers ───────────────────────────────────────────────────────
 
 describe('sessions.permissionMode get/set', () => {
+  test.each([...SESSION_GATE_PRESET_NAMES])('the advertised %s preset round-trips through the real local handlers', (name) => {
+    const config = makeConfig('custom');
+    const controls = createSessionRuntimeControls({ config, store: makeStore('sess-1', 0, 0) });
+    const get = createSessionPermissionModeGetHandler(controls);
+    const set = createSessionPermissionModeSetHandler(controls);
+    expect(get(invoke({ sessionId: 'sess-1' }))).toEqual({ sessionId: 'sess-1', mode: 'custom' });
+    expect(isSettableGatePresetName(name)).toBe(true);
+    expect(set(invoke({ sessionId: 'sess-1', mode: name })))
+      .toEqual({ sessionId: 'sess-1', mode: name, previousMode: 'custom' });
+    expect(config.current).toBe(GATE_PRESETS[name].mode);
+    expect(get(invoke({ sessionId: 'sess-1' }))).toEqual({ sessionId: 'sess-1', mode: name });
+  });
+
+  test.each(['custom', 'future-mode', '', 'toString'])('the unadvertised %s value cannot mutate session configuration', (name) => {
+    const config = makeConfig('custom');
+    const controls = createSessionRuntimeControls({ config, store: makeStore('sess-1', 0, 0) });
+    expect(isSettableGatePresetName(name)).toBe(false);
+    expect(() => createSessionPermissionModeSetHandler(controls)(invoke({ sessionId: 'sess-1', mode: name })))
+      .toThrow(GatewayVerbError);
+    expect(config.current).toBe('custom');
+  });
+
+  test('a preset choice for another session leaves the local owner configuration untouched', () => {
+    const config = makeConfig('custom');
+    const controls = createSessionRuntimeControls({ config, store: makeStore('sess-1', 0, 0) });
+    expect(() => createSessionPermissionModeSetHandler(controls)(invoke({ sessionId: 'other-session', mode: 'auto' })))
+      .toThrow(expect.objectContaining({ code: 'SESSION_NOT_LOCAL' }));
+    expect(config.current).toBe('custom');
+  });
+
   test('get returns the operator-vocabulary mode for the local runtime', () => {
     const config = makeConfig('prompt');
     const controls = createSessionRuntimeControls({ config, store: makeStore('sess-1', 0, 0) });
@@ -288,5 +319,25 @@ describe('nullable context arithmetic', () => {
     expect(deriveContextUsage(40_400, 100_000)).toEqual({ contextUsagePct: 40, contextRemainingTokens: 59_600 });
     expect(deriveContextUsage(120_000, 100_000)).toEqual({ contextUsagePct: 100, contextRemainingTokens: 0 });
     expect(deriveContextUsage(0, 100_000)).toEqual({ contextUsagePct: 0, contextRemainingTokens: 100_000 });
+  });
+});
+
+// Presentation reads the operator name, never the config-vocabulary fallback.
+describe('session gate preset presentation', () => {
+  test('known wire names resolve to their authoritative gate table labels, including custom', () => {
+    for (const preset of Object.values(GATE_PRESETS)) {
+      expect(isGatePresetName(preset.name)).toBe(true);
+      expect(gatePresetLabel(toOperatorPermissionMode(preset.mode))).toBe(preset.label);
+    }
+  });
+
+  test.each(['future-mode', 'prompt', 'allow-all', 'toString', '__proto__'])('unknown wire name %s stays visible without claiming a known preset', (name) => {
+    expect(isGatePresetName(name)).toBe(false);
+    expect(gatePresetLabel(name)).toBe(name);
+  });
+
+  test('an absent wire name has no selected preset', () => {
+    expect(isGatePresetName('')).toBe(false);
+    expect(gatePresetLabel('')).toBe('Unknown');
   });
 });

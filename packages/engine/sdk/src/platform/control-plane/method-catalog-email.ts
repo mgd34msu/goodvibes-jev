@@ -47,6 +47,7 @@ const EMAIL_MESSAGE_DETAIL_SCHEMA = objectSchema({
   bodyText: STRING_SCHEMA,
   bodyHtml: STRING_SCHEMA,
   attachments: arraySchema(EMAIL_ATTACHMENT_SCHEMA),
+  replySubjectRef: STRING_SCHEMA,
 }, ['uid', 'from', 'subject', 'date', 'messageId', 'bodyText']);
 
 /**
@@ -255,6 +256,7 @@ export const builtinGatewayEmailMethodDescriptors: readonly GatewayMethodDescrip
       'Return the full body and attachment metadata for a single inbox message by IMAP UID. Read-only (BODY.PEEK; does not mark as read).',
     category: 'email',
     scopes: ['read:email'],
+    metadata: { requiresFreshOperatorAuth: true },
     http: { method: 'GET', path: '/api/email/inbox/{uid}' },
     inputSchema: objectSchema({ uid: NUMBER_SCHEMA }, ['uid']),
     outputSchema: EMAIL_MESSAGE_DETAIL_SCHEMA,

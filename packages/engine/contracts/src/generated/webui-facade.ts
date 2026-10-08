@@ -11550,7 +11550,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "contentType": "sample",
           "sizeBytes": 0
         }
-      ]
+      ],
+      "replySubjectRef": "sample"
     }
   },
   "email.send": {

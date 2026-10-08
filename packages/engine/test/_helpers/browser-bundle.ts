@@ -8,12 +8,16 @@ const SDK_ROOT = resolve(import.meta.dir, '../..');
 const BUNDLE_CEILING_MS = 30_000;
 
 /** Keep each browser bundle out of the shared test runtime and own its cleanup. */
-export async function bundleBrowserEntrypoint(entrypoint: string): Promise<string> {
+export async function bundleBrowserEntrypoint(
+  entrypoint: string,
+  options: { readonly conditions?: readonly string[] } = {},
+): Promise<string> {
   const outDir = mkdtempSync(join(tmpdir(), 'gv-browser-bundle-'));
   const output = join(outDir, 'bundle.js');
   try {
     const child = Bun.spawn([
       process.execPath, 'build', entrypoint, '--target=browser', '--format=esm', `--outfile=${output}`,
+      ...(options.conditions ?? []).map((condition) => `--conditions=${condition}`),
     ], { cwd: SDK_ROOT, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
     // Drain both pipes immediately so a full pipe cannot stall the child.
     const stdout = new Response(child.stdout).text().catch(() => '');
