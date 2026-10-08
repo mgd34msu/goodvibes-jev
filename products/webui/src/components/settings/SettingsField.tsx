@@ -40,7 +40,9 @@
  * shows its schema default distinctly, and a rejected write keeps the row's edit
  * state so the user can correct it.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useSettingsDraft } from '../../hooks/useSettingsDraft';
+import { SettingsDraftConflict } from './SettingsDraftConflict';
 import { maskSecretValue } from '../../lib/config-redaction';
 import { settingLabelForKey } from '../../lib/setting-label';
 import { Button } from '../ui/Button';
@@ -85,20 +87,24 @@ function scalarToText(v: unknown): string {
 export function SettingsField({ field, onCommit, persisted, currency }: SettingsFieldProps) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // Local draft for text/number/secret; boolean & enum commit without a draft.
-  const initialText = scalarToText(effectiveValue(field));
-  const [draft, setDraft] = useState(initialText);
+  // Secret replacements are write-only: never seed them from live config.
+  const [draft, setDraft] = useState('');
+  const inFlight = useRef(false);
   const [revealing, setRevealing] = useState(false);
 
   async function commit(value: unknown): Promise<void> {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSaving(true);
     setError(null);
     try {
       await onCommit(field.key, value);
       setRevealing(false);
+      setDraft('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }
@@ -175,10 +181,11 @@ export function SettingsField({ field, onCommit, persisted, currency }: Settings
       const value = typeof current === 'number' ? current : 0;
       return (
         <MoneyField
+          key={field.key}
           value={value}
           currency={currency ?? 'USD'}
           disabled={saving}
-          onCommit={(amount) => void commit(amount)}
+          onCommit={(amount) => onCommit(field.key, amount)}
         />
       );
     }
@@ -196,6 +203,7 @@ export function SettingsField({ field, onCommit, persisted, currency }: Settings
               className="settings-field-replace"
               onClick={() => {
                 setDraft('');
+                setError(null);
                 setRevealing(true);
               }}
             >
@@ -218,7 +226,11 @@ export function SettingsField({ field, onCommit, persisted, currency }: Settings
               if (e.key === 'Enter') void commit(draft);
             }}
           />
-          <Button size="sm" disabled={saving} onClick={() => setRevealing(false)}>
+          <Button size="sm" disabled={saving} onClick={() => {
+            setDraft('');
+            setError(null);
+            setRevealing(false);
+          }}>
             Cancel
           </Button>
           <Button size="sm" variant="primary" className="settings-field-save" disabled={saving} onClick={() => void commit(draft)}>
@@ -260,50 +272,7 @@ export function SettingsField({ field, onCommit, persisted, currency }: Settings
       );
     }
 
-    if (field.type === 'number') {
-      return (
-        <Input
-          className="settings-field-input"
-          type="text"
-          inputMode="decimal"
-          aria-label={field.key}
-          value={draft}
-          disabled={saving}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-          }}
-          onBlur={() => {
-            if (draft === initialText) return;
-            const n = Number(draft);
-            if (draft.trim() === '' || !Number.isFinite(n)) {
-              setError(`Enter a finite number${field.validationHint ? ` (${field.validationHint})` : ''}`);
-              return;
-            }
-            void commit(n);
-          }}
-        />
-      );
-    }
-
-    // string (non-secret)
-    return (
-      <Input
-        className="settings-field-input"
-        type="text"
-        aria-label={field.key}
-        value={draft}
-        disabled={saving}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur();
-        }}
-        onBlur={() => {
-          if (draft === initialText) return;
-          void commit(draft);
-        }}
-      />
-    );
+    return <ScalarSettingsField key={field.key} field={field} onCommit={(value) => onCommit(field.key, value)} />;
   })();
 
   // Wide editors (structured objects, a revealed secret, the timezone picker,
@@ -348,6 +317,49 @@ export function SettingsField({ field, onCommit, persisted, currency }: Settings
         <div className="banner warning settings-field-error" role="alert">
           {error}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Text and ordinary number fields share refresh, conflict and save ownership. */
+function ScalarSettingsField({ field, onCommit }: {
+  readonly field: ConfigFieldModel;
+  readonly onCommit: (value: unknown) => Promise<void>;
+}) {
+  const draft = useSettingsDraft<string | number>(scalarToText(effectiveValue(field)), (text) => {
+    if (field.type !== 'number') return { value: text, text };
+    const value = Number(text);
+    if (text.trim() === '' || !Number.isFinite(value)) {
+      throw new Error(`Enter a finite number${field.validationHint ? ` (${field.validationHint})` : ''}`);
+    }
+    return { value, text: String(value) };
+  }, onCommit);
+  return (
+    <div className="settings-field-draft">
+      <Input
+        className="settings-field-input"
+        type="text"
+        inputMode={field.type === 'number' ? 'decimal' : undefined}
+        aria-label={field.key}
+        value={draft.text}
+        disabled={draft.saving}
+        onChange={(event) => draft.change(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Escape' && (draft.dirty || draft.conflicted || draft.error !== null)) {
+            event.preventDefault();
+            event.stopPropagation();
+            draft.reset();
+          }
+        }}
+        onBlur={() => void draft.submit()}
+      />
+      {draft.conflicted && !draft.saving && (
+        <SettingsDraftConflict onReset={draft.reset} onSave={() => void draft.submit(true)} />
+      )}
+      {draft.error && (
+        <div className="banner warning settings-field-error" role="alert">{draft.error}</div>
       )}
     </div>
   );
