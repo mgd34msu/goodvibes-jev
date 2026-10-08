@@ -8,6 +8,13 @@ This project uses semantic versioning with `vMAJOR.MINOR.PATCH` git tags.
 
 ### Fixed
 
+- Settings text, number and budget inputs now follow live config refreshes without
+  writing untouched stale values on blur. Dirty refresh conflicts retain the edit
+  and offer an explicit choice; Escape discards a draft. Pending/repeated saves
+  cannot duplicate writes or roll back newer config snapshots, and rejected
+  writes remain editable and retryable. Secret replacement cancellation clears
+  its write-only draft and error.
+
 - Await authenticated daemon error-reference readings at real chat/session callers. Unissued, uncertain or stale prose no longer becomes a guessed session or method classification.
 
 - Fleet actions for native-owned sessions now share the conversation composer's
