@@ -96,6 +96,11 @@ async function fixture(mode: Mode, outcome: Outcome) {
   const acceptance: { name: string; state: Record<string, unknown> }[] = [];
   const previous = installJudgmentPort(runnerPort((context) => {
     if (context.name === 'family') return choiceAnswer(context.question, 'file-mutation', 0.99);
+    // A denied mutation can legitimately reach the runner's stall battery.
+    // Return that question's complete choice distribution, never a noul stub.
+    if (context.name === 'route' && context.question.type === 'choice'
+      && Object.keys(context.question.criteria).sort().join(',') === 'fresh,owner,split')
+      return choiceAnswer(context.question, 'owner', 0.99);
     if (context.name === 'fixes_errors' || context.name === 'only_the_fix') {
       acceptance.push({ name: context.name, state: context.state });
       return noulAnswer(outcome === 'reject' && context.name === 'only_the_fix' ? 0.03 : 0.97);
@@ -380,7 +385,9 @@ for (const outcome of ['reject', 'unparsable'] as const) {
 test('actual captured repair respects a stored original-owner source denial before ToolLLM admission', async () => {
   const f = await fixture('write', 'deny-before');
   try {
-    f.start(); await f.settle();
+    f.start(); const contract = await f.settle();
+    expect(contract.status).toBe('awaiting-owner');
+    expect(contract.error ?? '').not.toContain('probability distribution');
     expect(f.repairRequests).toHaveLength(0); expect(f.acceptance).toHaveLength(0);
     // A path denied before its first read need not block subsequent safe model
     // turns. It must block this mutation and every repair admission.
