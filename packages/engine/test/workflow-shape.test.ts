@@ -603,11 +603,18 @@ describe('ci.yml: build once, restore everywhere', () => {
         'test/captured-direct-exec-compiled.test.ts',
       ]);
       expect(dispatched.get('tools')).toContain('test/captured-edit-write.test.ts');
+      expect(dispatched.get('graph-runtime')).toEqual([
+        'test/contract/actual-input-authority-graph.test.ts',
+        'test/contract/actual-edit-write-input-authority.test.ts',
+        'test/contract/actual-validator-runtime.test.ts',
+        'test/captured-passive-context-pipeline.test.ts',
+      ]);
       const allFiles = [...dispatched.values()].flat();
       for (const file of [
         'test/contract/actual-direct-exec-input-authority.test.ts',
         'test/captured-direct-exec-compiled.test.ts',
         'test/captured-edit-write.test.ts',
+        'test/captured-passive-context-pipeline.test.ts',
       ]) {
         expect(allFiles.filter((argument) => argument === file), `${file} must execute exactly once in required containment`).toHaveLength(1);
       }

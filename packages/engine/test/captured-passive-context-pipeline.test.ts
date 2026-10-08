@@ -22,13 +22,21 @@ import { createOrchestrationEngine } from '../sdk/src/platform/orchestration/eng
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 import { makeRepo, oneUnitPlan, runnerPort, waitFor } from './contract/runner-support.js';
 import { plannerOutput } from './contract/plan-support.js';
+import { probeCapturedExecAvailability } from '../sdk/src/platform/tools/exec/captured-exec.js';
 
 const PRIVATE = 'PRIVATE_PASSIVE_BYTES_MUST_NEVER_REACH_A_MODEL';
 const ORIGINAL = 'PASSIVE_ALLOWED_ORIGINAL';
 const REVISED = 'PASSIVE_ALLOWED_REVISED';
+const availability = await probeCapturedExecAvailability();
+test('required passive mutable context proof cannot skip captured execution', () => {
+  if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT !== undefined) {
+    expect(process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT).toBe('1');
+    expect(availability.available, JSON.stringify(availability)).toBe(true);
+  }
+});
 
 for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 'mutable', 'cancel-embedding', 'revoke-embedding', 'retry-revoked', 'embedding-retry-revoked'] as const) {
-  test(`captured passive context actual contract pipeline (${scenario})`, async () => {
+  test.skipIf(scenario === 'mutable' && !availability.available)(`captured passive context actual contract pipeline (${scenario})`, async () => {
     const root = makeRepo();
     // Only the two source fixtures belong in this proof corpus.
     rmSync(join(root, 'README.md'));
@@ -118,6 +126,7 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
     let ownerStats = 0; let ownerSearch = 0; let ownerReindex = 0;
     const requests: { planner: boolean; prompt: string; text: string }[] = [];
     const toolResults: string[] = [];
+    const execResults: string[] = [];
     let memberCalls = 0;
     const write = (path: string, content: string) => ({ name: 'write', arguments: { files: [{ path, mode: 'overwrite', content }] } });
     const steps = scenario === 'mutable' ? [
@@ -131,7 +140,10 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
       async chat(request) {
         const planner = !request.tools?.some((tool) => tool.name === 'write');
         requests.push({ planner, prompt: request.systemPrompt ?? '', text: JSON.stringify(request) });
-        for (const message of request.messages) if (message.role === 'tool' && typeof message.content === 'string') toolResults.push(message.content);
+        for (const message of request.messages) if (message.role === 'tool' && typeof message.content === 'string') {
+          toolResults.push(message.content);
+          if (message.name === 'exec') execResults.push(message.content);
+        }
         if (scenario === 'retry-revoked') {
           expect(request.beforeAttempt).toBeFunction();
           await revokeAllowed();
@@ -249,6 +261,10 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
         expect(requests.every((request) => !request.prompt.includes('## Injected Code Context'))).toBe(true);
       }
       if (scenario === 'mutable') {
+        expect(execResults.length).toBeGreaterThan(0);
+        for (const result of execResults) {
+          expect(JSON.parse(result)).toMatchObject({ success: true, sandboxed: true, exit_code: 0 });
+        }
         expect(members[1]!.prompt).toContain(REVISED);
         expect(members[1]!.prompt).not.toContain(ORIGINAL);
         expect(members[2]!.prompt).toContain('generated.ts:');

@@ -764,7 +764,7 @@ jobs:
               bun packages/engine/scripts/test.ts test/captured-repl.test.ts test/captured-repl-compiled.test.ts test/captured-bun-runtime-input.test.ts test/contract/actual-repl-input-authority.test.ts test/contract/actual-repl-run-history.test.ts test/contract/actual-repl-history-cancellation.test.ts
               ;;
             graph-runtime)
-              bun packages/engine/scripts/test.ts test/contract/actual-input-authority-graph.test.ts test/contract/actual-edit-write-input-authority.test.ts test/contract/actual-validator-runtime.test.ts
+              bun packages/engine/scripts/test.ts test/contract/actual-input-authority-graph.test.ts test/contract/actual-edit-write-input-authority.test.ts test/contract/actual-validator-runtime.test.ts test/captured-passive-context-pipeline.test.ts
               ;;
             agent-posture)
               bun packages/engine/scripts/test.ts --cwd ../../products/agent ./src/test/tools/owner-terminal-guard.test.ts ./src/test/runtime/exec-cancellation-wrappers.test.ts ./src/test/tools/tool-execution-safety.test.ts

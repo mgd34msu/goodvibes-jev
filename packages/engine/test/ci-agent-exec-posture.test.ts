@@ -35,7 +35,7 @@ const commands: Record<string, readonly string[]> = {
   'direct-exec': [runner, 'test/contract/actual-direct-exec-input-authority.test.ts', 'test/captured-direct-exec-compiled.test.ts'],
   repl: [runner, 'test/captured-repl.test.ts', 'test/captured-repl-compiled.test.ts', 'test/captured-bun-runtime-input.test.ts',
     'test/contract/actual-repl-input-authority.test.ts', 'test/contract/actual-repl-run-history.test.ts', 'test/contract/actual-repl-history-cancellation.test.ts'],
-  'graph-runtime': [runner, 'test/contract/actual-input-authority-graph.test.ts', 'test/contract/actual-edit-write-input-authority.test.ts', 'test/contract/actual-validator-runtime.test.ts'],
+  'graph-runtime': [runner, 'test/contract/actual-input-authority-graph.test.ts', 'test/contract/actual-edit-write-input-authority.test.ts', 'test/contract/actual-validator-runtime.test.ts', 'test/captured-passive-context-pipeline.test.ts'],
   'agent-posture': [runner, '--cwd', '../../products/agent', './src/test/tools/owner-terminal-guard.test.ts',
     './src/test/runtime/exec-cancellation-wrappers.test.ts', './src/test/tools/tool-execution-safety.test.ts'],
   repair: [runner, 'test/captured-auto-heal-candidate.test.ts', 'test/captured-auto-heal-revision.test.ts', 'test/captured-auto-heal.test.ts',
