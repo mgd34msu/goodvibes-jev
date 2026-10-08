@@ -16833,12 +16833,6 @@
       "status": "public-engine-successor-accounting-pending"
     },
     {
-      "source": "src/runtime/session-spine-rest-transport.ts",
-      "disposition": "HOIST",
-      "retainedPath": "products/agent/src/runtime/session-spine-rest-transport.ts",
-      "status": "public-engine-successor-accounting-pending"
-    },
-    {
       "source": "src/test/runtime/agent-session-mirror-identity.test.ts",
       "disposition": "PORT",
       "retainedPath": null,
@@ -18904,12 +18898,12 @@
     }
   ],
   "baselineMappingSummary": {
-    "mapped": 1159,
-    "unmapped": 443,
+    "mapped": 1160,
+    "unmapped": 442,
     "unmappedByDisposition": {
       "PORT": 176,
       "JEV": 44,
-      "HOIST": 223
+      "HOIST": 222
     }
   }
 }

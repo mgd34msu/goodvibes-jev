@@ -4128,6 +4128,15 @@
       "status": "judgment-migration-pending"
     },
     {
+      "source": "src/runtime/session-spine-rest-transport.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/agent/src/runtime/session-spine-rest-transport.ts"
+      ],
+      "status": "retained-source",
+      "evidence": "docs/audit/agent-session-spine-boundary.md"
+    },
+    {
       "source": "src/runtime/store/domains/domain-read-matrix.ts",
       "disposition": "PORT",
       "targets": [
