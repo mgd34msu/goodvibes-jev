@@ -57,10 +57,11 @@ The caller remains responsible for complete provider membership and trusted
 preview mapping. No fixture factory is installed in the executable.
 
 `createEmailDaemonInboxFactory({ account, screening })` supplies an explicit
-single-node TLS mailbox inbox with canonical mail lifecycle, complete-source
-protection, account-scoped ownership and durable UIDVALIDITY/UID progress. The
-root supplies its owned mail-service constructor. First polling records a typed
-history boundary; content starts on the next ordinary cadence. Omitted history
+TLS mailbox inbox for single-node or account-eligible clustered operation, with
+canonical mail lifecycle, complete-source protection, account-scoped ownership
+and durable UIDVALIDITY/UID progress. The root supplies its owned mail-service
+constructor and, in cluster mode, awaitable election gates. First polling records
+a typed history boundary; content starts on the next ordinary cadence. Omitted history
 and remaining backlog are disclosed separately from provider failures. See
 `docs/audit/daemon-email-inbox-composition.md` for prerequisites and limits. This
 does not remove default serving's all-provider refusal.
@@ -118,18 +119,32 @@ uncertain failures exit nonzero and are not retried. Provider IDs, private failu
 text and credential-bearing destination URLs are not printed. The existing
 per-channel formatting and length limits apply. See `docs/audit/daemon-standalone-send.md`.
 
-For an explicitly configured single-node Slack host, the same CLI export now
-provides `createSlackDaemonInboxFactory({ account, screening, timeoutMs? })`.
+For an explicitly configured Slack account, the same CLI export provides
+`createSlackDaemonInboxFactory({ account, screening, timeoutMs? })`.
 Pass its result as `runtime.inboxFactory`. The account supplies the expected
 workspace and user/bot identity; `screening` supplies the established local
 source-service authority and proposal/Jev endpoints. Existing canonical settings
-must enable Slack, select that workspace and disable cluster mode; credentials
-come from the existing daemon credential resolver. This factory owns real Slack
-history polling, protected content previews, an account-specific SQLite mirror
+must enable Slack and select that workspace; credentials come from the existing
+daemon credential resolver. This factory owns real Slack history polling,
+protected content previews, an account-specific SQLite mirror
 and authenticated reads, including token rotation and awaited shutdown. See
 `docs/audit/daemon-slack-inbox-composition.md` for the exact trusted inputs,
 transport and live-proof requirements. It does not compose other providers or
-claim clustered startup support.
+remove default serving's all-provider refusal.
+
+In cluster mode, these explicit factories authenticate expected account metadata
+before enrolling through the canonical root's owned election gates. Slack also
+requires the root's config/credential invalidation subscription. Email eligibility
+does not require a preexisting UID checkpoint. Actual authority invalidation
+withdraws and drains accepted polling before reentry. A held content result does
+not itself withdraw membership or block holder heartbeats. Standby reads remain
+account- and generation-protected. State is node-local: returning nodes resume
+their own committed mirror; cold nodes use each provider's bounded initialization.
+Email discloses omitted history and pending backlog. There is no previous-holder
+cursor transfer, globally
+identical feed or exactly-once guarantee. A failed owned drain prevents local
+reentry and explicit RESIGN, but heartbeat expiry may still permit peer takeover;
+this is not a distributed lease or a global no-overlap guarantee.
 
 `GOODVIBES_HOME` relocates the state-tree home. `--daemon-home` or
 `GOODVIBES_DAEMON_HOME` relocates only the daemon identity/settings tier;
