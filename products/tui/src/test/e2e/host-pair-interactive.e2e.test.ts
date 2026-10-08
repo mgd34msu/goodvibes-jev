@@ -11,7 +11,7 @@ import { startDaemonFixture } from '@goodvibes-jev/daemon/testing';
 import { TuiConfigManager } from '../../config/host-settings.ts';
 import { beginTuiHostPairing, completeTuiHostPairing, tuiHostPairingStorePath, readTuiHostPairing } from '../../runtime/tui-host-credential-store.ts';
 import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
-import { isolatedEnv, makeHome, resolveBinary, startStubModel, waitFor } from './harness.ts';
+import { isolatedEnv, makeHome, resolveBinary, startHomeDaemonServer, startStubModel, waitFor } from './harness.ts';
 
 const AUTH = '/api/control-plane/auth';
 const MIGRATE = '/api/control-plane/methods/pairing.tokens.migrate/invoke';
@@ -149,7 +149,6 @@ async function fixture(nativeCaptureFailure = false) {
   try {
     const legacyPath = join(daemonHome, 'operator-tokens.json');
     writeFileSync(legacyPath, JSON.stringify({ token: daemon.token, peerId: 'synthetic-tui-owner', createdAt: Date.now() }), { mode: 0o600 });
-    const sharedFiles = [legacyPath, join(daemonHome, 'settings.json')].map(path => ({ path, bytes: readFileSync(path) }));
     const gate = deferred();
     const requests = new AbortController();
     let hold: Hold | undefined;
@@ -162,10 +161,9 @@ async function fixture(nativeCaptureFailure = false) {
     const nativeCaptures: Array<{ status: number; body: unknown }> = [];
     const nativeRoutes = new Set([WEBUI_METHOD_ROUTES['workLedger.project'].path,
       WEBUI_METHOD_ROUTES['workLedger.intake.capture'].path, WEBUI_METHOD_ROUTES['workLedger.intake.get'].path]);
-    // Reserve the configured daemon port before launching the TUI as well as
-    // setting its explicit origin, so even legacy background discovery can only
-    // reach this owned front door. No process can occupy the selected port.
-    const proxy = Bun.serve({ hostname: '127.0.0.1', port: home.daemonPort, idleTimeout: 0, async fetch(request) {
+    // Configure both legacy discovery and the explicit origin from the bound
+    // front door, never by trying to reclaim makeHome's released port probe.
+    const proxy = await startHomeDaemonServer(home, async request => {
       const url = new URL(request.url);
       const path = url.pathname;
       // Startup discovery/event routes are deliberately absent: this owned
@@ -206,9 +204,10 @@ async function fixture(nativeCaptureFailure = false) {
       }
       if (path === AUTH) completedAuth++;
       return new Response(body, { status: response.status, headers: response.headers });
-    } });
+    });
     stopProxy = async () => { requests.abort(); gate.release(); await proxy.stop(true); };
     const host = proxy.url.origin;
+    const sharedFiles = [legacyPath, join(daemonHome, 'settings.json')].map(path => ({ path, bytes: readFileSync(path) }));
     if (nativeCaptureFailure) {
       const paths = daemon.services.shellPaths;
       const scopes = new WorkspaceRegistrationStore({ path: sharedWorkspaceRegisterPath(paths), fallbackReadPath: legacyWorkspaceRegisterPath(paths),

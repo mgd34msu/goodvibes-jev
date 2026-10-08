@@ -163,6 +163,7 @@ async function fixture(environmentOverride = false) {
     }
     let workspaceAnswered = false;
     async function launch(cols = 180, rows = 50, paletteReplies = true) {
+      const isRestart = workspaceAnswered;
       const session = spawn(cols, rows, paletteReplies);
       if (!workspaceAnswered) {
         await session.find('first workspace question', text => text.includes(WORKSPACE_QUESTION));
@@ -175,11 +176,21 @@ async function fixture(environmentOverride = false) {
       }
       // First paint can precede stdin subscription. Prove the real composer is
       // listening with an unsent, idempotent echo, then clear it before commands.
-      await waitFor('live owner composer', () => {
+      try { await waitFor('live owner composer', () => {
         if (session.screen().includes('┃  x')) return true;
         session.write('\x15x');
         return false;
-      }, 10_000, 30);
+      }, 10_000, 30); } catch (error) {
+        // This error reaches the runner only after the test's existing finally
+        // drains the fixture. Bound and redact the current frame, never raw PTY
+        // history or stored pairing credentials.
+        let diagnostic = `${String(error)}\nrestart=${isRestart} exit=${session.child.exitCode} signal=${session.child.signalCode} bytes=${session.output().length}\n--- current terminal ---\n${session.screen()}`;
+        for (const token of [daemon.token, ...authTokens.map(value => value?.replace(/^Bearer\s+/i, ''))]) {
+          if (token) diagnostic = diagnostic.replaceAll(token, '[fixture credential]');
+        }
+        diagnostic = diagnostic.replace(/\bBearer\s+[^\s]+|gvp_[A-Za-z0-9_-]+/gi, '[fixture credential]');
+        throw new Error(diagnostic.length > 12_000 ? `${diagnostic.slice(0, 12_000)}\n[diagnostic truncated]` : diagnostic);
+      }
       const cleared = session.mark(); session.write('\x15');
       await session.find('empty live owner composer', text => text.includes('Ask anything, or type / for commands') && !text.includes('┃  x'), cleared);
       return session;
