@@ -74,7 +74,7 @@ for (const [lane, expected] of Object.entries(commands)) {
         });
         expect(result.error).toBeUndefined();
         expect(result.status, result.stderr).toBe(status);
-        expect(readFileSync(args, 'utf8').trimEnd().split('\n')).toEqual(expected);
+        expect(readFileSync(args, 'utf8').trimEnd().split('\n')).toEqual([...expected]);
         expect(readFileSync(required, 'utf8')).toBe('1');
       } finally { rmSync(scratch, { recursive: true, force: true }); }
     });
