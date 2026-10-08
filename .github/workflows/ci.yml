@@ -321,6 +321,88 @@ jobs:
           PRODUCT: ${{ matrix.product }}
         run: bun run products:test "$PRODUCT"
 
+      # Only this matrix leg produces the daemon binary; the consumer never rebuilds it.
+      - name: Build and record daemon native artifact
+        if: matrix.product == 'daemon'
+        env:
+          DAEMON_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          bun run --cwd products/daemon build:binary --target linux-x64
+          bun products/daemon/scripts/ci-artifact.ts record "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          bun products/daemon/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+          tar -czf /tmp/daemon-native-linux-x64.tgz \
+            products/daemon/native/goodvibes-daemon-linux-x64 \
+            products/daemon/native/goodvibes-daemon-linux-x64.bun \
+            products/daemon/native/goodvibes-daemon-linux-x64.bun.LICENSE.md \
+            products/daemon/native/goodvibes-daemon-linux-x64.bun.json \
+            products/daemon/native/lib/sqlite-vec-linux-x64/vec0.so \
+            products/daemon/native/ci-artifact.json
+      - name: Upload daemon native artifact
+        if: matrix.product == 'daemon'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: daemon-native-linux-x64
+          path: /tmp/daemon-native-linux-x64.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  daemon-native:
+    name: Daemon native artifact (isolated Linux)
+    # Match the existing live containment lanes: no host security relaxation.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    needs: [build, product-tests]
+    if: always()
+    steps:
+      - name: Require successful artifact producer
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          PRODUCT_RESULT: ${{ needs.product-tests.result }}
+        run: test "$BUILD_RESULT" = success && test "$PRODUCT_RESULT" = success
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Install filesystem isolation harness
+        run: |
+          verify_host() {
+            timeout --signal=KILL 10s bwrap --die-with-parent --new-session \
+              --unshare-user --unshare-pid --unshare-ipc --unshare-uts \
+              --ro-bind / / --proc /proc --dev /dev -- /bin/true
+          }
+          if verify_host; then
+            exit 0
+          fi
+          apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          if ! sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap; then
+            sudo -n timeout --signal=KILL 60s apt-get "${apt_options[@]}" --error-on=any update
+            sudo -n timeout --signal=KILL 90s apt-get "${apt_options[@]}" install --no-install-recommends -y bubblewrap
+          fi
+          verify_host
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Download daemon native artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: daemon-native-linux-x64
+          path: /tmp/daemon-native-artifact
+      - name: Restore and verify exact daemon artifact
+        env:
+          DAEMON_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          tar -xzf /tmp/daemon-native-artifact/daemon-native-linux-x64.tgz -C .
+          bun products/daemon/scripts/ci-artifact.ts verify "$GITHUB_SHA" "$DAEMON_SOURCE_HEAD"
+      - name: Qualify isolated daemon commands and synthetic send
+        run: bun run --cwd products/daemon verify:binary
+
   # Whole E2E and headless files stay together; the complement covers every other file.
   agent-tests:
     name: Agent tests (${{ matrix.group }})
@@ -827,6 +909,7 @@ jobs:
       - build
       - platform-matrix
       - product-tests
+      - daemon-native
       - agent-tests
       - agent-tests-complete
       - tui-host-pair-terminal

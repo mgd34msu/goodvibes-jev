@@ -1,0 +1,137 @@
+{
+  "source": "Canonical in-memory IMAP read, authenticated browser judgment handler, shared service and recorded synthetic answers. No live calibration.",
+  "captures": [
+    {
+      "message": {
+        "uid": 1002,
+        "from": "sender@example.invalid",
+        "subject": "Nightly build finished",
+        "date": "",
+        "messageId": "<synthetic@example.invalid>",
+        "bodyText": "Synthetic body",
+        "replySubjectRef": "3281074e-d6ac-4075-8ea3-53684f96e394"
+      },
+      "requestBody": {
+        "protocolVersion": 1,
+        "batteryVersion": 1,
+        "requestId": "f042ab84-1a93-4eac-a9fc-6aaa81c405d0",
+        "battery": "webui.mail.reply-subject",
+        "input": {
+          "subjectRef": "3281074e-d6ac-4075-8ea3-53684f96e394"
+        }
+      },
+      "status": 200,
+      "body": "{\"protocolVersion\":1,\"requestId\":\"f042ab84-1a93-4eac-a9fc-6aaa81c405d0\",\"battery\":\"webui.mail.reply-subject\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"alreadyReply\":false},\"readings\":{\"already_reply\":{\"kind\":\"yes-no\",\"probability\":0.01,\"verdict\":\"no\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1197f-aa71-7000-91a8-f47ac2528ba8\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1}]}"
+    },
+    {
+      "message": {
+        "uid": 1002,
+        "from": "sender@example.invalid",
+        "subject": "RE: Synthetic lunch",
+        "date": "",
+        "messageId": "<synthetic@example.invalid>",
+        "bodyText": "Synthetic body",
+        "replySubjectRef": "cc97d3f4-ee3a-4faf-9a0c-025200dc5777"
+      },
+      "requestBody": {
+        "protocolVersion": 1,
+        "batteryVersion": 1,
+        "requestId": "199042e3-9d3c-40c3-ba15-f6b6506cafaf",
+        "battery": "webui.mail.reply-subject",
+        "input": {
+          "subjectRef": "cc97d3f4-ee3a-4faf-9a0c-025200dc5777"
+        }
+      },
+      "status": 200,
+      "body": "{\"protocolVersion\":1,\"requestId\":\"199042e3-9d3c-40c3-ba15-f6b6506cafaf\",\"battery\":\"webui.mail.reply-subject\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"alreadyReply\":true},\"readings\":{\"already_reply\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1197f-aa78-7000-ae03-e0737d0161aa\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1}]}"
+    },
+    {
+      "message": {
+        "uid": 1002,
+        "from": "sender@example.invalid",
+        "subject": "Re[2]: Synthetic lunch",
+        "date": "",
+        "messageId": "<synthetic@example.invalid>",
+        "bodyText": "Synthetic body",
+        "replySubjectRef": "3b17e144-5bfe-4c53-b6b4-20f2b3ba5039"
+      },
+      "requestBody": {
+        "protocolVersion": 1,
+        "batteryVersion": 1,
+        "requestId": "ffc6ee79-d6ae-4b09-b611-a67dca008dcd",
+        "battery": "webui.mail.reply-subject",
+        "input": {
+          "subjectRef": "3b17e144-5bfe-4c53-b6b4-20f2b3ba5039"
+        }
+      },
+      "status": 200,
+      "body": "{\"protocolVersion\":1,\"requestId\":\"ffc6ee79-d6ae-4b09-b611-a67dca008dcd\",\"battery\":\"webui.mail.reply-subject\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"alreadyReply\":true},\"readings\":{\"already_reply\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1197f-aa7b-7000-9f5a-63cf46265f26\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1}]}"
+    },
+    {
+      "message": {
+        "uid": 1002,
+        "from": "sender@example.invalid",
+        "subject": "AW: Synthetic lunch",
+        "date": "",
+        "messageId": "<synthetic@example.invalid>",
+        "bodyText": "Synthetic body",
+        "replySubjectRef": "0b485279-94d8-471d-b15e-c367ea65b145"
+      },
+      "requestBody": {
+        "protocolVersion": 1,
+        "batteryVersion": 1,
+        "requestId": "140f28cc-1437-454b-9bf1-63328985ae5e",
+        "battery": "webui.mail.reply-subject",
+        "input": {
+          "subjectRef": "0b485279-94d8-471d-b15e-c367ea65b145"
+        }
+      },
+      "status": 200,
+      "body": "{\"protocolVersion\":1,\"requestId\":\"140f28cc-1437-454b-9bf1-63328985ae5e\",\"battery\":\"webui.mail.reply-subject\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"alreadyReply\":true},\"readings\":{\"already_reply\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1197f-aa7d-7000-9086-4edef6868eec\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1}]}"
+    },
+    {
+      "message": {
+        "uid": 1002,
+        "from": "sender@example.invalid",
+        "subject": "SV: Synthetic lunch",
+        "date": "",
+        "messageId": "<synthetic@example.invalid>",
+        "bodyText": "Synthetic body",
+        "replySubjectRef": "8084a640-aa0c-4252-a761-8452dab21461"
+      },
+      "requestBody": {
+        "protocolVersion": 1,
+        "batteryVersion": 1,
+        "requestId": "59d858c1-12d6-4d13-9dd0-30be619421f7",
+        "battery": "webui.mail.reply-subject",
+        "input": {
+          "subjectRef": "8084a640-aa0c-4252-a761-8452dab21461"
+        }
+      },
+      "status": 200,
+      "body": "{\"protocolVersion\":1,\"requestId\":\"59d858c1-12d6-4d13-9dd0-30be619421f7\",\"battery\":\"webui.mail.reply-subject\",\"batteryVersion\":1,\"status\":\"settled\",\"value\":{\"alreadyReply\":true},\"readings\":{\"already_reply\":{\"kind\":\"yes-no\",\"probability\":0.99,\"verdict\":\"yes\",\"outcome\":\"act\"}},\"outcome\":\"act\",\"evidence\":[{\"decisionId\":\"01a1197f-aa7f-7000-a752-47627a937e76\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1}]}"
+    },
+    {
+      "message": {
+        "uid": 1002,
+        "from": "sender@example.invalid",
+        "subject": "Synthetic uncertain",
+        "date": "",
+        "messageId": "<synthetic@example.invalid>",
+        "bodyText": "Synthetic body",
+        "replySubjectRef": "e27d37dd-8217-47f3-8359-bb6bdc5049b7"
+      },
+      "requestBody": {
+        "protocolVersion": 1,
+        "batteryVersion": 1,
+        "requestId": "7c3bab3b-1bc3-4a65-9430-af37d91d4fbe",
+        "battery": "webui.mail.reply-subject",
+        "input": {
+          "subjectRef": "e27d37dd-8217-47f3-8359-bb6bdc5049b7"
+        }
+      },
+      "status": 200,
+      "body": "{\"protocolVersion\":1,\"requestId\":\"7c3bab3b-1bc3-4a65-9430-af37d91d4fbe\",\"battery\":\"webui.mail.reply-subject\",\"batteryVersion\":1,\"status\":\"held\",\"reason\":\"uncertain\",\"readings\":{\"already_reply\":{\"kind\":\"yes-no\",\"probability\":0.5,\"verdict\":\"uncertain\",\"outcome\":\"escalate\"}},\"outcome\":\"escalate\",\"evidence\":[{\"decisionId\":\"01a1197f-aa81-7000-ba98-3cad00002699\",\"model\":\"jev-1.13.0\",\"requestedModel\":\"jev-1.13.0\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1},\"latencyMs\":1}]}"
+    }
+  ]
+}

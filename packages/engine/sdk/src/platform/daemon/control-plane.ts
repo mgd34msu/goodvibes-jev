@@ -766,7 +766,7 @@ export class DaemonControlPlaneHelper {
           isAuthorized: (requiredScopes = []) => {
             if (descriptor.metadata?.requiresFreshOperatorAuth !== true) return true;
             const fresh = this.describeAuthenticatedPrincipal(input.authToken);
-            return fresh !== null && fresh.principalId === context?.principalId
+            return fresh !== null && fresh.principalId === context?.principalId && fresh.principalKind === context?.principalKind
               && requiredScopes.every(scope => (fresh.scopes.includes('*') || fresh.scopes.includes(scope))
                 && (context?.scopes?.includes('*') || context?.scopes?.includes(scope)))
               && this.validateGatewayInvocation(descriptor, fresh) === null

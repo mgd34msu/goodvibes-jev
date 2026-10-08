@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -191,3 +192,23 @@ for (const failure of [
     expect(existsSync(join(f.root, 'bad.ipynb'))).toBe(false);
   });
 }
+
+
+test('ordinary atomic snapshot mode exception rolls back earlier writes and preserves history', async () => {
+  const f = fixture();
+  const actualStat = fs.lstatSync;
+  const stat = spyOn(fs, 'lstatSync')
+    .mockImplementationOnce(actualStat)
+    .mockImplementationOnce(() => { throw new Error('synthetic snapshot mode failure'); });
+  try {
+    const result = await f.tool.execute({ files: [first, second, { path: 'later.txt', content: 'must not write' }], transaction: { mode: 'atomic' } });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('synthetic snapshot mode failure');
+    expect(result.error).toContain('Rolled back 1 file(s): first.txt');
+    expect(stat.mock.calls[1]?.[0]).toBe(join(f.root, 'second.txt'));
+    unchanged(f); expect(existsSync(join(f.root, 'later.txt'))).toBe(false);
+    expect(f.undo.undoDepth()).toBe(1); expect(f.undo.redoDepth()).toBe(1);
+    expect(f.undo.peekUndo()?.path).toBe(join(f.root, 'history-kept.txt'));
+    expect(f.undo.redo()?.path).toBe(join(f.root, 'history.txt'));
+  } finally { stat.mockRestore(); }
+});

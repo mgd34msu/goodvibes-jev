@@ -41,6 +41,8 @@
  * bun/node transport lives in the sibling `email/node` entry.
  */
 
+import { readEmailMessage } from './email-message-reader.js';
+import type { EmailReplySubjectSource, EmailReplySubjectSourceOwner } from './reply-subject-source.js';
 import { ensureMailboxConfigDefaults } from '../config/connector-config-sections.js';
 import { readSenderAuthentication } from '../google/sender-authentication.js';
 import { ImapClient, IMAP_MAX_FETCH_UIDS } from './imap-client.js';
@@ -316,6 +318,8 @@ export interface EmailTransportPort {
 }
 
 export interface EmailServiceDeps {
+  /** Optional owned lifetime for canonical read provenance; absence fails closed. */
+  readonly replySubjectSourceOwner?: EmailReplySubjectSourceOwner | undefined;
   /** Untyped config getter, reads the `email.*` namespace. */
   readonly getConfig: (key: string) => unknown;
   /** SecretsManager-compatible interface for resolving secret refs. */
@@ -369,6 +373,13 @@ export interface EmailServiceDeps {
 
 export class EmailService {
   private readonly deps: EmailServiceDeps;
+  readonly #replySubjectSources = new WeakMap<ImapMessageDetail, EmailReplySubjectSource>();
+
+  /** Only the exact canonical result can retrieve its immutable subject snapshot. */
+  getReplySubjectSource(message: ImapMessageDetail): EmailReplySubjectSource | undefined {
+    const source = this.#replySubjectSources.get(message);
+    return source?.signal.aborted === false ? source : undefined;
+  }
 
   constructor(deps: EmailServiceDeps) {
     this.deps = deps;
@@ -415,6 +426,7 @@ export class EmailService {
     const limit = input.limit ?? 10;
     const unreadOnly = input.unreadOnly ?? true;
     const config = this.getValidatedConfig();
+    const sourceRead = this.deps.replySubjectSourceOwner?.beginRead(config);
     const password = await resolveEmailPassword(config.passwordRef, this.deps.secretsManager);
 
     const socketFactory = this.deps.imapSocketFactory ?? imapSocketFactoryFor(this.deps.transport, config.imapSecurity);
@@ -429,6 +441,7 @@ export class EmailService {
 
     try {
       await client.open();
+      sourceRead?.observeMailbox(client.mailbox, client.mailboxStatus?.uidValidity ?? null);
       const uids = unreadOnly
         ? await client.searchUnseen(input.since)
         : await client.searchAll(input.since);
@@ -565,41 +578,10 @@ export class EmailService {
    * separate outcomes instead of one thrown error and one null.
    */
   async readMessageResult(uid: number): Promise<EmailMessageRead> {
-    const config = this.getValidatedConfig();
-    const password = await resolveEmailPassword(config.passwordRef, this.deps.secretsManager);
-
-    const socketFactory = this.deps.imapSocketFactory ?? imapSocketFactoryFor(this.deps.transport, config.imapSecurity);
-    const socket = await socketFactory(config.imapHost, config.imapPort);
-    const client = new ImapClient({
-      socket,
-      username: config.username,
-      password,
-      ...(config.mailbox.length > 0 ? { mailbox: config.mailbox } : {}),
-    });
-
-    try {
-      await client.open();
-      const read = await client.readMessageDetail(uid);
-      await client.logout();
-      if (read.outcome === 'read') {
-        this.recordIngest([{
-          from: read.detail.from,
-          text: `${read.detail.subject}\n${read.detail.bodyText}`.trim(),
-        }]);
-        return read;
-      }
-      if (read.outcome === 'gone') return { outcome: 'gone' };
-      return {
-        outcome: 'unreadable',
-        problems: read.problems.map((problem) => ({
-          uid: problem.uid,
-          detail: problem.detail,
-        })),
-      };
-    } catch (err) {
-      try { await client.logout(); } catch { /* best-effort */ }
-      throw err;
-    }
+    return readEmailMessage(
+      this.deps, this.getValidatedConfig(), uid, this.#replySubjectSources,
+      (messages) => this.recordIngest(messages),
+    );
   }
 
   /**
@@ -689,6 +671,7 @@ export class EmailService {
       return { ok: false, stage: 'config', error: errors.join('; ') };
     }
 
+    const sourceRead = this.deps.replySubjectSourceOwner?.beginRead(config);
     let password: string;
     try {
       password = await resolveEmailPassword(config.passwordRef, this.deps.secretsManager);
@@ -709,6 +692,7 @@ export class EmailService {
         ...(config.mailbox.length > 0 ? { mailbox: config.mailbox } : {}),
       });
       await client.open();
+      sourceRead?.observeMailbox(client.mailbox, client.mailboxStatus?.uidValidity ?? null);
       await client.logout();
     } catch (err) {
       return { ok: false, stage: 'imap', error: err instanceof Error ? err.message : String(err) };

@@ -251,6 +251,7 @@ async function restoreOriginalContents(fileContents: Map<string, string>, env: E
         if (!revision) throw new Error('Captured rollback has no owned revision');
         assertCapturedToolWriteRevision(resolvedPath, revision);
         writeFileSync(resolvedPath, originalContent, 'utf-8');
+        env.capturedWritten.delete(resolvedPath);
       }
       else await writeFile(resolvedPath, originalContent, 'utf-8');
       env.fileCache.update(resolvedPath, originalContent);
@@ -553,83 +554,104 @@ async function executeTextEdits(
   }
 
   const writtenPaths = new Set<string>();
-  if (!dryRun) {
-    await writeSuccessfulTextEdits(results, resolvedPaths, workingContents, fileContents, env, writtenPaths);
-    if (hasCapturedToolInvocation() && transactionMode === 'atomic' && results.some((result) => !result.success)) {
-      const rollbackFailures = await restoreOriginalContents(fileContents, env);
-      return { success: false, error: `Atomic edit publication failed${rollbackFailures.length ? ', rollback incomplete' : ', edits rolled back'}. ${results.filter((result) => !result.success).map((result) => result.error).join('; ')}${rollbackFailures.length ? `\n${rollbackFailures.join('\n')}` : ''}` };
+  try {
+    if (!dryRun) {
+      await writeSuccessfulTextEdits(results, resolvedPaths, workingContents, fileContents, env, writtenPaths);
+      if (hasCapturedToolInvocation() && transactionMode === 'atomic' && results.some((result) => !result.success)) {
+        const rollbackFailures = await restoreOriginalContents(fileContents, env);
+        return { success: false, error: `Atomic edit publication failed${rollbackFailures.length ? ', rollback incomplete' : ', edits rolled back'}. ${results.filter((result) => !result.success).map((result) => result.error).join('; ')}${rollbackFailures.length ? `\n${rollbackFailures.join('\n')}` : ''}` };
+      }
     }
-  }
 
-  const anySuccess = results.some((r) => r.success);
+    const anySuccess = results.some((r) => r.success);
 
-  let importGraphWarning: string | undefined;
-  if (!dryRun && anySuccess) {
-    importGraphWarning = await buildImportGraphWarning(cwd, writtenPaths);
-  }
+    let importGraphWarning: string | undefined;
+    if (!dryRun && anySuccess) {
+      importGraphWarning = await buildImportGraphWarning(cwd, writtenPaths);
+    }
 
-  let repairWarnings: string[] = [];
-  if (!dryRun && anySuccess && validateAfter.length > 0) {
-    const validationResult = await validateAfterTextEdits(
-      validateAfter,
-      cwd,
-      transactionMode,
-      fileContents,
-      workingContents,
-      env,
-    );
-    repairWarnings = validationResult.warnings ?? [];
-    if (hasCapturedToolInvocation() && validationResult.healedPaths?.size) {
-      for (const result of results) {
-        const path = resolvedPaths.get(result.path);
-        if (!result.success || !path || !writtenPaths.has(path) || !validationResult.healedPaths.has(path)) continue;
-        result.warning = [result.warning, 'Auto-heal applied; diff reflects the final repaired content.'].filter(Boolean).join(' ');
-        if (outputFormat === 'with_diff' || outputFormat === 'verbose') {
-          const diff = unifiedDiff(fileContents.get(path) ?? '', workingContents.get(path) ?? '', path, diffContext);
-          result.diff_truncated = diff.length > DIFF_TRUNCATE_THRESHOLD;
-          result.diff = result.diff_truncated ? diff.slice(0, DIFF_PREVIEW_LENGTH) : diff;
-          result.diff_preview = result.diff_truncated ? result.diff : undefined;
+    let repairWarnings: string[] = [];
+    if (!dryRun && anySuccess && validateAfter.length > 0) {
+      const validationResult = await validateAfterTextEdits(
+        validateAfter,
+        cwd,
+        transactionMode,
+        fileContents,
+        workingContents,
+        env,
+      );
+      repairWarnings = validationResult.warnings ?? [];
+      if (hasCapturedToolInvocation() && validationResult.healedPaths?.size) {
+        for (const result of results) {
+          const path = resolvedPaths.get(result.path);
+          if (!result.success || !path || !writtenPaths.has(path) || !validationResult.healedPaths.has(path)) continue;
+          result.warning = [result.warning, 'Auto-heal applied; diff reflects the final repaired content.'].filter(Boolean).join(' ');
+          if (outputFormat === 'with_diff' || outputFormat === 'verbose') {
+            const diff = unifiedDiff(fileContents.get(path) ?? '', workingContents.get(path) ?? '', path, diffContext);
+            result.diff_truncated = diff.length > DIFF_TRUNCATE_THRESHOLD;
+            result.diff = result.diff_truncated ? diff.slice(0, DIFF_PREVIEW_LENGTH) : diff;
+            result.diff_preview = result.diff_truncated ? result.diff : undefined;
+          }
+        }
+      }
+      if (validationResult.error) {
+        return { success: false, error: validationResult.error + (repairWarnings.length ? `\n${repairWarnings.join('\n')}` : '') };
+      }
+    }
+
+    // Post-edit diagnostics, cheap, in-process syntax check of each file we just
+    // wrote, appended as a text block (this output already carries text suffixes
+    // like the import-graph warning). Off when configured off; empty block when
+    // the provider finds nothing (honest absence).
+    let diagnosticsBlock = '';
+    if (
+      !dryRun &&
+      writtenPaths.size > 0 &&
+      env.diagnosticsProvider &&
+      (env.configManager?.get('diagnostics.postEdit') ?? 'on') === 'on'
+    ) {
+      const touched = [...writtenPaths]
+        .map((path) => ({ path, content: workingContents.get(path) }))
+        .filter((f): f is { path: string; content: string } => typeof f.content === 'string');
+      diagnosticsBlock = formatDiagnosticsBlock(await collectPostEditDiagnostics(env.diagnosticsProvider, touched));
+    }
+
+    return {
+      success: anySuccess,
+      output: formatOutput(results, outputFormat, dryRun) + (importGraphWarning ?? '') + (repairWarnings.length ? `\n${repairWarnings.join('\n')}` : '') + diagnosticsBlock,
+    };
+  } finally {
+    // A failed validator/repair can leave successful edits in place. Finalize
+    // only revisions we still own; rollback, revocation and a newer writer must
+    // never create an executable snapshot of stale or unauthorized contents.
+    if (!dryRun && hasCapturedToolInvocation() && env.fileUndoManager) {
+      const admitted: Array<{ path: string; content: string; revision: CapturedWriteRevision }> = [];
+      for (const path of env.capturedWritten) {
+        const content = workingContents.get(path);
+        const revision = env.capturedRevisions.get(path);
+        if (content === undefined || !revision) continue;
+        try {
+          await assertCapturedToolReadAccess(path);
+          admitted.push({ path, content, revision });
+        } catch {
+          // A later denial can invalidate earlier admissions too. Preserve the
+          // prior history rather than grant delayed authority to any of them.
+          admitted.length = 0;
+          break;
+        }
+      }
+      // A later admission can change an earlier file. Fence every revision after
+      // all policy awaits, then snapshot synchronously under the same lease.
+      for (const { path, content, revision } of admitted) {
+        try {
+          assertCapturedToolWriteRevision(path, revision);
+          env.fileUndoManager.snapshot({ path, beforeContent: fileContents.get(path) ?? null, afterContent: content, tool: 'edit' });
+        } catch {
+          // Bookkeeping must not hide the edit result or bypass a held revision.
         }
       }
     }
-    if (validationResult.error) {
-      if (hasCapturedToolInvocation() && transactionMode !== 'atomic') recordCapturedUndo();
-      return { success: false, error: validationResult.error + (repairWarnings.length ? `\n${repairWarnings.join('\n')}` : '') };
-    }
   }
-
-  if (!dryRun && hasCapturedToolInvocation()) recordCapturedUndo();
-
-  function recordCapturedUndo(): void {
-    for (const path of writtenPaths) {
-      const content = workingContents.get(path);
-      if (content === undefined) continue;
-      try { env.fileUndoManager?.snapshot({ path, beforeContent: fileContents.get(path) ?? null, afterContent: content, tool: 'edit' }); }
-      catch { /* Undo bookkeeping must not hide a successful edit. */ }
-    }
-  }
-
-  // Post-edit diagnostics, cheap, in-process syntax check of each file we just
-  // wrote, appended as a text block (this output already carries text suffixes
-  // like the import-graph warning). Off when configured off; empty block when
-  // the provider finds nothing (honest absence).
-  let diagnosticsBlock = '';
-  if (
-    !dryRun &&
-    writtenPaths.size > 0 &&
-    env.diagnosticsProvider &&
-    (env.configManager?.get('diagnostics.postEdit') ?? 'on') === 'on'
-  ) {
-    const touched = [...writtenPaths]
-      .map((path) => ({ path, content: workingContents.get(path) }))
-      .filter((f): f is { path: string; content: string } => typeof f.content === 'string');
-    diagnosticsBlock = formatDiagnosticsBlock(await collectPostEditDiagnostics(env.diagnosticsProvider, touched));
-  }
-
-  return {
-    success: anySuccess,
-    output: formatOutput(results, outputFormat, dryRun) + (importGraphWarning ?? '') + (repairWarnings.length ? `\n${repairWarnings.join('\n')}` : '') + diagnosticsBlock,
-  };
 }
 
 export interface EditToolOptions {

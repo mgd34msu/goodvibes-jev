@@ -5274,6 +5274,14 @@ export interface OperatorMethodInputMap {
                 sessionId: string;
             })[];
         };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.mail.reply-subject";
+        batteryVersion: 1;
+        input: {
+            subjectRef: string;
+        };
     };
     // (undocumented)
     "knowledge.ask": ({
@@ -16571,6 +16579,7 @@ export interface OperatorMethodOutputMap {
             contentType: string;
             sizeBytes: number;
         })[];
+        replySubjectRef?: string;
     };
     // (undocumented)
     "email.send": {
@@ -19478,6 +19487,76 @@ export interface OperatorMethodOutputMap {
         protocolVersion: 1;
         requestId: string;
         battery: "webui.palette.command-rank";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.mail.reply-subject";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            alreadyReply: boolean;
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.mail.reply-subject";
         batteryVersion: 1;
         status: "held";
         reason: "uncertain";

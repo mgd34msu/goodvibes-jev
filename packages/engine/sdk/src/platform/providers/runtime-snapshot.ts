@@ -84,15 +84,14 @@ async function buildSnapshotForProvider(
   } catch {
     return null;
   }
+  // Absence of metadata is unknown auth, not a declaration that no auth is needed.
   const runtime = provider.describeRuntime
     ? await providerRegistry.describeRuntime(providerId)
     : {
-        auth: { mode: 'none', configured: false, detail: 'Provider does not expose runtime metadata.' },
         models: { models: provider.models },
         usage: { streaming: true, toolCalling: true, parallelTools: false },
       } satisfies ProviderRuntimeMetadata;
   const resolvedRuntime = runtime ?? {
-    auth: { mode: 'none', configured: false, detail: 'Provider does not expose runtime metadata.' },
     models: { models: provider.models },
     usage: { streaming: true, toolCalling: true, parallelTools: false },
   } satisfies ProviderRuntimeMetadata;

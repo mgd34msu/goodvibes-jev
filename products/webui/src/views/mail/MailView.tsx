@@ -28,7 +28,7 @@
  * NEVER A DEAD BUTTON: while the surface is refusing, Compose does not render at
  * all, so nothing invites an action that cannot land.
  */
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertCircle, AlertTriangle, Inbox, Mail, Pencil, RefreshCw, Reply } from 'lucide-react';
 import { sdk } from '../../lib/goodvibes';
@@ -45,8 +45,10 @@ import { mailRefusalNote } from '../../lib/mail-refusal';
 import { sortInboxMessagesByUidDescending } from '../../lib/mail-order';
 import { PersonalPage } from '../personal/PersonalPage';
 import { openSettingsSection } from '../personal/openSettings';
-import { MailCompose } from './MailCompose';
-import { MailMessageBody, useMailMessage } from './MailMessagePeek';
+import { MailCompose, type MailComposeHandle } from './MailCompose';
+import { MailMessageBody, useMailMessage, type MailMessageData } from './MailMessagePeek';
+import { readMailReplySubject } from '../../lib/mail-reply-subject';
+import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime, type ClientLifetime } from '../../lib/client-lifetime';
 import '../../styles/components/mail.css';
 import { whenLabel } from '../../lib/when-label';
 import { nonEmpty } from '../../lib/non-empty';
@@ -107,6 +109,15 @@ function formatShort(iso: string): string {
     : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+interface ComposerSnapshot {
+  readonly lifetime: ClientLifetime;
+  readonly revision: number;
+  readonly to: string;
+  readonly subject: string;
+  readonly body: string;
+  readonly inReplyTo: string;
+}
+
 export interface MailViewProps {
   /** The Personal tab switcher; shown first in the filter row. */
   tabs?: ReactNode;
@@ -128,10 +139,20 @@ export function MailView({ tabs }: MailViewProps = {}) {
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
 
   const [composeOpen, setComposeOpen] = useState(false);
+  const composeRef = useRef<MailComposeHandle | null>(null);
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [inReplyTo, setInReplyTo] = useState('');
+  const [replySubjectState, setReplySubjectState] = useState<'pending' | 'held' | undefined>();
+  const replyRequest = useRef<{ readonly abort: AbortController; readonly message: MailMessageData } | null>(null);
+  const composerLifetime = useRef<ClientLifetime | null>(null);
+  const composerRevision = useRef(0);
+  const cancelReply = useCallback(() => {
+    const previous = replyRequest.current;
+    replyRequest.current = null;
+    previous?.abort.abort();
+  }, []);
 
   const inbox = useQuery({
     queryKey: queryKeys.emailInbox(Number(limit), unreadOnly, since),
@@ -150,30 +171,57 @@ export function MailView({ tabs }: MailViewProps = {}) {
   // not look available, so Compose also waits for the first answer.
   const surfaceRefusing = Boolean(inboxNote) || inbox.isPending;
 
-  function clearComposer(): void {
+  const clearComposer = useCallback((): void => {
+    cancelReply();
+    composerLifetime.current = null;
+    composerRevision.current++;
+    setReplySubjectState(undefined);
     setTo('');
     setSubject('');
     setBody('');
     setInReplyTo('');
     setComposeOpen(false);
+  }, [cancelReply]);
+
+  useEffect(() => subscribeClientLifetime(clearComposer), [clearComposer]);
+  useEffect(() => () => { cancelReply(); composerRevision.current++; }, [cancelReply]);
+  useEffect(() => {
+    if (replyRequest.current && replyRequest.current.message !== detail.data) {
+      cancelReply();
+      setReplySubjectState('held');
+    }
+  }, [detail.data, cancelReply]);
+
+  function composerCurrent(snapshot: ComposerSnapshot): boolean {
+    return composerLifetime.current === snapshot.lifetime && composerRevision.current === snapshot.revision
+      && isClientLifetimeCurrent(snapshot.lifetime);
+  }
+  function captureComposer(): ComposerSnapshot | undefined {
+    const lifetime = composerLifetime.current;
+    if (!lifetime || !isClientLifetimeCurrent(lifetime)) return undefined;
+    return { lifetime, revision: composerRevision.current, to: normalizeRecipients(to), subject: subject.trim(), body, inReplyTo };
+  }
+  function assertComposerCurrent(snapshot: ComposerSnapshot): void {
+    if (!composerCurrent(snapshot)) throw new Error('The draft or mail account connection changed. Review the current draft before continuing.');
   }
 
   const send = useMutation({
-    mutationFn: () => {
+    mutationFn: (snapshot: ComposerSnapshot) => {
+      assertComposerCurrent(snapshot);
       const input: EmailSendInput = {
-        to: normalizeRecipients(to),
-        subject: subject.trim(),
-        body,
+        to: snapshot.to,
+        subject: snapshot.subject,
+        body: snapshot.body,
         // Literal true, and only reached after the confirmation sheet resolved, the
         // SDK marks this verb dangerous and irreversible, so the flag is set because
         // the operator saw the recipients and agreed, never on their behalf.
         confirm: true,
-        ...(inReplyTo ? { inReplyTo } : {}),
+        ...(snapshot.inReplyTo ? { inReplyTo: snapshot.inReplyTo } : {}),
       };
       return sdk.operator.email.send(input);
     },
-    onSuccess: (result) => {
-      clearComposer();
+    onSuccess: (result, snapshot) => {
+      if (composerCurrent(snapshot)) clearComposer();
       toast({ title: 'Message sent', description: `Sent ${formatWhen(result.sentAt)} · ${result.messageId}`, tone: 'success' });
     },
     onError: (error) => {
@@ -183,17 +231,18 @@ export function MailView({ tabs }: MailViewProps = {}) {
   });
 
   const saveDraft = useMutation({
-    mutationFn: () => {
+    mutationFn: (snapshot: ComposerSnapshot) => {
+      assertComposerCurrent(snapshot);
       const input: EmailDraftCreateInput = {
-        to: normalizeRecipients(to),
-        subject: subject.trim(),
-        body,
-        ...(inReplyTo ? { inReplyTo, references: inReplyTo } : {}),
+        to: snapshot.to,
+        subject: snapshot.subject,
+        body: snapshot.body,
+        ...(snapshot.inReplyTo ? { inReplyTo: snapshot.inReplyTo, references: snapshot.inReplyTo } : {}),
       };
       return sdk.operator.email.draft.create(input);
     },
-    onSuccess: (result) => {
-      clearComposer();
+    onSuccess: (result, snapshot) => {
+      if (composerCurrent(snapshot)) clearComposer();
       toast({
         title: 'Draft saved to the account',
         description: `Appended to the IMAP Drafts folder as UID ${result.uid}. It is in the mailbox itself, so it is there in any mail client, not only here.`,
@@ -219,25 +268,50 @@ export function MailView({ tabs }: MailViewProps = {}) {
 
   const composerReady = to.trim() !== '' && subject.trim() !== '' && body.trim() !== '';
 
-  function startReply(message: { subject: string; from: string; messageId: string }): void {
+  async function startReply(message: MailMessageData): Promise<void> {
+    cancelReply();
+    composerLifetime.current = getClientLifetime();
+    composerRevision.current++;
     setTo(message.from);
-    setSubject(message.subject.startsWith('Re: ') ? message.subject : `Re: ${message.subject}`);
+    setSubject('');
     setInReplyTo(message.messageId);
     setBody('');
     setComposeOpen(true);
+    setReplySubjectState('pending');
+    // A repeated Reply clicked in the still-visible desktop drawer must return
+    // keyboard ownership to the composer, even though the panel stays mounted.
+    composeRef.current?.focus('body');
+    const pending = { abort: new AbortController(), message };
+    replyRequest.current = pending;
+    const result = await readMailReplySubject(message.replySubjectRef, pending.abort.signal);
+    if (replyRequest.current !== pending || pending.abort.signal.aborted) return;
+    replyRequest.current = null;
+    if (result.status !== 'ready' || !result.isCurrent()) { setReplySubjectState('held'); return; }
+    composerRevision.current++;
+    setSubject(result.alreadyReply ? message.subject : `Re: ${message.subject}`);
+    setReplySubjectState(undefined);
+  }
+
+  function selectMessage(uid: number | null): void {
+    if (uid !== selectedUid && replyRequest.current) {
+      cancelReply();
+      setReplySubjectState('held');
+    }
+    setSelectedUid(uid);
   }
 
   async function submitSend(): Promise<void> {
     if (!composerReady || surfaceRefusing) return;
-    const recipients = normalizeRecipients(to);
+    const snapshot = captureComposer();
+    if (!snapshot) return;
     const agreed = await confirm.ask({
       title: 'Send this message?',
-      target: recipients,
+      target: snapshot.to,
       description: 'It leaves the account right away and cannot be recalled.',
       confirmLabel: 'Send',
       tone: 'danger',
     });
-    if (agreed) send.mutate();
+    if (agreed && composerCurrent(snapshot)) send.mutate(snapshot);
   }
 
   const filters = inboxNote ? undefined : (
@@ -263,7 +337,12 @@ export function MailView({ tabs }: MailViewProps = {}) {
         variant="primary"
         icon={<Pencil />}
         onClick={() => {
+          cancelReply();
+          setReplySubjectState(undefined);
+          composerLifetime.current = getClientLifetime();
+          composerRevision.current++;
           if (!composeOpen) setComposeOpen(true);
+          composeRef.current?.focus(to.trim() ? 'body' : 'to');
         }}
       >
         Compose
@@ -334,7 +413,7 @@ export function MailView({ tabs }: MailViewProps = {}) {
               title={message.subject || '(no subject)'}
               meta={`${message.from} · ${message.bodyPreview}`}
               selected={message.uid === selectedUid}
-              onSelect={() => setSelectedUid(message.uid)}
+              onSelect={() => selectMessage(message.uid)}
               trailing={<span className="mail-row__date">{formatShort(message.date)}</span>}
             />
           ))}
@@ -346,7 +425,7 @@ export function MailView({ tabs }: MailViewProps = {}) {
         mode="peek"
         list={list}
         detailOpen={selectedUid !== null}
-        onCloseDetail={() => setSelectedUid(null)}
+        onCloseDetail={() => selectMessage(null)}
         listLabel="Inbox"
         detailLabel="Message"
         backLabel="Inbox"
@@ -361,13 +440,13 @@ export function MailView({ tabs }: MailViewProps = {}) {
                 icon={<Reply />}
                 onClick={() => {
                   const message = detail.data;
-                  if (message) startReply({ subject: message.subject, from: message.from, messageId: message.messageId });
+                  if (message) void startReply(message);
                 }}
               >
                 Reply
               </Button>
             ) : undefined}
-            onClose={() => setSelectedUid(null)}
+            onClose={() => selectMessage(null)}
             closeLabel="Close message"
           >
             <MailMessageBody detail={detail} />
@@ -391,20 +470,22 @@ export function MailView({ tabs }: MailViewProps = {}) {
         </PersonalPage>
         {composeOpen && !surfaceRefusing ? (
           <MailCompose
+            ref={composeRef}
             to={to}
             subject={subject}
             body={body}
             inReplyTo={inReplyTo}
-            onToChange={setTo}
-            onSubjectChange={setSubject}
-            onBodyChange={setBody}
-            onClearReply={() => setInReplyTo('')}
+            onToChange={(value) => { composerRevision.current++; setTo(value); }}
+            onSubjectChange={(value) => { composerRevision.current++; cancelReply(); setReplySubjectState(undefined); setSubject(value); }}
+            onBodyChange={(value) => { composerRevision.current++; setBody(value); }}
+            onClearReply={() => { composerRevision.current++; cancelReply(); setReplySubjectState(undefined); setInReplyTo(''); }}
             onSend={() => void submitSend()}
-            onSaveDraft={() => saveDraft.mutate()}
-            onClose={() => setComposeOpen(false)}
+            onSaveDraft={() => { const snapshot = captureComposer(); if (snapshot && composerReady && !surfaceRefusing) saveDraft.mutate(snapshot); }}
+            onClose={() => { composerRevision.current++; cancelReply(); setReplySubjectState(undefined); setComposeOpen(false); }}
             ready={composerReady}
             sending={send.isPending}
             saving={saveDraft.isPending}
+            replySubjectState={replySubjectState}
           />
         ) : null}
         {confirm.element}

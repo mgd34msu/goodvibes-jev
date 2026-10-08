@@ -61,7 +61,7 @@ describe('provider-health modal surface', () => {
     surface.onOpen?.(() => {});
     await flush();
     const view = surface.buildView();
-    expect(view.tabs.map((t) => t.id)).toEqual(['health', 'accounts']);
+    expect(view.tabs.map((t) => t.id)).toEqual(['health', 'accounts', 'routes']);
     const text = view.tabs[0]!.rows.map((r) => r.label).join('\n');
     expect(text).toContain('openai');
     expect(text).toContain('ACTIVE');

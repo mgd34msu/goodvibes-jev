@@ -23,6 +23,7 @@ const inputs = [
     ] },
     registryVersion: ref, candidates: { ...arraySchema(candidate), minItems: 1, maxItems: 64 },
   }, ['query', 'registryVersion', 'candidates'])],
+  ['webui.mail.reply-subject', objectSchema({ subjectRef: ref }, ['subjectRef'])],
 ] as const;
 const envelope = (battery: string, input: Record<string, unknown>) => objectSchema({
   protocolVersion: literal(1), requestId: { ...STRING_SCHEMA, format: 'uuid' }, battery: literal(battery), batteryVersion: literal(1), input,
@@ -44,6 +45,7 @@ const values = [
     objectSchema({ vocabulary: literal('library-dot'), tone: { type: 'string', enum: ['ok', 'warn', 'bad', 'info', 'idle'] } }, ['vocabulary', 'tone']),
   ] },
   objectSchema({ registryVersion: ref, accepted: arraySchema(objectSchema({ candidateIndex: { type: 'number', minimum: 0, maximum: 63 }, probability: p }, ['candidateIndex', 'probability'])), rejected: arraySchema({ type: 'number', minimum: 0, maximum: 63 }) }, ['registryVersion', 'accepted', 'rejected']),
+  objectSchema({ alreadyReply: BOOLEAN_SCHEMA }, ['alreadyReply']),
 ];
 const output = (battery: string, value: Record<string, unknown>) => {
   const structural: Record<string, Record<string, unknown>> = battery === 'webui.errors.daemon-refusal'

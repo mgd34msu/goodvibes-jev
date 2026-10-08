@@ -251,6 +251,7 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
   readonly emailGateway?: EmailGatewayService | undefined;
   /** Everything platform/email needs; absent in narrow compositions. */
   readonly emailServiceDeps?: EmailCompositionDeps['emailServiceDeps'];
+  readonly browserJudgment?: EmailCompositionDeps['browserJudgment'];
   /**
    * Why the mailbox is not usable yet, in the operator's own key names.
    * Supplied by a composition reading the daemon's `surfaces.email.*` keys.

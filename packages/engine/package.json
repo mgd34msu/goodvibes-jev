@@ -844,6 +844,11 @@
       "types": "./sdk/dist/platform/gate/index.d.ts",
       "import": "./sdk/dist/platform/gate/index.js"
     },
+    "./sdk/platform/gate/presets": {
+      "bun": "./sdk/src/platform/gate/presets.ts",
+      "types": "./sdk/dist/platform/gate/presets.d.ts",
+      "import": "./sdk/dist/platform/gate/presets.js"
+    },
     "./sdk/platform/gate/policy": {
       "bun": "./sdk/src/platform/gate/policy/index.ts",
       "types": "./sdk/dist/platform/gate/policy/index.d.ts",
@@ -1043,6 +1048,11 @@
       "bun": "./sdk/src/platform/runtime/store/index.ts",
       "types": "./sdk/dist/platform/runtime/store/index.d.ts",
       "import": "./sdk/dist/platform/runtime/store/index.js"
+    },
+    "./sdk/platform/runtime/provider-health": {
+      "bun": "./sdk/src/platform/runtime/provider-health.ts",
+      "types": "./sdk/dist/platform/runtime/provider-health.d.ts",
+      "import": "./sdk/dist/platform/runtime/provider-health.js"
     },
     "./sdk/platform/runtime/ui": {
       "bun": "./sdk/src/platform/runtime/ui.ts",

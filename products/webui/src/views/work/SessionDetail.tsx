@@ -35,7 +35,7 @@ import {
 import { companionMessagesFromListResponse } from '../../lib/companion-chat';
 import { firstString } from '../../lib/object';
 import { formatError, isMethodUnavailableError, isSessionNotLocalError } from '../../lib/errors';
-import { permissionModeLabel, type SettablePermissionMode } from '../../lib/permission-mode';
+import { gatePresetLabel, type SettableGatePresetName } from '@goodvibes-jev/engine/sdk/platform/gate/presets';
 import { outcomeLabel, type CompactionCheck, type CompactionReceipt } from '../../lib/compaction';
 import { useCompactionReceipts } from '../../hooks/useCompactionReceipts';
 import { PermissionModeSheet } from '../../components/confirm/PermissionModeSheet';
@@ -82,7 +82,7 @@ function PermissionModeFact({ sessionId }: { sessionId: string }) {
   const notLocal = modeQuery.isError && isSessionNotLocalError(modeQuery.error);
   const mode = modeQuery.data?.mode ?? '';
   const setMode = useMutation({
-    mutationFn: (nextMode: SettablePermissionMode) => sdk.operator.sessions.permissionMode.set(sessionId, nextMode),
+    mutationFn: (nextMode: SettableGatePresetName) => sdk.operator.sessions.permissionMode.set(sessionId, nextMode),
     onSuccess: async () => {
       setSheetOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.sessionPermissionMode(sessionId) });
@@ -98,7 +98,7 @@ function PermissionModeFact({ sessionId }: { sessionId: string }) {
   }
   return (
     <span className="work-inline-action">
-      {mode ? permissionModeLabel(mode) : modeQuery.isLoading ? 'Loading…' : 'Unknown'}
+      {mode ? gatePresetLabel(mode) : modeQuery.isLoading ? 'Loading…' : 'Unknown'}
       <Button size="sm" variant="ghost" onClick={() => setSheetOpen(true)} disabled={!mode} aria-label="Change permission mode">
         Change
       </Button>

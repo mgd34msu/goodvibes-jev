@@ -34,14 +34,22 @@ import {
   bodyCapabilityFailure,
   declaredTextOctets,
 } from './imap-body-probe.js';
-import { type ImapFetchFrame, parseFetchResponses } from './imap-fetch-response.js';
+import { type ImapFetchFrame, parseFetchResponses, hasCompleteFetchSection } from './imap-fetch-response.js';
 import {
   extractAuthenticationResults,
   extractDeliveryEvidence,
   extractHeader,
+  hasCompleteSubjectHeader,
 } from './imap-headers.js';
 import type { ImapSession } from './imap-session.js';
-import type { ImapFetchProblem, ImapMessageRead } from './imap-types.js';
+import type { ImapFetchProblem, ImapMessageDetail, ImapMessageRead } from './imap-types.js';
+
+// Private exact-result evidence. Legacy lenient reads remain readable but do
+// not establish UID-bound provenance for a downstream subject snapshot.
+const verifiedMessageIdentities = new WeakSet<ImapMessageDetail>();
+export function hasVerifiedImapMessageIdentity(detail: ImapMessageDetail): boolean {
+  return verifiedMessageIdentities.has(detail);
+}
 
 /**
  * The FETCH responses in a single-message header fetch that could not be read.
@@ -202,23 +210,27 @@ export async function readMessageDetail(
   }
 
   const deliveryEvidence = extractDeliveryEvidence(rawHeaders);
-  return {
-    outcome: 'read',
-    detail: {
-      uid,
-      from: extractHeader(rawHeaders, 'From'),
-      subject: extractHeader(rawHeaders, 'Subject'),
-      date: extractHeader(rawHeaders, 'Date'),
-      messageId: extractHeader(rawHeaders, 'Message-ID'),
-      mailbox,
-      deliveredTo: deliveryEvidence.map((entry) => entry.address),
-      deliveryEvidence,
-      // Display only, see the field docs on ImapEnvelope.
-      unverifiedToHeaderClaim: extractHeader(rawHeaders, 'To'),
-      authenticationResults: extractAuthenticationResults(rawHeaders),
-      bodyText,
-      bodyHtml,
-      attachments: attachmentsFromParts(parts),
-    },
+  const detail: ImapMessageDetail = {
+    uid,
+    from: extractHeader(rawHeaders, 'From'),
+    subject: extractHeader(rawHeaders, 'Subject'),
+    date: extractHeader(rawHeaders, 'Date'),
+    messageId: extractHeader(rawHeaders, 'Message-ID'),
+    mailbox,
+    deliveredTo: deliveryEvidence.map((entry) => entry.address),
+    deliveryEvidence,
+    // Display only, see the field docs on ImapEnvelope.
+    unverifiedToHeaderClaim: extractHeader(rawHeaders, 'To'),
+    authenticationResults: extractAuthenticationResults(rawHeaders),
+    bodyText,
+    bodyHtml,
+    attachments: attachmentsFromParts(parts),
   };
+  const responses = parseFetchResponses(headerLines);
+  const header = responses[0];
+  if (responses.length === 1 && header?.parseError === null && header.uid === uid
+    && hasCompleteFetchSection(header, 'HEADER')
+    && header.sections.get('HEADER') === rawHeaders
+    && hasCompleteSubjectHeader(rawHeaders, detail.subject)) verifiedMessageIdentities.add(detail);
+  return { outcome: 'read', detail };
 }

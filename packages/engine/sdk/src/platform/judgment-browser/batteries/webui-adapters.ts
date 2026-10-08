@@ -2,13 +2,14 @@ import type { BatteryRun, Outcome, Reading, YesNoReading } from '@goodvibes-jev/
 import { BrowserJudgmentError, type BrowserJudgmentInputMap } from '@goodvibes-jev/engine/daemon-sdk';
 import { requireSynchronousAssertion } from '../guards.js';
 import type { BrowserJudgmentBattery, BrowserJudgmentProjection, BrowserJudgmentResolveContext, BrowserJudgmentResolvedInput } from '../types.js';
-import { daemonRefusalBattery, statusToneBattery, commandRankBattery, WEBUI_BATTERY_QUESTIONS } from './webui-specs.js';
-import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiStatus } from './webui-readers.js';
+import { daemonRefusalBattery, statusToneBattery, commandRankBattery, mailReplySubjectBattery, WEBUI_BATTERY_QUESTIONS } from './webui-specs.js';
+import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiStatus, snapshotWebuiMailSubject } from './webui-readers.js';
 import { REFUSAL_ITEMS, WEBUI_READER_LIMITS, type CommandRankValue, type DaemonRefusalValue, type ResolvedCommandRank, type ResolvedDaemonRefusal, type ResolvedStatus, type StatusValue } from './webui-types.js';
 
 const ERRORS = 'webui.errors.daemon-refusal';
 const STATUS = 'webui.status.badge-tone';
 const PALETTE = 'webui.palette.command-rank';
+const MAIL = 'webui.mail.reply-subject';
 const inputHeld = (): never => { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); };
 const referenceHeld = (): never => { throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); };
 const invalid = (): never => { throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE'); };
@@ -21,6 +22,28 @@ function held(readings: Readonly<Record<string, Reading>>, compoundOutcome?: Exc
 }
 const unsettled = (readings: Readonly<Record<string, Reading>>): boolean => Object.values(readings).some((reading) => reading.outcome !== 'act');
 const hasHttpStatus = (source: ResolvedDaemonRefusal): source is ResolvedDaemonRefusal & { readonly status: number } => source.status !== undefined && Number.isInteger(source.status) && source.status >= 100 && source.status <= 599;
+
+/** Only an authenticated canonical read can issue the referenced subject. */
+export const webuiMailReplySubjectAdapter: BrowserJudgmentBattery<typeof MAIL, { readonly subject: string }, BatteryRun<typeof mailReplySubjectBattery.items>> = {
+  id: MAIL, version: 1, maxCalls: 1, questions: WEBUI_BATTERY_QUESTIONS[MAIL]!,
+  async resolve(input, context) {
+    checkAbort(context.signal);
+    return context.references.resolve(input.subjectRef, context.currentPrincipal, MAIL, snapshotWebuiMailSubject);
+  },
+  async run(port, raw, { signal }) {
+    checkAbort(signal);
+    const source = preflight(() => snapshotWebuiMailSubject(raw));
+    const run = await mailReplySubjectBattery.run(port, source, { signal, site: MAIL });
+    checkAbort(signal);
+    return run;
+  },
+  project(run) {
+    const readings = { already_reply: run.readings.already_reply };
+    if (unsettled(readings)) { run.recordAction('unsettled'); return held(readings); }
+    run.recordAction('ready');
+    return { status: 'settled', value: { alreadyReply: readings.already_reply.verdict === 'yes' }, readings };
+  },
+};
 
 /** Server-only intermediate evidence consumed by the refusal descriptor. */
 export interface WebuiDaemonRefusalRun {

@@ -552,8 +552,12 @@ export function createWriteTool(options?: {
           }
           // Store snapshot for atomic transaction rollback
           if (transactionMode === 'atomic' && resolvedForUndo && !snapshots.has(resolvedForUndo)) {
-            snapshots.set(resolvedForUndo, existedBeforeWrite ? beforeBytes : null);
-            if (existedBeforeWrite) snapshotModes.set(resolvedForUndo, lstatSync(resolvedForUndo).mode & 0o777);
+            try {
+              snapshots.set(resolvedForUndo, existedBeforeWrite ? beforeBytes : null);
+              if (existedBeforeWrite) snapshotModes.set(resolvedForUndo, lstatSync(resolvedForUndo).mode & 0o777);
+            } catch (err) {
+              return await rollbackAtomic(fileInput.path, `Atomic transaction cannot safely snapshot '${fileInput.path}': ${summarizeError(err)}`);
+            }
           }
         }
 
@@ -572,7 +576,7 @@ export function createWriteTool(options?: {
         }
 
         results.push(outcome.result);
-        if (capturedAtomic && !dryRun) {
+        if (captured && !dryRun && (capturedAtomic || options.fileUndoManager)) {
           revisions.set(outcome.result.resolved_path, captureCapturedToolWriteRevision(outcome.result.resolved_path,
             Buffer.from(outcome.result._content ?? '', (fileInput.encoding as BufferEncoding) ?? 'utf-8')));
         }
@@ -580,6 +584,23 @@ export function createWriteTool(options?: {
         // State integration, only for real writes, not dry runs
         if (!dryRun) {
           let content = outcome.result._content ?? '';
+          const retainedPath = outcome.result.resolved_path;
+          async function recordRetainedCapturedWrite(): Promise<void> {
+            if (!captured || !options?.fileUndoManager) return;
+            // A failed repair can leave its initial write intact. History must
+            // only describe bytes still owned under live read/mutation authority.
+            try {
+              await assertCapturedToolReadAccess(retainedPath);
+              if (options.capturedReadAccess && !await options.capturedReadAccess(retainedPath))
+                throw new Error('Captured write path is access-restricted');
+              const revision = revisions.get(retainedPath);
+              if (!revision) throw new Error('Captured failed repair has no owned revision');
+              assertCapturedToolWriteRevision(retainedPath, revision);
+              options.fileUndoManager.snapshot({ path: retainedPath, beforeContent, afterContent: content, tool: 'write' });
+            } catch (historyError) {
+              logger.warn('write tool: failed repair undo snapshot withheld', { path: retainedPath, error: summarizeError(historyError) });
+            }
+          }
 
           // Auto-heal: if file is JS/TS and auto-heal is enabled, run syntax check
           let autoHealEnabled = false;
@@ -617,7 +638,15 @@ export function createWriteTool(options?: {
                       warnings: [`Auto-heal skipped for '${outcome.result.path}': tool LLM is not configured`],
                     };
                 } catch (error) {
-                  if (capturedAtomic) return await rollbackAtomic(fileInput.path, `Auto-heal failed: ${summarizeError(error)}`);
+                  if (transactionMode === 'atomic') {
+                    const failure = await rollbackAtomic(fileInput.path, `Auto-heal failed: ${summarizeError(error)}`);
+                    if (capturedAtomic) return failure;
+                    if (failure.warnings?.length && error instanceof Error) {
+                      try { error.message += `. Atomic rollback incomplete: ${failure.warnings.join('; ')}`; }
+                      catch { /* Frozen errors must retain their original identity and classification. */ }
+                    }
+                  } else await recordRetainedCapturedWrite();
+                  // Ordinary terminal judgment failures still propagate after rollback.
                   throw error;
                 }
                 for (const warning of healResult.warnings ?? []) {
@@ -645,7 +674,11 @@ export function createWriteTool(options?: {
                       method: healResult.method,
                     };
                   } catch (writeErr) {
-                    if (capturedAtomic) return await rollbackAtomic(fileInput.path, `Auto-heal rewrite failed: ${summarizeError(writeErr)}`);
+                    if (transactionMode === 'atomic') return await rollbackAtomic(fileInput.path, `Auto-heal rewrite failed: ${summarizeError(writeErr)}`);
+                    if (captured) {
+                      await recordRetainedCapturedWrite();
+                      throw writeErr;
+                    }
                     logger.warn('write tool: auto-heal rewrite failed', {
                       path: outcome.result.resolved_path,
                       error: summarizeError(writeErr),

@@ -1,3 +1,4 @@
+import { EvalRegistry } from '@goodvibes-jev/engine/sdk/platform/observe';
 import { activeTokens } from '../renderer/theme.ts';
 import { getConfigSnapshot } from '@goodvibes-jev/engine/sdk/platform/config';
 import {
@@ -416,6 +417,8 @@ export function createBootstrapCommandExtensionsSection(
     toolRegistry: options.toolRegistry,
     mcpRegistry: options.mcpRegistry,
     ...shellServices.extensions,
+    // One read model per command context, shared by /eval run, gate and compare.
+    evalRegistry: new EvalRegistry(),
   };
 }
 

@@ -1,5 +1,5 @@
 {
-  "//": "Opt-in local native build only. The daemon is the sole app leg. Release-cut, publish and per-job-green remain owned by private-monorepo policy; see docs/audit/daemon-native-packaging.md. Native outputs are outside the packed dist tree.",
+  "//": "Opt-in local native build and private Linux CI artifact qualification. The daemon is the sole app leg. Release-cut, publish and per-job-green remain owned by private-monorepo policy; see docs/audit/daemon-native-packaging.md. Native outputs are outside the packed dist tree.",
   "packageName": "@goodvibes-jev/daemon",
   "sdkPin": {
     "sdkPackage": "@goodvibes-jev/engine",

@@ -7,6 +7,7 @@
  */
 import { test, expect } from '@playwright/test';
 import { installMockDaemon } from './support/mock-daemon';
+import { installMailReplySubjectDaemon } from './support/mail-reply-subject-fixture';
 import { expectNoHorizontalScroll, only, PHONE } from './support/app';
 
 const MAIL = '/?view=personal&tab=mail';
@@ -105,14 +106,14 @@ test('configured: Compose opens a panel at the lower right, Send enables once fi
 });
 
 test('configured: Reply opens the compose panel prefilled with the sender and a Re: subject', async ({ page }) => {
-  await installMockDaemon(page, { email: 'configured' });
+  await installMailReplySubjectDaemon(page);
   await page.goto(MAIL);
   await page.getByTestId('mail-list').locator('.mail-row').filter({ hasText: 'Nightly build finished' }).locator('.gv-row__main').click();
   await expect(page.getByTestId('mail-message-detail')).toBeVisible();
   await page.getByRole('button', { name: 'Reply' }).click();
   const compose = page.getByTestId('mail-compose');
   await expect(compose).toBeVisible();
-  await expect(compose.getByLabel('To', { exact: true })).toHaveValue('ops@example.com');
+  await expect(compose.getByLabel('To', { exact: true })).toHaveValue('sender@example.invalid');
   await expect(compose.getByLabel('Subject')).toHaveValue('Re: Nightly build finished');
 });
 
