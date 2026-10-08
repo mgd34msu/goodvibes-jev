@@ -59,8 +59,8 @@ export const CHANNEL_INBOX_ITEM_SCHEMA = objectSchema({
  *   `error`       , configured, asked, and the last attempt failed. `error`
  *                    carries what went wrong; this provider's items are MISSING
  *                    from the list, and the top-level `partial` flag says so.
- *   `pending`     , known but not yet synced once (a host that has just
- *                    started, or one whose fetching is another node's job).
+ *   `pending`     , not yet synced once, or an IMAP history boundary was
+ *                    established and eligible content awaits the next poll.
  */
 export const CHANNEL_INBOX_PROVIDER_STATUS_SCHEMA = objectSchema({
   provider: STRING_SCHEMA,
@@ -77,6 +77,15 @@ export const CHANNEL_INBOX_PROVIDER_STATUS_SCHEMA = objectSchema({
   syncing: BOOLEAN_SCHEMA,
   /** Present when state is `error`. */
   error: STRING_SCHEMA,
+  /** First-seed history boundary, scoped to its observed mailbox generation. */
+  mailboxHistory: objectSchema({
+    uidValidity: NUMBER_SCHEMA,
+    kind: STRING_SCHEMA,
+    lowerBoundUid: NUMBER_SCHEMA,
+    skippedOlderMessages: NUMBER_SCHEMA,
+  }, ['uidValidity', 'kind', 'lowerBoundUid', 'skippedOlderMessages']),
+  /** Pending eligible messages at lastSyncAt; absent after interruption/when unknown. */
+  mailboxProgress: objectSchema({ uidValidity: NUMBER_SCHEMA, pendingMessages: NUMBER_SCHEMA }, ['uidValidity', 'pendingMessages']),
 }, ['provider', 'state', 'itemCount', 'storedCount']);
 
 export const CHANNEL_ROUTING_RULE_SCHEMA = objectSchema({

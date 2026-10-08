@@ -40,7 +40,7 @@
 
 import type { InboxCursorStore, InboxPosition } from './cursor-store.js';
 import type { InboundPoller, ProviderStatus } from './poller.js';
-import type { InboundChannelItem } from './provider-adapter.js';
+import type { ImapUidCheckpoint, InboundChannelItem } from './provider-adapter.js';
 import { GatewayVerbError as HandlerError } from '../control-plane/routes/gateway-verb-error.js';
 
 export const DEFAULT_LIMIT = 50;
@@ -85,6 +85,10 @@ export interface ChannelInboxProviderStatus {
   /** Whether THIS node is currently fetching this provider. */
   syncing?: boolean;
   error?: string;
+  /** Durable first-seed boundary for this mailbox generation; excluded history is not processed. */
+  mailboxHistory?: ImapUidCheckpoint['history'] & { readonly uidValidity: number };
+  /** Eligible messages remaining at lastSyncAt, not a live provider total. Absent when unknown. */
+  mailboxProgress?: { readonly uidValidity: number; readonly pendingMessages: number };
 }
 
 /** SDK `channels.inbox.list` output. */
@@ -266,7 +270,7 @@ export function aggregateInbox(
   }
 
   const statuses = describeProviders({
-    poller,
+    poller, store,
     requested: providers,
     storedByProvider,
     pageByProvider,
@@ -282,7 +286,9 @@ export function aggregateInbox(
     providers: statuses,
     // An explicit missing configuration is not an outage. An unavailable
     // provider with true OR unknown configuration is reported as an error.
-    partial: statuses.some((status) => status.state === 'error'),
+    partial: statuses.some((status) => status.state === 'error'
+      || (status.mailboxHistory !== undefined && (status.mailboxHistory.skippedOlderMessages > 0 || status.mailboxProgress === undefined))
+      || (status.mailboxProgress?.pendingMessages ?? 0) > 0),
   };
 
   const watermark = store.maxReceivedAt(providers);
@@ -306,11 +312,12 @@ export function aggregateInbox(
  */
 function describeProviders(input: {
   poller: InboundPoller;
+  store: InboxCursorStore;
   requested: readonly string[] | undefined;
   storedByProvider: Map<string, number>;
   pageByProvider: Map<string, number>;
 }): ChannelInboxProviderStatus[] {
-  const { poller, requested, storedByProvider, pageByProvider } = input;
+  const { poller, store, requested, storedByProvider, pageByProvider } = input;
   const known = poller.snapshotStatuses(requested);
 
   // A `?provider=` filter naming something this node has no adapter for gets an
@@ -328,6 +335,9 @@ function describeProviders(input: {
       storedCount,
       syncing: poller.isProviderRunning(status.id),
     };
+    const checkpoint = store.getImapCheckpoint?.(status.id);
+    if (checkpoint) wire.mailboxHistory = { ...checkpoint.history, uidValidity: checkpoint.uidValidity };
+    if (checkpoint && status.mailboxProgress?.uidValidity === checkpoint.uidValidity) wire.mailboxProgress = { ...status.mailboxProgress };
     if (status.configured !== undefined) wire.configured = status.configured;
     if (status.lastPolledAt !== undefined) wire.lastSyncAt = status.lastPolledAt;
     // The error belongs to the `error` state only. Carrying the "missing
@@ -368,7 +378,7 @@ function wireState(
   status: ProviderStatus,
   storedCount: number,
 ): ChannelInboxProviderStatus['state'] {
-  if (!status.polled) return 'pending';
+  if (!status.polled || status.state === 'pending') return 'pending';
   if (status.state === 'unavailable') {
     return status.configured === false ? 'unconfigured' : 'error';
   }

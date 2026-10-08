@@ -241,4 +241,5 @@ export type { SurfaceEmailConfigProblem } from './surface-config.js';
 
 export { EmailReplySubjectSourceOwner } from './reply-subject-source.js';
 export type { EmailInboxBatchInput, EmailInboxBatchMessage, EmailInboxBatchRead } from './email-inbox-batch.js';
+export type { EmailInboxPageInput, EmailInboxPageRead, EmailInboxPageSelection } from './email-inbox-page.js';
 export type { EmailMailboxObservation, EmailReplySubjectSource } from './reply-subject-source.js';

@@ -44,9 +44,45 @@ export interface InboundChannelItem {
   triageTags?: string[];
 }
 
-export type ProviderState = 'ready' | 'unavailable' | 'empty';
+/** IMAP progress is independent of untrusted message Date headers. */
+export interface ImapUidCheckpoint {
+  readonly kind: 'imap-uid';
+  readonly uidValidity: number;
+  /** Null until an actual UID reaches a terminal protected disposition. */
+  readonly lastTerminalUid: number | null;
+  readonly history: {
+    readonly kind: 'complete' | 'bounded-seed';
+    /** Inclusive first UID eligible for intake; older history is not consumed. */
+    readonly lowerBoundUid: number;
+    /** Count omitted when the baseline was chosen, never a processed count. */
+    readonly skippedOlderMessages: number;
+  };
+}
+
+export type ImapUidTerminalDisposition =
+  | { readonly uid: number; readonly disposition: 'published'; readonly itemId: string }
+  | { readonly uid: number; readonly disposition: 'suppressed' | 'gone' };
+
+/**
+ * Trusted adapter proposal, never authority derived from message fields.
+ * Seed/reset commits pin history before any content read. They carry no rows,
+ * terminal UIDs, or processed watermark. Subsequent advances cover the entire
+ * oldest pending page, including terminally suppressed/confirmed gone UIDs.
+ */
+export interface ImapUidCheckpointAdvance {
+  readonly kind: 'imap-uid';
+  readonly transition: 'seed' | 'advance' | 'reset';
+  readonly previous: ImapUidCheckpoint | null;
+  readonly next: ImapUidCheckpoint;
+  readonly coveredUids: readonly number[];
+  readonly terminal: readonly ImapUidTerminalDisposition[];
+}
+
+export type ProviderState = 'ready' | 'unavailable' | 'empty' | 'pending';
 
 export interface ProviderPollResult {
+  /** Last observed eligible messages still pending in checkpointAdvance.next.uidValidity. */
+  readonly pendingMessages?: number;
   items: InboundChannelItem[];
   state: ProviderState;
   /** Present only when state === 'unavailable'. */
@@ -66,6 +102,8 @@ export interface ProviderPollResult {
    *           failed), which is neither claim and is reported as neither.
    */
   configured?: boolean;
+  /** Durable UID progress, atomically committed with only the redacted items. */
+  checkpointAdvance?: ImapUidCheckpointAdvance;
 }
 
 export interface ProviderPollOptions {
@@ -73,6 +111,8 @@ export interface ProviderPollOptions {
   signal?: AbortSignal;
   /** Only return items newer than this Unix-ms timestamp, when supported. */
   since?: number;
+  /** IMAP-only checkpoint. Timestamp providers keep their existing since semantics. */
+  checkpoint?: ImapUidCheckpoint;
   /** Max items to return this poll. */
   limit: number;
 }
@@ -103,6 +143,10 @@ export type RouteResolver = (input: {
 export interface InboundProviderAdapter {
   /** Provider id, e.g. 'slack'. Must be unique within the registry. */
   readonly id: string;
+  /** Explicit trusted adapter capability; never inferred from provider data. */
+  readonly checkpointKind?: 'imap-uid';
+  /** UID adapters must fence account/source currentness synchronously at commit. */
+  readonly assertCurrent?: () => void;
   /**
    * Poll cadence in ms. Slack/Discord 30s, email 60s, everything else 120s.
    * The poller reads this to schedule its per-provider interval.

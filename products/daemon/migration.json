@@ -1,7 +1,7 @@
 {
   "sourceRevision": "254699bf5d834cdca41436211ada1ae32bf89258",
   "status": "partial",
-  "phase": "standalone-send-and-explicit-runtime-launcher",
+  "phase": "explicit-email-inbox-and-uid-checkpoint-composition",
   "entrypoints": [
     "src/cli/index.ts",
     "src/cli/entrypoint.ts"
@@ -420,7 +420,9 @@
       "source": "src/runtime/daemon-handler-composition.ts",
       "disposition": "PORT",
       "targets": [
-        "products/daemon/src/runtime/daemon-handler-composition.ts"
+        "products/daemon/src/runtime/daemon-handler-composition.ts",
+        "products/daemon/src/runtime/owned-inbox-mail.ts",
+        "products/daemon/src/runtime/email-inbox-composition.ts"
       ]
     },
     {
@@ -689,7 +691,16 @@
       "targets": [
         "products/daemon/src/test/cli/entrypoint.test.ts"
       ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/providers/email.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/providers/email-owner.ts",
+        "packages/engine/sdk/src/platform/email/email-inbox-page.ts",
+        "packages/engine/sdk/src/platform/intake/imap-checkpoint.ts"
+      ]
     }
   ],
-  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; automatic service/update lifecycle, discovery, remaining pairing display/pruning/adoption behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; five upstream native-binary/release/compiled-hosting acceptance items remain deferred; only the emitted CLI-dispatch test acceptance is now mapped. Selected-home shared companion-token bootstrap is adapted in docs/audit/daemon-companion-token-bootstrap.md; this does not complete the whole upstream CLI or live acceptance."
+  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Default serve still requires the built-in inbox provider/privacy-mapper/Discord catalog composition; automatic service/update lifecycle, discovery, remaining pairing display/pruning/adoption behavior, native binary/release packaging and other unmapped modules remain pending. The partial src/daemon/cli.ts adaptation is documented in docs/audit/daemon-cli-entrypoint.md and intentionally is not marked fully migrated. This partial workspace does not satisfy migration:complete; five upstream native-binary/release/compiled-hosting acceptance items remain deferred; only the emitted CLI-dispatch test acceptance is now mapped. Selected-home shared companion-token bootstrap is adapted in docs/audit/daemon-companion-token-bootstrap.md; this does not complete the whole upstream CLI or live acceptance. Explicit single-node email composition now reuses complete-source mail reads, protected local screening, owned lifecycle and atomic UIDVALIDITY/UID progress with typed history/backlog disclosure; see docs/audit/daemon-email-inbox-composition.md. This does not complete default all-provider composition, clustered ownership, live provider/service calibration or whole-session transport bounds."
 }
