@@ -119,7 +119,7 @@ export class ModelTierStore {
     const known = this.known(facts);
     if (known) return Promise.resolve(known);
     const key = `${facts.registryKey}\u0000${fingerprint(facts)}`;
-    const pending = options.beforeAttempt === undefined ? this.#inFlight.get(key) : undefined;
+    const pending = options.beforeAttempt === undefined && options.beforeAsyncAttempt === undefined ? this.#inFlight.get(key) : undefined;
     if (pending) return pending;
     const site = options.site ?? 'routing.model-tier';
     const reading = (async (): Promise<TierRecord> => {
@@ -127,6 +127,7 @@ export class ModelTierStore {
         site,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.beforeAsyncAttempt === undefined ? {} : { beforeAsyncAttempt: options.beforeAsyncAttempt }),
     ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
       });
       const record: TierRecord = {
@@ -139,7 +140,7 @@ export class ModelTierStore {
       this.#save();
       return record;
     })();
-    if (options.beforeAttempt === undefined) {
+    if (options.beforeAttempt === undefined && options.beforeAsyncAttempt === undefined) {
       this.#inFlight.set(key, reading);
       void reading.finally(() => this.#inFlight.delete(key)).catch(() => undefined);
     }

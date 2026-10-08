@@ -1,5 +1,5 @@
 import type { CapturedWriteRevision } from '../shared/captured-write-revision.js';
-import { captureCapturedToolWriteRevision, assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation, prepareCapturedToolBackup } from '../shared/captured-input-tools.js';
+import { assertCapturedToolWriteRevision, captureCapturedToolWriteRevision, assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation, prepareCapturedToolBackup } from '../shared/captured-input-tools.js';
 import type { ReadAccessFilter } from '../shared/read-access.js';
 import { chmodSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
@@ -12,7 +12,7 @@ import { ProjectIndex } from '../../state/project-index.js';
 import { FileUndoManager } from '../../state/file-undo.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
-import { AutoHealer, type HealResult } from '../shared/auto-heal.js';
+import { healToolFile, type CapturedAutoHealBackend } from '../shared/captured-auto-heal.js';
 import { isNotebookFile } from '../../utils/notebook.js';
 import { logger } from '../../utils/logger.js';
 import type { SessionChangeTracker } from '../../sessions/change-tracker.js';
@@ -358,6 +358,7 @@ export function createWriteTool(options?: {
   diagnosticsProvider?: DiagnosticsProvider | undefined;
   capturedReadAccess?: ReadAccessFilter | undefined;
   validatorRunner?: ValidatorRunner | undefined;
+  capturedAutoHeal?: CapturedAutoHealBackend | undefined;
 }): Tool {
   if (typeof options?.projectRoot !== 'string' || options.projectRoot.trim().length === 0) {
     throw new Error('createWriteTool requires projectRoot');
@@ -392,6 +393,7 @@ export function createWriteTool(options?: {
       const results: FileWriteResult[] = [];
       const errors: string[] = [];
       const warnings: string[] = [];
+      const pendingUndo: Array<{ path: string; beforeContent: string | null; afterContent: string; tool: 'write' }> = [];
       const transactionMode = input.transaction?.mode ?? 'none';
       // Snapshots for atomic rollback: map from resolvedPath -> original content (null = new file)
       const snapshots = new Map<string, string | Buffer | null>();
@@ -399,11 +401,56 @@ export function createWriteTool(options?: {
       const captured = hasCapturedToolInvocation();
       const capturedAtomic = captured && transactionMode === 'atomic';
       const revisions = new Map<string, CapturedWriteRevision>();
+      const initialRevisions = new Map<string, CapturedWriteRevision>();
       const backups = new Map<WriteFileInput, Awaited<ReturnType<typeof prepareCapturedToolBackup>>>();
 
+      async function rollbackAtomic(failedPath: string, failure: string): Promise<{ success: false; error: string; warnings?: string[] }> {
+        const rolledBack: string[] = [];
+        const rollbackFailures: string[] = [];
+        for (const written of [...new Map(results.map((result) => [result.resolved_path, result])).values()]) {
+          try {
+            if (capturedAtomic) {
+              await assertCapturedToolReadAccess(written.resolved_path);
+              const revision = revisions.get(written.resolved_path);
+              if (!revision) throw new Error('Captured rollback has no owned revision');
+              assertCapturedToolWriteRevision(written.resolved_path, revision);
+            }
+            assertCapturedToolMutationCurrent(written.resolved_path);
+            const snapshot = snapshots.get(written.resolved_path);
+            if (snapshot === null || snapshot === undefined) {
+              // File was new - delete it
+              unlinkSync(written.resolved_path);
+            } else {
+              // File existed before - restore original
+              atomicWrite(written.resolved_path, snapshot);
+              const mode = snapshotModes.get(written.resolved_path);
+              if (mode !== undefined) chmodSync(written.resolved_path, mode);
+              options?.fileCache?.update(written.resolved_path, snapshot.toString());
+            }
+            rolledBack.push(written.path);
+          } catch (rollbackErr) {
+            const rollbackFailure = `Failed to roll back '${written.path}': ${summarizeError(rollbackErr)}`;
+            rollbackFailures.push(rollbackFailure);
+            logger.warn('write tool: atomic rollback failed', {
+              path: written.resolved_path,
+              error: summarizeError(rollbackErr),
+            });
+          }
+        }
+        const rollbackDetail = rollbackFailures.length > 0
+          ? `. Rollback failures: ${rollbackFailures.join('; ')}`
+          : '';
+        const failMsg = `Atomic transaction failed on '${failedPath}': ${failure}. Rolled back ${rolledBack.length} file(s): ${rolledBack.join(', ')}${rollbackDetail}`;
+        return {
+          success: false,
+          error: failMsg,
+          ...(rollbackFailures.length > 0 ? { warnings: rollbackFailures } : {}),
+        };
+      }
+
       // Atomic captured batches admit and validate every path before effects.
-      // Once publication starts there are no awaited callbacks until every write
-      // (or its synchronous rollback) has finished under the shared view lock.
+      // Repair can await between writes. Exact initial/owned revisions therefore
+      // guard every subsequent write and rollback under the shared view lock.
       if (capturedAtomic) {
         const willExist = new Set<string>();
         for (const fileInput of input.files) {
@@ -431,6 +478,7 @@ export function createWriteTool(options?: {
           assertCapturedToolMutationCurrent(path);
           if (before === null ? existsSync(path) : !existsSync(path) || !Buffer.from(before).equals(readFileSync(path)) || (snapshotModes.has(path) && (lstatSync(path).mode & 0o777) !== snapshotModes.get(path)))
             throw new Error('Captured atomic write conflicts with changed input');
+          if (before !== null) initialRevisions.set(path, captureCapturedToolWriteRevision(path, Buffer.from(before)));
         }
       }
 
@@ -451,7 +499,16 @@ export function createWriteTool(options?: {
         }
         let preparationError: string | undefined;
         try {
-          if (captured) assertCapturedToolMutationCurrent(resolveAndValidatePath(fileInput.path, projectRoot));
+          if (captured) {
+            const path = resolveAndValidatePath(fileInput.path, projectRoot);
+            if (capturedAtomic) {
+              await assertCapturedToolReadAccess(path);
+              const revision = revisions.get(path) ?? initialRevisions.get(path);
+              if (revision) assertCapturedToolWriteRevision(path, revision);
+              else if (existsSync(path)) throw new Error('Captured atomic write conflicts with newly created input');
+            }
+            assertCapturedToolMutationCurrent(path);
+          }
         } catch (error) { preparationError = summarizeError(error); }
 
         // Capture before-content for undo and atomic transaction snapshots BEFORE the write happens
@@ -501,43 +558,7 @@ export function createWriteTool(options?: {
           logger.warn('write tool: file write failed', { path: fileInput.path, error: outcome.error });
 
           // Atomic transaction: rollback all successfully written files
-          if (transactionMode === 'atomic' && results.length > 0) {
-            const rolledBack: string[] = [];
-            const rollbackFailures: string[] = [];
-            for (const written of [...new Map(results.map((result) => [result.resolved_path, result])).values()]) {
-              try {
-                assertCapturedToolMutationCurrent(written.resolved_path);
-                const snapshot = snapshots.get(written.resolved_path);
-                if (snapshot === null || snapshot === undefined) {
-                  // File was new - delete it
-                  unlinkSync(written.resolved_path);
-                } else {
-                  // File existed before - restore original
-                  atomicWrite(written.resolved_path, snapshot);
-                  const mode = snapshotModes.get(written.resolved_path);
-                  if (mode !== undefined) chmodSync(written.resolved_path, mode);
-                  options.fileCache?.update(written.resolved_path, snapshot.toString());
-                }
-                rolledBack.push(written.path);
-              } catch (rollbackErr) {
-                const rollbackFailure = `Failed to roll back '${written.path}': ${summarizeError(rollbackErr)}`;
-                rollbackFailures.push(rollbackFailure);
-                logger.warn('write tool: atomic rollback failed', {
-                  path: written.resolved_path,
-                  error: summarizeError(rollbackErr),
-                });
-              }
-            }
-            const rollbackDetail = rollbackFailures.length > 0
-              ? `. Rollback failures: ${rollbackFailures.join('; ')}`
-              : '';
-            const failMsg = `Atomic transaction failed on '${fileInput.path}': ${outcome.error}. Rolled back ${rolledBack.length} file(s): ${rolledBack.join(', ')}${rollbackDetail}`;
-            return {
-              success: false,
-              error: failMsg,
-              ...(rollbackFailures.length > 0 ? { warnings: rollbackFailures } : {}),
-            };
-          }
+          if (transactionMode === 'atomic' && (capturedAtomic || results.length > 0)) return await rollbackAtomic(fileInput.path, outcome.error);
 
           continue;
         }
@@ -565,8 +586,7 @@ export function createWriteTool(options?: {
               );
             }
           }
-          if (autoHealEnabled && captured) appendWarning(warnings, 'Captured input auto-heal is unavailable until its backend enforces original-owner authority.');
-          if (autoHealEnabled && !captured) {
+          if (autoHealEnabled) {
             const ext = extname(outcome.result.resolved_path).toLowerCase();
             const isJsTs = ['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs'].includes(ext);
             if (isJsTs) {
@@ -577,13 +597,21 @@ export function createWriteTool(options?: {
               } catch (syntaxErr) {
                 const syntaxErrors = [String(syntaxErr)];
                 outcome.result.auto_heal = { attempted: true, healed: false };
-                const healResult: HealResult = options.toolLLM && options.configManager
-                  ? await new AutoHealer(options.configManager, options.toolLLM).heal(outcome.result.resolved_path, content, syntaxErrors)
+                let healResult: Awaited<ReturnType<typeof healToolFile>>;
+                try {
+                  healResult = options.toolLLM && options.configManager
+                  ? await healToolFile(options.configManager, options.toolLLM, outcome.result.resolved_path, content, syntaxErrors, options.capturedAutoHeal)
                   : {
                       healed: false,
                       content,
+                      assertCurrent: async () => {}, assertCurrentSynchronous: () => {},
+                      method: undefined,
                       warnings: [`Auto-heal skipped for '${outcome.result.path}': tool LLM is not configured`],
                     };
+                } catch (error) {
+                  if (capturedAtomic) return await rollbackAtomic(fileInput.path, `Auto-heal failed: ${summarizeError(error)}`);
+                  throw error;
+                }
                 for (const warning of healResult.warnings ?? []) {
                   appendWarning(warnings, warning, outcome.result);
                 }
@@ -594,6 +622,11 @@ export function createWriteTool(options?: {
                   });
                   // Rewrite file with healed content
                   try {
+                    if (captured) {
+                      await healResult.assertCurrent();
+                      healResult.assertCurrentSynchronous();
+                      assertCapturedToolMutationCurrent(outcome.result.resolved_path);
+                    }
                     atomicWrite(outcome.result.resolved_path, healResult.content);
                     content = healResult.content;
                     outcome.result._content = content;
@@ -604,6 +637,7 @@ export function createWriteTool(options?: {
                       method: healResult.method,
                     };
                   } catch (writeErr) {
+                    if (capturedAtomic) return await rollbackAtomic(fileInput.path, `Auto-heal rewrite failed: ${summarizeError(writeErr)}`);
                     logger.warn('write tool: auto-heal rewrite failed', {
                       path: outcome.result.resolved_path,
                       error: summarizeError(writeErr),
@@ -625,6 +659,7 @@ export function createWriteTool(options?: {
             }
           }
 
+          if (capturedAtomic) revisions.set(outcome.result.resolved_path, captureCapturedToolWriteRevision(outcome.result.resolved_path, Buffer.from(content, (fileInput.encoding as BufferEncoding) ?? 'utf-8')));
           const byteSize = Buffer.byteLength(content, 'utf-8');
           const tokenEstimate = Math.ceil(byteSize / 4);
 
@@ -663,12 +698,9 @@ export function createWriteTool(options?: {
           // Snapshot for /undo file support
           if (options?.fileUndoManager) {
             try {
-              options.fileUndoManager.snapshot({
-                path: outcome.result.resolved_path,
-                beforeContent,
-                afterContent: content,
-                tool: 'write',
-              });
+              const snapshot = { path: outcome.result.resolved_path, beforeContent, afterContent: content, tool: 'write' as const };
+              if (capturedAtomic) pendingUndo.push(snapshot);
+              else options.fileUndoManager.snapshot(snapshot);
             } catch (err) {
               appendWarning(
                 warnings,
@@ -712,6 +744,11 @@ export function createWriteTool(options?: {
           error: errors.join('\n'),
           ...(warnings.length > 0 ? { warnings } : {}),
         };
+      }
+
+      for (const snapshot of pendingUndo) {
+        try { options.fileUndoManager?.snapshot(snapshot); }
+        catch (error) { appendWarning(warnings, `Undo snapshot failed for '${snapshot.path}': ${summarizeError(error)}`); }
       }
 
       const output = formatOutput(results, errors, verbosity, dryRun);

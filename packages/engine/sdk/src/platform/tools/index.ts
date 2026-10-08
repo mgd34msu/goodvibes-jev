@@ -1,3 +1,4 @@
+import { createCapturedAutoHealBackend } from './shared/captured-auto-heal.js';
 import { createCapturedValidatorRunner } from './shared/captured-validators.js';
 import { join } from 'node:path';
 import { resolveScopedDirectory } from '../runtime/surface-root.js';
@@ -515,6 +516,7 @@ export function registerAllTools(
           ...(deps.onSandboxedRun ? { onSandboxedRun: deps.onSandboxedRun } : {}),
         }
       : null;
+  const capturedAutoHeal = deps.capturedExec ? createCapturedAutoHealBackend(deps.capturedExec) : undefined;
   const validatorRunner = deps.capturedExec ? createCapturedValidatorRunner(deps.capturedExec, { sandbox: execSandbox, credentialEnvScrub: deps.credentialEnvScrub }) : undefined;
   registerTool(
     createWriteTool({
@@ -523,6 +525,7 @@ export function registerAllTools(
       projectIndex,
       capturedReadAccess: deps.capturedReadAccess,
       validatorRunner,
+      capturedAutoHeal,
       fileUndoManager,
       configManager: deps.configManager,
       toolLLM: deps.toolLLM,
@@ -534,6 +537,7 @@ export function registerAllTools(
     createEditTool(fileCache, {
       cwd: workingDirectory,
       validatorRunner,
+      capturedAutoHeal,
       fileUndoManager,
       configManager: deps.configManager,
       toolLLM: deps.toolLLM,

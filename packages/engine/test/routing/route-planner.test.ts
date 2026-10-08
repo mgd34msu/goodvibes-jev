@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { EntryType, Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
-import { composeTier, type RequestReading } from '../../sdk/src/platform/routing/request-reading.js';
+import { composeTier, readRequest, type RequestReading } from '../../sdk/src/platform/routing/request-reading.js';
 import { createRoutePlanner, eligibleModels, NoRouteError, shortlistOrder, type RoutePlannerCatalog } from '../../sdk/src/platform/routing/route-planner.js';
 import { ModelTierStore, modelTierFrom, type ModelFacts } from '../../sdk/src/platform/routing/model-tiers.js';
 import { tierSearchOrder } from '../../sdk/src/platform/routing/tiers.js';
@@ -210,4 +210,37 @@ describe('shortlist order', () => {
     expect([...list].sort(shortlistOrder('premium')).map((f) => f.registryKey)).toEqual(['b', 'a', 'c']);
     expect([...list].sort(shortlistOrder('economy')).map((f) => f.registryKey)).toEqual(['c', 'a', 'b']);
   });
+});
+
+
+test('request routing forwards optional async dispatch admission', async () => {
+  const base = routingPort({ tier: 'standard', frontier: () => false, pick: 'fixture' }).port;
+  let gates = 0;
+  const admission = async () => { gates++; };
+  installJudgmentPort({ model: base.model, async ask(request) {
+    expect(request.beforeAsyncAttempt).toBe(admission);
+    await request.beforeAsyncAttempt?.();
+    return base.ask(request);
+  } });
+  await readRequest({ purpose: 'unit', brief: 'synthetic routing work' }, { beforeAsyncAttempt: admission });
+  expect(gates).toBe(1);
+});
+
+test('async-guarded model tier readings never borrow another caller pending admission', async () => {
+  const base = routingPort({ tier: 'standard', frontier: () => false, pick: 'fixture' }).port;
+  let dispatches = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  installJudgmentPort({ model: base.model, async ask(request) {
+    dispatches++;
+    await request.beforeAsyncAttempt?.();
+    return base.ask(request);
+  } });
+  const tiers = new ModelTierStore();
+  const facts: ModelFacts = { registryKey: 'fixture:shared', id: 'shared', name: 'Shared fixture', provider: 'fixture' };
+  let firstChecks = 0; let secondChecks = 0;
+  const first = tiers.read(facts, { beforeAsyncAttempt: async () => { firstChecks++; await held; } });
+  const second = tiers.read(facts, { beforeAsyncAttempt: async () => { secondChecks++; await held; } });
+  expect(dispatches).toBe(2); expect(firstChecks).toBe(1); expect(secondChecks).toBe(1);
+  release(); await Promise.all([first, second]);
 });

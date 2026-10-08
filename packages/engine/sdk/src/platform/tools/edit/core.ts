@@ -1,3 +1,4 @@
+import type { CapturedWriteRevision } from '../shared/captured-write-revision.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { relative } from 'node:path';
@@ -9,9 +10,9 @@ import { FileStateCache, unifiedDiff } from '../../state/file-cache.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
-import { assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation } from '../shared/captured-input-tools.js';
+import { assertCapturedToolWriteRevision, captureCapturedToolWriteRevision, assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation } from '../shared/captured-input-tools.js';
 import { editSchema } from './schema.js';
-import { AutoHealer } from '../shared/auto-heal.js';
+import { healToolFile, type CapturedAutoHealBackend } from '../shared/captured-auto-heal.js';
 import {
   collectPostEditDiagnostics,
   formatDiagnosticsBlock,
@@ -45,6 +46,8 @@ async function runValidators(validators: ValidatorName[], cwd: string, runner?: 
 }
 
 interface EditExecutionContext {
+  capturedRevisions: Map<string, CapturedWriteRevision>;
+  capturedWritten: Set<string>;
   fileCache: FileStateCache;
   cwd: string;
   fileUndoManager?: FileUndoManager | undefined;
@@ -53,6 +56,7 @@ interface EditExecutionContext {
   changeTracker?: Pick<SessionChangeTracker, 'recordChange'> | undefined;
   diagnosticsProvider?: DiagnosticsProvider | undefined;
   validatorRunner?: ValidatorRunner | undefined;
+  capturedAutoHeal?: CapturedAutoHealBackend | undefined;
 }
 
 interface ResolvedTextEditInput {
@@ -64,6 +68,8 @@ interface ResolvedTextEditInput {
 
 interface PostValidationRepairResult {
   healed: boolean;
+  healedPaths: Set<string>;
+  warnings: string[];
 }
 
 async function prepareTextEditInput(
@@ -104,6 +110,7 @@ async function prepareTextEditInput(
       await assertCapturedToolReadAccess(resolvedPath);
       const content = readFileSync(resolvedPath, 'utf-8');
       fileContents.set(resolvedPath, content);
+      if (hasCapturedToolInvocation() && !input.dry_run) env.capturedRevisions.set(resolvedPath, captureCapturedToolWriteRevision(resolvedPath, Buffer.from(content)));
     } catch {
       const msg = `File not found or unreadable: '${resolvedPath}'`;
       if (transactionMode === 'atomic') {
@@ -140,11 +147,18 @@ async function writeSuccessfulTextEdits(
     try {
       await assertCapturedToolReadAccess(resolvedPath);
       assertCapturedToolMutationCurrent(resolvedPath);
-      if (hasCapturedToolInvocation()) writeFileSync(resolvedPath, newContent, 'utf-8');
+      if (hasCapturedToolInvocation()) {
+        const revision = env.capturedRevisions.get(resolvedPath);
+        if (!revision) throw new Error('Captured edit has no initial revision');
+        assertCapturedToolWriteRevision(resolvedPath, revision);
+        writeFileSync(resolvedPath, newContent, 'utf-8');
+        env.capturedRevisions.set(resolvedPath, captureCapturedToolWriteRevision(resolvedPath, Buffer.from(newContent)));
+        env.capturedWritten.add(resolvedPath);
+      }
       else await writeFile(resolvedPath, newContent, 'utf-8');
       env.fileCache.update(resolvedPath, newContent);
       writtenPaths.add(resolvedPath);
-      if (env.fileUndoManager) {
+      if (env.fileUndoManager && !hasCapturedToolInvocation()) {
         try {
           const originalContent = fileContents.get(resolvedPath) ?? null;
           env.fileUndoManager.snapshot({
@@ -225,18 +239,26 @@ async function buildImportGraphWarning(cwd: string, writtenPaths: Set<string>): 
   }
 }
 
-async function restoreOriginalContents(fileContents: Map<string, string>, env: EditExecutionContext): Promise<void> {
+async function restoreOriginalContents(fileContents: Map<string, string>, env: EditExecutionContext): Promise<string[]> {
+  const failures: string[] = [];
   for (const [resolvedPath, originalContent] of fileContents) {
     try {
       await assertCapturedToolReadAccess(resolvedPath);
       assertCapturedToolMutationCurrent(resolvedPath);
-      if (hasCapturedToolInvocation()) writeFileSync(resolvedPath, originalContent, 'utf-8');
+      if (hasCapturedToolInvocation()) {
+        if (!env.capturedWritten.has(resolvedPath)) continue;
+        const revision = env.capturedRevisions.get(resolvedPath);
+        if (!revision) throw new Error('Captured rollback has no owned revision');
+        assertCapturedToolWriteRevision(resolvedPath, revision);
+        writeFileSync(resolvedPath, originalContent, 'utf-8');
+      }
       else await writeFile(resolvedPath, originalContent, 'utf-8');
       env.fileCache.update(resolvedPath, originalContent);
-    } catch {
-      // Continue restoring the remaining files.
+    } catch (error) {
+      if (hasCapturedToolInvocation()) failures.push(`Rollback held for '${resolvedPath}': ${summarizeError(error)}`);
     }
   }
+  return failures;
 }
 
 async function repairAfterValidationFailure(
@@ -246,25 +268,38 @@ async function repairAfterValidationFailure(
   env: EditExecutionContext,
 ): Promise<PostValidationRepairResult> {
   let healed = false;
-  if (hasCapturedToolInvocation()) return { healed };
+  const healedPaths = new Set<string>();
+  const warnings: string[] = [];
   for (const [resolvedPath, originalContent] of fileContents) {
+    if (hasCapturedToolInvocation() && !env.capturedWritten.has(resolvedPath)) continue;
     const newContent = workingContents.get(resolvedPath);
     if (newContent === undefined || newContent === originalContent) continue;
     const healResult =
       env.configManager && env.toolLLM
-        ? await new AutoHealer(env.configManager, env.toolLLM).heal(resolvedPath, newContent, failureMessages)
-        : { healed: false, content: newContent };
+        ? await healToolFile(env.configManager, env.toolLLM, resolvedPath, newContent, failureMessages, env.capturedAutoHeal)
+        : { healed: false, content: newContent, assertCurrent: async () => {}, assertCurrentSynchronous: () => {}, warnings: undefined };
+    if (hasCapturedToolInvocation()) warnings.push(...(healResult.warnings ?? []));
     if (healResult.healed) {
       try {
+        if (hasCapturedToolInvocation()) {
+          await healResult.assertCurrent();
+          healResult.assertCurrentSynchronous();
+          assertCapturedToolMutationCurrent(resolvedPath);
+        }
         writeFileSync(resolvedPath, healResult.content, 'utf-8');
+        if (hasCapturedToolInvocation()) {
+          workingContents.set(resolvedPath, healResult.content);
+          env.capturedRevisions.set(resolvedPath, captureCapturedToolWriteRevision(resolvedPath, Buffer.from(healResult.content)));
+        }
         env.fileCache.update(resolvedPath, healResult.content);
         healed = true;
+        healedPaths.add(resolvedPath);
       } catch {
         // Leave validation failure handling to the caller if the heal write fails.
       }
     }
   }
-  return { healed };
+  return { healed, healedPaths, warnings };
 }
 
 async function validateAfterTextEdits(
@@ -274,25 +309,34 @@ async function validateAfterTextEdits(
   fileContents: Map<string, string>,
   workingContents: Map<string, string>,
   env: EditExecutionContext,
-): Promise<{ error?: string }> {
-  const failure = await runValidators(validators, cwd, env.validatorRunner);
-  if (!failure) return {};
+): Promise<{ error?: string; warnings?: string[]; healedPaths?: ReadonlySet<string> }> {
+  try {
+    const failure = await runValidators(validators, cwd, env.validatorRunner);
+    if (!failure) return {};
 
-  const failureMessages = [formatValidatorFailure(failure)];
-  const repair = await repairAfterValidationFailure(fileContents, workingContents, failureMessages, env);
-  if (repair.healed) {
-    const healFailure = await runValidators(validators, cwd, env.validatorRunner);
-    if (!healFailure) {
-      return {};
+    const failureMessages = [formatValidatorFailure(failure)];
+    const repair = await repairAfterValidationFailure(fileContents, workingContents, failureMessages, env);
+    if (repair.healed) {
+      const healFailure = await runValidators(validators, cwd, env.validatorRunner);
+      if (!healFailure) {
+        return { warnings: repair.warnings, healedPaths: repair.healedPaths };
+      }
     }
-  }
 
-  if (transactionMode === 'atomic') {
-    await restoreOriginalContents(fileContents, env);
+    const rollbackFailures = transactionMode === 'atomic' ? await restoreOriginalContents(fileContents, env) : [];
+    return {
+      warnings: [...repair.warnings, ...rollbackFailures],
+      healedPaths: repair.healedPaths,
+      error: `Post-edit validation failed${transactionMode === 'atomic' ? (rollbackFailures.length ? ', rollback incomplete' : ', edits rolled back') : ''}. ${formatValidatorFailure(failure)}`,
+    };
+  } catch (error) {
+    if (!hasCapturedToolInvocation() || transactionMode !== 'atomic') throw error;
+    const rollbackFailures = await restoreOriginalContents(fileContents, env);
+    return {
+      error: `Post-edit validation or repair failed${rollbackFailures.length ? ', rollback incomplete' : ', edits rolled back'}. ${summarizeError(error)}`,
+      warnings: rollbackFailures,
+    };
   }
-  return {
-    error: `Post-edit validation failed${transactionMode === 'atomic' ? ', edits rolled back' : ''}. ${formatValidatorFailure(failure)}`,
-  };
 }
 
 function formatOutput(
@@ -511,6 +555,10 @@ async function executeTextEdits(
   const writtenPaths = new Set<string>();
   if (!dryRun) {
     await writeSuccessfulTextEdits(results, resolvedPaths, workingContents, fileContents, env, writtenPaths);
+    if (hasCapturedToolInvocation() && transactionMode === 'atomic' && results.some((result) => !result.success)) {
+      const rollbackFailures = await restoreOriginalContents(fileContents, env);
+      return { success: false, error: `Atomic edit publication failed${rollbackFailures.length ? ', rollback incomplete' : ', edits rolled back'}. ${results.filter((result) => !result.success).map((result) => result.error).join('; ')}${rollbackFailures.length ? `\n${rollbackFailures.join('\n')}` : ''}` };
+    }
   }
 
   const anySuccess = results.some((r) => r.success);
@@ -520,6 +568,7 @@ async function executeTextEdits(
     importGraphWarning = await buildImportGraphWarning(cwd, writtenPaths);
   }
 
+  let repairWarnings: string[] = [];
   if (!dryRun && anySuccess && validateAfter.length > 0) {
     const validationResult = await validateAfterTextEdits(
       validateAfter,
@@ -529,8 +578,34 @@ async function executeTextEdits(
       workingContents,
       env,
     );
+    repairWarnings = validationResult.warnings ?? [];
+    if (hasCapturedToolInvocation() && validationResult.healedPaths?.size) {
+      for (const result of results) {
+        const path = resolvedPaths.get(result.path);
+        if (!result.success || !path || !writtenPaths.has(path) || !validationResult.healedPaths.has(path)) continue;
+        result.warning = [result.warning, 'Auto-heal applied; diff reflects the final repaired content.'].filter(Boolean).join(' ');
+        if (outputFormat === 'with_diff' || outputFormat === 'verbose') {
+          const diff = unifiedDiff(fileContents.get(path) ?? '', workingContents.get(path) ?? '', path, diffContext);
+          result.diff_truncated = diff.length > DIFF_TRUNCATE_THRESHOLD;
+          result.diff = result.diff_truncated ? diff.slice(0, DIFF_PREVIEW_LENGTH) : diff;
+          result.diff_preview = result.diff_truncated ? result.diff : undefined;
+        }
+      }
+    }
     if (validationResult.error) {
-      return { success: false, error: validationResult.error };
+      if (hasCapturedToolInvocation() && transactionMode !== 'atomic') recordCapturedUndo();
+      return { success: false, error: validationResult.error + (repairWarnings.length ? `\n${repairWarnings.join('\n')}` : '') };
+    }
+  }
+
+  if (!dryRun && hasCapturedToolInvocation()) recordCapturedUndo();
+
+  function recordCapturedUndo(): void {
+    for (const path of writtenPaths) {
+      const content = workingContents.get(path);
+      if (content === undefined) continue;
+      try { env.fileUndoManager?.snapshot({ path, beforeContent: fileContents.get(path) ?? null, afterContent: content, tool: 'edit' }); }
+      catch { /* Undo bookkeeping must not hide a successful edit. */ }
     }
   }
 
@@ -553,7 +628,7 @@ async function executeTextEdits(
 
   return {
     success: anySuccess,
-    output: formatOutput(results, outputFormat, dryRun) + (importGraphWarning ?? '') + diagnosticsBlock,
+    output: formatOutput(results, outputFormat, dryRun) + (importGraphWarning ?? '') + (repairWarnings.length ? `\n${repairWarnings.join('\n')}` : '') + diagnosticsBlock,
   };
 }
 
@@ -565,6 +640,7 @@ export interface EditToolOptions {
   changeTracker?: Pick<SessionChangeTracker, 'recordChange'> | undefined;
   diagnosticsProvider?: DiagnosticsProvider | undefined;
   validatorRunner?: ValidatorRunner | undefined;
+  capturedAutoHeal?: CapturedAutoHealBackend | undefined;
 }
 
 function resolveEditCwd(options?: EditToolOptions): string {
@@ -606,6 +682,8 @@ export function createEditTool(fileCache: FileStateCache, options?: EditToolOpti
       }
 
       const env: EditExecutionContext = {
+        capturedRevisions: new Map(),
+        capturedWritten: new Set(),
         fileCache,
         cwd,
         fileUndoManager: options?.fileUndoManager,
@@ -614,6 +692,7 @@ export function createEditTool(fileCache: FileStateCache, options?: EditToolOpti
         changeTracker: options?.changeTracker,
         diagnosticsProvider: options?.diagnosticsProvider,
         validatorRunner: options?.validatorRunner,
+        capturedAutoHeal: options?.capturedAutoHeal,
       };
 
       if (input.notebook_operations) {

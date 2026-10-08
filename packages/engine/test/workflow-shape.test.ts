@@ -545,6 +545,16 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(liveRun).toContain('test/exec-interactive.test.ts');
     expect(liveRun).toContain('test/exec-sandbox.test.ts');
     expect(liveRun).toContain('test/exec-containment-proof.test.ts');
+    expect((proof.strategy?.matrix as Record<string, unknown>).lane).toEqual(['tools', 'repl', 'graph-runtime', 'repair', 'repair-runtime']);
+    expect(proof['timeout-minutes']).toBe(10);
+    const repairFiles = readdirSync(resolve(ROOT, 'packages/engine/test'))
+      .filter((name) => name.startsWith('captured-auto-heal') && name.endsWith('.test.ts'))
+      .map((name) => `test/${name}`);
+    repairFiles.push('test/contract/actual-captured-auto-heal.test.ts');
+    for (const file of repairFiles) {
+      expect(liveRun.split(file).length - 1, `${file} must run exactly once in required containment`).toBe(1);
+    }
+    expect(liveRun).toContain('repair-runtime)');
     for (const step of steps(proof)) {
       expect(step.if).toBeUndefined();
       expect(step['continue-on-error']).toBeUndefined();

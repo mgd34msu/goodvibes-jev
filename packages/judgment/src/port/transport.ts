@@ -38,7 +38,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         attempts.push(attempt);
         if (attempts.length > 128) attempts.shift();
       };
-      const { signal, beforeAttempt, onRetry } = request;
+      const { signal, beforeAttempt, beforeAsyncAttempt, onRetry } = request;
       const requestedModel = request.model ?? defaultModel;
       const controller = new AbortController();
       const cancelled = () => controller.abort(new JudgmentError('aborted', 'the judgment call was cancelled'));
@@ -66,6 +66,18 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
           for (const { target, endpointIndex } of eligible) {
             checkCancellation();
             try {
+              if (beforeAsyncAttempt) {
+                try {
+                  await interruptible(Promise.resolve().then(() => {
+                    checkCancellation();
+                    return beforeAsyncAttempt();
+                  }), controller.signal);
+                } catch {
+                  checkCancellation();
+                  throw new JudgmentError('rejected', 'the judgment attempt is no longer authorized');
+                }
+                checkCancellation();
+              }
               const checked: unknown = beforeAttempt?.();
               if (checked !== undefined && checked !== null && (typeof checked === 'object' || typeof checked === 'function') && 'then' in checked) {
                 void Promise.resolve(checked).catch(() => {});
