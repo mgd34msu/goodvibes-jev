@@ -25,7 +25,13 @@ function live(snapshot: NativeWorkExecutionSnapshot) {
 }
 
 async function fixture(withoutInspection = false) {
-  const host = launchNativeIntegrationHost(withoutInspection);
+  const child = launchNativeIntegrationHost(withoutInspection);
+  let capturedStatus: number | undefined;
+  const host = { ...child,
+    async heldStatus() { const ordinal = await child.heldStatus(); capturedStatus = ordinal; return ordinal; },
+    async releaseStatus() { const ordinal = await child.releaseStatus(); capturedStatus = undefined; return ordinal; },
+  };
+  const forwarding = new Set<Promise<Response>>();
   const { model, home } = await (async () => {
     let model: ReturnType<typeof startStubModel> | undefined;
     try {
@@ -61,8 +67,15 @@ async function fixture(withoutInspection = false) {
       // product's read-only guarantee or hide an accidental start/resume.
       paths.push(url.pathname);
       if (!allowed.has(url.pathname)) return new Response('Owned inspection fixture has no background service', { status: 404 });
-      return fetch(`${ready.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers: request.headers,
-        body: request.method === 'POST' ? await request.arrayBuffer() : undefined, redirect: 'error' });
+      const body = request.method === 'POST' ? await request.arrayBuffer() : undefined;
+      const pending = (async () => {
+        const response = await fetch(`${ready.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers: request.headers, body, redirect: 'error' });
+        // Drain the actual upstream bytes before exposing handler completion.
+        // This is transport buffering only, never a fabricated inspection DTO.
+        return new Response(await response.arrayBuffer(), { status: response.status, headers: response.headers });
+      })();
+      forwarding.add(pending);
+      try { return await pending; } finally { forwarding.delete(pending); }
     });
     const origin = proxy.url.origin;
     const attempt = { attemptId: 'synthetic-native-pty-pairing', name: 'Owned native PTY fixture', startedAt: now };
@@ -107,6 +120,11 @@ async function fixture(withoutInspection = false) {
     const assertPrivate = () => { expect(tui!.rawOutput()).not.toContain(ready.token); expect(tui!.screen()).not.toContain(ready.token); };
     return { host, home, ready, start, open, close, integration, status, refresh, snapshot, paths, assertPrivate,
       terminal: () => tui!,
+      async probeStatusThroughProxy() {
+        const probe = createOperatorNativeWorkExecutionClient(createOperatorSdk({ baseUrl: origin, authToken: ready.token, retry: { maxAttempts: 1 } }), 'project');
+        try { return await probe.status(ready.identity, { signal: AbortSignal.timeout(15_000) }); }
+        finally { probe.dispose(); }
+      },
       async probeRejectedMutation(operation: 'start' | 'resume') {
         const response = await fetch(`${origin}/api/work-ledger/execution/${operation}`, {
           method: 'POST', headers: { authorization: `Bearer ${ready.token}`, 'content-type': 'application/json' }, body: '{}',
@@ -127,8 +145,18 @@ async function fixture(withoutInspection = false) {
         // disposer fails. Assertions happen only after all cleanup was attempted.
         await attempt(() => tui?.stop()); tui = undefined;
         await attempt(() => client?.dispose());
-        await attempt(() => proxy?.stop(true));
+        // Release the specific captured reply and drain its real proxy fetch
+        // before shutting down either HTTP owner. Still attempt every disposer
+        // if release/drain fails; the child has its own bounded stop fallback.
+        await attempt(async () => { if (capturedStatus !== undefined) await host.releaseStatus(); });
+        await attempt(async () => {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try { await Promise.race([Promise.all([...forwarding]), new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error('Native proxy requests did not drain during cleanup')), 2_000);
+          })]); } finally { clearTimeout(timer); }
+        });
         await attempt(() => host.stop());
+        await attempt(() => proxy?.stop(true));
         await attempt(() => model.stop());
         await attempt(() => { violations = existsSync(networkViolations) ? readFileSync(networkViolations, 'utf8') : ''; });
         await attempt(() => rmSync(home.root, { recursive: true, force: true }));
@@ -256,16 +284,19 @@ test('compiled native Integration distinguishes current repair from recorded con
     // A live header precedes deferred row adoption. The Down above and any
     // scrollUntil Down can still be queued when the hash first becomes visible.
     // A visible local filter marker acknowledges all earlier FIFO keys. Clearing
-    // it resets the viewport to its known origin; neither key reads the host.
+    // it preserves the keyboard-owned viewport offset; neither key reads the host.
     const beforeFenceRequests = f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'));
     const mergeHash = `Merge hash: ${merged.item.mergeHash}`;
     expect(tui.screen()).toContain(mergeHash);
     tui.type('q');
-    await tui.waitForScreen('native queued input acknowledged by local filter', screen => screen.includes('q▏'), 10_000);
+    const acknowledged = await tui.waitForScreen('native queued input acknowledged by local filter', screen => screen.includes('q▏'), 10_000);
+    const scrollOffset = (screen: string): number => Number(/(\d+) (?:more )?↑/.exec(screen)?.[1] ?? 0);
+    const acknowledgedOffset = scrollOffset(acknowledged);
+    expect(acknowledged).toContain(mergeHash);
     tui.key('BSpace');
-    const beforeLateDelivery = await tui.waitForScreen('native input settled at merged viewport origin', screen =>
+    const beforeLateDelivery = await tui.waitForScreen('native input settled at acknowledged merged viewport', screen =>
       screen.includes('Filter integration') && screen.includes(mergeHash) && !screen.includes('Native rows changed')
-      && !/\d+ (?:more )?↑/.test(screen), 10_000);
+      && scrollOffset(screen) === acknowledgedOffset, 10_000);
     expect(f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'))).toEqual(beforeFenceRequests);
     expect(beforeLateDelivery).toContain('Recorded integration: merged');
     // Negative witness uses the actual obsolete compiled conflict pane, not an
@@ -381,3 +412,33 @@ test('pane-fragment witness requires the complete ordered path, including its mi
   expect(visiblePrefix(panes.filter((_pane, index) => index !== 2), path)).toBeLessThan(path.length);
   expect(visiblePrefix([...panes].reverse(), path)).toBeLessThan(path.length);
 });
+
+
+test('owned native proxy teardown drains a genuine held status before waiting for proxy shutdown', async () => {
+  const f = await fixture();
+  let shutdown: Promise<void> | undefined;
+  let pending: Promise<unknown> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let primaryError: unknown;
+  try {
+    await f.host.holdStatus();
+    pending = f.probeStatusThroughProxy(); void pending.catch(() => {});
+    expect(await f.host.heldStatus()).toBeGreaterThan(0);
+    expect(f.paths.filter(path => path.startsWith('/api/work-ledger/execution/'))).toEqual(['/api/work-ledger/execution/status']);
+    shutdown = f.stop(); void shutdown.catch(() => {});
+    await Promise.race([
+      Promise.all([shutdown, pending.catch(() => {})]),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Held native response prevented owned proxy cleanup')), 10_000); }),
+    ]);
+  } catch (error) { primaryError = error; throw error; }
+  finally {
+    clearTimeout(timer);
+    // Reap the child even under the deliberate old-order red control. Closing
+    // it releases the real held bytes and lets the blocked proxy stop finish.
+    const failures: unknown[] = [];
+    try { await f.host.stop(); } catch (error) { failures.push(error); }
+    try { if (shutdown) await shutdown; else await f.stop(primaryError); } catch (error) { failures.push(error); }
+    await pending?.catch(() => {});
+    if (failures.length) throw new AggregateError(primaryError === undefined ? failures : [primaryError, ...failures], 'Held proxy cleanup control failed');
+  }
+}, 30_000);
