@@ -8,7 +8,7 @@ import {
   assertContractExecutionView,
   assertContractInputObjects,
   assertContractInputGitIdentity,
-  assertContractInputView,
+  createContractInputViewAssertion,
   CONTRACT_INPUT_EXCLUSIONS,
   type ContractInputSnapshot,
 } from './input-snapshot.js';
@@ -104,9 +104,7 @@ export async function createContractInputAuthority(
           if (!options.branch) throw new Error('member authority requires its recorded branch');
           assertContractExecutionView(admission.receipt, view, options.branch);
         }
-      : async () => {
-          await assertContractInputView(snapshot, options.signal, view);
-        });
+      : createContractInputViewAssertion(snapshot, options.signal, view));
   assertAdmission(admission);
   assertContractInputObjects(admission.receipt, admission.receipt.sourceRoot);
   if ((await realpath(view)) !== view) throw new Error('captured input root is redirected');

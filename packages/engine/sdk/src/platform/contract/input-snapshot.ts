@@ -193,8 +193,7 @@ async function readEntry(root: string, path: string): Promise<{ readonly file: C
   return { file: { path, kind, mode, digest: digest(data), identity: identity(before) }, data };
 }
 
-function checkLinks(files: readonly ContractInputFile[], links: ReadonlyMap<string, string>): void {
-  const available = new Map(files.filter((file) => file.kind !== 'missing').map((file) => [file.path, file]));
+function checkLinks(files: readonly ContractInputFile[], links: ReadonlyMap<string, string>, available: ReadonlyMap<string, ContractInputFile> = new Map(files.filter((file) => file.kind !== 'missing').map((file) => [file.path, file]))): void {
   for (const [path, target] of links) {
     let next = path;
     const seen = new Set<string>();
@@ -309,13 +308,35 @@ export async function assertContractInputGitIdentity(snapshot: ContractInputSnap
 
 /** Verify persisted object provenance, without recapturing today's owner tree. */
 export function assertContractInputObjects(snapshot: ContractInputSnapshot, projectRoot: string): void {
+  assertInputObjects(snapshot, projectRoot);
+}
+
+interface PreparedInputViewManifest {
+  readonly expectedTree: string;
+  readonly expectedPaths: string;
+  readonly symlinks: readonly ContractInputFile[];
+  readonly available: ReadonlyMap<string, ContractInputFile>;
+}
+
+/** Receipt-derived constants only: no live filesystem state or permission verdict. */
+function prepareInputViewManifest(snapshot: ContractInputSnapshot): PreparedInputViewManifest {
+  const present = snapshot.files.filter(file => file.kind !== 'missing');
+  return {
+    expectedTree: present.map(file => `${file.mode} blob ${file.oid}\t${file.path}\0`).sort().join(''),
+    expectedPaths: JSON.stringify(present.map(file => file.path)),
+    symlinks: present.filter(file => file.kind === 'symlink'),
+    available: new Map(present.map(file => [file.path, file])),
+  };
+}
+
+function assertInputObjects(snapshot: ContractInputSnapshot, projectRoot: string, prepared?: PreparedInputViewManifest): void {
   if (!snapshot.dirty && snapshot.inputCommit !== snapshot.ownerHead) throw new Error('clean contract input must name the recorded owner commit');
   if (resolve(projectRoot) !== snapshot.sourceRoot) throw new Error('contract input receipt belongs to a different source root');
   if (gitText(projectRoot, ['rev-parse', `${snapshot.inputCommit}^{tree}`]) !== snapshot.inputTree) throw new Error('contract input commit/tree receipt mismatch');
-  const links = new Map(snapshot.files.filter((file) => file.kind === 'symlink').map((file) => [file.path, git(projectRoot, ['cat-file', 'blob', file.oid!]).toString()]));
-  checkLinks(snapshot.files, links);
+  const links = new Map((prepared?.symlinks ?? snapshot.files.filter((file) => file.kind === 'symlink')).map((file) => [file.path, git(projectRoot, ['cat-file', 'blob', file.oid!]).toString()]));
+  checkLinks(snapshot.files, links, prepared?.available);
   const actual = git(projectRoot, ['ls-tree', '-r', '-z', snapshot.inputTree]).toString();
-  const expected = snapshot.files.filter((file) => file.kind !== 'missing').map((file) => `${file.mode} blob ${file.oid}\t${file.path}\0`).sort().join('');
+  const expected = prepared?.expectedTree ?? snapshot.files.filter((file) => file.kind !== 'missing').map((file) => `${file.mode} blob ${file.oid}\t${file.path}\0`).sort().join('');
   if (actual.split('\0').filter(Boolean).map((entry) => `${entry}\0`).sort().join('') !== expected) throw new Error('contract input file/object receipt mismatch');
 }
 
@@ -367,7 +388,18 @@ export function contractInputPath(snapshot: ContractInputSnapshot): string {
 
 /** A planner can resume only from its recorded input generation, never today's source or a result tree. */
 export async function assertContractInputView(snapshot: ContractInputSnapshot, signal?: AbortSignal, viewPath = contractInputPath(snapshot)): Promise<void> {
-  assertContractInputObjects(snapshot, snapshot.sourceRoot);
+  await assertInputView(snapshot, signal, viewPath);
+}
+
+/** The default immutable authority owns this clone and its constant manifest. */
+export function createContractInputViewAssertion(snapshot: ContractInputSnapshot, signal?: AbortSignal, viewPath = contractInputPath(snapshot)): () => Promise<void> {
+  const owned = structuredClone(snapshot);
+  const prepared = prepareInputViewManifest(owned);
+  return () => assertInputView(owned, signal, viewPath, prepared);
+}
+
+async function assertInputView(snapshot: ContractInputSnapshot, signal: AbortSignal | undefined, viewPath: string, prepared?: PreparedInputViewManifest): Promise<void> {
+  assertInputObjects(snapshot, snapshot.sourceRoot, prepared);
   const root = viewPath;
   if (gitText(root, ['rev-parse', 'HEAD']) !== snapshot.inputCommit) throw new Error('contract input view no longer names the recorded commit');
   for (const file of snapshot.files) {
@@ -376,7 +408,7 @@ export async function assertContractInputView(snapshot: ContractInputSnapshot, s
     if (current.kind !== file.kind || current.mode !== file.mode || current.digest !== file.digest) throw new Error(`contract input view changed: ${file.path}`);
   }
   await assertNoSpecialFiles(root, snapshot.exclusions, signal);
-  if (JSON.stringify(paths(root, snapshot.exclusions)) !== JSON.stringify(snapshot.files.filter((file) => file.kind !== 'missing').map((file) => file.path))) throw new Error('contract input view path set changed');
+  if (JSON.stringify(paths(root, snapshot.exclusions)) !== (prepared?.expectedPaths ?? JSON.stringify(snapshot.files.filter((file) => file.kind !== 'missing').map((file) => file.path)))) throw new Error('contract input view path set changed');
 }
 
 /** Member worktrees inherit the contract's current exact Git tree, without owner checkout filters/hooks. */
