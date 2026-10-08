@@ -2,6 +2,7 @@ import { seedProviderMetadataCacheFixture } from './helpers/provider-metadata-ca
 import { describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { Questions } from '@goodvibes-jev/judgment';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONFIG_SCHEMA, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -669,22 +670,55 @@ describe('parseCliFlags', () => {
       workingDir: root,
     });
 
-    const providersText = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber'], configManager, root);
-    expect(providersText.result).toEqual({ handled: true, exitCode: 0 });
-    expect(providersText.output).toContain('setup: Subscription');
+    const requests: Array<{ state: unknown; questions: Questions }> = [];
+    let unavailable = false;
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      if (new URL(request.url).pathname !== '/v1/systemone') return new Response('not found', { status: 404 });
+      const body = await request.json() as { model: string; state: unknown; questions: Questions };
+      requests.push(body);
+      if (unavailable) return new Response('fixture unavailable', { status: 503 });
+      const answers = Object.fromEntries(Object.keys(body.questions).map(name => [name, noulAnswer(
+        name === 'subscription' && String(body.state).includes('stored ChatGPT/Codex subscription session') ? 0.99 : 0.01,
+      )]));
+      return Response.json({ model: body.model, answers, usage: { input_tokens: 1, output_tokens: 1 } });
+    } });
+    const previousKey = process.env.TYPESAFE_API_KEY;
+    const previousJudgment = installJudgmentPort(undefined);
+    try {
+      process.env.TYPESAFE_API_KEY = 'local-cli-setup-fixture';
+      configManager.setDynamic('judgment.endpoint', `http://127.0.0.1:${server.port}`);
+      configManager.setDynamic('judgment.keySource', 'env');
+      const providersText = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber'], configManager, root);
+      expect(providersText.result).toEqual({ handled: true, exitCode: 0 });
+      expect(providersText.output).toContain('setup: Subscription');
 
-    const providersJson = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber', '--json'], configManager, root);
-    expect(providersJson.result).toEqual({ handled: true, exitCode: 0 });
-    expect((JSON.parse(providersJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBe('subscription');
+      const providersJson = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber', '--json'], configManager, root);
+      expect(providersJson.result).toEqual({ handled: true, exitCode: 0 });
+      expect((JSON.parse(providersJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBe('subscription');
 
-    const modelsText = await captureGoodVibesCliCommand(['models', 'current'], configManager, root);
-    expect(modelsText.result).toEqual({ handled: true, exitCode: 0 });
-    expect(modelsText.output).toContain('setup:');
-    expect(modelsText.output).toContain('provider configured:');
+      const modelsText = await captureGoodVibesCliCommand(['models', 'current'], configManager, root);
+      expect(modelsText.result).toEqual({ handled: true, exitCode: 0 });
+      expect(modelsText.output).toContain('setup:');
+      expect(modelsText.output).toContain('provider configured:');
 
-    const modelsJson = await captureGoodVibesCliCommand(['models', 'current', '--json'], configManager, root);
-    expect(modelsJson.result).toEqual({ handled: true, exitCode: 0 });
-    expect((JSON.parse(modelsJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBeString();
+      const modelsJson = await captureGoodVibesCliCommand(['models', 'current', '--json'], configManager, root);
+      expect(modelsJson.result).toEqual({ handled: true, exitCode: 0 });
+      expect((JSON.parse(modelsJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBeString();
+
+      const setupRequests = requests.filter(request => 'subscription' in request.questions);
+      expect(setupRequests.length).toBeGreaterThanOrEqual(4);
+      expect(setupRequests.slice(0, 2).every(request => String(request.state).includes('stored ChatGPT/Codex subscription session'))).toBe(true);
+
+      unavailable = true;
+      const unavailableResult = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber', '--json'], configManager, root);
+      expect(unavailableResult.result).toEqual({ handled: true, exitCode: 0 });
+      expect((JSON.parse(unavailableResult.output) as { setup: { setupClass: string } }).setup.setupClass).toBe('unknown');
+    } finally {
+      await server.stop(true);
+      if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+      else process.env.TYPESAFE_API_KEY = previousKey;
+      installJudgmentPort(previousJudgment);
+    }
   });
 
   test('secrets test redacts resolved secret values in text and json output', async () => {
