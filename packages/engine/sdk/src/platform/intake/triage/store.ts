@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { types } from 'node:util';
 import {
   closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync,
   readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
@@ -146,7 +147,7 @@ function readRecords(db: SqlDatabase): Map<string, TriageStoredRecord> {
   return new Map((db.exec('SELECT id, latest, settled FROM triage_receipts')[0]?.values ?? []).map(decodeRecord));
 }
 
-function publishImage(path: string, image: Uint8Array, signal?: AbortSignal): void {
+function publishImage(path: string, image: Uint8Array, signal?: AbortSignal, assertPublicationCurrent?: () => void): void {
   abortIfRequested(signal);
   checkPath(path);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -166,6 +167,10 @@ function publishImage(path: string, image: Uint8Array, signal?: AbortSignal): vo
     // Cancellation after preparation cannot publish a partial/new receipt.
     abortIfRequested(signal);
     checkPath(path);
+    const proof: unknown = assertPublicationCurrent?.();
+    if (types.isPromise(proof)) void proof.catch(() => {});
+    if (proof !== undefined) throw new Error('Triage publication fence must be synchronous.');
+    abortIfRequested(signal);
     renameSync(temporary, path);
     ownsTemporary = false;
   } finally {
@@ -187,8 +192,9 @@ export class SqliteTriageStore implements TriageStore {
   private closing: Promise<void> | null = null;
   private readonly pending = new Set<Promise<unknown>>();
 
-  constructor(workingDirectory: string) {
-    this.path = join(canonicalDirectory(workingDirectory), '.goodvibes', 'tui', 'operator', STORE_FILE);
+  constructor(workingDirectory: string, fileName: string = STORE_FILE) {
+    if (!/^[a-zA-Z0-9_-]+\.sqlite$/.test(fileName)) throw new TypeError('Triage store requires a safe SQLite filename.');
+    this.path = join(canonicalDirectory(workingDirectory), '.goodvibes', 'tui', 'operator', fileName);
   }
 
   get dbPath(): string {
@@ -221,7 +227,8 @@ export class SqliteTriageStore implements TriageStore {
     });
   }
 
-  commit(receipts: readonly TriageReceipt[], signal?: AbortSignal): Promise<void> {
+  /** The optional host fence runs synchronously immediately before atomic publication. */
+  commit(receipts: readonly TriageReceipt[], signal?: AbortSignal, assertPublicationCurrent?: () => void): Promise<void> {
     if (this.closed) return Promise.reject(new Error('SqliteTriageStore is closed.'));
     let checked: TriageReceipt[];
     try {
@@ -255,7 +262,7 @@ export class SqliteTriageStore implements TriageStore {
         }
         db.run('COMMIT');
         abortIfRequested(signal);
-        publishImage(this.path, db.export(), signal);
+        publishImage(this.path, db.export(), signal, assertPublicationCurrent);
       } finally {
         db.close();
       }
