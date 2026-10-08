@@ -35,8 +35,8 @@ describe('CI prerequisite acquisition', () => {
     expect(installer.if).toBeUndefined();
     expect(installer['continue-on-error']).toBeUndefined();
     expect(tui['timeout-minutes']).toBe(10);
-    const proof = tui.steps.find((step) => step.name === 'Qualify host pairing, passive planning history and interruption recovery')!;
-    expect(proof.run).toBe('bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts src/test/e2e/host-pair-interactive.e2e.test.ts src/test/e2e/planning-history.e2e.test.ts');
+    const proof = tui.steps.find((step) => step.name === 'Qualify host pairing, native integration, passive history and interruption recovery')!;
+    expect(proof.run).toBe('bun packages/engine/scripts/test.ts --cwd ../../products/tui --timeout=300000 src/test/e2e/host-pair-terminal.e2e.test.ts src/test/e2e/host-pair-interactive.e2e.test.ts src/test/e2e/planning-history.e2e.test.ts src/test/e2e/native-integration.e2e.test.ts');
     expect(proof.if).toBeUndefined();
     expect(proof['continue-on-error']).toBeUndefined();
     expect(tui.steps.indexOf(installer)).toBeLessThan(tui.steps.indexOf(proof));

@@ -28,6 +28,7 @@ type Hold = 'preview' | 'revalidation' | 'migration' | 'verification';
 type Cancel = 'Ctrl-C' | 'Escape' | 'Ctrl-D' | 'exit' | 'replacement';
 
 import { TerminalFrame } from './terminal-frame.ts';
+import { observeOwnedWorkspaceDecline, ownerWorkspaceStartupReadiness } from '../helpers/owner-workspace-startup.ts';
 
 function deferred() {
   let release!: () => void;
@@ -170,21 +171,27 @@ async function fixture(environmentOverride = false) {
         const since = session.mark();
         session.write('\r');
         await session.find('workspace question answered', text => text.includes('Ask anything, or type / for commands') && !text.includes(WORKSPACE_QUESTION), since);
-        workspaceAnswered = true;
       } else {
         await session.find('interactive input', text => text.includes('Ask anything, or type / for commands') && !text.includes(WORKSPACE_QUESTION));
       }
-      // First paint can precede stdin subscription. Prove the real composer is
-      // listening with an unsent, idempotent echo, then clear it before commands.
+      // First paint can precede stdin subscription, and dismissing the modal
+      // can precede its async decline write. Within the same readiness budget,
+      // require the owned stored decline and an unsent real-composer echo.
       try { await waitFor('live owner composer', () => {
-        if (session.screen().includes('┃  x')) return true;
-        session.write('\x15x');
+        const readiness = ownerWorkspaceStartupReadiness(session.screen(), home);
+        if (readiness.ready) return true;
+        if (readiness.canEcho) session.write('\x15x');
         return false;
       }, 10_000, 30); } catch (error) {
         // This error reaches the runner only after the test's existing finally
         // drains the fixture. Bound and redact the current frame, never raw PTY
         // history or stored pairing credentials.
-        let diagnostic = `${String(error)}\nrestart=${isRestart} exit=${session.child.exitCode} signal=${session.child.signalCode} bytes=${session.output().length}\n--- current terminal ---\n${session.screen()}`;
+        let registration: unknown;
+        try {
+          const observed = observeOwnedWorkspaceDecline(home);
+          registration = { byteCount: observed.byteCount, sha256: observed.sha256, ownedDecline: observed.ownedDecline };
+        } catch { registration = { byteCount: null, sha256: null, ownedDecline: false }; }
+        let diagnostic = `${String(error)}\nregistration=${JSON.stringify(registration)}\nrestart=${isRestart} exit=${session.child.exitCode} signal=${session.child.signalCode} bytes=${session.output().length}\n--- current terminal ---\n${session.screen()}`;
         for (const token of [daemon.token, ...authTokens.map(value => value?.replace(/^Bearer\s+/i, ''))]) {
           if (token) diagnostic = diagnostic.replaceAll(token, '[fixture credential]');
         }
@@ -192,7 +199,8 @@ async function fixture(environmentOverride = false) {
         throw new Error(diagnostic.length > 12_000 ? `${diagnostic.slice(0, 12_000)}\n[diagnostic truncated]` : diagnostic);
       }
       const cleared = session.mark(); session.write('\x15');
-      await session.find('empty live owner composer', text => text.includes('Ask anything, or type / for commands') && !text.includes('┃  x'), cleared);
+      await session.find('empty live owner composer', text => text.includes('Ask anything, or type / for commands') && !text.includes('┃  x') && !text.includes(WORKSPACE_QUESTION), cleared);
+      workspaceAnswered = true;
       return session;
     }
     async function status() {
