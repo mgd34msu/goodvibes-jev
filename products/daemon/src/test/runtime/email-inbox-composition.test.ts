@@ -368,10 +368,10 @@ test('duplicate lifetime owner cannot acquire the store; an explicit different a
   expect(stored(second.storePath).checkpoint).toBeNull(); expect(stored(first.storePath)).toEqual(before);
 });
 
-test.each(['cluster', 'unconfigured', 'constructor'] as const)('%s refusal precedes service construction, credentials, files, and polling', async mode => {
+test.each(['unconfigured', 'constructor'] as const)('%s refusal precedes service construction, credentials, files, and polling', async mode => {
   const root = makeOwnedTempDir('email-refused-composition'), workingDirectory = join(root, 'workspace'); mkdirSync(workingDirectory);
   const configManager = new ConfigManager({ surfaceRoot: 'tui', workingDir: workingDirectory, homeDir: join(root, 'home') });
-  configManager.set('cluster.enabled', mode === 'cluster');
+  configManager.set('cluster.enabled', false);
   if (mode !== 'unconfigured') { configManager.set('surfaces.email.host', account.host); configManager.set('surfaces.email.user', account.username); }
   let effects = 0; const context: HandlerContext = { configManager, workingDirectory, homeDirectory: join(root, 'home'), catalog: new GatewayMethodCatalog(),
     credentials: createDaemonCredentialStore({ async get() { effects++; return null; }, async set() { effects++; } }), logger: { info() {}, warn() {}, error() {} } };
@@ -379,7 +379,7 @@ test.each(['cluster', 'unconfigured', 'constructor'] as const)('%s refusal prece
     createOwner() { effects++; throw new Error('Unexpected owner'); }, registerSurface() { effects++; throw new Error('Unexpected registration'); },
   });
   const routing = { async initialize() {}, async close() {}, unregister() {}, resolveProfileId: () => null };
-  await expect(composition(context, routing, { gatePolling() { effects++; }, ...(mode === 'constructor' ? {} : { createEmailService() { effects++; throw new Error('Unexpected mail'); } }) })).rejects.toThrow(mode === 'constructor' ? 'canonical' : 'single-node');
+  await expect(composition(context, routing, { gatePolling() { effects++; }, ...(mode === 'constructor' ? {} : { createEmailService() { effects++; throw new Error('Unexpected mail'); } }) })).rejects.toThrow(mode === 'constructor' ? 'canonical' : 'enabled stable');
   expect(effects).toBe(0); expect(existsSync(join(workingDirectory, '.goodvibes', 'tui', 'operator'))).toBe(false);
 });
 

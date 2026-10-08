@@ -1,10 +1,12 @@
+import type { ClusterClock } from '@goodvibes-jev/engine/sdk/platform/cluster';
+import { ownInboxEligibility } from './inbox-eligibility.js';
 /** Explicit single-account mail inbox; does not enable all-provider default serve. */
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSurfaceEmailInboxConfigReader } from '@goodvibes-jev/engine/sdk/platform/email';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import { createEmailInboxOwner, registerInboxSurface,
-  type EmailInboxAccount, type InboxSurfaceRegistration } from '@goodvibes-jev/engine/sdk/platform/intake';
+  type EmailInboxAccount, type EmailInboxOwner, type InboxSurfaceRegistration } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { ProtectedSourceOwnerOptions } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
@@ -14,8 +16,10 @@ export interface EmailDaemonInboxOptions {
   readonly screening: ProtectedSourceOwnerOptions;
 }
 export interface EmailDaemonInboxFactories {
-  readonly createOwner?: typeof createEmailInboxOwner;
+  readonly createOwner?: (...args: Parameters<typeof createEmailInboxOwner>) => EmailInboxOwner;
   readonly registerSurface?: typeof registerInboxSurface;
+  /** Constructor-only deterministic clock, never decoded from configuration. */
+  readonly eligibilityClock?: ClusterClock;
 }
 
 export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
@@ -25,16 +29,19 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
     // reader derives readiness from configured endpoint/account fields.
     const config: { get(key: string): unknown } = context.configManager;
     const mailConfig = createSurfaceEmailInboxConfigReader(key => config.get(key));
+    const clustered = context.configManager.get('cluster.enabled') === true;
+    if (clustered && !controls.gatePollingOwned) throw new Error('Clustered inbox requires owned gate retirement');
     const current = (): void => {
-      if (context.configManager.get('cluster.enabled') !== false
-        || mailConfig('email.enabled') !== true) throw new Error('Email inbox requires enabled single-node mode');
+      if ((context.configManager.get('cluster.enabled') === true) !== clustered
+        || mailConfig('email.enabled') !== true) throw new Error('Email inbox requires enabled stable cluster mode');
     };
     current();
     if (!controls.createEmailService) throw new Error('Email inbox requires the canonical owned mail-service constructor');
     const workingDirectory = await realpath(context.workingDirectory);
     current();
     const mail = controls.createEmailService();
-    let owner: ReturnType<typeof createEmailInboxOwner> | undefined;
+    let eligibility: ReturnType<typeof ownInboxEligibility> | undefined;
+    let owner: EmailInboxOwner | undefined;
     let release: (() => void) | undefined;
     let surface: InboxSurfaceRegistration | undefined;
     try {
@@ -44,6 +51,7 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
           if (!surface?.getImapCheckpoint) throw new Error('Email inbox checkpoint storage is unavailable');
           return surface.getImapCheckpoint('email');
         } });
+      if (clustered && typeof owner.verifyEligibility !== 'function') throw new Error('Clustered email inbox requires an eligible owner');
       current();
       const storeFileName = `inbox-email-${owner.scopeId}.sqlite`;
       release = await acquireCrossProcessLock(join(workingDirectory, '.goodvibes', 'tui', 'operator', `${storeFileName}.owner.lock`),
@@ -51,12 +59,19 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
       current();
       const selectedOwner = owner;
       surface = (factories.registerSurface ?? registerInboxSurface)({ ...context, workingDirectory }, {
-        adapters: new Map([['email', selectedOwner.adapter]]), storeFileName,
+        adapters: new Map([['email', selectedOwner.adapter]]), storeFileName, ...(clustered ? { awaitInitialPoll: false } : {}),
         acquireReadLease: () => selectedOwner.acquireReadLease(),
-        gatePolling: (_provider, control) => controls.gatePolling(`email:${selectedOwner.scopeId}`, control),
+        gatePolling: (_provider, control) => {
+          if (!clustered) return controls.gatePolling(`email:${selectedOwner.scopeId}`, control);
+          eligibility = ownInboxEligibility({ verify: async () => { await surface!.ready; return selectedOwner.verifyEligibility!(); }, control,
+            ...(factories.eligibilityClock ? { clock: factories.eligibilityClock } : {}),
+            register: gated => controls.gatePollingOwned!(`email:${selectedOwner.scopeId}`, gated),
+          });
+          return () => eligibility!.close();
+        },
       });
     } catch {
-      try { await owner?.close(); } finally { try { mail.close(); } finally { release?.(); } }
+      try { await Promise.all([owner?.close(), eligibility?.close()]); } finally { try { mail.close(); } finally { release?.(); } }
       throw new Error('Email inbox composition could not acquire its owned account and storage');
     }
     const registration = surface;
@@ -64,7 +79,7 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
     const unlock = release;
     let closing: Promise<void> | undefined;
     return {
-      ready: registration.ready,
+      ready: Promise.all([registration.ready, eligibility?.ready]).then(() => {}),
       close() {
         if (!closing) {
           closing = Promise.resolve().then(async () => {

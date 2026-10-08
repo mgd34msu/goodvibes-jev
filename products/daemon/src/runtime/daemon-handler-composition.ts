@@ -7,7 +7,7 @@ import type { ClusterCoordinator } from '@goodvibes-jev/engine/sdk/platform/clus
 import type { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { registerRoutingMethods, registerDraftMethods, type ChannelDeliveryRouter } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { registerRemoteSurface } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import type { RegisterInboxSurfaceOptions } from '@goodvibes-jev/engine/sdk/platform/intake';
+import type { InboxPollingControl, RegisterInboxSurfaceOptions } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { registerDaemonHandlers, type DaemonHandlerSurfaces, type RoutingRegistration } from '../daemon/handlers/index.js';
 import type { HandlerContext, HandlerLogger, OwnedHandlerSurface } from '../daemon/handlers/context.js';
 import { createPaymentsServices } from './payments-composition.js';
@@ -22,6 +22,10 @@ import type { BrowserCheckoutSeamHolder } from './browser-checkout-seam-holder.j
  * production default and this seam is not evidence of built-in provider parity.
  */
 export interface DaemonInboxControls extends Required<Pick<RegisterInboxSurfaceOptions, 'gatePolling'>> {
+  /** Explicit awaitable election withdrawal for account-verified clustered owners. */
+  readonly gatePollingOwned?: (providerId: string, control: InboxPollingControl) => () => Promise<void>;
+  /** Subscribe to local config/credential revocation without exposing secrets. */
+  readonly onAccountInvalidation?: (listener: () => void) => () => void;
   /** Trusted root-owned constructor; no credentials or generic secret access escape. */
   readonly createEmailService?: () => { readonly service: EmailService; close(): void };
 }
@@ -73,6 +77,7 @@ export async function createDaemonHandlerComposition(
     registerInbox: (ctx, routing) => registerOwnedMailInbox(options.inboxFactory, ctx, routing, {
       // Each provider is elected separately; standby nodes still serve storage.
       gatePolling: (providerId, control) => options.clusterCoordinator.register(inboxPollerGate(providerId, control)),
+      gatePollingOwned: (providerId, control) => options.clusterCoordinator.registerOwned(inboxPollerGate(providerId, control)),
     }, { configManager: options.configManager, secretsManager: options.secretsManager }),
     registerDrafts: registerDraftMethods,
     registerPayments: () => createPaymentsServices({

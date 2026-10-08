@@ -1,9 +1,11 @@
+import type { ClusterClock } from '@goodvibes-jev/engine/sdk/platform/cluster';
+import { ownInboxEligibility } from './inbox-eligibility.js';
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import {
   createSlackInboxOwner, registerInboxSurface,
-  type SlackInboxAccount, type InboxSurfaceRegistration,
+  type SlackInboxAccount, type SlackInboxOwner, type InboxSurfaceRegistration,
 } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { ProtectedSourceOwnerOptions } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
@@ -18,12 +20,14 @@ export interface SlackDaemonInboxOptions {
 
 /** In-process constructor capabilities; never sourced from CLI/config/message data. */
 export interface SlackDaemonInboxFactories {
-  readonly createOwner?: typeof createSlackInboxOwner;
+  readonly createOwner?: (...args: Parameters<typeof createSlackInboxOwner>) => Promise<SlackInboxOwner>;
   readonly registerSurface?: typeof registerInboxSurface;
+  /** Constructor-only deterministic clock, never decoded from configuration. */
+  readonly eligibilityClock?: ClusterClock;
 }
 
 /**
- * Real Slack-only composition for an explicitly configured single-node host.
+ * Real Slack-only composition for an explicitly configured account owner.
  * This neither installs a global provider registry nor claims all-provider serve.
  */
 export function createSlackDaemonInboxFactory(
@@ -31,13 +35,14 @@ export function createSlackDaemonInboxFactory(
   factories: SlackDaemonInboxFactories = {},
 ): DaemonInboxFactory {
   return async (context, _routing, controls) => {
-    // Reject unsupported cluster mode before credentials, sockets or disk writes.
-    if (context.configManager.get('cluster.enabled') !== false) throw new Error('Slack inbox composition requires single-node mode');
+    const clustered = context.configManager.get('cluster.enabled') === true;
+    if (clustered && !controls.gatePollingOwned) throw new Error('Clustered inbox requires owned gate retirement');
+    if (clustered && !controls.onAccountInvalidation) throw new Error('Clustered Slack inbox requires owned account invalidation');
     if (context.configManager.get('surfaces.slack.enabled') !== true) throw new Error('Slack inbox composition requires Slack to be enabled');
     const expectedWorkspace = options.account.workspaceId;
     const account = Object.freeze({ workspaceId: expectedWorkspace, userId: options.account.userId });
     const current = (): void => {
-      if (context.configManager.get('cluster.enabled') !== false
+      if ((context.configManager.get('cluster.enabled') === true) !== clustered
         || context.configManager.get('surfaces.slack.enabled') !== true
         || context.configManager.get('surfaces.slack.workspaceId') !== expectedWorkspace) {
         throw new Error('Slack inbox configuration scope changed');
@@ -50,9 +55,15 @@ export function createSlackDaemonInboxFactory(
       account, screening: options.screening, assertCurrent: current,
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
+    let eligibility: ReturnType<typeof ownInboxEligibility> | undefined;
+    let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
     let surface: InboxSurfaceRegistration | undefined;
     try {
+      if (clustered && (typeof owner.verifyEligibility !== 'function' || typeof owner.invalidateCredential !== 'function')) {
+        throw new Error('Clustered Slack inbox requires an eligible owner');
+      }
+      unsubscribe = controls.onAccountInvalidation?.(() => owner.invalidateCredential?.());
       current();
       const storeFileName = `inbox-slack-${owner.scopeId}.sqlite`;
       release = await acquireCrossProcessLock(join(workingDirectory, '.goodvibes', 'tui', 'operator', `${storeFileName}.owner.lock`), {
@@ -60,27 +71,36 @@ export function createSlackDaemonInboxFactory(
       });
       current();
       surface = (factories.registerSurface ?? registerInboxSurface)({ ...context, workingDirectory }, {
-        adapters: new Map([['slack', owner.adapter]]), storeFileName,
+        adapters: new Map([['slack', owner.adapter]]), storeFileName, ...(clustered ? { awaitInitialPoll: false } : {}),
         assertReadCurrent: owner.assertReadCurrent,
         // Keep wire provider='slack'; only the owner/election discriminator is scoped.
-        gatePolling: (_provider, control) => controls.gatePolling(`slack:${owner.scopeId}`, control),
+        gatePolling: (_provider, control) => {
+          if (!clustered) return controls.gatePolling(`slack:${owner.scopeId}`, control);
+          eligibility = ownInboxEligibility({ verify: async () => { await surface!.ready; return owner.verifyEligibility!(); }, control,
+            ...(factories.eligibilityClock ? { clock: factories.eligibilityClock } : {}),
+            register: gated => controls.gatePollingOwned!(`slack:${owner.scopeId}`, gated),
+          });
+          return () => eligibility!.close();
+        },
       });
     } catch {
-      try { await owner.close(); } finally { release?.(); }
+      try { await Promise.all([Promise.resolve().then(() => unsubscribe?.()), owner.close(), eligibility?.close()]); } finally { release?.(); }
       throw new Error('Slack inbox composition could not acquire its owned storage');
     }
     const registration = surface;
     const unlock = release;
     let closing: Promise<void> | undefined;
     return {
-      ready: registration.ready,
+      ready: Promise.all([registration.ready, eligibility?.ready]).then(() => {}),
       close() {
         if (!closing) {
           closing = Promise.resolve().then(async () => {
+            let subscriptionFailure = false;
+            try { unsubscribe?.(); } catch { subscriptionFailure = true; }
             const [store, provider] = await Promise.allSettled([registration.close(), owner.close()]);
             // Never release a store lease on a failed storage retirement.
             if (store.status === 'fulfilled') unlock();
-            if (store.status === 'rejected' || provider.status === 'rejected') throw new Error('Slack inbox composition did not close cleanly');
+            if (subscriptionFailure || store.status === 'rejected' || provider.status === 'rejected') throw new Error('Slack inbox composition did not close cleanly');
           });
         }
         return closing;

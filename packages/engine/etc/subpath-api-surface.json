@@ -13867,6 +13867,7 @@
         "isMaster",
         "onPrepare",
         "register",
+        "registerOwned",
         "reportConsumerConflict",
         "running",
         "settled",
@@ -13875,7 +13876,7 @@
         "stop",
         "surfaceHoldings"
       ],
-      "text": "export declare class ClusterCoordinator { private readonly options; private readonly registry; private readonly clock; private nodeIdValue; private election; private transport; private started; private ungatedRunning; private readonly prepares; constructor(options: ClusterCoordinatorOptions); private get nodeId(); get enabled(): boolean; get running(): boolean; get isMaster(): boolean; holdsSurface(surface: ClusterSurfaceKey): boolean; surfaceHoldings(): readonly ClusterSurfaceHolding[] | null; register(gate: ClusterConsumerGate): () => void; onPrepare(prepare: () => Promise<void>): void; start(): Promise<void>; stop(reason?: string): Promise<void>; settled(): Promise<void>; reportConsumerConflict(detail: string, surface?: ClusterSurfaceKey): void; status(): ClusterStatus; private startAllUngated; private stopAllUngated; private startGateUngated; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class ClusterCoordinator { private readonly options; private readonly registry; private readonly clock; private readonly ownedWithdrawals; private readonly ownedGateDrains; private nodeIdValue; private election; private transport; private started; private ungatedRunning; private readonly prepares; constructor(options: ClusterCoordinatorOptions); private get nodeId(); get enabled(): boolean; get running(): boolean; get isMaster(): boolean; holdsSurface(surface: ClusterSurfaceKey): boolean; surfaceHoldings(): readonly ClusterSurfaceHolding[] | null; register(gate: ClusterConsumerGate): () => void; registerOwned(gate: ClusterConsumerGate): () => Promise<void>; private registerConsumer; onPrepare(prepare: () => Promise<void>): void; start(): Promise<void>; stop(reason?: string): Promise<void>; settled(): Promise<void>; reportConsumerConflict(detail: string, surface?: ClusterSurfaceKey): void; status(): ClusterStatus; private startAllUngated; private stopAllUngated; private startGateUngated; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "ClusterCoordinatorOptions",
@@ -14211,11 +14212,12 @@
         "list",
         "onChange",
         "register",
+        "registerOwned",
         "size",
         "startSurface",
         "stopSurface"
       ],
-      "text": "export declare class ClusterSurfaceRegistry { private readonly logger; private readonly surfaces; private readonly retiring; private readonly listeners; constructor(logger: ClusterLogger); register(gate: ClusterConsumerGate): () => void; onChange(listener: (surfaceId: string) => void): () => void; canServe(surfaceId: string): boolean; get(surfaceId: string): RegisteredClusterSurface | undefined; list(): RegisteredClusterSurface[]; get size(): number; startSurface(surfaceId: string, context: ClusterConsumerStartContext): Promise<void>; stopSurface(surfaceId: string, reason: string): Promise<void>; forget(surfaceId: string): void; private notify; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class ClusterSurfaceRegistry { private readonly logger; private readonly ownedGates; private readonly surfaces; private readonly retiring; private readonly listeners; constructor(logger: ClusterLogger); register(gate: ClusterConsumerGate): () => void; registerOwned(gate: ClusterConsumerGate): () => Promise<void>; private registerConsumer; onChange(listener: (surfaceId: string) => void): () => void; canServe(surfaceId: string): boolean; get(surfaceId: string): RegisteredClusterSurface | undefined; list(): RegisteredClusterSurface[]; get size(): number; startSurface(surfaceId: string, context: ClusterConsumerStartContext): Promise<void>; stopSurface(surfaceId: string, reason: string): Promise<void>; forget(surfaceId: string): void; private notify; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "ClusterSurfaceStatus",
@@ -31486,7 +31488,7 @@
         "close",
         "scopeId"
       ],
-      "text": "export interface EmailInboxOwner { readonly account: EmailInboxAccount; readonly scopeId: string; readonly adapter: InboundProviderAdapter; assertReadCurrent(): Promise<void>; acquireReadLease(): Promise<() => Promise<void>>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface EmailInboxOwner { readonly account: EmailInboxAccount; readonly scopeId: string; readonly adapter: InboundProviderAdapter; verifyEligibility?(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void; }>; assertReadCurrent(): Promise<void>; acquireReadLease(): Promise<() => Promise<void>>; close(): Promise<void>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "EmailInboxOwnerOptions",
@@ -31608,6 +31610,7 @@
         "advanceCursor",
         "close",
         "commitImapPoll",
+        "commitTimestampPoll",
         "constructor",
         "countItems",
         "countItemsByProvider",
@@ -31622,7 +31625,7 @@
         "sweepRetention",
         "upsertItems"
       ],
-      "text": "export declare class InboxCursorStore { private readonly store; private revision; private persistedRevision; private initialized; private initializing; private closing; private readonly flushing; private readonly sweeping; private readonly itemTtlMs; private readonly itemCap; private readonly sweepIntervalMs; private readonly onSweep; private readonly onSweepError; private readonly now; private readonly setIntervalImpl; private readonly clearIntervalImpl; private sweepTimer; private closed; constructor(workingDirectory: string, fileName?: string, options?: InboxCursorStoreOptions); get dbPath(): string; init(): Promise<void>; private assertOpen; sweepRetention(): InboxSweepSummary; private runSweep; private startSweepTimer; private stopSweepTimer; private enforceItemCap; upsertItems(items: readonly InboundChannelItem[]): number; getImapCheckpoint(provider: string): ImapUidCheckpoint | null; commitImapPoll(provider: string, inputItems: readonly InboundChannelItem[], input: ImapUidCheckpointAdvance, assertCurrent: () => void): Promise<number>; advanceCursor(provider: string, candidate: number): void; getCursor(provider: string): number; listItems(query: InboxQuery): InboundChannelItem[]; maxReceivedAt(providers?: readonly string[]): number; countItems(providers?: readonly string[], since?: number): number; countItemsByProvider(providers?: readonly string[], since?: number): Map<string, number>; pruneOlderThan(cutoff: number, providers?: readonly string[]): number; flush(): Promise<void>; private flushSnapshot; close(): Promise<void>; } ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class InboxCursorStore { private readonly store; private revision; private persistedRevision; private initialized; private initializing; private closing; private readonly flushing; private readonly sweeping; private readonly itemTtlMs; private readonly itemCap; private readonly sweepIntervalMs; private readonly onSweep; private readonly onSweepError; private readonly now; private readonly setIntervalImpl; private readonly clearIntervalImpl; private sweepTimer; private closed; constructor(workingDirectory: string, fileName?: string, options?: InboxCursorStoreOptions); get dbPath(): string; init(): Promise<void>; private assertOpen; sweepRetention(): InboxSweepSummary; private runSweep; private startSweepTimer; private stopSweepTimer; private enforceItemCap; upsertItems(items: readonly InboundChannelItem[]): number; commitTimestampPoll(provider: string, inputItems: readonly InboundChannelItem[], assertCurrent: () => void): Promise<number>; getImapCheckpoint(provider: string): ImapUidCheckpoint | null; commitImapPoll(provider: string, inputItems: readonly InboundChannelItem[], input: ImapUidCheckpointAdvance, assertCurrent: () => void): Promise<number>; advanceCursor(provider: string, candidate: number): void; getCursor(provider: string): number; listItems(query: InboxQuery): InboundChannelItem[]; maxReceivedAt(providers?: readonly string[]): number; countItems(providers?: readonly string[], since?: number): number; countItemsByProvider(providers?: readonly string[], since?: number): Map<string, number>; pruneOlderThan(cutoff: number, providers?: readonly string[]): number; flush(): Promise<void>; private flushSnapshot; close(): Promise<void>; } ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "InboxCursorStoreOptions",
@@ -31867,7 +31870,7 @@
       "required": [
         "adapters"
       ],
-      "text": "export interface RegisterInboxSurfaceOptions { readonly adapters: ReadonlyMap<string, InboundProviderAdapter>; readonly storeFileName?: string; readonly skipInitialPoll?: boolean; readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>); readonly assertReadCurrent?: () => void | Promise<void>; readonly acquireReadLease?: () => Promise<() => void | Promise<void>>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+      "text": "export interface RegisterInboxSurfaceOptions { readonly adapters: ReadonlyMap<string, InboundProviderAdapter>; readonly storeFileName?: string; readonly skipInitialPoll?: boolean; readonly awaitInitialPoll?: boolean; readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>); readonly assertReadCurrent?: () => void | Promise<void>; readonly acquireReadLease?: () => Promise<() => void | Promise<void>>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
     },
     {
       "name": "RouteResolver",
@@ -31898,7 +31901,7 @@
         "close",
         "scopeId"
       ],
-      "text": "export interface SlackInboxOwner { readonly account: SlackInboxAccount; readonly scopeId: string; readonly adapter: InboundProviderAdapter; assertReadCurrent(): Promise<void>; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface SlackInboxOwner { readonly account: SlackInboxAccount; readonly scopeId: string; readonly adapter: InboundProviderAdapter; assertReadCurrent(): Promise<void>; verifyEligibility?(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void; }>; invalidateCredential?(): void; close(): Promise<void>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "SlackInboxOwnerFactories",
@@ -31997,6 +32000,23 @@
       "text": "export interface TriageStoredRecord { readonly latest: TriageReceipt; readonly settled: TriageEvidence | null; }"
     },
     {
+      "name": "VerifiedEmailInboxOwner",
+      "kind": "interface",
+      "required": [
+        "verifyEligibility"
+      ],
+      "text": "export interface VerifiedEmailInboxOwner extends EmailInboxOwner { verifyEligibility(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void; }>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "VerifiedSlackInboxOwner",
+      "kind": "interface",
+      "required": [
+        "invalidateCredential",
+        "verifyEligibility"
+      ],
+      "text": "export interface VerifiedSlackInboxOwner extends SlackInboxOwner { verifyEligibility(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void; }>; invalidateCredential(): void; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "aggregateInbox",
       "kind": "function",
       "text": "export declare function aggregateInbox(sources: InboxAggregatorSources, query: InboxListQuery): InboxListOutput;"
@@ -32014,7 +32034,7 @@
     {
       "name": "createEmailInboxOwner",
       "kind": "function",
-      "text": "export declare function createEmailInboxOwner(options: EmailInboxOwnerOptions): EmailInboxOwner;"
+      "text": "export declare function createEmailInboxOwner(options: EmailInboxOwnerOptions): VerifiedEmailInboxOwner;"
     },
     {
       "name": "createProtectedInboxMapper",
@@ -32024,7 +32044,7 @@
     {
       "name": "createSlackInboxOwner",
       "kind": "function",
-      "text": "export declare function createSlackInboxOwner(context: Pick<AdapterContext, 'credentials' | 'logger'>, options: SlackInboxOwnerOptions, factories?: SlackInboxOwnerFactories): Promise<SlackInboxOwner>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function createSlackInboxOwner(context: Pick<AdapterContext, 'credentials' | 'logger'>, options: SlackInboxOwnerOptions, factories?: SlackInboxOwnerFactories): Promise<VerifiedSlackInboxOwner>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "decodeIntakeImapHeader",

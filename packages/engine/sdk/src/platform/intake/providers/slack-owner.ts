@@ -40,7 +40,17 @@ export interface SlackInboxOwner {
   readonly adapter: InboundProviderAdapter;
   /** A changed credential must prove the same identity before stored rows leave. */
   assertReadCurrent(): Promise<void>;
+  /** Metadata-only exact-account proof, revoked by credential/scope/source changes. */
+  verifyEligibility?(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
+  /** Trusted host credential lifecycle hook, including alias and ABA changes. */
+  invalidateCredential?(): void;
   close(): Promise<void>;
+}
+
+/** Concrete owners provide proof; legacy host-owned adapter seams remain compatible. */
+export interface VerifiedSlackInboxOwner extends SlackInboxOwner {
+  verifyEligibility(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
+  invalidateCredential(): void;
 }
 
 function captureAccount(value: SlackInboxAccount): SlackInboxAccount {
@@ -67,7 +77,7 @@ export async function createSlackInboxOwner(
   context: Pick<AdapterContext, 'credentials' | 'logger'>,
   options: SlackInboxOwnerOptions,
   factories: SlackInboxOwnerFactories = {},
-): Promise<SlackInboxOwner> {
+): Promise<VerifiedSlackInboxOwner> {
   const account = captureAccount(options.account);
   const scopeId = digest(JSON.stringify(['slack-inbox', 1, account.workspaceId, account.userId]));
   const lifetime = new AbortController();
@@ -80,7 +90,17 @@ export async function createSlackInboxOwner(
   let closing: Promise<void> | undefined;
   let verifiedCredential: string | undefined;
   let identityEpoch = 0;
-  const invalidateIdentity = (): void => { verifiedCredential = undefined; identityEpoch += 1; };
+  let identityLifetime = new AbortController();
+  let identitySignal = AbortSignal.any([signal, identityLifetime.signal]);
+  let commitEpoch: number | undefined;
+  let pollSignal: AbortSignal | undefined;
+  const invalidateIdentity = (): void => {
+    const retired = identityLifetime;
+    verifiedCredential = undefined; identityEpoch += 1; commitEpoch = undefined;
+    identityLifetime = new AbortController();
+    identitySignal = AbortSignal.any([signal, identityLifetime.signal]);
+    retired.abort();
+  };
 
   const current = (): void => {
     try {
@@ -90,8 +110,13 @@ export async function createSlackInboxOwner(
         void Promise.resolve(result).catch(() => {});
         throw new Error();
       }
+      const sourceResult: unknown = assertSource.call(sourceAuthority);
+      if (sourceResult !== undefined) {
+        if (types.isPromise(sourceResult)) void sourceResult.catch(() => {});
+        throw new Error();
+      }
       if (closed || signal.aborted) throw new Error();
-    } catch { throw new Error('Slack inbox account scope is unavailable'); }
+    } catch { invalidateIdentity(); throw new Error('Slack inbox account scope is unavailable'); }
   };
   current();
   const screening = createProtectedSourceOwner({ ...options.screening,
@@ -119,8 +144,10 @@ export async function createSlackInboxOwner(
   };
   const readCredential = async (): Promise<string | null> => {
     current();
+    const epoch = identityEpoch;
     const value = await context.credentials.resolveConfigSecret(KEY);
     current();
+    if (epoch !== identityEpoch) throw new Error('Slack inbox credential observation was revoked');
     return value;
   };
   const matchesAccount = (body: unknown): boolean => {
@@ -131,6 +158,7 @@ export async function createSlackInboxOwner(
   const identityHttp = (token: string, onVerified: (epoch: number) => void): SlackInboxHttp => async (url, request) => {
     current();
     if (request.headers.Authorization !== `Bearer ${token}`) throw new Error('Slack inbox credential scope changed');
+    const epoch = identityEpoch;
     const response = await httpOwner.http(url, request);
     current();
     if (url.pathname === '/api/auth.test') {
@@ -140,20 +168,29 @@ export async function createSlackInboxOwner(
         invalidateIdentity();
         throw new Error('Slack inbox account verification unavailable');
       }
-      onVerified(identityEpoch);
+      if (epoch !== identityEpoch) throw new Error('Slack inbox identity proof was revoked');
+      onVerified(epoch);
     }
     return response;
   };
 
   const adapter: InboundProviderAdapter = {
     id: 'slack', pollIntervalMs: POLL_CADENCE_MS.realtime,
+    assertCurrent() {
+      current();
+      if (commitEpoch === undefined || commitEpoch !== identityEpoch || !verifiedCredential || pollSignal?.aborted) {
+        throw new Error('Slack inbox poll identity is unavailable');
+      }
+    },
     async poll(options: ProviderPollOptions): Promise<ProviderPollResult> {
+      commitEpoch = undefined; pollSignal = options.signal;
       let configured: boolean | undefined;
       try {
         return await own(async () => {
           const token = await readCredential();
           if (!usableToken(token)) { configured = false; invalidateIdentity(); return unavailable(false); }
           configured = true;
+          if (verifiedCredential && verifiedCredential !== digest(token)) invalidateIdentity();
           let verified: number | undefined;
           const delegate = createSlackInboxAdapter({ logger: context.logger,
             credentials: { resolveRef: async () => null, resolveConfigSecret: async (key) => key === KEY ? token : null },
@@ -164,33 +201,48 @@ export async function createSlackInboxOwner(
           if (await readCredential() !== token) { invalidateIdentity(); return unavailable(true); }
           // A later auth denial must not be overwritten by an older mapper/read.
           if (verified !== undefined && verified !== identityEpoch) return unavailable(true);
-          if (verified !== undefined) verifiedCredential = digest(token);
+          if (verified !== undefined) { verifiedCredential = digest(token); commitEpoch = verified; }
           return result;
         });
       } catch { return unavailable(configured); }
     },
   };
 
+  const verifyIdentity = (force: boolean): Promise<number> => own(async () => {
+    try {
+      const token = await readCredential();
+      if (!usableToken(token)) { invalidateIdentity(); throw new Error(); }
+      const fingerprint = digest(token);
+      if (verifiedCredential && verifiedCredential !== fingerprint) invalidateIdentity();
+      if (force || verifiedCredential !== fingerprint) {
+        let verified: number | undefined;
+        await identityHttp(token, (epoch) => { verified = epoch; })(new URL(AUTH_URL), {
+          method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal,
+        });
+        if (await readCredential() !== token) { invalidateIdentity(); throw new Error(); }
+        if (verified === undefined || verified !== identityEpoch) throw new Error();
+        verifiedCredential = fingerprint;
+      }
+      current();
+      return identityEpoch;
+    } catch { throw new Error('Slack inbox account scope is unavailable'); }
+  });
   return {
     account, scopeId, adapter,
-    assertReadCurrent() {
-      return own(async () => {
-        try {
-          const token = await readCredential();
-          if (!usableToken(token)) { invalidateIdentity(); throw new Error(); }
-          const fingerprint = digest(token);
-          if (verifiedCredential !== fingerprint) {
-            let verified: number | undefined;
-            await identityHttp(token, (epoch) => { verified = epoch; })(new URL(AUTH_URL), {
-              method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal,
-            });
-            if (await readCredential() !== token) { invalidateIdentity(); throw new Error(); }
-            if (verified === undefined || verified !== identityEpoch) throw new Error();
-            verifiedCredential = fingerprint;
-          }
-          current();
-        } catch { throw new Error('Slack inbox account scope is unavailable'); }
-      });
+    invalidateCredential: invalidateIdentity,
+    async assertReadCurrent() { await verifyIdentity(false); },
+    async verifyEligibility() {
+      const epoch = await verifyIdentity(true);
+      current();
+      if (epoch !== identityEpoch) throw new Error('Slack inbox eligibility was revoked');
+      const observed = identityLifetime;
+      if (!verifiedCredential) throw new Error('Slack inbox account scope is unavailable');
+      return Object.freeze({ signal: identitySignal, assertCurrent() {
+        current();
+        if (observed.signal.aborted || epoch !== identityEpoch || !verifiedCredential) {
+          throw new Error('Slack inbox eligibility was revoked');
+        }
+      } });
     },
     close() {
       if (!closing) {

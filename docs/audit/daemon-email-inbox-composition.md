@@ -1,10 +1,9 @@
 # Explicit account-owned email inbox
 
 THE-18 remains **In Progress**. `createEmailDaemonInboxFactory` now composes one
-explicit TLS mailbox on a single-node daemon. It is an opt-in launcher capability,
+explicit TLS mailbox on a single-node or account-eligible clustered daemon. It is an opt-in launcher capability,
 not a default all-provider `serve` implementation. Default serving still refuses
-until the entire required composition is available. Cluster enrollment/failover,
-other providers, triage and required live proof are not claimed here.
+until the entire required composition is available. Other providers, triage and required live proof are not claimed here.
 
 ## Original source and canonical ownership
 
@@ -18,8 +17,7 @@ credentials directly, mint sender authority or invent an account.
 
 A trusted launcher supplies exact expected TLS host/port, username and mailbox,
 plus the real protected local-service identity/retention authority. Canonical
-configuration must already provide the mailbox endpoint/account and disable
-clustering. The existing canonical reader derives mailbox readiness; no separate
+configuration must already provide the mailbox endpoint/account. The existing canonical reader derives mailbox readiness; no separate
 email-enable switch is introduced. The owned inbox uses a canonical read-only
 projection and validates only IMAP endpoint/account/reference prerequisites, so
 legacy IMAP-only configurations do not require or fabricate SMTP settings.
@@ -102,8 +100,8 @@ boundary is not a promise to retain all mailbox history forever.
 The store filename binds a versioned expected account tuple by full SHA-256.
 A strict lifetime lock under the canonical workspace prevents duplicate
 in-process or cross-process ownership. It is retained through shutdown and is
-not released if storage retirement fails. This single-node factory refuses
-cluster mode before its own mail constructor, credentials, sockets or storage.
+not released if storage retirement fails. Cluster eligibility is authenticated
+separately before election enrollment, as described below.
 
 IMAP rows and their terminal checkpoint are staged in a private SQLite clone.
 The canonical store validates exact prior-checkpoint CAS, ascending UID coverage,
@@ -136,3 +134,37 @@ No real mailbox, provider credential, login, external send, account change,
 release or deployment is used. Real local-service retention/identity, semantic
 calibration and provider-account proof remain live prerequisites. This composition
 does not establish whole-session IMAP memory bounds or all-provider/cluster parity.
+
+## Cluster eligibility and local generations
+
+The explicit clustered factory now authenticates metadata-only eligibility
+before enrolling through the canonical root's awaitable `gatePollingOwned`.
+Eligibility uses the canonical no-checkpoint mailbox planning path: no message
+FETCH, protected-source judgment, or checkpoint mutation, and no requirement
+that a cold node already have a committed UID checkpoint. Mirror reads still
+require the current account and committed UIDVALIDITY generation.
+
+The owned lifecycle probes once on startup and every 30 seconds after completion,
+never overlapping probes. Actual account/credential/config/source invalidation
+withdraws membership and drains accepted polling before fresh proof/reentry.
+Transport uncertainty preserves valid proof; semantic held sources never rotate
+election ownership merely to resample. Canonical credential/config observations
+include alias and ABA invalidation. UID generation replacement revokes old proof.
+Shutdown fences stale metadata completions and drains before releasing the
+existing lifetime storage lock.
+
+No distributed state transfer is introduced. Returning nodes use their own
+committed rows, UID history and checkpoints. Cold nodes retain the existing
+bounded initialization, omitted-history disclosure and pending backlog. Standby
+reads may be stale and remain account/generation protected. No previous-holder
+watermark, globally identical feed, gap-free cross-node history, or exactly-once
+processing is claimed. Never copy only a cursor or share concurrently opened
+sql.js snapshots.
+
+Clustered startup waits for store preparation and seed admission, rather than
+blocking holder heartbeats on source judgment. The admitted seed remains owned
+and drained; default registrar behavior for legacy consumers is unchanged.
+An owned drain failure rejects withdrawal, fences local reentry and withholds
+explicit RESIGN, including removed siblings. Heartbeat expiry can nevertheless
+permit remote takeover; no global no-overlap guarantee or distributed lease
+is implied. Account/source/UID generation fences remain authoritative locally.

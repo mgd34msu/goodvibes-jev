@@ -108,11 +108,10 @@ export function createClusterComposition(options: {
  * The provider id is the surface's local discriminator and is hashed before it
  * reaches the network, so what travels is a digest and not an account name.
  *
- * No replay cursor is threaded in, and that is deliberate rather than an
- * omission: the inbox keeps a persisted per-provider cursor of its own
- * (InboxCursorStore), so a node taking an account over resumes from where the
- * previous one committed. ntfy needs an explicit `since=` because it has no
- * server-side per-subscriber cursor; this poller does not.
+ * Each node resumes its own persisted rows and cursor/checkpoint. Cold nodes
+ * use bounded provider initialization; this is not a distributed mirror, cursor
+ * transfer, previous-holder continuity, or exactly-once delivery. Standby reads
+ * remain account/generation protected and can be stale.
  */
 export function inboxPollerGate(providerId: string, control: GatedPollerControl): ClusterConsumerGate {
   return {

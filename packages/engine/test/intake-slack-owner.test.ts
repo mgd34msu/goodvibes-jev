@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { Client } from 'undici/index.js';
-import { createSlackInboxOwner, type SlackInboxAccount, type SlackInboxOwner } from '../sdk/src/platform/intake/providers/slack-owner.ts';
+import { createSlackInboxOwner, type SlackInboxAccount, type SlackInboxOwner, type SlackInboxOwnerOptions } from '../sdk/src/platform/intake/providers/slack-owner.ts';
 import { digestSender } from '../sdk/src/platform/intake/text-normalization.ts';
 
 const cleanups: (() => unknown | Promise<unknown>)[] = [];
@@ -8,7 +8,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const pause = () => new Promise<void>(resolve => setTimeout(resolve, 10));
 const deferred = () => Promise.withResolvers<void>();
 
-async function fixture(options: { account?: SlackInboxAccount; sourceGate?: Promise<void>; credentialGate?: Promise<void> } = {}) {
+async function fixture(options: { account?: SlackInboxAccount; sourceGate?: Promise<void>; credentialGate?: Promise<void>; authGate?: Promise<void> } = {}) {
   const account = options.account ?? { workspaceId: 'T-ALPHA', userId: 'U-OWNER' };
   let token: string | null = 'xoxb-synthetic-alpha';
   let actualAccount = { ...account };
@@ -19,10 +19,11 @@ async function fixture(options: { account?: SlackInboxAccount; sourceGate?: Prom
   const sourceCalls: { path: string; parts?: readonly string[] }[] = [];
   const text = 'Contact person@example.test, keep the build notes.';
   const ts = `${Math.floor((Date.now() - 2_000) / 1_000)}.000000`;
-  const slack = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+  const slack = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     const url = new URL(request.url);
     calls.push({ path: url.pathname, authorization: request.headers.get('authorization'), oldest: url.searchParams.get('oldest') });
     if (!available) return new Response('{}', { status: 503 });
+    if (url.pathname === '/api/auth.test') await options.authGate;
     if (url.pathname === '/api/auth.test') return Response.json({ ok: true, team_id: actualAccount.workspaceId, user_id: actualAccount.userId });
     if (url.pathname === '/api/conversations.list') return Response.json({ ok: true, channels: [{ id: 'D-FIXTURE', user: 'U-SENDER' }] });
     return Response.json({ ok: true, messages: [{ ts, user: 'U-SENDER', text }] });
@@ -41,16 +42,17 @@ async function fixture(options: { account?: SlackInboxAccount; sourceGate?: Prom
   } });
   cleanups.push(() => local.stop(true), () => slack.stop(true));
   const signal = new AbortController();
-  const owner = await createSlackInboxOwner({ logger: { info() {}, warn() {}, error() {} }, credentials: {
-    resolveRef: async () => null,
-    async resolveConfigSecret(key) { expect(key).toBe('surfaces.slack.botToken'); credentialReads++; await options.credentialGate; return token; },
-  } }, { account, signal: signal.signal, assertCurrent() { if (!current) throw new Error('synthetic-private-scope-marker'); },
+  const ownerOptions = { account, signal: signal.signal, assertCurrent() { if (!current) throw new Error('synthetic-private-scope-marker'); },
     screening: { authority: { ownerId: 'synthetic-local-services', revision: '1', retention: 'ephemeral-no-log', signal: signal.signal, assertCurrent() {} },
       proposal: { endpoint: `http://127.0.0.1:${local.port}`, model: 'synthetic-proposer' },
       judgment: { endpoint: `http://127.0.0.1:${local.port}`, model: 'jev-1.13.0' }, timeoutMs: 1_000 },
-  }, { createHttpClient: (_origin, clientOptions) => new Client(`http://127.0.0.1:${slack.port}`, clientOptions) });
+  } satisfies SlackInboxOwnerOptions;
+  const owner = await createSlackInboxOwner({ logger: { info() {}, warn() {}, error() {} }, credentials: {
+    resolveRef: async () => null,
+    async resolveConfigSecret(key) { expect(key).toBe('surfaces.slack.botToken'); credentialReads++; await options.credentialGate; return token; },
+  } }, ownerOptions, { createHttpClient: (_origin, clientOptions) => new Client(`http://127.0.0.1:${slack.port}`, clientOptions) });
   cleanups.push(() => owner.close());
-  return { owner, calls, sourceCalls, text, ts, signal, get credentialReads() { return credentialReads; },
+  return { owner, ownerOptions, calls, sourceCalls, text, ts, signal, get credentialReads() { return credentialReads; },
     setToken(value: string | null) { token = value; }, setAccount(value: SlackInboxAccount) { actualAccount = value; },
     outage() { available = false; }, revoke() { current = false; } };
 }
@@ -138,4 +140,103 @@ test('account discriminators distinguish users and workspaces without exposing i
   const c = await fixture({ account: { workspaceId: 'T-OTHER', userId: 'U-OWNER' } });
   expect(new Set([a.owner.scopeId, b.owner.scopeId, c.owner.scopeId]).size).toBe(3);
   for (const owner of [a.owner, b.owner, c.owner]) expect(owner.scopeId).toMatch(/^[a-f0-9]{64}$/);
+});
+
+test('eligibility authenticates metadata only and retains its signal across fresh same-account probes', async () => {
+  const f = await fixture();
+  const first = await f.owner.verifyEligibility();
+  const second = await f.owner.verifyEligibility();
+  expect(first.signal).toBe(second.signal);
+  expect(f.calls.map(call => call.path)).toEqual(['/api/auth.test', '/api/auth.test']);
+  expect(f.sourceCalls).toEqual([]);
+  expect(() => first.assertCurrent()).not.toThrow();
+  expect(() => f.owner.adapter.assertCurrent!()).toThrow();
+});
+
+test('credential lifecycle invalidates eligibility and poll commit synchronously, including ABA', async () => {
+  const f = await fixture();
+  const first = await f.owner.verifyEligibility();
+  await f.owner.adapter.poll({ limit: 10 });
+  expect(() => f.owner.adapter.assertCurrent!()).not.toThrow();
+  f.owner.invalidateCredential();
+  expect(first.signal.aborted).toBe(true);
+  expect(() => first.assertCurrent()).toThrow();
+  expect(() => f.owner.adapter.assertCurrent!()).toThrow();
+  const before = f.calls.length;
+  const next = await f.owner.verifyEligibility();
+  expect(next.signal).not.toBe(first.signal);
+  expect(f.calls).toHaveLength(before + 1);
+});
+
+test('transport failure preserves eligibility, while same-account token rotation requires fresh proof', async () => {
+  const f = await fixture();
+  const proof = await f.owner.verifyEligibility();
+  f.outage();
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(false);
+  expect(() => proof.assertCurrent()).not.toThrow();
+  f.setToken('xoxb-synthetic-rotated');
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
+});
+
+test('same-token account mismatch revokes eligibility without content polling', async () => {
+  const f = await fixture();
+  const proof = await f.owner.verifyEligibility();
+  f.setAccount({ workspaceId: 'T-ALPHA', userId: 'U-FOREIGN' });
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
+  expect(f.calls.map(call => call.path)).toEqual(['/api/auth.test', '/api/auth.test']);
+});
+
+test('source-held polling retains eligibility until actual scope revocation', async () => {
+  const gate = deferred(); cleanups.push(() => gate.resolve());
+  const f = await fixture({ sourceGate: gate.promise });
+  const proof = await f.owner.verifyEligibility();
+  const pending = f.owner.adapter.poll({ limit: 10 });
+  while (f.sourceCalls.length === 0) await pause();
+  expect(() => proof.assertCurrent()).not.toThrow();
+  f.revoke();
+  expect(() => proof.assertCurrent()).toThrow();
+  expect(proof.signal.aborted).toBe(true);
+  gate.resolve(); await pending;
+});
+
+test('a stale auth success cannot restore eligibility after credential lifecycle revocation', async () => {
+  const gate = deferred(); cleanups.push(() => gate.resolve());
+  const f = await fixture({ authGate: gate.promise });
+  const pending = f.owner.verifyEligibility();
+  void pending.catch(() => {});
+  while (f.calls.length === 0) await pause();
+  f.owner.invalidateCredential();
+  gate.resolve();
+  await expect(pending).rejects.toThrow();
+  const proof = await f.owner.verifyEligibility();
+  expect(() => proof.assertCurrent()).not.toThrow();
+  expect(f.calls).toHaveLength(2);
+});
+
+test('eligibility detaches the caller account and options before an awaited authentication response', async () => {
+  const gate = deferred(); cleanups.push(() => gate.resolve());
+  const original = { workspaceId: 'T-ALPHA', userId: 'U-OWNER' };
+  const f = await fixture({ account: original, authGate: gate.promise });
+  const scope = f.owner.scopeId;
+  const pending = f.owner.verifyEligibility();
+  void pending.catch(() => {});
+  while (f.calls.length === 0) await pause();
+  original.workspaceId = 'T-FOREIGN'; original.userId = 'U-FOREIGN';
+  f.ownerOptions.account = { workspaceId: 'T-RETARGET', userId: 'U-RETARGET' };
+  f.ownerOptions.assertCurrent = () => { throw new Error('Replacement options must not run'); };
+  f.ownerOptions.signal = AbortSignal.abort();
+  gate.resolve();
+  const proof = await pending;
+  expect(f.owner.account).toEqual({ workspaceId: 'T-ALPHA', userId: 'U-OWNER' });
+  expect(Object.isFrozen(f.owner.account)).toBe(true);
+  expect(f.owner.scopeId).toBe(scope);
+  expect(() => proof.assertCurrent()).not.toThrow();
+  f.setAccount({ workspaceId: 'T-RETARGET', userId: 'U-RETARGET' });
+  await expect(f.owner.verifyEligibility()).rejects.toThrow();
+  expect(proof.signal.aborted).toBe(true);
+  expect(f.calls.every(call => call.path === '/api/auth.test')).toBe(true);
+  expect(f.sourceCalls).toEqual([]);
 });
