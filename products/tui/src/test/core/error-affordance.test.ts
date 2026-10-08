@@ -1,3 +1,8 @@
+import { beforeEach, afterEach } from 'bun:test';
+import { installUserErrorReading, flushErrorNotices } from '../helpers/user-error-reading.ts';
+let restoreUserErrorReading: () => void;
+beforeEach(() => { restoreUserErrorReading = installUserErrorReading('rate-limit'); });
+afterEach(() => { restoreUserErrorReading(); });
 /**
  * error-affordance.test.ts
  *
@@ -122,7 +127,7 @@ function wireBasic(
 // ---------------------------------------------------------------------------
 
 describe('wireStreamEventMetrics: onErrorSurfaced', () => {
-  test('fires when TURN_ERROR surfaces immediately (no optimizer)', () => {
+  test('fires when TURN_ERROR surfaces immediately (no optimizer)', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const result = wireBasic(turns, tools);
@@ -130,11 +135,12 @@ describe('wireStreamEventMetrics: onErrorSurfaced', () => {
     result.onErrorSurfaced(cb);
 
     turns.emitTurnError('network timeout');
+    await flushErrorNotices();
 
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  test('does NOT fire on successful automatic failover', () => {
+  test('does NOT fire on successful automatic failover', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     // true = the turn really was re-submitted (main.ts's contract): a failover
@@ -152,13 +158,14 @@ describe('wireStreamEventMetrics: onErrorSurfaced', () => {
     result.onErrorSurfaced(cb);
 
     turns.emitTurnError('api error');
+    await flushErrorNotices();
 
     // Successful failover: retryTurn called, onErrorSurfaced NOT called
     expect(retryTurn).toHaveBeenCalledTimes(1);
     expect(cb).not.toHaveBeenCalled();
   });
 
-  test('fires after chain exhaustion', () => {
+  test('fires after chain exhaustion', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const retryTurn = mock(() => true);
@@ -174,12 +181,13 @@ describe('wireStreamEventMetrics: onErrorSurfaced', () => {
     result.onErrorSurfaced(cb);
 
     turns.emitTurnError('503 service unavailable');
+    await flushErrorNotices();
 
     expect(retryTurn).not.toHaveBeenCalled();
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  test('fires when optimizer is present but disabled', () => {
+  test('fires when optimizer is present but disabled', async () => {
     const turns = makeTurnBus();
     const tools = makeToolBus();
     const optimizer = makeOptimizer({
@@ -191,6 +199,7 @@ describe('wireStreamEventMetrics: onErrorSurfaced', () => {
     result.onErrorSurfaced(cb);
 
     turns.emitTurnError('rate limit');
+    await flushErrorNotices();
 
     expect(cb).toHaveBeenCalledTimes(1);
   });

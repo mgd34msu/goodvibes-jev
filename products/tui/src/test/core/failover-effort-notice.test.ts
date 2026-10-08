@@ -1,3 +1,8 @@
+import { beforeEach, afterEach } from 'bun:test';
+import { installUserErrorReading, flushErrorNotices } from '../helpers/user-error-reading.ts';
+let restoreUserErrorReading: () => void;
+beforeEach(() => { restoreUserErrorReading = installUserErrorReading('rate-limit'); });
+afterEach(() => { restoreUserErrorReading(); });
 // ---------------------------------------------------------------------------
 // failover-effort-notice.test.ts, the effort-remap sentence survives the retry
 // rollback.
@@ -138,10 +143,11 @@ function wire(requestedEffort: string | undefined) {
 }
 
 describe('failover onto a model that caps the requested level', () => {
-  test('the effort-remap sentence is still in the transcript after the retry rollback', () => {
+  test('the effort-remap sentence is still in the transcript after the retry rollback', async () => {
     const { turns, transcript } = wire('xhigh');
 
     turns.emitTurnError('rate limit');
+    await flushErrorNotices();
 
     const text = transcript.join('\n');
     expect(text).toContain('[Failover] anthropic -> openai');
@@ -150,29 +156,32 @@ describe('failover onto a model that caps the requested level', () => {
     expect(text).toContain("using 'medium'");
   });
 
-  test('the sentence rides in on the notice handed to retryTurn, not emitted before it', () => {
+  test('the sentence rides in on the notice handed to retryTurn, not emitted before it', async () => {
     const { turns, retryNotices } = wire('xhigh');
 
     turns.emitTurnError('rate limit');
+    await flushErrorNotices();
 
     expect(retryNotices).toHaveLength(1);
     expect(retryNotices[0]).toContain("isn't available on Capped Model");
   });
 
-  test('no sentence is invented when the fallback model honours the requested level', () => {
+  test('no sentence is invented when the fallback model honours the requested level', async () => {
     const { turns, transcript } = wire('medium');
 
     turns.emitTurnError('rate limit');
+    await flushErrorNotices();
 
     const text = transcript.join('\n');
     expect(text).toContain('[Failover] anthropic -> openai');
     expect(text).not.toContain("isn't available");
   });
 
-  test('the requested level is what gets re-resolved, so restoring gets it back', () => {
+  test('the requested level is what gets re-resolved, so restoring gets it back', async () => {
     const { turns, transcript, currentKey } = wire('xhigh');
 
     turns.emitTurnError('rate limit');
+    await flushErrorNotices();
     expect(currentKey()).toBe(FALLBACK_KEY);
 
     // Turn ends: serving goes back to the configured model, and the capable

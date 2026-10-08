@@ -73,7 +73,6 @@ import { buildCommandArgsHint } from './input/command-args-hint.ts';
 import { summarizeRunningAgents } from './renderer/process-summary.ts';
 import { footerFleetCost } from './views/fleet-read-model.ts';
 import { footerTargetRows } from './renderer/footer-targets.ts';
-import { formatUserFacingErrorLine } from './core/format-user-error.ts';
 import { wireStreamEventMetrics, createStreamMetrics, type StreamMetrics, type WireStreamEventMetricsResult } from './core/stream-event-wiring.ts';
 import { wireTurnEventHandlers } from './core/turn-event-wiring.ts';
 import { resolveContextStatusHint } from './renderer/context-status-hint.ts';
@@ -81,7 +80,7 @@ import { isEffectiveDangerMode } from '@goodvibes-jev/engine/sdk/platform/config
 import { applyComposerCapture, applyAtModelDirective } from './input/composer-capture.ts';
 import { makeComposerEditorOpener, makeFileEditorOpener } from './input/composer-editor.ts';
 import { evaluateSessionMaintenance } from '@/runtime/index.ts';
-import { createCancelGeneration } from './core/turn-cancellation.ts';
+import { createCancelGeneration, runOwnedTurnRetry } from './core/turn-cancellation.ts';
 import { wireInteractionSeams, createMemoryProvenanceUi } from './runtime/interaction-seams.ts';
 import { createPowerChipSource } from './core/power-chip-source.ts';
 import { fetchDaemonPowerState, installKeepAwakeRemoteForward } from './runtime/power-keepawake-remote.ts';
@@ -319,6 +318,8 @@ async function main() {
       notify: (message) => systemMessageRouter.high(message),
     }).text;
     if (processedText || content) {
+      // Supersede recovery before the new intake reader, not only at dispatch.
+      streamResult.clearFailoverVisited();
       void (async () => {
         const unsupportedSources = [...original.unsupportedSources];
         if (processedText !== text) unsupportedSources.push({ kind: 'context', label: 'composer-derived-text' });
@@ -334,7 +335,7 @@ async function main() {
     }
   };
 
-  const cancelGeneration = createCancelGeneration(orchestrator, spokenTurns);
+  const cancelGeneration = createCancelGeneration(orchestrator, spokenTurns, () => streamResult.cancelPendingRecovery());
 
   const jumpToBookmark = (key: string) => {
     conversation.getDisplayBlocks();
@@ -365,6 +366,7 @@ async function main() {
   // Late-patched: bootstrap.ts populates uiServices.platform.externalServices AFTER commandContext is built.
   commandContext.platform.externalServices = uiServices.platform.externalServices;
   commandContext.cancelGeneration = cancelGeneration;
+  commandContext.cancelPendingRecovery = () => streamResult.cancelPendingRecovery();
   wireInteractionSeams(commandContext, {
     orchestrator, powerManager: ctx.services.powerManager, readPowerSurface: () => powerChipSource.get(), render: () => render(), notify: (m) => systemMessageRouter.high(m),
     getActiveToolCallId: () => streamMetrics.activeToolCallId, toggleMemoryProvenance: () => memoryProvenanceUi.toggle(),
@@ -712,7 +714,7 @@ async function main() {
     render, trustPromptRef,
   });
 
-  const { refreshGit, unsubs: turnUnsubs, continueTurnAfterFailover } = wireTurnEventHandlers({
+  const { refreshGit, unsubs: turnUnsubs, continueTurnAfterFailover, beginFailoverNotice } = wireTurnEventHandlers({
     events: uiServices.events,
     conversation,
     runtime,
@@ -742,7 +744,7 @@ async function main() {
   // Time-bounded: onExpire repaints once the 60s disarm timer fires, so a stray keypress hours
   // later can never trigger a real retry, see retry-affordance.ts.
   const retryAffordance = createRetryAffordanceState({ onExpire: render });
-  const retryTurn = (notice?: string): boolean => {
+  const retryTurn = (notice?: string, isCurrent: () => boolean = () => true, recoverySignal?: AbortSignal): boolean => {
     if (!retryCtx) return false; // nothing to roll back to; the caller narrates instead
     const { count, text, content: rContent, opts: rOpts } = retryCtx;
     if (rOpts?.nativeConversationTurnPermit && !orchestrator.canRetryNativeConversationTurn(rOpts.nativeConversationTurnPermit)) {
@@ -755,12 +757,16 @@ async function main() {
     // it is posted here: after the rollback, above the prompt it explains.
     conversation.removeMessagesAfter(count);
     if (notice) systemMessageRouter.userReceipt(notice);
-    void refreshMemoryRecallSnapshot(ctx.services).then(() => orchestrator.handleUserInput(text, rContent, rOpts)).catch((e: unknown) => logger.debug('retryTurn', { error: summarizeError(e) }));
+    void runOwnedTurnRetry({
+      prepare: () => refreshMemoryRecallSnapshot(ctx.services), submit: () => orchestrator.handleUserInput(text, rContent, rOpts),
+      abort: () => orchestrator.abort(), isCurrent, signal: recoverySignal,
+    }).catch((e: unknown) => logger.debug('retryTurn', { error: summarizeError(e) }));
     return true;
   };
   const streamResult: WireStreamEventMetricsResult = wireStreamEventMetrics({
     events: uiServices.events, orchestrator, providerRegistry,
     systemMessageRouter, render, metrics: streamMetrics,
+    getSessionId: () => runtime.sessionId, isActive: () => !lifecycle.isTerminalRestored(), beginFailoverNotice,
     providerOptimizer: ctx.services.providerOptimizer, costLookup: providerRegistry, retryTurn, onFailoverRetry: continueTurnAfterFailover,
     failoverState, getConfiguredRegistryKey: () => configManager.get('provider.model') as string | undefined,
     // The REQUESTED level, through the one helper every remap site reads from.
