@@ -26,6 +26,7 @@
  * serialization a HEARTBEAT landing mid-`start()` could interleave a second
  * transition into a half-applied one.
  */
+import { OwnedClusterDrainError } from './owned-drain-error.js';
 import {
   compareStableRank,
   isStrictlyNewerVersion,
@@ -402,6 +403,10 @@ export class SurfaceElection {
           reason,
           error: error instanceof Error ? error.message : String(error),
         });
+        // Owned withdrawal must not announce that an undrained consumer stopped.
+        // Peers may still take over after heartbeat expiry; this is not a lease
+        // or a global no-overlap guarantee. Local owner authority stays fenced.
+        if (error instanceof OwnedClusterDrainError) throw error;
       }
       this.consumerRunning = false;
     }

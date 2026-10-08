@@ -33,6 +33,8 @@ export interface RegisterInboxSurfaceOptions {
   readonly adapters: ReadonlyMap<string, InboundProviderAdapter>;
   readonly storeFileName?: string;
   readonly skipInitialPoll?: boolean;
+  /** Default true. Cluster gates may heartbeat once the owned seed is admitted. */
+  readonly awaitInitialPoll?: boolean;
   /** Host registration may return its own awaitable unregister callback. */
   readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>);
   /** Recheck a product-owned account/workspace scope around every mirror read. */
@@ -121,7 +123,14 @@ export function registerInboxSurface(
           // seed so reacquiring leadership does not silently skip that poll;
           // the poller coalesces interval ticks with an in-flight seed.
           poller.startProvider(providerId);
-          if (!options.skipInitialPoll) await poller.pollProviderOnce(providerId);
+          if (!options.skipInitialPoll) {
+            const seed = poller.pollProviderOnce(providerId);
+            if (options.awaitInitialPoll === false) {
+              // The canonical poller still owns and drains this accepted seed.
+              // Content screening cannot delay a cluster holder's heartbeat.
+              void seed.catch(() => report('warn', 'inbox provider seed failed'));
+            } else await seed;
+          }
           if (closed || current !== epoch) throw stopped();
         });
         starting = work;

@@ -1,10 +1,10 @@
 # Explicit Slack inbox composition
 
 This THE-18 increment supplies a working, content-bearing Slack inbox for one
-explicit account on a single-node daemon. It composes the retained history
+explicit account on a single-node or account-eligible clustered daemon. It composes the retained history
 adapter, protected local source owner, canonical poller/store and authenticated
 `channels.inbox.list` method. It does not finish default all-provider serving,
-Discord/email composition, clustered ownership, native packaging or live proof.
+other-provider default composition, native packaging or live proof.
 THE-18 remains In Progress.
 
 ## Supported caller and prerequisites
@@ -29,7 +29,7 @@ The caller supplies a `SlackDaemonInboxOptions` value containing:
 - Optional bounded `timeoutMs` for Slack HTTP. The default is ten seconds and
   the maximum is two minutes, including queue admission and response decoding.
 
-Canonical configuration must already have `cluster.enabled=false`,
+Canonical configuration must already have
 `surfaces.slack.enabled=true`, and `surfaces.slack.workspaceId` equal to the
 explicit account. The existing daemon credential resolver supplies
 `surfaces.slack.botToken`; no literal token is read from settings and no
@@ -75,7 +75,7 @@ The read guard returns only a fixed scope-unavailable diagnostic. Credential
 fingerprints are process-local and do not appear in logs or stored rows.
 
 Canonical configuration is rechecked around owned asynchronous work. Disabling
-Slack, changing its workspace or enabling cluster mode withholds late work and
+Slack, changing its workspace or changing the configured cluster mode withholds late work and
 reads. Wire `provider` stays `slack`, stable item IDs retain the upstream
 `slack:<conversation>:<timestamp>` form, and the ownership discriminator alone
 is account-scoped. Profile IDs are not route IDs: no fabricated route binding
@@ -109,13 +109,6 @@ owned transport/source processing, drains admitted credential reads and polls,
 retires the mirror, then releases its lifetime lease. Logical refused reads do
 not manufacture cleanup failures. No detached work is reported as settled.
 
-This Slack factory refuses clustered composition before its own credentials,
-sockets or disk writes; an embedding host can have acquired earlier runtime
-services before invoking it. The
-current cluster registrar cannot yet express account-verified enrollment and
-withdrawal; enrolling an incapable node could prevent a capable node polling.
-This composition makes no cross-node cursor replication or failover claim.
-
 The adapter's original bounded complete scan, timestamp buckets and history
 limitations remain documented in [the adapter audit](daemon-slack-inbox-adapter.md).
 This is DM history polling; it does not establish events, complete thread
@@ -137,3 +130,46 @@ transmission is used. Live service identity/retention, semantic calibration and
 provider account proof remain THE-35 prerequisites, not inferred from synthetic
 HTTP responses. Legacy IMAP and the separate native-settlement review are not
 part of this increment.
+
+## Account-eligible clustered ownership
+
+The explicit factory now uses the canonical root's additive `gatePollingOwned`
+capability and metadata-only `verifyEligibility` before enrolling a clustered
+account. Slack must also receive the root-owned config/secret invalidation
+subscription. No credential or account name travels on the election wire.
+The existing `gatePolling` and legacy owner seams remain supported for
+single-node use; a clustered custom owner must explicitly provide eligibility.
+
+One metadata probe runs at startup, then every 30 seconds after the preceding
+probe finishes. Probes do not overlap, poll content, or advance a checkpoint.
+Actual credential, account, configuration, or source-authority invalidation
+revokes proof and withdraws membership. A changed credential must prove the
+same expected account before reenrollment. A transport outage preserves a
+still-current proof; there is no invented proof-expiry timer. Semantic held
+sources never cause election withdrawal to resample on another node.
+
+Withdrawal removes eligibility immediately and awaits accepted polling and the
+exact retired election gate before reentry. Shutdown cancels probe scheduling,
+revokes the provider and drains admitted work, so stale probe completion cannot
+reenroll. Timestamp row/watermark persistence now uses the canonical staged
+transaction and a synchronous account/source/poll-generation fence after the
+asynchronous write and before publication. Lifetime store locks are unchanged.
+
+State remains node-local: a returning node resumes its own committed mirror and
+cursor. A cold node uses bounded existing initialization. Standby mirrors can
+be stale and require current account proof. This is not previous-holder cursor
+continuity, a globally identical feed, or exactly-once processing.
+
+Clustered gate startup waits for storage preparation, then reports admission
+once the canonical poller has begun its owned initial seed. It does not await
+content judgment before allowing heartbeats. Seed errors are handled and the
+same poller owns cancellation/drain. The registrar's default still waits for
+seed completion for existing consumers.
+
+An owned drain failure rejects withdrawal, permanently fences local owned
+reentry for that surface, retains its storage lease, and withholds explicit
+RESIGN. Removed sibling drains are included. This is not a network lease:
+heartbeat expiry can still permit another node to take over, so failed-drain
+behavior is not a global no-overlap guarantee. Old account/source/poll commit
+and read authority remain independently fenced. Legacy consumers keep their
+prior failure behavior.

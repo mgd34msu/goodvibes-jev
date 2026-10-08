@@ -9,7 +9,7 @@ type MailInput = Omit<Parameters<typeof composeMailDeps>[0], 'registerDispose'>;
 
 /** Even a factory that throws after construction cannot orphan subscriptions. */
 export async function registerOwnedMailInbox(factory: DaemonInboxFactory, context: HandlerContext,
-  routing: RoutingRegistration, controls: Pick<DaemonInboxControls, 'gatePolling'>,
+  routing: RoutingRegistration, controls: Pick<DaemonInboxControls, 'gatePolling' | 'gatePollingOwned'>,
   mailInput: MailInput): Promise<OwnedHandlerSurface> {
   const mailClosers: Array<() => void> = [];
   let retired = false;
@@ -22,6 +22,25 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
   };
   try {
     const registration = await factory(context, routing, { ...controls,
+      ...(mailInput.configManager.onDidInvalidate && mailInput.secretsManager.onDidChange ? {
+        onAccountInvalidation(listener: () => void) {
+          if (retired) throw new Error('Inbox account lifecycle is retired');
+          let stopConfig: (() => void) | undefined;
+          let stopSecrets: (() => void) | undefined;
+          let closed = false;
+          const close = (): void => {
+            if (closed) return;
+            closed = true;
+            try { stopConfig?.(); } finally { stopSecrets?.(); }
+          };
+          mailClosers.push(close);
+          try {
+            stopConfig = mailInput.configManager.onDidInvalidate!(listener);
+            stopSecrets = mailInput.secretsManager.onDidChange!(() => listener());
+            return close;
+          } catch (error) { close(); throw error; }
+        },
+      } : {}),
       createEmailService() {
         if (retired) throw new Error('Inbox mail constructor is retired');
         const disposers: Array<() => void> = [];

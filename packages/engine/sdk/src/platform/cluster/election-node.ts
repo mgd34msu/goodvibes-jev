@@ -137,7 +137,7 @@ export class ClusterElection {
     await this.options.transport.start((raw) => this.receive(raw));
     this.armWatchdog();
     this.unsubscribeRegistry = this.options.registry.onChange((surfaceId) => {
-      void this.syncSurface(surfaceId);
+      return this.syncSurface(surfaceId);
     });
     if (this.options.registry.size === 0) {
       this.options.logger.debug('cluster: this node serves no inbound surfaces, so it contests none');

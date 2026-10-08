@@ -20,6 +20,7 @@
  * behavior that existed before it: every gate starts on start() and stops on
  * stop(), no sockets are opened, and nothing is broadcast anywhere.
  */
+import { OwnedClusterDrainError } from './owned-drain-error.js';
 import { ClusterElection } from './election-node.js';
 import { ClusterSurfaceRegistry } from './surface-registry.js';
 import { createSystemClusterClock } from './clock.js';
@@ -54,6 +55,9 @@ export interface ClusterCoordinatorOptions {
 export class ClusterCoordinator {
   private readonly registry: ClusterSurfaceRegistry;
   private readonly clock: ClusterClock;
+  /** Pending or failed owned retirements fence same-surface replacement. */
+  private readonly ownedWithdrawals = new Map<string, Promise<void>>();
+  private readonly ownedGateDrains = new Map<ClusterConsumerGate, { surfaceId: string; work: Promise<void> }>();
   /**
    * Resolved on first use, never in the constructor: resolving it MINTS AND
    * WRITES a file, and merely composing a runtime (which every test that
@@ -150,14 +154,108 @@ export class ClusterCoordinator {
    * a restart.
    */
   register(gate: ClusterConsumerGate): () => void {
-    const unregister = this.registry.register(gate);
+    const withdraw = this.registerConsumer(gate, false);
+    return () => {
+      void withdraw().catch(() => this.options.logger.error('cluster: consumer withdrawal failed'));
+    };
+  }
+
+  /**
+   * Owned registration: eligibility disappears synchronously and withdrawal
+   * resolves only after the exact gate and its election retirement have drained.
+   * Await it before registering a replacement for the same surface.
+   */
+  registerOwned(gate: ClusterConsumerGate): () => Promise<void> {
+    return this.registerConsumer(gate, true);
+  }
+
+  private registerConsumer(gate: ClusterConsumerGate, strictDrain: boolean): () => Promise<void> {
+    const surfaceId = surfaceIdFor(gate.surface);
+    if (strictDrain && this.ownedWithdrawals.has(surfaceId)) throw new Error('Owned cluster surface is still retiring');
+    let retired = false;
+    let running = false;
+    let stopping: Promise<void> | undefined;
+    const starts = new Set<Promise<void>>();
+    const drain = (reason: string): Promise<void> => {
+      if (stopping) return stopping;
+      if (!running && starts.size === 0) return Promise.resolve();
+      const admitted = [...starts];
+      const work = Promise.resolve().then(async () => {
+        // Stop must begin now so it can cancel a pending start. A generic
+        // gate may complete startup late; fence that completion with a final
+        // stop before claiming this exact consumer has drained.
+        await gate.stop(reason);
+        await Promise.allSettled(admitted);
+        if (admitted.length) await gate.stop(reason);
+        running = false;
+      }).catch((error: unknown) => {
+        if (strictDrain) throw new OwnedClusterDrainError();
+        throw error;
+      });
+      stopping = work;
+      void work.then(() => { if (stopping === work) stopping = undefined; }, () => {
+        // Legacy consumers historically restart after a failed stop. Only an
+        // owned drain is sticky: it must remain fenced rather than claim repair.
+        if (!strictDrain && stopping === work) stopping = undefined;
+      });
+      return work;
+    };
+    const owned: ClusterConsumerGate = { ...gate,
+      start: (context) => {
+        if (retired || stopping) return Promise.reject(new Error('Cluster consumer registration is retiring'));
+        running = true;
+        const work = Promise.resolve().then(() => {
+          if (retired) return;
+          return gate.start(context);
+        }).catch((error: unknown) => {
+          if (strictDrain) throw new Error('Owned cluster consumer failed to start');
+          throw error;
+        });
+        starts.add(work);
+        void work.then(() => starts.delete(work), () => starts.delete(work));
+        return work;
+      },
+      stop: async (reason) => {
+        await drain(reason);
+        if (strictDrain) {
+          // A previously removed sibling may still be stopping or may have
+          // failed. Its raw drain, never its election retirement, is the fence
+          // so sibling cleanup cannot form a promise cycle or emit false RESIGN.
+          await Promise.all([...this.ownedGateDrains.entries()]
+            .filter(([other, pending]) => other !== owned && pending.surfaceId === surfaceId)
+            .map(([, pending]) => pending.work));
+        }
+      },
+    };
+    const unregister = strictDrain ? this.registry.registerOwned(owned) : this.registry.register(owned);
     if (this.ungatedRunning) {
-      void this.startGateUngated(gate, {
+      void this.startGateUngated(owned, {
         replayFromMs: null,
         reason: 'registered while this node was already consuming',
       });
     }
-    return unregister;
+    let withdrawal: Promise<void> | undefined;
+    return () => {
+      if (withdrawal) return withdrawal;
+      retired = true;
+      const exactDrain = drain('consumer registration withdrawn');
+      if (strictDrain) this.ownedGateDrains.set(owned, { surfaceId, work: exactDrain });
+      const retirement = unregister();
+      withdrawal = Promise.all([retirement, owned.stop('consumer registration withdrawn'),
+        ...(strictDrain ? [this.ownedWithdrawals.get(surfaceId)] : [])]).then(() => {});
+      if (strictDrain) {
+        const pending = withdrawal;
+        this.ownedWithdrawals.set(surfaceId, pending);
+        void pending.then(() => {
+          this.ownedGateDrains.delete(owned);
+          if (this.ownedWithdrawals.get(surfaceId) === pending) this.ownedWithdrawals.delete(surfaceId);
+        }, () => {}); // Failed retirement deliberately remains fenced.
+      }
+      // Legacy owners may deliberately ignore cleanup; rejection still remains
+      // observable to an owned caller, without becoming an unhandled rejection.
+      void withdrawal.catch(() => {});
+      return withdrawal;
+    };
   }
 
   /**

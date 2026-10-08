@@ -356,7 +356,7 @@ test.each(['cluster', 'disabled', 'workspace'] as const)('unsupported %s configu
     registerSurface() { effects++; throw new Error('Unexpected inbox registration'); },
   });
   const routing = { async initialize() {}, async close() {}, unregister() {}, resolveProfileId: () => null };
-  await expect(composition(context, routing, { gatePolling() { effects++; } })).rejects.toThrow(mode === 'cluster' ? 'single-node' : mode === 'disabled' ? 'enabled' : 'scope changed');
+  await expect(composition(context, routing, { gatePolling() { effects++; } })).rejects.toThrow(mode === 'cluster' ? 'owned gate retirement' : mode === 'disabled' ? 'enabled' : 'scope changed');
   expect(effects).toBe(0); expect(existsSync(join(workingDirectory, '.goodvibes', 'tui', 'operator'))).toBe(false);
 });
 
