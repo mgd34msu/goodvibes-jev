@@ -199,3 +199,34 @@ test('Slack HTTP close publishes one retirement promise before synchronous cance
   expect(reentrant).toBe(closing);
   await Promise.all([closing, pending.catch(() => {})]);
 });
+
+test('read leases synchronously fence credential ABA even after successful async validation', async () => {
+  const remote = endpoint();
+  const owned = await owner(remote.base);
+  const lease = await owned.acquireReadLease();
+  expect(typeof lease.assertCurrent).toBe('function');
+  await lease();
+  expect(() => lease.assertCurrent!()).not.toThrow();
+  owned.invalidateCredential();
+  owned.invalidateCredential();
+  expect(() => lease.assertCurrent!()).toThrow('revoked');
+  const fresh = await owned.acquireReadLease();
+  expect(() => fresh.assertCurrent!()).not.toThrow();
+  expect(() => lease.assertCurrent!()).toThrow('revoked');
+  await expect(lease()).rejects.toThrow('revoked');
+});
+
+test('read leases synchronously refuse a later decoded authentication denial and close', async () => {
+  const remote = endpoint();
+  const owned = await owner(remote.base);
+  const lease = await owned.acquireReadLease();
+  await lease();
+  remote.respond({ ok: false, error: 'token_revoked' });
+  expect((await owned.adapter.poll({ limit: 10 })).state).toBe('unavailable');
+  expect(() => lease.assertCurrent!()).toThrow('revoked');
+  remote.respond({ ok: true, team_id: account.workspaceId, user_id: account.userId });
+  const fresh = await owned.acquireReadLease();
+  await fresh();
+  await owned.close();
+  expect(() => fresh.assertCurrent!()).toThrow();
+});

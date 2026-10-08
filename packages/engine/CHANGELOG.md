@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Observe bounded service-manager handover outcomes before claiming success or
+  exiting. Order reload before start enqueue, preserve completed update/rollback
+  disk evidence on failure, and cancel/drain external shutdown races without
+  repeating swaps. Enqueue acceptance does not assert replacement health; this
+  repair does not activate host updates or change release defaults. Launchd
+  restart-by-exit remains unacknowledged: desired configuration or a disk plist
+  cannot prove loaded KeepAlive policy, so that path does not exit as success.
+
 - Restore the explicit daemon host’s owned background provider-discovery scan
   after cached preload, preserving custom providers and selected models. Persist
   nonempty results under the selected home/surface and fence late application
