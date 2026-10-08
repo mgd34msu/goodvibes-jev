@@ -8,7 +8,7 @@
  * top-most-only rules below be tested without a server.
  */
 
-import { fetchSection, parseFetchResponses } from './imap-fetch-response.js';
+import { type ImapFetchFrame, fetchSection, parseFetchResponses } from './imap-fetch-response.js';
 // The 32-bit protocol ceiling, imported rather than restated. `source-cursor.ts`
 // states the reasoning at length and is a leaf module (its only import is
 // `inbound/types.js`, which imports nothing), so there is one bound and no way
@@ -228,7 +228,7 @@ export function parseSearchNumbers(searchResponse: readonly string[]): number[] 
  * silence, and read downstream as an expunge.
  */
 export function readEnvelopeBatch(
-  fetchLines: readonly string[],
+  fetchLines: readonly (string | ImapFetchFrame)[],
   mailbox: string,
   wanted: readonly number[],
 ): ImapEnvelopeBatch {

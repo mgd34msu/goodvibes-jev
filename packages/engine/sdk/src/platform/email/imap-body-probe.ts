@@ -49,6 +49,7 @@
  * round trips, and neither form is droppable. The argument is at that function.
  */
 
+import { type ImapFetchFrame, parseFetchResponses } from './imap-fetch-response.js';
 import {
   extractBodyStructure,
   extractFetchSection,
@@ -275,12 +276,12 @@ export function bodyCapabilityFailure(input: {
  * calling it a capability verdict would stop a watcher over a network blip.
  */
 async function probeCommand(
-  session: Pick<ImapSession, 'command'>,
+  session: Pick<ImapSession, 'command'> & Partial<Pick<ImapSession, 'commandFrames'>>,
   command: string,
   mailbox: string,
-): Promise<string[]> {
+): Promise<(string | ImapFetchFrame)[]> {
   try {
-    return await session.command(command);
+    return await (session.commandFrames ? session.commandFrames(command) : session.command(command));
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error ?? '');
     if (!text.startsWith('IMAP command failed:')) throw error;
@@ -295,12 +296,8 @@ async function probeCommand(
 }
 
 /** The UID the server reported in a FETCH response, or 0 when it named none. */
-function uidFrom(lines: readonly string[]): number {
-  for (const line of lines) {
-    const match = /\bUID (\d+)/.exec(line);
-    if (match !== null) return parseInt(match[1] ?? '0', 10);
-  }
-  return 0;
+function uidFrom(lines: readonly (string | ImapFetchFrame)[]): number {
+  return parseFetchResponses(lines).find(response => response.parseError === null)?.uid ?? 0;
 }
 
 /**
@@ -340,7 +337,7 @@ function uidFrom(lines: readonly string[]): number {
  * been declared healthy.
  */
 export async function probeMailboxBody(
-  session: Pick<ImapSession, 'command'>,
+  session: Pick<ImapSession, 'command'> & Partial<Pick<ImapSession, 'commandFrames'>>,
   input: {
     /** `EXISTS` from EXAMINE. */
     readonly exists: number | null;
