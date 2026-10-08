@@ -545,7 +545,7 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(liveRun).toContain('test/exec-interactive.test.ts');
     expect(liveRun).toContain('test/exec-sandbox.test.ts');
     expect(liveRun).toContain('test/exec-containment-proof.test.ts');
-    expect((proof.strategy?.matrix as Record<string, unknown>).lane).toEqual(['tools', 'repl', 'graph-runtime', 'agent-posture', 'repair', 'repair-runtime']);
+    expect((proof.strategy?.matrix as Record<string, unknown>).lane).toEqual(['tools', 'direct-exec', 'repl', 'graph-runtime', 'agent-posture', 'repair', 'repair-runtime']);
     expect(proof['timeout-minutes']).toBe(10);
     const repairFiles = readdirSync(resolve(ROOT, 'packages/engine/test'))
       .filter((name) => name.startsWith('captured-auto-heal') && name.endsWith('.test.ts'))
@@ -564,6 +564,54 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(liveRun).not.toMatch(/\bsudo\b|--privileged/);
     expect(runText(ci, 'exec-containment-proof')).not.toMatch(/\bsysctl\b|\bapparmor\b|--privileged/);
     expect(needsOf(ci.jobs!['auto-release']!)).toContain('exec-containment-proof');
+  });
+
+  test('direct exec and edit/write proofs execute in required containment case commands', () => {
+    const proof = ci.jobs!['exec-containment-proof']!;
+    const live = steps(proof).find((step) =>
+      (step.env as Record<string, string> | undefined)?.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1')!;
+    const lanes = (proof.strategy?.matrix as { lane: string[] }).lane;
+    const root = mkdtempSync(join(tmpdir(), 'containment-case-dispatch-'));
+    // Execute the real case body with only a recording runner on PATH. This
+    // proves argv, inherited no-skip environment and failure propagation,
+    // without running any containment fixture, compiler or package build.
+    writeFileSync(join(root, 'bun'), '#!/bin/sh\nprintf \'%s\\n\' "$GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT" "$@"\nexit "$FIXTURE_STATUS"\n', { mode: 0o755 });
+    const dispatched = new Map<string, string[]>();
+    try {
+      for (const lane of lanes) {
+        for (const status of [0, 29]) {
+          const result = spawnSync('/bin/bash', ['-e', '-o', 'pipefail', '-c', String(live.run).replaceAll('${{ matrix.lane }}', lane)], {
+            env: { ...(live.env as Record<string, string>), PATH: root, FIXTURE_STATUS: String(status) },
+            encoding: 'utf8', timeout: 5_000,
+          });
+          expect(result.status, `${lane}: ${result.stderr}`).toBe(status);
+          const [required, runner, ...files] = result.stdout.trim().split('\n');
+          expect(required, `${lane} must inherit the no-skip guard`).toBe('1');
+          expect(runner, `${lane} must use the owned engine runner`).toBe('packages/engine/scripts/test.ts');
+          expect(files.length).toBeGreaterThan(0);
+          if (lane === 'agent-posture') {
+            expect(files.slice(0, 2)).toEqual(['--cwd', '../../products/agent']);
+            for (const file of files.slice(2)) expect(file).toMatch(/^\.\/src\/test\/.*\.test\.ts$/);
+          } else {
+            for (const file of files) expect(file).toMatch(/^test\/.*\.test\.ts$/);
+          }
+          if (status === 0) dispatched.set(lane, files);
+        }
+      }
+      expect(dispatched.get('direct-exec')).toEqual([
+        'test/contract/actual-direct-exec-input-authority.test.ts',
+        'test/captured-direct-exec-compiled.test.ts',
+      ]);
+      expect(dispatched.get('tools')).toContain('test/captured-edit-write.test.ts');
+      const allFiles = [...dispatched.values()].flat();
+      for (const file of [
+        'test/contract/actual-direct-exec-input-authority.test.ts',
+        'test/captured-direct-exec-compiled.test.ts',
+        'test/captured-edit-write.test.ts',
+      ]) {
+        expect(allFiles.filter((argument) => argument === file), `${file} must execute exactly once in required containment`).toHaveLength(1);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
 
