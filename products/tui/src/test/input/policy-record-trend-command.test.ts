@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerBuiltinCommands } from '../../input/commands.ts';
-import { dispatchPolicyCommand } from '../../input/commands/policy-dispatch.ts';
+import { policyCommand } from '../../input/commands/policy.ts';
+
 import { createShellPathService, createUnsignedBundle, createPermissionSimulator, DivergenceDashboard } from '@/runtime/index.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -13,6 +14,10 @@ import { SandboxSessionRegistry } from '@goodvibes-jev/engine/sdk/platform/runti
 import { createRuntimeStore, type ContractRecord } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { createOperationsReadModels } from '@goodvibes-jev/engine/sdk/platform/runtime/ui';
 import { registerControlRoomRuntimeCommands } from '../../input/commands/control-room-runtime.ts';
+
+async function dispatchPolicyCommand(args: string[], context: CommandContext): Promise<void> {
+  await policyCommand.handler(args, context);
+}
 
 // W6 command-path parity: /policy record-trend is a thin wrapper over
 // PolicyRuntimeState.recordTrendEntry() (the policy modal dropped its 'r' action

@@ -14,6 +14,7 @@
  * configured threshold (`permissions.divergenceThreshold`): arithmetic
  * against an owner setting, kept as code.
  */
+import { summarizeError } from '../../utils/error-display.js';
 import type { DeepReadonly } from '../../config/manager.js';
 import type { GoodVibesConfig } from '../../config/schema-types.js';
 import {
@@ -65,6 +66,14 @@ function getRegistry(ctx?: PolicyCommandContext): PolicyRegistry {
   return ctx?.policyRegistry ?? getPolicyState(ctx).getRegistry();
 }
 
+async function refreshLintAfterPolicyChange(context: PolicyCommandContext): Promise<void> {
+  try {
+    await getPolicyState(context).refreshLint(getRegistry(context));
+  } catch (error) {
+    context.print(`[policy] Policy change applied, but lint findings could not be refreshed: ${summarizeError(error)}`);
+  }
+}
+
 function fmtRate(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
 }
@@ -108,9 +117,10 @@ async function handleLoad(args: string[], context: PolicyCommandContext): Promis
   }
   const candidate = registry.getCandidate();
   if (candidate) {
-    await policyState.refreshLint(registry);
+    policyState.notify();
     context.print(bundleSummary('[policy] Candidate loaded', candidate));
     context.print('[policy] Next: run `/policy simulate` to collect divergence evidence before promoting.');
+    await refreshLintAfterPolicyChange(context);
   }
 }
 
@@ -156,6 +166,10 @@ async function handleSimulate(args: string[], context: PolicyCommandContext): Pr
   const report = simulator.getDivergenceReport();
   const gateResult = dashboard.checkEnforceGate();
   const scenarioSummary = await runPolicySimulationScenarios(simulator);
+  if (registry.getCandidate() !== candidateForSim || registry.getCurrent() !== current || policyState.getDashboard() !== dashboard) {
+    context.print('[policy] Simulation finished after the active policy changed; its results were not applied.');
+    return;
+  }
   registry.attachSimulationReport(report, gateResult);
   policyState.recordSimulationSummary(scenarioSummary);
   const candidate2 = registry.getCandidate();
@@ -227,6 +241,10 @@ async function handleLint(_args: string[], context: PolicyCommandContext): Promi
     ...(current ? (await lintPolicyConfig({ mode: 'custom', rules: current.rules })).map((finding) => ({ scope: 'current', ...finding })) : []),
     ...(candidate ? (await lintPolicyConfig({ mode: 'custom', rules: candidate.rules })).map((finding) => ({ scope: 'candidate', ...finding })) : []),
   ];
+  if (registry.getCurrent() !== current || registry.getCandidate() !== candidate) {
+    context.print('[policy] Policy bundles changed while lint was running. Run `/policy lint` again.');
+    return;
+  }
   if (findings.length === 0) {
     context.print('[policy] No lint findings for the active or candidate bundles.');
     return;
@@ -240,7 +258,13 @@ async function handleLint(_args: string[], context: PolicyCommandContext): Promi
 async function handlePreflight(_args: string[], context: PolicyCommandContext): Promise<void> {
   const registry = getRegistry(context);
   const policyState = getPolicyState(context);
+  const current = registry.getCurrent();
+  const candidate = registry.getCandidate();
   const lintFindings = await policyState.refreshLint(registry);
+  if (registry.getCurrent() !== current || registry.getCandidate() !== candidate) {
+    context.print('[policy] Policy bundles changed while preflight was running. Run `/policy preflight` again.');
+    return;
+  }
   const review = buildPolicyPreflightReview({
     config: context.config(),
     lintFindings,
@@ -283,7 +307,8 @@ async function handlePromote(args: string[], context: PolicyCommandContext): Pro
     context.print(`[policy] Gate at promotion: ${result.gate.status}; divergence rate ${result.gate.divergenceRate !== undefined ? fmtRate(result.gate.divergenceRate) : 'unknown'} (threshold ${fmtRate(result.gate.threshold)}).`);
   }
   if (current) context.print(bundleSummary('[policy] Active bundle', current));
-  await policyState.refreshLint(registry);
+  policyState.notify();
+  await refreshLintAfterPolicyChange(context);
 }
 
 async function handleRollback(_args: string[], context: PolicyCommandContext): Promise<void> {
@@ -298,8 +323,9 @@ async function handleRollback(_args: string[], context: PolicyCommandContext): P
   context.print(`[policy] Rolled back to bundle "${result.restoredBundleId}".`);
   if (current) context.print(bundleSummary('[policy] Active bundle', current));
   policyState.setDashboard(null);
-  await policyState.refreshLint(registry);
+  policyState.notify();
   context.print('[policy] Simulation dashboard cleared. Run `/policy simulate` for the restored bundle.');
+  await refreshLintAfterPolicyChange(context);
 }
 
 async function handleStatus(_args: string[], context: PolicyCommandContext): Promise<void> {
@@ -327,15 +353,15 @@ async function handleStatus(_args: string[], context: PolicyCommandContext): Pro
 export function renderPolicyUsage(): string {
   return [
     'Usage: /policy <subcommand>',
-    '  /policy                        : open the policy/governance panel',
-    '  load <bundle-id> [rule-count]  : Load a candidate bundle',
-    '  simulate [mode]               : Run simulation (silent|warn|enforce)',
-    '  diff                          : Show rule diff (current vs candidate)',
-    '  lint                          : Lint active and candidate bundles',
-    '  preflight                     : Review proactive policy and MCP risk state',
-    '  promote [--force]             : Promote candidate to enforcement',
-    '  rollback                      : Restore the previous active bundle',
-    '  status                        : Show current policy state',
+    '  /policy                        — open the policy/governance modal',
+    '  load <bundle-id> [rule-count]  — Load a candidate bundle',
+    '  simulate [mode]               — Run simulation (silent|warn|enforce)',
+    '  diff                          — Show rule diff (current vs candidate)',
+    '  lint                          — Lint active and candidate bundles',
+    '  preflight                     — Review proactive policy and MCP risk state',
+    '  promote [--force]             — Promote candidate to enforcement',
+    '  rollback                      — Restore the previous active bundle',
+    '  status                        — Show current policy state',
   ].join('\n');
 }
 

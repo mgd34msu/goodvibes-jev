@@ -89,12 +89,17 @@ export class PolicyRuntimeState {
   public async refreshLint(registry: PolicyRegistry = this._registry): Promise<readonly PolicyLintFinding[]> {
     const current = registry.getCurrent();
     const candidate = registry.getCandidate();
-    this._lintFindings = [
+    const findings = [
       ...(current ? await lintPolicyConfig({ mode: 'custom', rules: current.rules }) : []),
       ...(candidate ? await lintPolicyConfig({ mode: 'custom', rules: candidate.rules }) : []),
     ];
-    this.notify();
-    return this._lintFindings;
+    // A newer bundle may have been loaded while a judgment reader was pending.
+    // Return this read to its caller, but never replace the newer snapshot.
+    if (registry.getCurrent() === current && registry.getCandidate() === candidate) {
+      this._lintFindings = findings;
+      this.notify();
+    }
+    return findings;
   }
 
   public recordSimulationSummary(summary: PolicySimulationSummary): void {
