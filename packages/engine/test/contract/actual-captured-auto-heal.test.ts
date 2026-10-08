@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '../../errors/src/index.js';
 import { ConfigManager } from '../../sdk/src/platform/config/index.js';
+import { judgmentInputBoundary } from '../../sdk/src/platform/gate/boundary.js';
 import { assertContractInputAuthority, getContractInputAuthority, revokeContractInputAuthority } from '../../sdk/src/platform/contract/input-authority.js';
 import { createContractRunner } from '../../sdk/src/platform/contract/runner.js';
 import { ContractStore } from '../../sdk/src/platform/contract/store.js';
@@ -95,6 +96,11 @@ async function fixture(mode: Mode, outcome: Outcome) {
   const acceptance: { name: string; state: Record<string, unknown> }[] = [];
   const previous = installJudgmentPort(runnerPort((context) => {
     if (context.name === 'family') return choiceAnswer(context.question, 'file-mutation', 0.99);
+    // A denied mutation can legitimately reach the runner's stall battery.
+    // Return that question's complete choice distribution, never a noul stub.
+    if (context.name === 'route' && context.question.type === 'choice'
+      && Object.keys(context.question.criteria).sort().join(',') === 'fresh,owner,split')
+      return choiceAnswer(context.question, 'owner', 0.99);
     if (context.name === 'fixes_errors' || context.name === 'only_the_fix') {
       acceptance.push({ name: context.name, state: context.state });
       return noulAnswer(outcome === 'reject' && context.name === 'only_the_fix' ? 0.03 : 0.97);
@@ -122,6 +128,23 @@ async function fixture(mode: Mode, outcome: Outcome) {
   let memberContent: string | undefined;
   let backups: string[] = [];
   let checkedBeforeDelivery = false;
+  // Bounded, value-free observations of the actual original-owner read filter.
+  // Preserve the real permission answer; never log paths, source bytes or tokens.
+  const readChecks: { candidate: 'owner-source' | 'member-source' | 'other'; decision: 'allow' | 'restricted'; boundary: string; memberCalls: number }[] = [];
+  const originalReadAccess = runtime.permissionManager.readAccess;
+  runtime.permissionManager.readAccess = async (path) => {
+    const decision = await originalReadAccess.call(runtime.permissionManager, path);
+    if (readChecks.length < 128) {
+      const boundary = judgmentInputBoundary('read', { path }, root);
+      readChecks.push({
+        candidate: path === join(root, 'src/csv.ts') ? 'owner-source'
+          : path.endsWith('/src/csv.ts') && path.includes('/.worktrees/') ? 'member-source' : 'other',
+        decision, boundary: boundary.passed ? 'pass' : boundary.checks[0]?.detail ?? 'refused', memberCalls,
+      });
+    }
+    return decision;
+  };
+  const firstToolResult = deferred<void>();
   const assertOwnerState = (): void => {
     expect(readFileSync(join(root, 'owner.txt'), 'utf8')).toBe('OWNER_UNSTAGED\n');
     expect(readFileSync(join(root, 'owner-untracked.txt'), 'utf8')).toBe('OWNER_UNTRACKED\n');
@@ -207,7 +230,7 @@ async function fixture(mode: Mode, outcome: Outcome) {
     decompositionRunner: createAgentManagerDecompositionRunner({ agentManager: runtime.agentManager }),
     createEngine: (input) => createOrchestrationEngine({
       agentManager: runtime.agentManager, configManager: config, runtimeBus: bus,
-      projectRoot: input.projectRoot, stateRoot: input.stateRoot, stateNamespace: input.stateNamespace,
+      projectRoot: input.projectRoot, stateRoot: input.stateRoot, stateNamespace: outcome === 'revoke-pending' ? 'ctr-797d133b' : input.stateNamespace,
       initializeWorktree: input.initializeWorktree, prepareInputAuthority: input.prepareInputAuthority,
       contractUnitSettlement: input.contractUnitSettlement, fleetCapacity: input.fleetCapacity, judgeAttempts: input.judgeAttempts,
       runWorktreeSetup: () => undefined,
@@ -226,6 +249,7 @@ async function fixture(mode: Mode, outcome: Outcome) {
           for (const result of turn.results) {
             results.set(result.callId, result);
             if (result.callId === call.id) {
+              firstToolResult.resolve();
               const source = join(record.workingDirectory!, 'src/csv.ts');
               memberContent = existsSync(source) ? readFileSync(source, 'utf8') : undefined;
               if (mode === 'write' && result.success) {
@@ -248,8 +272,12 @@ async function fixture(mode: Mode, outcome: Outcome) {
   return {
     root, runtime, get runner() { return runner; }, results, requests, repairRequests, acceptance, repairEntered, releaseRepair, repairReturned, resumePaused,
     assertOwnerState, assertOwnerUnchanged, denyOriginal,
+    awaitRepair: () => Promise.race([
+      repairEntered.promise.then(() => 'entered' as const),
+      firstToolResult.promise.then(() => 'ended-before-repair' as const),
+    ]),
     member: () => runtime.agentManager.list().find((record) => record.contractRole === 'unit')!,
-    state: () => ({ memberCalls, plannerCalls, memberRoot, memberContent, backups, checkedBeforeDelivery }),
+    state: () => ({ memberCalls, plannerCalls, memberRoot, memberContent, backups, checkedBeforeDelivery, repairRequestCount: repairRequests.length, readChecks }),
     start() {
       id = runner.start({ ask: 'Add a CSV parser module', sessionId: 'actual-captured-heal-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' }).contract.id;
       return id;
@@ -269,13 +297,15 @@ async function fixture(mode: Mode, outcome: Outcome) {
             role: record.contractRole, status: record.status, error: record.error, progress: record.progress,
           })) }));
       }
-      await runner.join(id!);
+      // Awaiting-owner is an intentional pause, not a terminal worker join.
+      // The fixture's finally still cancels and joins before restoring owners.
+      if (runner.get(id!)!.status !== 'awaiting-owner') await runner.join(id!);
       return runner.get(id!)!;
     },
     async dispose() {
       releaseRepair.resolve();
       if (id) { runner.cancel(id, 'fixture cleanup'); await runner.join(id); }
-      runner.dispose(); store.dispose(); runtime.dispose(); installJudgmentPort(previous);
+      runner.dispose(); store.dispose(); runtime.dispose(); runtime.permissionManager.readAccess = originalReadAccess; installJudgmentPort(previous);
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -357,7 +387,9 @@ for (const outcome of ['reject', 'unparsable'] as const) {
 test('actual captured repair respects a stored original-owner source denial before ToolLLM admission', async () => {
   const f = await fixture('write', 'deny-before');
   try {
-    f.start(); await f.settle();
+    f.start(); const contract = await f.settle();
+    expect(contract.status).toBe('awaiting-owner');
+    expect(contract.error ?? '').not.toContain('probability distribution');
     expect(f.repairRequests).toHaveLength(0); expect(f.acceptance).toHaveLength(0);
     // A path denied before its first read need not block subsequent safe model
     // turns. It must block this mutation and every repair admission.
@@ -373,8 +405,9 @@ for (const outcome of ['deny-pending', 'revoke-pending', 'cancel-pending'] as co
     const f = await fixture('write', outcome);
     try {
       const id = f.start();
-      expect((await observed(f.repairEntered.promise, 60_000)).state,
-        JSON.stringify({ state: f.state(), contract: f.runner.get(id)?.error, results: [...f.results] })).toBe('settled');
+      const entry = await observed(f.awaitRepair(), 60_000);
+      expect(entry.state === 'settled' ? entry.value : entry.state,
+        JSON.stringify({ state: f.state(), contract: f.runner.get(id)?.error, results: [...f.results] })).toBe('entered');
       const member = f.member(); const source = join(member.workingDirectory!, 'src/csv.ts');
       expect(readFileSync(source, 'utf8')).toBe(broken); f.assertOwnerUnchanged();
       const execution = f.runtime.agentManager.join(member.id);
