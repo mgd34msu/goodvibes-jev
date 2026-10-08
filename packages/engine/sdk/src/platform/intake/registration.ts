@@ -11,7 +11,7 @@ import { HandlerError, registerCatalogHandler } from '../control-plane/host-hand
 import { InboxCursorStore } from './cursor-store.js';
 import { InboundPoller } from './poller.js';
 import { aggregateInbox, normalizeInboxQuery, type InboxListInput, type InboxListOutput } from './aggregator.js';
-import type { InboundProviderAdapter } from './provider-adapter.js';
+import type { ImapUidCheckpoint, InboundProviderAdapter } from './provider-adapter.js';
 import type { IntakeLogger } from './context.js';
 
 export const INBOX_LIST_METHOD_ID = 'channels.inbox.list';
@@ -37,11 +37,15 @@ export interface RegisterInboxSurfaceOptions {
   readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>);
   /** Recheck a product-owned account/workspace scope around every mirror read. */
   readonly assertReadCurrent?: () => void | Promise<void>;
+  /** Capture one account/mailbox generation across this exact mirror projection. */
+  readonly acquireReadLease?: () => Promise<() => void | Promise<void>>;
 }
 
 export interface InboxSurfaceRegistration {
   /** Storage and any ungated initial seed must finish; failures reject. */
   readonly ready: Promise<void>;
+  /** Current durable generation only; valid after ready, unavailable after close. */
+  getImapCheckpoint?(providerId: string): ImapUidCheckpoint | null;
   close(): Promise<void>;
   /** Legacy initiation; new owners must await close(). */
   unregister(): void;
@@ -165,8 +169,15 @@ export function registerInboxSurface(
       (invocation) => own(async () => {
         await ready;
         await checkRead();
+        let validateLease: (() => void | Promise<void>) | undefined;
+        try {
+          validateLease = await options.acquireReadLease?.();
+          if (options.acquireReadLease && typeof validateLease !== 'function') throw new Error();
+        } catch { throw new HandlerError('Inbox account scope is unavailable', 'INBOX_SCOPE_UNAVAILABLE', 503); }
         const result = await aggregateInbox({ store, poller }, normalizeInboxQuery(invocation.body, invocation.query));
         await checkRead();
+        try { await validateLease?.(); }
+        catch { throw new HandlerError('Inbox account scope is unavailable', 'INBOX_SCOPE_UNAVAILABLE', 503); }
         return result;
       }));
   } catch { setupFailed = true; }
@@ -204,5 +215,5 @@ export function registerInboxSurface(
     void cleanup().then(resolve, reject);
     return result;
   };
-  return { ready, close, unregister: () => { void close(); } };
+  return { ready, close, getImapCheckpoint: (providerId) => store.getImapCheckpoint(providerId), unregister: () => { void close(); } };
 }

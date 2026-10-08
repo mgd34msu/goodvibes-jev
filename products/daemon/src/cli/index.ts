@@ -23,3 +23,6 @@ export { runDaemonCli, type DaemonCliOptions } from './run.js';
 export type { DaemonCliRuntime } from './serve.js';
 export { createSlackDaemonInboxFactory } from '../runtime/slack-inbox-composition.js';
 export type { SlackDaemonInboxOptions, SlackDaemonInboxFactories } from '../runtime/slack-inbox-composition.js';
+
+export { createEmailDaemonInboxFactory } from '../runtime/email-inbox-composition.js';
+export type { EmailDaemonInboxOptions, EmailDaemonInboxFactories } from '../runtime/email-inbox-composition.js';

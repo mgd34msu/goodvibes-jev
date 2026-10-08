@@ -1,4 +1,6 @@
 /** Product host surfaces over canonical engine implementations. */
+import type { EmailService } from '@goodvibes-jev/engine/sdk/platform/email';
+import { registerOwnedMailInbox } from './owned-inbox-mail.js';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createDaemonCredentialStore } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ClusterCoordinator } from '@goodvibes-jev/engine/sdk/platform/cluster';
@@ -19,10 +21,15 @@ import type { BrowserCheckoutSeamHolder } from './browser-checkout-seam-holder.j
  * Tests supply fixture adapters to the real inbox registrar. There is no empty
  * production default and this seam is not evidence of built-in provider parity.
  */
+export interface DaemonInboxControls extends Required<Pick<RegisterInboxSurfaceOptions, 'gatePolling'>> {
+  /** Trusted root-owned constructor; no credentials or generic secret access escape. */
+  readonly createEmailService?: () => { readonly service: EmailService; close(): void };
+}
+
 export type DaemonInboxFactory = (
   context: HandlerContext,
   routing: RoutingRegistration,
-  options: Required<Pick<RegisterInboxSurfaceOptions, 'gatePolling'>>,
+  options: DaemonInboxControls,
 ) => OwnedHandlerSurface | Promise<OwnedHandlerSurface>;
 
 export interface DaemonHandlerCompositionOptions {
@@ -63,10 +70,10 @@ export async function createDaemonHandlerComposition(
   };
   return registerDaemonHandlers(handlerContext, {
     registerRouting: registerRoutingMethods,
-    registerInbox: (ctx, routing) => options.inboxFactory(ctx, routing, {
+    registerInbox: (ctx, routing) => registerOwnedMailInbox(options.inboxFactory, ctx, routing, {
       // Each provider is elected separately; standby nodes still serve storage.
       gatePolling: (providerId, control) => options.clusterCoordinator.register(inboxPollerGate(providerId, control)),
-    }),
+    }, { configManager: options.configManager, secretsManager: options.secretsManager }),
     registerDrafts: registerDraftMethods,
     registerPayments: () => createPaymentsServices({
       gatewayMethods: options.gatewayMethods,

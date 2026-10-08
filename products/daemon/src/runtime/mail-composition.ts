@@ -58,16 +58,26 @@ export function composeMailDeps(input: MailCompositionInput): {
   let replySubjectSourceOwner: EmailReplySubjectSourceOwner | undefined;
   if (input.configManager.onDidInvalidate && input.secretsManager.onDidChange && input.registerDispose) {
     const owner = new EmailReplySubjectSourceOwner();
-    const stopConfig = input.configManager.onDidInvalidate(() => owner.invalidate());
-    // Stored credentials can be references to other local secret keys. The
-    // dependency chain is deliberately not read here; any secret mutation
-    // conservatively retires this account's observed snapshots, including ABA.
-    const stopSecrets = input.secretsManager.onDidChange(() => owner.invalidate());
-    input.registerDispose(() => {
-      owner.dispose();
-      stopConfig();
-      stopSecrets();
-    });
+    let stopConfig: (() => void) | undefined;
+    let stopSecrets: (() => void) | undefined;
+    let disposed = false;
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      const errors: unknown[] = [];
+      for (const cleanup of [() => owner.dispose(), () => stopConfig?.(), () => stopSecrets?.()]) {
+        try { cleanup(); } catch (error) { errors.push(error); }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Mail source lifetime did not close cleanly');
+    };
+    try {
+      stopConfig = input.configManager.onDidInvalidate(() => owner.invalidate());
+      // Aliased secret changes also retire account snapshots, including ABA.
+      stopSecrets = input.secretsManager.onDidChange(() => owner.invalidate());
+      input.registerDispose(dispose);
+    } catch (error) {
+      dispose(); throw error;
+    }
     replySubjectSourceOwner = owner;
   }
   const emailServiceDeps = withSurfaceEmailConfig({

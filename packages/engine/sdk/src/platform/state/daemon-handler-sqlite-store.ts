@@ -6,6 +6,13 @@ import { basename, dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { loadSqlJsEngine, type SqlDatabase } from './sqlite-store.js';
 
+/** Synchronous transaction view; callers must not retain it past the callback. */
+export interface HandlerSqliteTransaction {
+  run(sql: string, params?: (string | number | Uint8Array | null)[]): void;
+  all<T = Record<string, unknown>>(sql: string, params?: (string | number)[]): T[];
+  get<T = Record<string, unknown>>(sql: string, params?: (string | number)[]): T | null;
+}
+
 export interface HandlerSqliteStoreOptions {
   workingDirectory: string;
   /** e.g. 'channel-routes.sqlite', 'drafts.sqlite', 'inbox-cursors.sqlite' */
@@ -56,6 +63,9 @@ export class HandlerSqliteStore {
   private db: SqlDatabase | null = null;
   private initPromise: Promise<void> | null = null;
   private persistenceBlocked = false;
+  private databaseFactory: ((data: Uint8Array) => SqlDatabase) | null = null;
+  private mutationRevision = 0;
+  private stagedTransactions = 0;
 
   constructor(options: HandlerSqliteStoreOptions) {
     this.options = options;
@@ -161,6 +171,7 @@ export class HandlerSqliteStore {
   private async initialize(): Promise<void> {
     await mkdir(dirname(this.resolvedPath), { recursive: true });
     const SQL = await loadSqlJsEngine();
+    this.databaseFactory = (data) => new SQL.Database(data);
     this.persistenceBlocked = false;
 
     // Validate the file by its CONTENT, not by existsSync. `save()` writes
@@ -248,21 +259,13 @@ export class HandlerSqliteStore {
 
   /** Execute a write (INSERT/UPDATE/DELETE/CREATE). */
   run(sql: string, params?: (string | number | Uint8Array | null)[]): void {
+    this.mutationRevision += 1;
     this.requireDb().run(sql, params);
   }
 
   /** SELECT → array of row objects (columns mapped to values). */
   all<T = Record<string, unknown>>(sql: string, params?: (string | number)[]): T[] {
-    const result = this.requireDb().exec(sql, params);
-    if (result.length === 0) return [];
-    const { columns, values } = result[0]!;
-    return values.map((row) => {
-      const obj: Record<string, unknown> = {};
-      for (let i = 0; i < columns.length; i += 1) {
-        obj[columns[i]!] = row[i];
-      }
-      return obj as T;
-    });
+    return queryRows<T>(this.requireDb(), sql, params);
   }
 
   /** First row or null. */
@@ -290,14 +293,16 @@ export class HandlerSqliteStore {
     }
     // Capture before yielding, so close() or subsequent writes cannot change
     // this save's contents. A later invocation must be the later rename.
-    const data = db.export();
+    // A save admitted behind a staged transaction must capture AFTER it; an
+    // earlier snapshot would overwrite the newly committed checkpoint.
+    const data = this.stagedTransactions > 0 ? undefined : db.export();
     HandlerSqliteStore.saveSequence += 1;
     const tmpPath = `${this.resolvedPath}.${process.pid}.${Date.now()}.${HandlerSqliteStore.saveSequence}.tmp`;
     const previous = HandlerSqliteStore.saveTails.get(this.resolvedPath) ?? Promise.resolve();
     const saving = previous.then(async () => {
       try {
         await mkdir(dirname(this.resolvedPath), { recursive: true });
-        await writeFile(tmpPath, data);
+        await writeFile(tmpPath, data ?? this.requireDb().export());
         await rename(tmpPath, this.resolvedPath);
       } finally {
         await rm(tmpPath, { force: true }).catch(() => {});
@@ -313,6 +318,71 @@ export class HandlerSqliteStore {
     await saving;
   }
 
+  /**
+   * Stage a repeatable synchronous mutation on a private database image. Only
+   * after a successful disk write and synchronous fence does rename+publication
+   * occur, without an await between them. Failure leaves the live DB unchanged.
+   * Concurrent ordinary mutations cause a rebase; queued ordinary saves capture
+   * after this operation, preserving mixed-provider and retention updates.
+   */
+  persistTransaction<T>(mutate: (transaction: HandlerSqliteTransaction) => T, assertCurrent: () => void): Promise<T> {
+    this.requireDb();
+    this.stagedTransactions += 1;
+    const previous = HandlerSqliteStore.saveTails.get(this.resolvedPath) ?? Promise.resolve();
+    const operation = previous.then(async () => {
+      if (this.persistenceBlocked) throw new Error('HandlerSqliteStore cannot persist transaction: quarantine failed');
+      for (;;) {
+        synchronousFence(assertCurrent);
+        const live = this.requireDb();
+        const revision = this.mutationRevision;
+        const candidate = this.databaseFactory!(live.export());
+        HandlerSqliteStore.saveSequence += 1;
+        const tmpPath = `${this.resolvedPath}.${process.pid}.${Date.now()}.${HandlerSqliteStore.saveSequence}.tmp`;
+        let published = false;
+        try {
+          const transaction: HandlerSqliteTransaction = {
+            run: (sql, params) => candidate.run(sql, params),
+            all: <R>(sql: string, params?: (string | number)[]) => queryRows<R>(candidate, sql, params),
+            get: <R>(sql: string, params?: (string | number)[]) => queryRows<R>(candidate, sql, params)[0] ?? null,
+          };
+          candidate.run('BEGIN');
+          let result: T;
+          try {
+            result = mutate(transaction);
+            if (result !== null && (typeof result === 'object' || typeof result === 'function') && 'then' in result) {
+              void Promise.resolve(result).catch(() => {});
+              throw new Error('HandlerSqliteStore transaction must be synchronous');
+            }
+            candidate.run('COMMIT');
+          } catch (error) { candidate.run('ROLLBACK'); throw error; }
+          await mkdir(dirname(this.resolvedPath), { recursive: true });
+          await writeFile(tmpPath, candidate.export());
+          // The trusted fence cannot yield. A synchronous rename closes the
+          // otherwise unavoidable gap between checking and replacing the file.
+          synchronousFence(assertCurrent);
+          if (this.db !== live) throw new Error('HandlerSqliteStore transaction lost its database');
+          if (this.mutationRevision !== revision) continue;
+          renameSync(tmpPath, this.resolvedPath);
+          this.db = candidate;
+          this.mutationRevision += 1;
+          published = true;
+          try { live.close(); } catch { /* Publication already succeeded. */ }
+          return result;
+        } finally {
+          if (!published) candidate.close();
+          await rm(tmpPath, { force: true }).catch(() => {});
+        }
+      }
+    });
+    const completed = operation.finally(() => { this.stagedTransactions -= 1; });
+    const tail = completed.then(() => {}, () => {});
+    HandlerSqliteStore.saveTails.set(this.resolvedPath, tail);
+    void tail.then(() => {
+      if (HandlerSqliteStore.saveTails.get(this.resolvedPath) === tail) HandlerSqliteStore.saveTails.delete(this.resolvedPath);
+    });
+    return completed;
+  }
+
   close(): void {
     if (this.db) {
       this.db.close();
@@ -323,6 +393,7 @@ export class HandlerSqliteStore {
   /** BEGIN/COMMIT around fn; ROLLBACK on throw (synchronous sql.js). */
   transaction(fn: () => void): void {
     const db = this.requireDb();
+    this.mutationRevision += 1;
     db.run('BEGIN');
     try {
       fn();
@@ -331,5 +402,22 @@ export class HandlerSqliteStore {
       db.run('ROLLBACK');
       throw error;
     }
+  }
+}
+
+function queryRows<T>(db: SqlDatabase, sql: string, params?: (string | number)[]): T[] {
+  const result = db.exec(sql, params);
+  if (result.length === 0) return [];
+  const { columns, values } = result[0]!;
+  return values.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]])) as T);
+}
+
+function synchronousFence(assertCurrent: () => void): void {
+  const result: unknown = assertCurrent();
+  if (result !== undefined) {
+    if (result !== null && (typeof result === 'object' || typeof result === 'function') && 'then' in result) {
+      void Promise.resolve(result).catch(() => {});
+    }
+    throw new Error('HandlerSqliteStore currentness fence must be synchronous and return void');
   }
 }

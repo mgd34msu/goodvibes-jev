@@ -234,3 +234,6 @@ export async function readMessageDetail(
     && hasCompleteSubjectHeader(rawHeaders, detail.subject)) verifiedMessageIdentities.add(detail);
   return { outcome: 'read', detail };
 }
+
+// The strict source contract is intentionally separate from lenient display.
+export { readCompleteMessageDetail } from './imap-message-complete.js';

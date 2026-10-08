@@ -60,7 +60,10 @@ export interface ImapBodyPart {
 // ---------------------------------------------------------------------------
 
 /** A parsed IMAP S-expression node: string, NIL (null), or a nested list. */
-type SNode = string | null | SNode[];
+export type ImapBodyStructureNode = string | number | null | ImapBodyStructureNode[];
+type SNode = ImapBodyStructureNode;
+
+interface StrictParseState { valid: boolean; nodes: number }
 
 /** Bounds adversarial nesting; real messages are a handful of levels deep. */
 const MAX_NESTING_DEPTH = 24;
@@ -119,7 +122,7 @@ function skipList(text: string, from: number): number {
   return i;
 }
 
-function parseList(text: string, from: number, depth: number): { items: SNode[]; next: number } {
+function parseList(text: string, from: number, depth: number, strict?: StrictParseState): { items: SNode[]; next: number } {
   const items: SNode[] = [];
   let i = from;
   while (i < text.length) {
@@ -129,23 +132,38 @@ function parseList(text: string, from: number, depth: number): { items: SNode[];
       continue;
     }
     if (ch === ')') return { items, next: i + 1 };
+    if (strict !== undefined && i > from && !/[\s(]/.test(text.charAt(i - 1))
+      && !(text.charAt(i - 1) === ')' && ch === '(')) strict.valid = false;
+    if (strict !== undefined && ++strict.nodes > 10_000) {
+      strict.valid = false;
+      return { items, next: text.length };
+    }
     if (ch === '(') {
       if (depth >= MAX_NESTING_DEPTH) {
+        if (strict !== undefined) strict.valid = false;
         i = skipList(text, i + 1);
         continue;
       }
-      const inner = parseList(text, i + 1, depth + 1);
+      const inner = parseList(text, i + 1, depth + 1, strict);
       items.push(inner.items);
       i = inner.next;
       continue;
     }
     if (ch === '"') {
       const quoted = readQuoted(text, i);
+      if (strict !== undefined) {
+        const token = text.slice(i, quoted.next);
+        if (!/^"(?:[^"\\\r\n\u0000-\u001f]|\\["\\])*"$/.test(token)
+          || /\ufffd/.test(quoted.value)) strict.valid = false;
+      }
       items.push(quoted.value);
       i = quoted.next;
       continue;
     }
     if (ch === '{') {
+      // A strict read does not reinterpret byte-counted structure literals as
+      // character-counted text. Unsupported literal syntax is explicitly refused.
+      if (strict !== undefined) strict.valid = false;
       const literal = readLiteral(text, i);
       if (literal !== null) {
         items.push(literal.value);
@@ -158,10 +176,21 @@ function parseList(text: string, from: number, depth: number): { items: SNode[];
       i += 1; // no progress possible on this character, step over it
       continue;
     }
-    items.push(/^nil$/i.test(atom.value) ? null : atom.value);
+    if (strict !== undefined && !/^(?:NIL|[0-9]+)$/i.test(atom.value)) strict.valid = false;
+    items.push(/^nil$/i.test(atom.value) ? null
+      : strict !== undefined && /^[0-9]+$/.test(atom.value) ? Number(atom.value) : atom.value);
     i = atom.next;
   }
+  if (strict !== undefined) strict.valid = false; // unterminated list
   return { items, next: i };
+}
+
+/** The same bounded parser, with omissions and malformed syntax refused. */
+export function parseCompleteBodyStructureNodes(raw: string): ImapBodyStructureNode[] | null {
+  if (raw.length === 0 || raw.length > MAX_STRUCTURE_CHARS || raw.charAt(0) !== '(') return null;
+  const strict: StrictParseState = { valid: true, nodes: 0 };
+  const parsed = parseList(raw, 1, 1, strict);
+  return strict.valid && parsed.next === raw.length ? parsed.items : null;
 }
 
 // ---------------------------------------------------------------------------
