@@ -767,11 +767,12 @@ export class DaemonLifecycleRuntime {
         } catch (error) {
           return { status: 'unknown', detail: `could not verify launchd supervision: ${summarizeError(error)}` };
         }
-        // Existing launchd supervision uses KeepAlive. This is a handover request,
-        // not evidence that the replacement started successfully.
-        flushActivityLogSync();
-        (this.options.exitProcess ?? ((code: number) => process.exit(code)))(0);
-        return { status: 'accepted' };
+        // Being listed by launchd does not acknowledge a replacement job.
+        // Desired restartOnFailure and the plist on disk do not establish the
+        // policy loaded by launchd; KeepAlive may be disabled or stale. Until
+        // an observed launchd handover exists, never turn that inference into
+        // a successful exit (even when both desired and on-disk values are true).
+        return { status: 'unknown', detail: 'launchd restart-by-exit has no observed manager acknowledgement; loaded KeepAlive policy is unverified' };
       },
     };
   }

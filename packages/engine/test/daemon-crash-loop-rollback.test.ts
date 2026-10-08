@@ -218,6 +218,8 @@ function rollbackHarness(overrides: {
   readonly supervised?: boolean;
   readonly platform?: NodeJS.Platform;
   readonly managerPlatform?: 'manual' | 'launchd' | 'systemd';
+  readonly managerContents?: string;
+  readonly restartOnFailure?: boolean;
   readonly stopGracefully?: (() => Promise<void> | void) | undefined;
   /** Share one marker filesystem across two harnesses to model two PROCESSES. */
   readonly marker?: { io: LifecycleMarkerIo; files: Map<string, string> };
@@ -230,6 +232,7 @@ function rollbackHarness(overrides: {
     ['update.auto', false], // the loop is not what these tests exercise
     ['service.enabled', false], // boot promotion is a separate path
     ['service.serviceName', 'goodvibes-crash-loop-test'],
+    ['service.restartOnFailure', overrides.restartOnFailure ?? true],
     ['update.rollbackAfterFailedStarts', overrides.threshold ?? 3],
   ]);
   const configManager = {
@@ -238,7 +241,7 @@ function rollbackHarness(overrides: {
   } as unknown as DaemonLifecycleRuntimeOptions['configManager'];
   const platformServiceManager = {
     // A failed install must preserve the completed disk rollback, without exiting.
-    status: () => ({ installed: overrides.supervised ?? false, running: overrides.supervised ?? false, platform: overrides.managerPlatform }),
+    status: () => ({ installed: overrides.supervised ?? false, running: overrides.supervised ?? false, platform: overrides.managerPlatform, contents: overrides.managerContents }),
     install: overrides.install ?? (() => { throw new Error('no service manager in this test'); }),
   } as unknown as DaemonLifecycleRuntimeOptions['platformServiceManager'];
   const { io: markerIo, files: markerFiles } = overrides.marker ?? memoryMarkerIo();
@@ -607,12 +610,12 @@ test('receipt write failure cannot undo a completed rollback on duplicate start'
 });
 
 for (const managerPlatform of ['manual', 'launchd'] as const) {
-  test(`darwin ${managerPlatform} requires actual restart-by-exit supervision`, async () => {
+  test(`darwin ${managerPlatform} cannot infer restart acceptance from supervision identity`, async () => {
     const h = rollbackHarness({ artifact: ARTIFACT, supervised: true, platform: 'darwin', managerPlatform });
     for (let i = 0; i < 4; i++) h.runtime.onStarting();
     await Bun.sleep(10);
-    expect(h.exits).toEqual(managerPlatform === 'launchd' ? [0] : []);
-    if (managerPlatform === 'manual') expect(h.receipts()[1]!.text).toContain('incomplete (unsupported)');
+    expect(h.exits).toEqual([]);
+    expect(h.receipts()[1]!.text).toContain(managerPlatform === 'manual' ? 'incomplete (unsupported)' : 'incomplete (unknown)');
   });
 }
 
@@ -650,4 +653,27 @@ for (const managerPlatform of ['manual', 'systemd'] as const) {
     if (managerPlatform === 'manual') expect(h.receipts()[1]!.text).toContain('incomplete (unsupported)');
     else expect(h.receipts()).toHaveLength(1);
   });
+}
+
+
+for (const restartOnFailure of [false, true]) {
+  for (const diskKeepAlive of [false, true]) {
+    test(`launchd rollback desired restart=${restartOnFailure}, disk KeepAlive=${diskKeepAlive} has no observed acceptance`, async () => {
+      let commands = 0;
+      const h = rollbackHarness({ artifact: ARTIFACT, supervised: true, platform: 'darwin', managerPlatform: 'launchd',
+        restartOnFailure,
+        managerContents: `<plist><dict><key>KeepAlive</key><${diskKeepAlive}/></dict></plist>`,
+        runner: async () => { commands++; return { status: 'accepted' }; },
+      });
+      for (let i = 0; i < 4; i++) h.runtime.onStarting();
+      await Bun.sleep(10);
+      expect(commands).toBe(0);
+      expect(h.exits).toEqual([]);
+      expect(h.files.get(EXEC_PATH)).toBe('good-build');
+      expect(h.files.get(PREVIOUS_PATH)).toBe('bad-build');
+      expect(h.receipts()[0]!.text).toContain('rolled back to the previously installed version');
+      expect(h.receipts()[1]!.text).toContain('incomplete (unknown)');
+      expect(h.marker()?.rejectedVersion).toBe('2.0.0');
+    });
+  }
 }

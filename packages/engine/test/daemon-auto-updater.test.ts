@@ -13,6 +13,7 @@ import {
   defaultDownloadBaseUrl,
   type AutoUpdateServiceActions,
 } from '../sdk/src/platform/daemon/auto-updater.js';
+import { DaemonLifecycleRuntime, type DaemonLifecycleRuntimeOptions } from '../sdk/src/platform/daemon/facade-lifecycle.js';
 import { DaemonReceiptStore } from '../sdk/src/platform/daemon/receipts.js';
 import type { ServiceHandoverOutcome } from '../sdk/src/platform/daemon/service-handover.js';
 import {
@@ -46,10 +47,11 @@ function memoryIo(initial: Record<string, Buffer>) {
   return { files, io };
 }
 
-function releaseFetch(overrides: { latestTag?: string } = {}): { fetchImpl: UpdateFetchLike; requests: string[] } {
+function releaseFetch(overrides: { latestTag?: string; assetName?: string } = {}): { fetchImpl: UpdateFetchLike; requests: string[] } {
   const tag = overrides.latestTag ?? NEW_TAG;
+  const assetName = overrides.assetName ?? DAEMON_ASSET;
   const base = defaultDownloadBaseUrl(LATEST_URL, tag);
-  const manifest = `${sha256(NEW_DAEMON)}  ${DAEMON_ASSET}\n`;
+  const manifest = `${sha256(NEW_DAEMON)}  ${assetName}\n`;
   const requests: string[] = [];
   const fetchImpl: UpdateFetchLike = async (url) => {
     requests.push(url);
@@ -62,7 +64,7 @@ function releaseFetch(overrides: { latestTag?: string } = {}): { fetchImpl: Upda
     }
     const body = url === `${base}/SHA256SUMS.txt`
       ? Buffer.from(manifest)
-      : url === `${base}/${DAEMON_ASSET}`
+      : url === `${base}/${assetName}`
         ? NEW_DAEMON
         : null;
     if (!body) {
@@ -95,6 +97,7 @@ interface Harness {
 function makeHarness(options: {
   idle: () => boolean;
   supervised?: boolean;
+  platform?: NodeJS.Platform;
   latestTag?: string;
   currentVersion?: string;
   /** The version a crash-loop rollback rejected, as the lifecycle marker would report it. */
@@ -112,7 +115,7 @@ function makeHarness(options: {
 } ): Harness {
   const scratch = mkdtempSync(join(tmpdir(), 'auto-updater-'));
   const { files, io } = memoryIo({ '/opt/gv/goodvibes-daemon': Buffer.from('daemon-v1') });
-  const { fetchImpl, requests } = releaseFetch({ ...(options.latestTag ? { latestTag: options.latestTag } : {}) });
+  const { fetchImpl, requests } = releaseFetch({ assetName: options.platform === 'darwin' ? 'goodvibes-daemon-macos-x64' : DAEMON_ASSET, ...(options.latestTag ? { latestTag: options.latestTag } : {}) });
   const receipts = new DaemonReceiptStore(join(scratch, 'receipts.json'), { now: () => new Date(2026, 6, 12, 14, 30).getTime() });
   const actions = { supervised: options.supervised ?? true, adopted: 0, restarted: 0 };
   const sequence: string[] = [];
@@ -139,7 +142,7 @@ function makeHarness(options: {
   const updater = new DaemonAutoUpdater({
     currentVersion: options.currentVersion ?? '1.0.0',
     execPath: '/opt/gv/goodvibes-daemon',
-    platform: 'linux',
+    platform: options.platform ?? 'linux',
     arch: 'x64',
     releasesLatestUrl: LATEST_URL,
     checkIntervalMs: 60 * 60 * 1000,
@@ -1031,3 +1034,39 @@ describe('PeriodicUpdateLoop cadence', () => {
     expect(h.loop.busyRetryMs).toBe(1_000);
   });
 });
+
+
+for (const restartOnFailure of [false, true]) {
+  for (const diskKeepAlive of [false, true]) {
+    test(`launchd update desired restart=${restartOnFailure}, disk KeepAlive=${diskKeepAlive} preserves completed disk evidence without exit`, async () => {
+      const serviceExits: number[] = [];
+      let commands = 0;
+      const lifecycle = new DaemonLifecycleRuntime({
+        configManager: { get: (key: string) => key === 'service.restartOnFailure' ? restartOnFailure : undefined } as unknown as DaemonLifecycleRuntimeOptions['configManager'],
+        platformServiceManager: { status: () => ({ installed: true, running: true, platform: 'launchd',
+          contents: `<plist><dict><key>KeepAlive</key><${diskKeepAlive}/></dict></plist>`,
+        }) } as unknown as DaemonLifecycleRuntimeOptions['platformServiceManager'],
+        isIdle: () => true, servicePlatform: 'darwin',
+        serviceCommandRunner: async () => { commands++; return { status: 'accepted' }; },
+        exitProcess: (code) => { serviceExits.push(code); },
+      });
+      // Construct the shared action adapter only: do not arm the lifecycle.
+      const actions = (lifecycle as unknown as { buildServiceActions(): AutoUpdateServiceActions }).buildServiceActions();
+      const h = makeHarness({ idle: () => true, platform: 'darwin', serviceActions: actions });
+      try {
+        await h.updater.tick();
+        expect(commands).toBe(0);
+        expect(serviceExits).toEqual([]);
+        expect(h.exits).toEqual([]);
+        expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+        expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+        expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+        expect(h.updater.snapshot().handover?.status).toBe('unknown');
+        expect(h.receipts.list()[0]!.text).toContain('on disk');
+        expect(h.receipts.list()[1]!.text).toContain('handover is incomplete');
+        await h.updater.tick();
+        expect(h.requests).toHaveLength(3);
+      } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+    });
+  }
+}
