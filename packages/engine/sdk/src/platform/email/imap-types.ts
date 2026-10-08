@@ -133,6 +133,24 @@ export type ImapMessageRead =
   | { readonly outcome: 'gone' }
   | { readonly outcome: 'unreadable'; readonly problems: readonly ImapFetchProblem[] };
 
+/** Every relevant body section, decoded completely and never clipped. */
+export interface ImapCompleteTextSection {
+  readonly section: string;
+  readonly contentType: 'text/plain' | 'text/html';
+  readonly text: string;
+}
+
+/**
+ * Strict acquisition proof for source screening. Ordinary display reads and
+ * subject provenance are not evidence of this stronger complete-source claim.
+ * Incomplete results expose no partially acquired sender-authored content.
+ */
+export type ImapCompleteMessageRead =
+  | { readonly outcome: 'complete'; readonly detail: ImapMessageDetail;
+      readonly rawHeaders: string; readonly rawBodyStructure: string; readonly textSections: readonly ImapCompleteTextSection[] }
+  | { readonly outcome: 'incomplete'; readonly reason: string }
+  | { readonly outcome: 'gone' };
+
 /**
  * An attachment as the server described it. METADATA ONLY: this is read out of
  * the message's BODYSTRUCTURE, and no code path in this module fetches an

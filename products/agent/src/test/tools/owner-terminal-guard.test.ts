@@ -1,6 +1,6 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
+import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 /**
  * owner-terminal-guard.test.ts, the owner's terminal is untouchable on a
  * LOCAL turn too.
@@ -17,68 +17,49 @@ import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
  * of the rule: driving a session this platform did not name is refused, and
  * reading tmux state still runs.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AgentMessageBus } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { CrossSessionTaskRegistry } from '@goodvibes-jev/engine/sdk/platform/sessions';
-import { FileUndoManager, ModeManager } from '@goodvibes-jev/engine/sdk/platform/state';
-import {
-  AgentManager,
-  OverflowHandler,
-  ProcessManager,
-  ToolRegistry,
-  createWorkflowServices,
-  registerAllTools,
-} from '@goodvibes-jev/engine/sdk/platform/tools';
-import { RemoteRunnerRegistry, SandboxSessionRegistry } from '@/runtime/index.ts';
+import { AGENT_OWNER_TERMINAL_GUARD as ENGINE_OWNER_TERMINAL_GUARD } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
+import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { composeAgentToolRegistry } from '../../runtime/agent-tool-registry.ts';
+import type { RuntimeServices } from '../../runtime/services.ts';
 import { AGENT_OWNER_TERMINAL_GUARD } from '../../runtime/agent-exec-posture.ts';
-import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
-import { createTestManagers } from '../helpers/test-managers.ts';
-import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 let previousPort: ReturnType<typeof installJudgmentPort>;
-afterEach(() => { installJudgmentPort(previousPort); });
+const runtimes: RuntimeServices[] = [];
+// Own the reset even when another suite imported the cached helper first.
+beforeEach(() => {
+  resetTestRuntimeServices();
+  previousPort = installJudgmentPort(undefined);
+});
+afterEach(async () => {
+  try {
+    for (const services of runtimes.splice(0)) {
+      try { await services.processManager.close(); }
+      finally { services.dispose(); }
+    }
+  } finally {
+    resetTestRuntimeServices();
+    installJudgmentPort(previousPort);
+  }
+});
 
 /** The line the refusal carries, so a person is told which rule stopped them. */
 const RULE = 'the owner\'s terminal is untouchable';
 
-/**
- * The agent's local tool registry, composed the way bootstrap-core.ts composes
- * it in the part that matters here: with the product's own owner-terminal
- * guard, read from the same constant production reads.
- */
-function localTurnTools(): ToolRegistry {
-  const registry = new ToolRegistry();
-  const workingDirectory = makeProjectTempDir('agent-owner-terminal');
-  const services = createTestManagers();
-  const agentManager = new AgentManager({
-    messageBus: new AgentMessageBus(),
+/** The same local composition bootstrap-core.ts builds for a live Agent turn. */
+function localTurnTools(): { registry: ToolRegistry; workingDirectory: string } {
+  const services = getTestRuntimeServices();
+  runtimes.push(services);
+  const { toolRegistry: registry } = composeAgentToolRegistry({
+    services,
     configManager: services.configManager,
+    homeDirectory: services.homeDirectory,
+    resolveSessionId: () => 'owner-terminal-adoption',
+    getLastUserMessage: () => 'Run the scratch terminal probes',
   });
-  registerAllTools(registry, {
-    surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
-    fileUndoManager: new FileUndoManager(),
-    modeManager: new ModeManager(),
-    processManager: new ProcessManager(),
-    agentManager,
-    contractRunner: getTestRuntimeServices().contractRunner,
-    projectRoot: workingDirectory,
-    agentMessageBus: new AgentMessageBus(),
-    configManager: services.configManager,
-    providerRegistry: services.providerRegistry,
-    toolLLM: services.toolLLM,
-    sessionOrchestration: new CrossSessionTaskRegistry(
-      join(workingDirectory, '.goodvibes', 'agent', 'sessions', 'task-graph.json'),
-    ),
-    sandboxSessionRegistry: new SandboxSessionRegistry(workingDirectory),
-    remoteRunnerRegistry: new RemoteRunnerRegistry(agentManager),
-    workingDirectory,
-    overflowHandler: new OverflowHandler({ baseDir: workingDirectory }),
-    workflowServices: createWorkflowServices(),
-    channelRegistry: null,
-    ownerTerminalGuard: AGENT_OWNER_TERMINAL_GUARD,
-  });
-  previousPort = installJudgmentPort(fakePort((name, question, state) => {
+  installJudgmentPort(fakePort((name, question, state) => {
     const text = JSON.stringify(state);
     if (name === 'acts_on_session') return noulAnswer(text.includes('send-keys') ? 0.999 : 0.001);
     if (name === 'owned_targets') return noulAnswer(text.includes('goodvibes-agent-workspace') ? 0.999 : 0.001);
@@ -90,13 +71,14 @@ function localTurnTools(): ToolRegistry {
     if (['catastrophic', 'needsNetwork', 'needsPrivilege', 'will_prompt'].includes(name)) return noulAnswer(0.001);
     throw new Error(`Unexpected owner-terminal judgment: ${name}`);
   }).port);
-  return registry;
+  return { registry, workingDirectory: services.workingDirectory };
 }
 
 async function runCommand(registry: ToolRegistry, cmd: string): Promise<{
   success: boolean;
   stdout: string;
   stderr: string;
+  sandbox: Record<string, unknown>;
 }> {
   const result = await registry.execute(`owner-terminal-${cmd.slice(0, 12)}`, 'exec', {
     commands: [{ cmd }],
@@ -104,16 +86,38 @@ async function runCommand(registry: ToolRegistry, cmd: string): Promise<{
   const output = JSON.parse(String(result.output ?? '{}')) as Record<string, unknown>;
   return {
     success: result.success,
+    sandbox: output,
     stdout: String(output['stdout'] ?? ''),
     stderr: `${String(output['stderr'] ?? '')}${String(result.error ?? '')}`,
   };
 }
 
-describe('a local agent turn and the owner\'s tmux', () => {
-  test('typing into a session this platform did not name is refused, naming the rule', async () => {
-    const registry = localTurnTools();
+/** Required CI must observe the ordinary Agent boundary, never a host fallback. */
+function expectRequiredOrdinarySandbox(output: Record<string, unknown>): void {
+  const required = process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT;
+  if (required === undefined) return;
+  expect(required).toBe('1');
+  expect(output).toMatchObject({ sandboxed: true, sandbox_network: 'disabled' });
+  expect(output['sandbox_boundary']).toStartWith('bubblewrap: workspace ');
+  expect(output['captured_exec_availability']).toBeUndefined();
+}
 
-    const outcome = await runCommand(registry, 'tmux send-keys -t main "echo owned" Enter');
+describe('a local agent turn and the owner\'s tmux', () => {
+  test('the product compatibility export is the canonical engine posture, not a copied value', () => {
+    expect(AGENT_OWNER_TERMINAL_GUARD).toBe(ENGINE_OWNER_TERMINAL_GUARD);
+    expect(AGENT_OWNER_TERMINAL_GUARD).toEqual({ posture: 'enforced' });
+  });
+
+  test('typing into a session this platform did not name is refused, naming the rule', async () => {
+    const { registry, workingDirectory } = localTurnTools();
+
+    const marker = join(workingDirectory, 'foreign-terminal-ran');
+    // A private socket with no server: even if enforcement regresses, the
+    // command can only write this fixture marker, never touch a real terminal.
+    const outcome = await runCommand(registry,
+      `tmux -L gv-posture-${process.pid} send-keys -t main "echo owned" Enter; printf ran > '${marker}'`);
+
+    expect(existsSync(marker)).toBe(false);
 
     expect(outcome.success).toBe(false);
     expect(outcome.stderr).toContain(RULE);
@@ -122,28 +126,33 @@ describe('a local agent turn and the owner\'s tmux', () => {
   });
 
   test('reading tmux state is not touching it, and still runs', async () => {
-    const registry = localTurnTools();
+    const { registry, workingDirectory } = localTurnTools();
 
-    // The trailing echo is the proof the command actually reached the shell:
+    // The marker proves the command actually reached the shell:
     // `tmux list-sessions` fails on a host with no tmux server (and on one with
     // no tmux at all), and neither of those is the thing under test.
-    const outcome = await runCommand(registry, 'tmux list-sessions; echo probe-ran');
+    const marker = join(workingDirectory, 'terminal-read-ran');
+    const outcome = await runCommand(registry,
+      `tmux -L gv-posture-${process.pid} list-sessions; printf probe-ran > '${marker}'; cat '${marker}'`);
 
     expect(outcome.stderr).not.toContain(RULE);
     expect(outcome.success, outcome.stderr).toBe(true);
+    expect(readFileSync(marker, 'utf8')).toBe('probe-ran');
     expect(outcome.stdout).toContain('probe-ran');
+    expectRequiredOrdinarySandbox(outcome.sandbox);
   });
 
   test('driving the platform\'s OWN session stays allowed', async () => {
-    const registry = localTurnTools();
+    const { registry, workingDirectory } = localTurnTools();
 
-    const outcome = await runCommand(
-      registry,
-      'tmux send-keys -t goodvibes-agent-workspace "echo ours" Enter; echo probe-ran',
-    );
+    const marker = join(workingDirectory, 'owned-terminal-ran');
+    const outcome = await runCommand(registry,
+      `tmux -L gv-posture-${process.pid} send-keys -t goodvibes-agent-workspace "echo ours" Enter; printf probe-ran > '${marker}'; cat '${marker}'`);
 
     expect(outcome.stderr).not.toContain(RULE);
     expect(outcome.success, outcome.stderr).toBe(true);
+    expect(readFileSync(marker, 'utf8')).toBe('probe-ran');
     expect(outcome.stdout).toContain('probe-ran');
+    expectRequiredOrdinarySandbox(outcome.sandbox);
   });
 });

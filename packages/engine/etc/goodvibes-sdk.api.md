@@ -11632,6 +11632,16 @@ export interface OperatorMethodOutputMap {
             lastSyncAt?: number;
             syncing?: boolean;
             error?: string;
+            mailboxHistory?: {
+                uidValidity: number;
+                kind: string;
+                lowerBoundUid: number;
+                skippedOlderMessages: number;
+            };
+            mailboxProgress?: {
+                uidValidity: number;
+                pendingMessages: number;
+            };
         })[];
         partial: boolean;
     };

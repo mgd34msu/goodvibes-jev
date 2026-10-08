@@ -154,8 +154,9 @@ for (const viewKind of ['snapshot', 'member'] as const) {
         const file = Bun.file;
         const tap = spyOn(Bun, 'file').mockImplementation(((...args: Parameters<typeof Bun.file>) => {
           opened.push(String(args[0]));
-          if (access === 'policy-revoked' && String(args[0]) === join(view, 'allowed.ts') && !policyChange)
-            policyChange = runtime.userPermissionRuleStore.add({
+          const handle = file(...args);
+          if (access === 'policy-revoked' && String(args[0]) === join(view, 'allowed.ts')) {
+            policyChange ??= runtime.userPermissionRuleStore.add({
               rule: {
                 id: 'revoke-original-allowed',
                 type: 'path-scope',
@@ -168,7 +169,16 @@ for (const viewKind of ['snapshot', 'member'] as const) {
               tier: 'path',
               tool: 'read',
             });
-          return file(...args);
+            // add publishes only after persistence succeeds. Hold this actual
+            // preview read until that publication, so later provider admission
+            // observes a committed revocation rather than racing a store write.
+            const text = handle.text.bind(handle);
+            handle.text = async () => {
+              await policyChange;
+              return text();
+            };
+          }
+          return handle;
         }) as typeof Bun.file);
         let calls = 0;
         const perRunCalls = { survivor: 0, cancelled: 0 };

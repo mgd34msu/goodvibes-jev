@@ -26,6 +26,7 @@ export interface ProviderStatus {
   itemCount: number;
   error?: string;
   lastPolledAt?: number;
+  mailboxProgress?: { readonly uidValidity: number; readonly pendingMessages: number };
   /**
    * Whether the provider's credentials resolved on the last poll, as the
    * adapter reported it. Absent until a poll has happened (or when the
@@ -137,6 +138,13 @@ export class InboundPoller {
     this.paused.add(id);
     this.generations.set(id, (this.generations.get(id) ?? 0) + 1);
     this.controllers.get(id)?.abort();
+    if (this.adapters.get(id)?.checkpointKind === 'imap-uid') {
+      const previous = this.statuses.get(id);
+      if (previous) {
+        const { mailboxProgress: _progress, ...status } = previous;
+        this.statuses.set(id, { ...status, state: 'unavailable', error: 'Email inbox polling is paused; pending message count is unknown' });
+      }
+    }
     const handle = this.timers.get(id);
     if (handle !== undefined) {
       this.timers.delete(id);
@@ -197,33 +205,69 @@ export class InboundPoller {
     if (!current()) return;
     let configured: boolean | undefined;
     try {
-      const since = this.store.getCursor(id) || undefined;
-      const result = await adapter.poll({ ...(since === undefined ? {} : { since }), limit: this.perProviderLimit, signal: controller.signal });
+      const usesImapCheckpoint = adapter.checkpointKind === 'imap-uid';
+      const assertAdapterCurrent = adapter.assertCurrent;
+      if (usesImapCheckpoint && typeof assertAdapterCurrent !== 'function') {
+        throw new Error('IMAP inbox adapter requires a trusted synchronous currentness fence');
+      }
+      const assertCommitCurrent = (): void => {
+        if (!current()) throw new Error('Inbound poll is no longer current');
+        // HandlerSqliteStore rejects any non-void/async result from this fence.
+        const result = assertAdapterCurrent!.call(adapter);
+        if (!current()) throw new Error('Inbound poll is no longer current');
+        return result;
+      };
+      const checkpoint = usesImapCheckpoint ? this.store.getImapCheckpoint(id) : null;
+      const since = usesImapCheckpoint ? undefined : this.store.getCursor(id) || undefined;
+      const result = await adapter.poll({ ...(since === undefined ? {} : { since }),
+        ...(checkpoint === null ? {} : { checkpoint }), limit: this.perProviderLimit, signal: controller.signal });
       if (!current()) return;
       configured = result.configured;
-      if (result.state === 'unavailable') {
+      if (result.pendingMessages !== undefined && (!usesImapCheckpoint || !result.checkpointAdvance
+        || !Number.isSafeInteger(result.pendingMessages) || result.pendingMessages < 0)) throw new Error('Invalid IMAP pending message count');
+      const progress = result.pendingMessages === undefined ? {} : { mailboxProgress: {
+        uidValidity: result.checkpointAdvance!.next.uidValidity, pendingMessages: result.pendingMessages } };
+      if (result.checkpointAdvance && !usesImapCheckpoint) throw new Error('Timestamp adapter cannot propose UID progress');
+      if (result.state === 'unavailable' || result.state === 'pending') {
+        // Pin the first history window before attempting content on a later
+        // cadence. Failed content never advances a terminal watermark.
+        if (result.checkpointAdvance) {
+          if (result.checkpointAdvance.transition === 'advance') throw new Error('Unavailable IMAP poll cannot advance UID progress');
+          await this.store.commitImapPoll(id, result.items, result.checkpointAdvance, assertCommitCurrent);
+          if (!current()) return;
+        }
         this.setStatus(id, {
           id,
-          state: 'unavailable',
+          state: result.state,
+          ...progress,
           itemCount: 0,
-          error: result.error ?? 'provider unavailable',
+          ...(result.state === 'unavailable' ? { error: result.error ?? 'provider unavailable' } : {}),
           lastPolledAt: Date.now(),
           ...(result.configured === undefined ? {} : { configured: result.configured }),
           polled: true,
         });
         return;
       }
-      const newCount = this.store.upsertItems(result.items);
-      let maxReceived = since ?? 0;
-      for (const item of result.items) {
-        if (item.receivedAt > maxReceived) maxReceived = item.receivedAt;
+      let newCount: number;
+      if (usesImapCheckpoint) {
+        if (!result.checkpointAdvance && result.items.length > 0) throw new Error('IMAP inbox rows require terminal UID coverage');
+        newCount = result.checkpointAdvance
+          ? await this.store.commitImapPoll(id, result.items, result.checkpointAdvance, assertCommitCurrent)
+          : 0;
+      } else {
+        newCount = this.store.upsertItems(result.items);
+        let maxReceived = since ?? 0;
+        for (const item of result.items) {
+          if (item.receivedAt > maxReceived) maxReceived = item.receivedAt;
+        }
+        if (maxReceived > 0) this.store.advanceCursor(id, maxReceived);
+        await this.store.flush();
       }
-      if (maxReceived > 0) this.store.advanceCursor(id, maxReceived);
-      await this.store.flush();
       if (!current()) return;
       this.setStatus(id, {
         id,
         state: result.items.length > 0 ? 'ready' : 'empty',
+        ...progress,
         itemCount: newCount,
         lastPolledAt: Date.now(),
         ...(result.configured === undefined ? {} : { configured: result.configured }),

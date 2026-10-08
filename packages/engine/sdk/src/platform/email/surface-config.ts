@@ -250,6 +250,20 @@ export function createSurfaceEmailConfigReader(getConfig: ConfigReader): ConfigR
   };
 }
 
+/**
+ * The daemon's explicit read-only inbox admission. SMTP configuration is neither
+ * required nor fabricated. All account, endpoint and credential-ref projection
+ * otherwise delegates to the same canonical surface reader.
+ */
+export function createSurfaceEmailInboxConfigReader(getConfig: ConfigReader): ConfigReader {
+  const read = createSurfaceEmailConfigReader(getConfig);
+  return (key: string): unknown => {
+    if (key !== 'email.enabled') return read(key);
+    const settings = readSurfaceEmailSettings(getConfig);
+    return settings.imapHost !== undefined && settings.username !== undefined;
+  };
+}
+
 async function firstStoredSecret(
   secrets: SecretReader,
   keys: readonly string[],
@@ -329,6 +343,7 @@ export function withSurfaceEmailConfig(deps: EmailServiceDeps): EmailServiceDeps
   return {
     ...deps,
     getConfig: createSurfaceEmailConfigReader(deps.getConfig),
+    getInboxConfig: createSurfaceEmailInboxConfigReader(deps.getConfig),
     secretsManager: createSurfaceEmailSecretReader(deps.secretsManager),
   };
 }
