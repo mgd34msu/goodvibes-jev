@@ -448,10 +448,6 @@
     "disposition": "PORT"
   },
   {
-    "source": "src/panels/memory-consolidation-gateway.ts",
-    "disposition": "HOIST"
-  },
-  {
     "source": "src/panels/modals/planning-modal.ts",
     "disposition": "JEV"
   },

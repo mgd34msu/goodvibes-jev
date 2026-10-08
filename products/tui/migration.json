@@ -8225,6 +8225,15 @@
         "products/tui/src/input/agents-modal.ts",
         "products/tui/src/test/input/agents-modal-fleet-footer.test.ts"
       ]
+    },
+    {
+      "source": "src/panels/memory-consolidation-gateway.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/knowledge/consolidation-gateway.ts",
+        "packages/engine/sdk/src/platform/knowledge/index.ts",
+        "packages/engine/test/memory-consolidation-gateway.test.ts"
+      ]
     }
   ],
   "verification": {
@@ -8233,10 +8242,10 @@
   "accounting": {
     "inventoryRows": 1618,
     "samePathMappings": 1027,
-    "unresolved": 523,
+    "unresolved": 522,
     "unresolvedManifest": "products/tui/migration-unresolved.json",
     "semantics": "Same-path mappings identify current locations, not evidence of completed JEV/HOIST decisions or feature parity.",
-    "verifiedRenameMappings": 68,
+    "verifiedRenameMappings": 69,
     "renameReview": "docs/audit/tui-rename-reconciliation-2026-10-02.json",
     "retainedRenameReview": "docs/audit/tui-retained-rename-review-2026-10-02.json"
   }
