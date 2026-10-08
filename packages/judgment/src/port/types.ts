@@ -56,6 +56,8 @@ export interface JudgmentRequest<Q extends Questions> {
   readonly signal?: AbortSignal;
   /** Synchronous current-authority check before every wire attempt, including retries. */
   readonly beforeAttempt?: () => void;
+  /** Optional asynchronous admission before every wire attempt; the synchronous guard runs afterward. */
+  readonly beforeAsyncAttempt?: () => void | Promise<void>;
   /**
    * Synchronous permission to hash and retain this call. The recording port
    * checks before capture/hash and every answered or failed entry. A throw or

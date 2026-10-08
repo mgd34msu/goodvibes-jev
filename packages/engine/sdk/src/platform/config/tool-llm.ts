@@ -106,6 +106,8 @@ export function resolveToolLLM(deps: ToolLLMDeps): ResolvedToolLLM | null {
 
 /** Chat options for tool-internal LLM calls. */
 export interface ToolLLMChatOptions {
+  /** Revalidate construction-owned inputs before each provider dispatch/retry. */
+  beforeAttempt?: (() => void | Promise<void>) | undefined;
   maxTokens?: number | undefined;
   systemPrompt?: string | undefined;
   signal?: AbortSignal | undefined;
@@ -145,6 +147,7 @@ export class ToolLLM {
         maxTokens: options.maxTokens ?? 1024,
         systemPrompt: options.systemPrompt,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
       });
 
       if (this.deps.runtimeBus) {

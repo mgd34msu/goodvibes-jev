@@ -704,7 +704,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [tools, repl, graph-runtime, agent-posture]
+        lane: [tools, repl, graph-runtime, agent-posture, repair, repair-runtime]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     needs: [build]
@@ -763,6 +763,12 @@ jobs:
               ;;
             agent-posture)
               bun packages/engine/scripts/test.ts --cwd ../../products/agent ./src/test/tools/owner-terminal-guard.test.ts ./src/test/runtime/exec-cancellation-wrappers.test.ts ./src/test/tools/tool-execution-safety.test.ts
+              ;;
+            repair)
+              bun packages/engine/scripts/test.ts test/captured-auto-heal-candidate.test.ts test/captured-auto-heal-revision.test.ts test/captured-auto-heal.test.ts test/captured-auto-heal-backend-isolation.test.ts test/captured-auto-heal-rollback.test.ts test/contract/actual-captured-auto-heal.test.ts
+              ;;
+            repair-runtime)
+              bun packages/engine/scripts/test.ts test/captured-auto-heal-real-tools.test.ts
               ;;
             *) exit 1 ;;
           esac

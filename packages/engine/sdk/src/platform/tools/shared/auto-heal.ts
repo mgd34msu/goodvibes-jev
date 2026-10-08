@@ -28,9 +28,19 @@ import type { ToolLLM } from '../../config/tool-llm.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { unifiedDiff } from '../../state/file-cache.js';
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
+import { hasCapturedToolInvocation } from './captured-input-tools.js';
 import { healAcceptance, MAX_JUDGED_CHANGE_CHARS } from '../batteries/heal-acceptance.js';
 
 const HEAL_ACCEPTANCE_SITE = 'tools.auto-heal.acceptance';
+
+/** Internal execution boundary supplied by the captured repair owner. */
+export interface AutoHealExecution {
+  readonly signal?: AbortSignal | undefined;
+  readonly check: () => Promise<void>;
+  readonly checkSynchronous: () => void;
+  readonly transform: (stage: 'formatter' | 'linter', file: string, content: string, warnings: string[]) => Promise<string>;
+}
 
 /** Result of an auto-heal attempt. */
 export interface HealResult {
@@ -62,6 +72,7 @@ export class AutoHealer {
   constructor(
     private readonly configManager: Pick<ConfigManager, 'get'>,
     private readonly toolLLM: Pick<ToolLLM, 'chat'>,
+    private readonly execution?: AutoHealExecution,
   ) {}
 
   /**
@@ -74,6 +85,8 @@ export class AutoHealer {
    */
   async heal(filePath: string, content: string, errors: string[]): Promise<HealResult> {
     const warnings: string[] = [];
+    if (hasCapturedToolInvocation() && !this.execution) throw new Error('Captured repair requires its construction-owned backend');
+    if (this.execution) await this.execution.check();
     try {
       // Config gate: only run when tools.autoHeal is enabled
       if (!this.configManager.get('tools.autoHeal')) {
@@ -85,7 +98,7 @@ export class AutoHealer {
       }
 
       const ext = extname(filePath) || '.txt';
-      const tmpFile = join(tmpdir(), `auto-heal-${randomBytes(6).toString('hex')}${ext}`);
+      const tmpFile = this.execution ? '' : join(tmpdir(), `auto-heal-${randomBytes(6).toString('hex')}${ext}`);
 
       let result: HealResult = { healed: false, content };
       try {
@@ -106,7 +119,7 @@ export class AutoHealer {
       } finally {
         // Clean up temp file
         try {
-          if (existsSync(tmpFile)) {
+          if (tmpFile && existsSync(tmpFile)) {
             unlinkSync(tmpFile);
           }
         } catch (cleanupErr) {
@@ -114,9 +127,11 @@ export class AutoHealer {
         }
       }
 
+      if (this.execution) await this.execution.check();
       return warnings.length > 0 ? { ...result, warnings } : result;
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
+      if (this.execution) await this.execution.check();
       logger.warn('AutoHealer.heal: unexpected error', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal failed unexpectedly', err);
       return { healed: false, content, warnings };
@@ -134,6 +149,7 @@ export class AutoHealer {
     warnings: string[],
   ): Promise<HealResult> {
     try {
+      if (this.execution) return await this._tryContained('formatter', filePath, content, errors, warnings);
       const prettier = Bun.which('prettier');
       const biome = Bun.which('biome');
 
@@ -178,6 +194,7 @@ export class AutoHealer {
       return { healed: false, content: formatted };
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
+      if (this.execution) await this.execution.check();
       logger.warn('AutoHealer: formatter stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal formatter stage failed; continuing to later repair stages', err);
       return { healed: false, content };
@@ -195,6 +212,7 @@ export class AutoHealer {
     warnings: string[],
   ): Promise<HealResult> {
     try {
+      if (this.execution) return await this._tryContained('linter', filePath, content, errors, warnings);
       const eslint = Bun.which('eslint');
 
       if (!eslint) {
@@ -225,10 +243,20 @@ export class AutoHealer {
       return { healed: false, content: fixed };
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
+      if (this.execution) await this.execution.check();
       logger.warn('AutoHealer: linter stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal linter stage failed; continuing to LLM repair', err);
       return { healed: false, content };
     }
+  }
+
+  private async _tryContained(stage: 'formatter' | 'linter', filePath: string, content: string, errors: string[], warnings: string[]): Promise<HealResult> {
+    await this.execution!.check();
+    const candidate = await executePolicyCheck(() => this.execution!.transform(stage, filePath, content, warnings), this.execution!.signal);
+    await this.execution!.check();
+    if (candidate === content) return { healed: false, content };
+    const accepted = await this._accepted(filePath, content, candidate, errors, stage, warnings);
+    return { healed: accepted, content: candidate, ...(accepted ? { method: stage } : {}) };
   }
 
   /**
@@ -258,10 +286,14 @@ export class AutoHealer {
         `Return ONLY the corrected file content, no explanation, no markdown fences.`,
       ].join('\n');
 
-      const response = await this.toolLLM.chat(prompt, {
+      if (this.execution) await this.execution.check();
+      const response = await executePolicyCheck(() => this.toolLLM.chat(prompt, {
         maxTokens: 4096,
         systemPrompt: 'You are a code repair tool. Output only the corrected file content with no additional text or markdown.',
-      });
+        ...(this.execution?.signal ? { signal: this.execution.signal } : {}),
+        ...(this.execution ? { beforeAttempt: this.execution.check } : {}),
+      }), this.execution?.signal);
+      if (this.execution) await this.execution.check();
 
       if (!response || response.trim() === '') {
         logger.debug('AutoHealer: LLM returned empty response');
@@ -279,6 +311,7 @@ export class AutoHealer {
       return { healed: true, content: response, method: 'llm' };
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
+      if (this.execution) await this.execution.check();
       logger.warn('AutoHealer: LLM stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal LLM stage failed', err);
       return { healed: false, content };
@@ -317,7 +350,9 @@ export class AutoHealer {
       return false;
     }
     const asked = stage === 'llm' ? (['fixes_errors', 'only_the_fix'] as const) : (['fixes_errors'] as const);
-    const run = await healAcceptance.run(judgmentPort(HEAL_ACCEPTANCE_SITE), { file: filePath, errors, change }, { site: HEAL_ACCEPTANCE_SITE, only: [...asked] });
+    if (this.execution) await this.execution.check();
+    const run = await executePolicyCheck(() => healAcceptance.run(judgmentPort(HEAL_ACCEPTANCE_SITE), { file: filePath, errors, change }, { site: HEAL_ACCEPTANCE_SITE, only: [...asked], ...(this.execution ? { beforeAttempt: this.execution.checkSynchronous, beforeAsyncAttempt: this.execution.check } : {}), ...(this.execution?.signal ? { signal: this.execution.signal } : {}) }), this.execution?.signal);
+    if (this.execution) await this.execution.check();
     const accepted = asked.every((question) => {
       const reading = run.readings[question];
       return reading?.verdict === 'yes' && reading.outcome === 'act';

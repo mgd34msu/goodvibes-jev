@@ -3,7 +3,7 @@ import { collectCommandNodes } from '../../runtime/permissions/normalization/ast
 import { parseAST } from '../../runtime/permissions/normalization/parser.js';
 import { MAX_INPUT_LENGTH, MAX_TOKEN_COUNT, tokenize } from '../../runtime/permissions/normalization/tokenizer.js';
 import { projectCapturedExecNodeRuntime, type CapturedExecNodeRuntimeInput } from './captured-exec-runtime-input.js';
-import type { CapturedPublicationLease } from '../shared/captured-publication.js';
+import { assertCapturedPublicationOwner, type CapturedPublicationLease } from '../shared/captured-publication.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { publishCapturedProjection } from './captured-exec-publication.js';
 import { executeCapturedFileOperations } from './captured-exec-file-ops.js';
@@ -152,6 +152,8 @@ export interface CapturedExecutionLease {
   readonly readOutput: () => Promise<ExecCommandResult>;
 }
 export interface CapturedExecutionObserver {
+  /** Construction-only repair candidate. Never publishes projection changes. */
+  readonly repairCandidate?: { readonly path: string; readonly content: string; readonly receive: (content: string) => void } | undefined;
   /** Construction-only owner for nested write/edit validators, never model input. */
   readonly publicationLease?: CapturedPublicationLease | undefined;
   readonly fileOps?: ExecFileOp[] | undefined;
@@ -204,7 +206,7 @@ export async function runCapturedCommand(
 ): Promise<ExecCommandResult> {
   binding = Object.freeze({ ...binding, dependencyInputs: binding.dependencyInputs ? Object.freeze([...binding.dependencyInputs]) : undefined });
   input = structuredClone(input);
-  observer = { ...observer, fileOps: observer.fileOps ? structuredClone(observer.fileOps) : undefined };
+  observer = { ...observer, repairCandidate: observer.repairCandidate ? Object.freeze({ ...observer.repairCandidate }) : undefined, fileOps: observer.fileOps ? structuredClone(observer.fileOps) : undefined };
   const start = Date.now();
   const root = resolve(binding.root);
   const cwd = resolve(workingDirectory, input.cwd ?? '.');
@@ -227,10 +229,15 @@ export async function runCapturedCommand(
   const authorize = (path: string): Promise<string> => executePolicyCheck(
     () => authorizeContractInputPath(binding.authority, path, binding.readAccessFilter, operationSignal), operationSignal);
   const check = async (): Promise<void> => executePolicyCheck(async () => {
+    if (observer.repairCandidate) {
+      if (!observer.publicationLease) throw new Error('repair requires its active publication owner');
+      assertCapturedPublicationOwner(observer.publicationLease, binding.authority);
+    }
     if (!binding.readAccessFilter) throw new Error('captured exec requires original-owner read authorization');
     await assertContractInputAuthority(binding.authority, root, combined);
     for (const path of paths) await authorize(path);
     await checkDependencies();
+    if (observer.repairCandidate) assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);
   }, operationSignal);
   try {
     if (!within(root, resolve(workingDirectory)) || !within(root, cwd)) throw new Error('outside captured working directory');
@@ -290,6 +297,20 @@ export async function runCapturedCommand(
       }
     };
     await populate('');
+    const candidate = observer.repairCandidate;
+    let candidateRelative: string | undefined;
+    if (candidate) {
+      if (!observer.publicationLease) throw new Error('repair requires its active publication owner');
+      assertCapturedPublicationOwner(observer.publicationLease, binding.authority);
+      const target = resolve(root, candidate.path);
+      candidateRelative = relative(root, target);
+      await authorize(target);
+      if (!candidateRelative || !originals.has(candidateRelative) || Buffer.byteLength(candidate.content) > 32 * 1024 * 1024)
+        throw new Error('repair candidate requires one existing admitted file');
+      paths.add(target);
+      await writeFile(join(projection, candidateRelative), candidate.content, 'utf8');
+      await check();
+    }
     if (observer.fileOps?.some((operation) => operation.op !== 'delete' || !operation.dry_run) && !contractInputAuthorityMutable(binding.authority))
       throw new Error('immutable captured input cannot apply file operations');
     const fileOperations = await executeCapturedFileOperations(root, projection, observer.fileOps,
@@ -337,6 +358,7 @@ export async function runCapturedCommand(
       let child: ReturnType<typeof spawn>;
       try {
         executionSignal.throwIfAborted();
+        if (candidate) assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);
         child = spawn('/usr/bin/bwrap', argv, { env: environment, stdio: ['ignore', 'pipe', 'pipe', fd] });
       } finally { closeSync(fd); }
       childCompletion = new Promise<number | null>((resolveExit, reject) => {
@@ -396,6 +418,7 @@ export async function runCapturedCommand(
           retained = true;
         }
         else if (stat.isFile() && !stat.isSymbolicLink()) {
+          if (candidateRelative === rel && stat.nlink !== 1) throw new Error('repair candidate is a hardlink');
           if (stat.size > 32 * 1024 * 1024 || resultBytes + stat.size > MAX_BYTES) throw new Error('captured output exceeds byte limit');
           const data = await readFile(join(projection, rel));
           resultBytes += data.length;
@@ -410,9 +433,18 @@ export async function runCapturedCommand(
     };
     await inspect('');
     await check();
-    if (contractInputAuthorityMutable(binding.authority))
+    if (!candidate && contractInputAuthorityMutable(binding.authority))
       await publishCapturedProjection(binding, originals, originalDirectories, present, directories, changes, combined, observer.publicationLease);
     await check();
+    if (candidate && candidateRelative) {
+      assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);
+      if (!present.has(candidateRelative)) throw new Error('repair removed its target');
+      const bytes = changes.get(candidateRelative)?.data ?? originals.get(candidateRelative)!.data;
+      combined?.throwIfAborted();
+      const text = bytes.toString('utf8');
+      if (!Buffer.from(text, 'utf8').equals(bytes)) throw new Error('repair candidate is not valid UTF-8');
+      candidate.receive(text);
+    }
     const failures: string[] = [];
     if (fileOperations.fileOpError) failures.push(fileOperations.fileOpError);
     if (input.expect?.exit_code !== undefined && exitCode !== input.expect.exit_code) failures.push('exit_code expectation failed');

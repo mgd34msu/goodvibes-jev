@@ -284,3 +284,34 @@ describe('helper model routing', () => {
     await expect(helper.chat('compaction', 'plan')).rejects.toThrow('did not include string content');
   });
 });
+
+test('ToolLLM carries live authority admission to each provider retry', async () => {
+  let allowed = true;
+  let admitted = 0;
+  let transmissions = 0;
+  const signal = new AbortController().signal;
+  const guardedProvider: LLMProvider = {
+    ...provider('fixture'),
+    async chat(request) {
+      expect(request.signal).toBe(signal);
+      await request.beforeAttempt?.();
+      transmissions++;
+      allowed = false;
+      await request.beforeAttempt?.();
+      transmissions++;
+      throw Error('unauthorized retry reached dispatch');
+    },
+  };
+  const toolLLM = new ToolLLM({
+    configManager: { get: ((key: string) => key === 'tools.llmEnabled' ? true : '') as ConfigManager['get'] },
+    providerRegistry: {
+      getCurrentModel: () => model('fixture', 'fixture'),
+      getForModel: () => guardedProvider,
+      resolveModelPricing: resolveModelPricingStub,
+    },
+  });
+  await expect(toolLLM.chat('repair synthetic content', { signal, beforeAttempt: async () => {
+    admitted++; await Promise.resolve(); if (!allowed) throw Error('current owner denied repair');
+  } })).rejects.toThrow('current owner denied repair');
+  expect(admitted).toBe(2); expect(transmissions).toBe(1);
+});

@@ -96,6 +96,7 @@ export async function readRequest(
     label: 'routing.request',
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
+    ...(options.beforeAsyncAttempt === undefined ? {} : { beforeAsyncAttempt: options.beforeAsyncAttempt }),
     ...(options.onRetry === undefined ? {} : { onRetry: options.onRetry }),
   });
   const readings = {
