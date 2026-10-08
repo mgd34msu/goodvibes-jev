@@ -3,7 +3,29 @@
 Status: partial foundation, under integration. This document records observed
 checks; it does not declare WebUI or the Jev migration complete.
 
-## Current acceptance checkpoint (2026-10-05)
+## Current accounting checkpoint (2026-10-08)
+
+Accounting reviewed at merged main `dfe395031e14542ac21d35fb89336886fbdacffd`.
+THE-70 production composition is complete through [PR149](https://github.com/mgd34msu/goodvibes-jev/pull/149).
+Native original-source admission, execution, hosted delivery and native-owned
+session continuation are implemented through PRs 129, 135, 139 and 142; Fleet
+actions and selected-hunk comments followed in PRs 144 and 146.
+These are bounded implementation/fixture receipts, not live calibration.
+At that reviewed-main baseline, the inventory, 17 mappings and partial status
+were unchanged. Concrete remaining
+WebUI gaps include engine-owned gate-preset adoption, typed mail reply-subject
+reading, canonical persisted `display.treeGlyphs`, remaining ordinary hosted
+ingress and final parity evidence. See the acceptance reconciliation for receipts
+and boundaries.
+
+The local gate-preset follow-up now imports the engine-owned picker data directly
+and adds three mapping records (20 total), while preserving partial status and
+all source dispositions. Its local unit/type/build/API/package checks passed;
+publication and the 14 actual phone/desktop browser cases remain pending. The
+baseline's missing-preset statements below describe the reviewed main SHA, not a
+claim that this local implementation is already merged.
+
+## Historical acceptance checkpoint (2026-10-05)
 
 Reviewed baseline: merged main `1941b66e59822f98864474dda198bb86dd1443d1`.
 [THE-30](https://linear.app/the-artificery/issue/THE-30/port-webui-with-preserved-ui-and-behavior)
@@ -127,17 +149,19 @@ used by this lane.
 ## Remaining integration and semantic work
 
 The 666-path inventory and its 62 JEV dispositions remain requirements, not a
-completed-mapping count. Fixed Library/status catalogs and the authenticated
-palette caller exist. Unknown prose stays unclassified; new semantic readers,
-the dynamic-error caller, genuine source-reference issuers and production browser
-judgment installation remain dependencies of
+completed-mapping count. Fixed Library/status catalogs, authenticated palette
+and dynamic-error callers, genuine authority-bound source-reference issuers and
+production browser judgment installation are implemented by completed
 [THE-70](https://linear.app/the-artificery/issue/THE-70/integrate-authenticated-webui-judgments).
+Unknown prose remains unclassified outside approved sources/readers. Remaining
+semantic consumers still require per-caller evidence; live calibration is THE-35.
 No browser model client or Jev credential is an acceptable substitute.
 
 Contract inspection, native evidence and explicit cancellation are implemented.
-Remaining contract-tree semantic consumers, source-bearing native task ingress
-and host-owned continuation/execution integration must use the source, authority
-and execution boundaries in the
+Source-bearing native intake and its host-owned execution, hosted delivery and
+native-owned continuation integrations are implemented. Remaining ordinary hosted
+ingress and semantic consumers must retain the source, authority and execution
+boundaries in the
 [current autonomous contract](../../../docs/design/autonomous-jev-decisions.md).
 The source-less `contracts.start` wire is not native admission; native runners
 reject it. The existing work-ledger intake requires persisted paired-admin
@@ -155,9 +179,13 @@ and browser appearance. The key description and genuine credential reading are
 unchanged. See the [current source follow-up](../../../docs/audit/webui-acceptance-reconciliation.md#typed-terminal-palette-follow-up)
 for the functional proof boundaries.
 
-There is still no canonical `display.treeGlyphs` setting, and remaining settings
-reconciliation is separate. The current session permission-mode verbs expose their fixed mode enums; they do not
-supply the missing engine-owned gate-preset catalog for the replacement sheet.
+There is still no canonical `display.treeGlyphs` setting. PR189 completed scalar
+and budget settings-draft reconciliation; it did not close the missing glyph
+schema/default/generated metadata/persistence/browser proof or its genuine
+credential-classification prerequisite. At the reviewed-main accounting baseline, the session permission-mode verbs
+expose fixed mode enums without the required engine-owned preset catalog in the
+sheet. The local follow-up above supplies that data path while preserving those
+verbs; hosted browser/publication proof is still pending.
 Unknown/null/zero/non-local context renders honestly.
 [THE-90](https://linear.app/the-artificery/issue/THE-90/preserve-unknown-context-windows)/
 [PR #46](https://github.com/mgd34msu/goodvibes-jev/pull/46) already implemented

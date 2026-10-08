@@ -1,12 +1,60 @@
 # WebUI acceptance reconciliation
 
-Checkpoint: 2026-10-05, merged main
+Historical checkpoint: 2026-10-05, merged main
 `1941b66e59822f98864474dda198bb86dd1443d1` (tree
 `a4648cde33bc703301d23678727d50196556a59a`).
 [THE-30](https://linear.app/the-artificery/issue/THE-30/port-webui-with-preserved-ui-and-behavior)
 remains **In Progress** and [migration.json](../../products/webui/migration.json)
 remains **partial**. This is an evidence reconciliation, not a new feature gate
 or a declaration of full product parity.
+
+## Current accounting checkpoint (2026-10-08)
+
+Reviewed source: merged main `dfe395031e14542ac21d35fb89336886fbdacffd`.
+The historical counts below remain attached to their original SHA. That accounting baseline retains 666 source dispositions, 17 mappings and partial
+status; the local preset follow-up below adds three mapping records without
+changing dispositions or partial status.
+
+- **THE-70 is complete.** [PR149](https://github.com/mgd34msu/goodvibes-jev/pull/149)
+  merged as `aa961d0092555f80ff233bc065f9a69c097d9ae4`.
+  [Actual-main CI37521857400](https://github.com/mgd34msu/goodvibes-jev/actions/runs/37521857400)
+  passed all 36 validation jobs with auto-release skipped; 838 browser cases passed
+  and 76 were explicitly skipped. All 22 added runtime cases executed. Production
+  registry installation, real host chat-title/error issuers and dynamic-error
+  callers are implemented. Three closed purposes retain actual-dispatch,
+  revocation, log and delivery authority; status remains catalog-enum-only.
+- **Native source intake is implemented.** [PR129](https://github.com/mgd34msu/goodvibes-jev/pull/129)
+  merged as `71a1d4657c171e010ce93e819ba31182041a7973`;
+  [CI37422249353](https://github.com/mgd34msu/goodvibes-jev/actions/runs/37422249353)
+  passed 35 jobs and 676 browser cases, with 76 explicit skips. All 24 added
+  native cases passed. PR135 adds durable execution; PR139 adds hosted delivery;
+  PR142 adds native-owned session continuation. PR142's actual-main
+  [CI37476251975](https://github.com/mgd34msu/goodvibes-jev/actions/runs/37476251975)
+  passed 36 jobs and 756 browser cases, including all 104 relevant native cases,
+  with 76 explicit skips. PR144 Fleet actions and PR146 hunk comments extend the
+  same owned source boundaries. Ordinary hosted ingress remains separate.
+- **Settings/context credit stays bounded.** PR127 propagates known/unknown
+  context provenance; PR128 supplies the canonical theme enum/default; PR189
+  repairs scalar/budget draft reconciliation after canonical config refresh.
+  Concrete open WebUI gaps are engine-owned gate-preset presentation adoption,
+  typed `webui.mail.reply-subject` in the reachable Mail Reply flow, and canonical
+  persisted `display.treeGlyphs`, including genuine credential classification,
+  generated metadata, persistence and actual browser proof. A read-only glyph
+  presentation reader is not the persisted setting.
+
+These receipts establish controlled runtime/browser behavior on the named trees.
+They do not establish deployed account/provider acceptance, final-SHA live
+calibration (THE-35), all source mappings or THE-15 release readiness. No unresolved
+mapping count is treated as a count of wholly unimplemented features.
+
+## Local gate-preset follow-up (publication pending)
+
+The local session picker now consumes labels and settable ids directly from the
+engine's browser-safe gate preset table. Three inventory mappings bring the
+working-tree total to 20. Source, type, API, package and behavioral unit checks
+have passed for that slice; the seven phone/desktop scenarios are discoverable,
+but actual hosted browser and publication proof remain pending. These local
+results do not close THE-30 or replace the merged receipts above.
 
 ## Acceptance basis
 
@@ -18,8 +66,8 @@ packaging/PWA/daemon bundle behavior and connected-daemon flows where available.
 
 The [666-path inventory](../inventory/webui.md) retains 597 PORT, 62 JEV and seven
 DROP dispositions. These describe required treatment of the pinned source, not
-666 completed mappings or 62 wholly unimplemented modules. The existing 17
-mapping records are unchanged. [Import proof](../../products/webui/docs/migration-proof.md)
+666 completed mappings or 62 wholly unimplemented modules. The reviewed-main baseline has 17 mapping records; the local preset follow-up
+adds three, for 20 working-tree records. [Import proof](../../products/webui/docs/migration-proof.md)
 and [upstream delta accounting](webui-upstream-delta.md) retain their historical
 observations; their old local-browser restrictions and missing-slice statements
 do not override the merged evidence below.
@@ -96,7 +144,7 @@ the browser replays prove a real connected deployment, user account or provider.
    semantic projections and settings consumers. Merged inspection does not close
    every judgment/action obligation. No new mappings or disposition changes are
    inferred by this reconciliation.
-2. **Browser judgment runtime publication (THE-70).** The production daemon now
+2. **Completed browser judgment runtime (THE-70); live calibration separate.** The production daemon now
    installs the existing command/error adapters against its configured Jev route
    and decision-log policy for three closed source purposes. Its actual initialized
    chat manager supplies titles with fresh read permission and source/lifetime
@@ -106,13 +154,14 @@ the browser replays prove a real connected deployment, user account or provider.
    possession. Revocation fences dispatch, hashes, records and attachments;
    unknown prose has no substring fallback. Controlled actual-daemon HTTP and
    runtime-capture browser tests establish these implementation boundaries.
-   Final publication/CI remains required; live provider calibration is separately
-   tracked in THE-35, and no connected deployment or real-user egress is claimed.
+   Publication and merged-main CI are complete through PR149, as recorded above.
+   Live provider calibration remains THE-35; no connected deployment or real-user
+   egress is claimed.
    Sources: [THE-70](https://linear.app/the-artificery/issue/THE-70/integrate-authenticated-webui-judgments),
    [runtime policy](../../products/daemon/src/runtime/browser-judgment-composition.ts),
    [source owner](../../packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts),
    [runtime browser captures](../../products/webui/e2e/support/fixtures/browser-judgment-runtime/README.md).
-3. **Native host/source-bearing ingress.** The bounded
+3. **Implemented native ingress; remaining ordinary hosted ingress.** The bounded
    [WebUI original-source admission](../design/webui-native-intake.md) surface now
    journals exact text and invokes capture/admission in one Submit, with paired
    authority checks and explicit inspect/recovery/cancellation. It renders real
