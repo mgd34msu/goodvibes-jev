@@ -154,7 +154,10 @@ Each release step has a dedicated script in the root `package.json`:
 | `bun run release:tag` | Creates the git release tag (`scripts/create-release-tag.ts`) |
 | `bun run release:verify` | Full local release gate: `validate`, `flags:graduation`, `security:audit`, the `test`/`test:rn`/`test:workers`/`test:workers:wrangler` suites, `release:dry-run`, and `install:smoke` |
 | `bun run release:verify:published` | Verifies already-published packages and runs a registry install smoke check (`--registry`) |
-| `bun run release:verify:verdaccio` | End-to-end publish/install dry-run against a local Verdaccio registry (`scripts/verdaccio-dry-run.ts`) |
+
+The optional local-registry publish/install smoke lane has been retired.
+`release:dry-run` and `install:smoke` remain independent checks; they do not
+exercise a local registry server or its publish authentication protocol.
 
 Before opening a PR, run the focused check that matches the change rather than the full gate:
 
