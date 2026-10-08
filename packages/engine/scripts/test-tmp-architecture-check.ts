@@ -19,8 +19,7 @@
  *      the exact failure mode this file is named for.
  *
  *   2. Every standalone script under `scripts/` that calls `tmpdir()` (a
- *      one-shot tool, not a test file, see scripts/verdaccio-dry-run.ts and
- *      scripts/build-whisper-bundle.ts) also calls the shared
+ *      one-shot tool, not a test file, see scripts/build-whisper-bundle.ts) also calls the shared
  *      `sweepStaleTmpDirs()` helper (scripts/stale-tmp-sweep.ts) somewhere in
  *      the same file, so a copy orphaned by a signal-killed run gets reclaimed
  *      by the next one instead of accumulating forever. This is a static
@@ -100,7 +99,7 @@ for (const directory of ['scripts', 'toolchain/src/test-runner']) {
           `scripts/stale-tmp-sweep.ts) anywhere in the file, a directory this script creates under ` +
           `the real system temp dir will accumulate forever if the process is ever killed before its ` +
           `own cleanup runs. Sweep your own prefix before creating a new directory, the same way ` +
-          `scripts/verdaccio-dry-run.ts and scripts/build-whisper-bundle.ts do.`,
+          `scripts/build-whisper-bundle.ts does.`,
       );
     }
   }

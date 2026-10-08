@@ -18,8 +18,10 @@
  * instead of being skipped by a bare exit. Only then does the process hand
  * over: when the daemon runs under the service manager, a non-blocking service
  * restart; when it runs unsupervised, the service manager first ADOPTS it,
- * installs the unit and enqueues a service start, and the old process exits
- * so the supervised instance (already the new binary on disk) takes over.
+ * installs the unit and enqueues a service start. Only an acknowledged
+ * adoption request lets the old process exit. An incomplete handover leaves
+ * the disk update and previous binary intact, reports what happened, and
+ * pauses this process's updater so it cannot install the same release twice.
  *
  * Every applied update leaves a receipt ("updated from X to Y at HH:MM") in
  * the daemon log and in the receipt store surfaced on next surface connect.
@@ -61,14 +63,15 @@ import {
 import { PeriodicUpdateLoop, type PeriodicCheckOutcome } from '../runtime/update-schedule.js';
 import { formatReceiptTime, type DaemonReceiptStore } from './receipts.js';
 import { CLIENT_COMPATIBILITY_FLOOR } from '../control-plane/client-compatibility.js';
+import type { ServiceHandoverOutcome } from './service-handover.js';
 
 export interface AutoUpdateServiceActions {
   /** Whether the daemon currently runs under the platform service manager. */
   isSupervised(): boolean;
-  /** Install + enable the service unit (adoption of an unsupervised daemon). */
-  adoptIntoService(): void;
-  /** Enqueue a non-blocking service restart. */
-  restartService(): void;
+  /** Install + enable the service unit. Legacy void carries no acknowledgement. */
+  adoptIntoService(signal?: AbortSignal): void | ServiceHandoverOutcome | Promise<void | ServiceHandoverOutcome>;
+  /** Enqueue a non-blocking service restart and observe manager acceptance. */
+  restartService(signal?: AbortSignal): void | ServiceHandoverOutcome | Promise<void | ServiceHandoverOutcome>;
 }
 
 export interface DaemonUpdateInstallLocation {
@@ -155,7 +158,9 @@ export interface DaemonAutoUpdaterOptions {
   /**
    * The daemon's own orderly stop, run BEFORE the process hands over to the
    * restarted instance, so shutdown hooks fire on an update restart instead of
-   * being skipped by a bare exit. Absent = nothing to wind down.
+   * being skipped by a bare exit. Absent = nothing to wind down. If this hook
+   * reenters the updater, use stop(true)/drainHandover(true): a normal stop
+   * cancels the handover, and draining it here would wait on this hook itself.
    */
   readonly stopGracefully?: (() => Promise<void> | void) | undefined;
   /** Exits the current process after an unsupervised daemon is adopted. */
@@ -214,12 +219,25 @@ export interface DaemonUpdateLoopSnapshot {
   readonly lastCheckFailure: string | null;
   /** A downloaded-and-verified release waiting for an idle moment, or null. */
   readonly pendingVersion: string | null;
+  /** The version installed on disk by this process, independently of handover. */
+  readonly appliedVersion?: string | null;
+  /** Service-manager acknowledgement, never proof that the new daemon is healthy. */
+  readonly handover?: ServiceHandoverOutcome | null;
 }
 
 export class DaemonAutoUpdater {
   private readonly loop: PeriodicUpdateLoop;
   /** A downloaded-and-verified update waiting for an idle moment. */
   private pendingSwap: PendingSwap | null = null;
+  /** A completed disk swap is terminal for this process, even if handover fails. */
+  private appliedVersion: string | null = null;
+  private handover: ServiceHandoverOutcome | null = null;
+  private handoverCancelled = false;
+  private handoverTask: Promise<void> | null = null;
+  private handoverAbort: AbortController | null = null;
+  /** Settles only after lookup/apply/handover, including checks started by the timer. */
+  private activeCheck: Promise<void> | null = null;
+  private finishActiveCheck: (() => void) | null = null;
   /** Consecutive checks that threw. Reset by any check that completes. */
   private consecutiveFailures = 0;
   /** When the owner was last told the daemon cannot update itself, or null. */
@@ -235,13 +253,28 @@ export class DaemonAutoUpdater {
       firstCheckDelayMs: options.firstCheckDelayMs,
       busyRetryMs: options.busyRetryMs,
       runCheck: async (): Promise<PeriodicCheckOutcome> => {
+        // A separate completion promise never rejects. Failures are settled by
+        // onError below only AFTER the periodic loop has recorded their result.
+        this.activeCheck = new Promise((resolve) => {
+          this.finishActiveCheck = () => {
+            this.activeCheck = null;
+            this.finishActiveCheck = null;
+            resolve();
+          };
+        });
         await this.checkAndApply();
-        this.recordCheckSucceeded();
+        // A failed handover must not be followed by a misleading recovery line.
+        if (!this.handoverCancelled && (this.handover === null || this.handover.status === 'accepted')) this.recordCheckSucceeded();
+        this.finishActiveCheck?.();
         return this.pendingSwap ? 'deferred' : 'settled';
       },
       onError: (error) => {
-        this.recordCheckFailed(summarizeError(error));
-        this.pendingSwap = null;
+        try {
+          this.recordCheckFailed(summarizeError(error));
+          this.pendingSwap = null;
+        } finally {
+          this.finishActiveCheck?.();
+        }
       },
       setTimer: options.setTimer,
       clearTimer: options.clearTimer,
@@ -313,7 +346,9 @@ export class DaemonAutoUpdater {
     if (!wasAlerted) return;
     this.alertOwner(
       `update checks are working again after ${failures} consecutive failures`
-      + `, the daemon is on v${normalizeVersion(this.options.currentVersion)} and checking on schedule`,
+      + (this.appliedVersion
+        ? `, v${this.appliedVersion} is installed on disk and the service manager accepted the handover request`
+        : `, the daemon is on v${normalizeVersion(this.options.currentVersion)} and checking on schedule`),
     );
   }
 
@@ -341,6 +376,8 @@ export class DaemonAutoUpdater {
       failedCheckCount: this.consecutiveFailures,
       lastCheckFailure: this.lastFailureDetail,
       pendingVersion: this.pendingSwap ? normalizeVersion(this.pendingSwap.tag) : null,
+      appliedVersion: this.appliedVersion,
+      handover: this.handover ? { ...this.handover } : null,
     };
   }
 
@@ -361,11 +398,25 @@ export class DaemonAutoUpdater {
 
   /** Begin the loop. The first check runs after a short boot-settle delay. */
   start(): void {
+    if (this.appliedVersion !== null) return;
+    this.handoverCancelled = false;
     this.loop.start();
   }
 
-  stop(): void {
+  /** Cancel future checks; only the updater-owned graceful stop preserves its handover. */
+  stop(forHandover = false): void {
     this.loop.stop();
+    // An external shutdown can arrive during graceful stop or during the
+    // service action. Timing alone cannot distinguish it from our own stop.
+    if (!forHandover) {
+      this.handoverCancelled = true;
+      this.handoverAbort?.abort();
+    }
+  }
+
+  /** Drain lookup/apply/handover; its own graceful stop must explicitly avoid waiting on itself. */
+  drainHandover(forHandover = false): Promise<void> {
+    return (forHandover ? null : this.activeCheck ?? this.handoverTask) ?? Promise.resolve();
   }
 
   /** One loop iteration; exposed for tests driving mocked time. */
@@ -374,10 +425,12 @@ export class DaemonAutoUpdater {
   }
 
   private async checkAndApply(): Promise<void> {
+    if (this.appliedVersion !== null || this.handoverCancelled) return;
     const fetchImpl = this.options.fetchImpl ?? (fetch as unknown as UpdateFetchLike);
 
     if (!this.pendingSwap) {
       const latestTag = await resolveLatestReleaseTag(fetchImpl, this.options.releasesLatestUrl);
+      if (this.handoverCancelled) return;
       if (compareVersions(this.options.currentVersion, latestTag) >= 0) {
         return; // already current
       }
@@ -421,6 +474,10 @@ export class DaemonAutoUpdater {
       ? this.options.downloadBaseUrl(tag)
       : defaultDownloadBaseUrl(this.options.releasesLatestUrl, tag);
 
+    if (this.handoverCancelled) return;
+    // Once the transactional apply begins it cannot be interrupted here safely.
+    // If shutdown arrives during its awaits, preserve the completed disk swap
+    // and receipt below, but suppress all subsequent stop/service/exit actions.
     await applyVerifiedUpdate({
       fetchImpl,
       downloadBaseUrl: downloadBase,
@@ -429,6 +486,12 @@ export class DaemonAutoUpdater {
       platform: this.options.platform,
     });
     this.pendingSwap = null;
+    // Set the latch before any receipt, shutdown hook, or service action can
+    // fail. The old running version must never re-swap the installed release
+    // and overwrite its previous binary while waiting for a new process.
+    this.appliedVersion = normalizeVersion(tag);
+    this.handover = { status: 'unknown', detail: 'service handover is pending' };
+    this.loop.stop();
 
     const now = this.options.now ?? Date.now;
     const from = normalizeVersion(this.options.currentVersion);
@@ -440,12 +503,16 @@ export class DaemonAutoUpdater {
     // not change. Clients below CLIENT_COMPATIBILITY_FLOOR additionally stop
     // taking shared-session work (control-plane/client-compatibility.ts)
     // rather than only being asked to restart.
-    this.options.receipts.record(
+    this.recordReceipt(
       `updated from ${from} to ${to} at ${formatReceiptTime(now())}`
-      + `, already-running goodvibes clients keep their old build until restarted;`
+      + ` on disk; service handover is pending, already-running goodvibes clients keep their old build until restarted;`
       + ` anything older than ${CLIENT_COMPATIBILITY_FLOOR} has stopped taking shared-session work`,
     );
 
+    if (this.handoverCancelled) {
+      this.reportIncompleteHandover({ status: 'unknown', detail: 'updater stopped while applying the disk update; process handover was cancelled' });
+      return;
+    }
     await this.restartIntoNewBinary();
   }
 
@@ -507,22 +574,95 @@ export class DaemonAutoUpdater {
   }
 
   private async restartIntoNewBinary(): Promise<void> {
-    await this.stopGracefully();
-    const actions = this.options.serviceActions;
-    if (actions.isSupervised()) {
-      logger.info('DaemonAutoUpdater: restarting via the service manager');
-      actions.restartService();
+    // Install ownership before graceful stop begins. An external close must
+    // cancel and drain this entire sequence, even while a stop hook is pending.
+    // The explicitly updater-owned stop uses stop(true)/drainHandover(true).
+    const abort = new AbortController();
+    this.handoverAbort = abort;
+    const task = Promise.resolve().then(async () => {
+      if (this.handoverCancelled) {
+        this.reportIncompleteHandover({ status: 'unknown', detail: 'process handover was cancelled before graceful stop started' });
+        return;
+      }
+      await this.stopGracefully();
+      await this.requestServiceHandover(abort.signal);
+    });
+    this.handoverTask = task;
+    try {
+      await task;
+    } finally {
+      this.handoverTask = null;
+      this.handoverAbort = null;
+    }
+  }
+
+  private async requestServiceHandover(signal: AbortSignal): Promise<void> {
+    if (this.handoverCancelled) {
+      this.reportIncompleteHandover({ status: 'unknown', detail: 'process handover was cancelled before the service action started' });
       return;
     }
-    // Unsupervised: adopt into the service first, then step aside, the
-    // supervised instance starts from the already-swapped new binary.
-    logger.info('DaemonAutoUpdater: unsupervised daemon; adopting into the service manager and handing over');
-    actions.adoptIntoService();
+    const actions = this.options.serviceActions;
+    let supervised: boolean;
+    let outcome: void | ServiceHandoverOutcome;
+    try {
+      supervised = actions.isSupervised();
+      logger.info(supervised
+        ? 'DaemonAutoUpdater: requesting restart via the service manager'
+        : 'DaemonAutoUpdater: unsupervised daemon; requesting adoption into the service manager');
+      outcome = await (supervised ? actions.restartService(signal) : actions.adoptIntoService(signal));
+    } catch (error) {
+      // Includes rejected promises and even `throw undefined`: an exception
+      // cannot be confused with a legacy action that returned no evidence.
+      this.reportIncompleteHandover({ status: 'failed', detail: summarizeError(error) });
+      return;
+    }
+
+    // Legacy void actions remain source-compatible, but silence is not an
+    // acknowledgement. Only positive acceptance authorizes an adoption exit.
+    this.handover = outcome ?? { status: 'unknown', detail: 'service action returned no handover acknowledgement' };
+    if (this.handover.status !== 'accepted') {
+      this.reportIncompleteHandover(this.handover);
+      return;
+    }
+    if (this.handoverCancelled) {
+      this.reportIncompleteHandover({
+        status: 'unknown',
+        detail: 'updater stopped while service handover was pending; the manager later accepted the request, but process handover was cancelled',
+      });
+      return;
+    }
+    logger.info('DaemonAutoUpdater: service manager accepted the handover request', {
+      versionOnDisk: this.appliedVersion,
+      supervised,
+    });
+    if (supervised) return;
     // The handover record has to be on disk before this process stops being
     // one. Without it an update that goes wrong reads, in the log, as a daemon
     // that simply vanished mid-sentence.
     flushActivityLogSync();
     (this.options.exitProcess ?? ((code: number) => process.exit(code)))(0);
+  }
+
+  private reportIncompleteHandover(outcome: ServiceHandoverOutcome): void {
+    this.handover = { ...outcome };
+    const detail = `v${this.appliedVersion} is installed on disk, but service handover is incomplete`
+      + ` (${outcome.status}${outcome.detail ? `: ${outcome.detail}` : ''}).`
+      + ' No successful handover exit was requested; the previous binary is preserved.'
+      + ' Automatic updates are paused in this process; inspect the service manager and restart the daemon.';
+    this.recordReceipt(detail);
+    this.alertOwner(detail);
+    flushActivityLogSync();
+  }
+
+  /** Receipt persistence must not undo a completed swap or detach its handover. */
+  private recordReceipt(text: string): void {
+    try {
+      this.options.receipts.record(text);
+    } catch (error) {
+      logger.error(`DaemonAutoUpdater: ${text}`, {
+        receiptError: summarizeError(error),
+      });
+    }
   }
 
   /**

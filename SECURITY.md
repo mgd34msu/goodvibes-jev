@@ -16,12 +16,7 @@ the upstream dependency range has not yet moved but a compatible fixed package i
 available. Current non-vendored overrides are declared in the root
 `package.json`:
 
-- `compression@1.8.2` closes `GHSA-vc2v-76pw-4v95` (native stream memory leak
-  on premature response close). Verdaccio 6.5.2 pins vulnerable 1.8.1 exactly;
-  remove the override when its declared dependency requires the patched release.
 - `fast-xml-parser@5.7.1` for the AWS XML builder path
-- `ajv@8.18.0` for Verdaccio and documentation tooling paths
-- `lodash@4.18.1` for Verdaccio storage paths (bumped from `4.17.21` to escape an audit advisory; see root `package.json` overrides)
 - `google-auth-library@10.6.2` for Cloudflare/Wrangler transitive auth tooling
 - `minimatch@^10.2.5` for source-workspace installs
 - `fast-uri@^3.1.5` to avoid `GHSA-v39h-62p7-jpjc` in AJV consumers used by release tooling
@@ -29,7 +24,7 @@ available. Current non-vendored overrides are declared in the root
 - `form-data@4.0.6` to close `GHSA-hmw2-7cc7-3qxx` (CRLF injection via unescaped multipart field/file names)
 - `ws@8.21.0` to close `GHSA-96hv-2xvq-fx4p` (memory-exhaustion DoS from tiny fragments)
 - `undici@^7.29.0` to close `GHSA-vmh5-mc38-953g`, `GHSA-vxpw-j846-p89q`, and `GHSA-hm92-r4w5-c3mj` (TLS bypass, WebSocket DoS, SOCKS5 routing); also a direct dependency at the same version, not only a transitive override
-- `tar@^7.5.16`, `brace-expansion@^5.0.9`, `sharp@^0.35.0`, `js-yaml@^4.3.1`, and `ip-address@^10.4.0`, later additions to the same override table for transitive advisory remediation; `brace-expansion` and `ip-address` are also direct dependencies at the same pinned version. See the `overridesRationale` field in the root `package.json` for the per-package justification on file; a package listed here without a corresponding `overridesRationale` entry is pinned as a precaution and does not yet have a recorded rationale.
+- `tar@^7.5.16`, `brace-expansion@^5.0.9`, `sharp@^0.35.0`, and `ip-address@^10.4.0`, later additions to the same override table for transitive advisory remediation; `brace-expansion` and `ip-address` are also direct dependencies at the same pinned version. See the `overridesRationale` field in the root `package.json` for the per-package justification on file; a package listed here without a corresponding `overridesRationale` entry is pinned as a precaution and does not yet have a recorded rationale.
 
 The engine's optional `simple-git` is pinned to 4.0.2, which requires the patched
 `@simple-git/argv-parser@2.0.1`. This closes `GHSA-x6jw-m9v5-85vh`,
@@ -78,23 +73,10 @@ excessive nesting is rejected before recursive walkers. Tests cover original
 matching semantics, nesting boundaries, direct AST entry points and installed
 source identity. Root overrides alone are insufficient for shipped consumers.
 
-The development-only Verdaccio `http-cache-semantics@4.2.0` chain is patched
-for `GHSA-ch52-4w7c-c8xp` with explicit cache-reuse security guards. The source
-keeps its original version/license and is covered by actual-consumer resolution,
-red/green behavioral regressions, ordinary-cache compatibility and loopback
-HTTP-client tests. There is no upstream patched release for either advisory as
-of 2026-10-03. The high-severity audit stays enabled without advisory exceptions;
-an audit pass does not replace review of these maintained local source patches.
-
-The `uuid` advisory `GHSA-w5hq-g745-h8pq` is also handled with a vendor patch
-because Verdaccio's current stable release still depends on `@cypress/request@3.0.10`,
-which depends on `uuid@^8.3.2`. The root workspace overrides that transitive
-dependency to `file:vendor/uuid-cjs`, a checked-in CommonJS vendor adapter that
-implements only the `v4` surface used by `@cypress/request`. The adapter uses
-Node's crypto APIs and includes the same output-buffer bounds check shape used
-by the upstream `uuid@14` fix. This vendored package is dev/tooling scope only
-for the local Verdaccio registry dry-run and must not be treated as a general
-replacement for the upstream `uuid` package.
+The optional local-registry release smoke lane and its Verdaccio dependency have
+been removed. Its registry publish/install and dependency-specific regression
+tests are intentionally retired. The independent release dry-run, install smoke
+checks and high-severity dependency audit remain enabled.
 
 Application roots that audit the SDK dependency graph should set their own
 root-level overrides for the non-vendored packages if their package manager does
@@ -109,22 +91,20 @@ not inherit dependency-package overrides:
     "fast-xml-parser": "5.7.1",
     "form-data": "4.0.6",
     "google-auth-library": "10.6.2",
-    "lodash": "4.18.1",
     "minimatch": "^10.2.5",
     "undici": "^7.29.0",
     "ws": "8.21.0",
     "tar": "^7.5.16",
     "brace-expansion": "^5.0.9",
     "sharp": "^0.35.0",
-    "js-yaml": "^4.3.1",
     "ip-address": "^10.4.0"
   }
 }
 ```
 
-The `bash-language-server` and `uuid` vendor-patch overrides described above are omitted from
-this snippet; they are file-path overrides (`file:vendor/...`) specific to this repo's own
-Verdaccio dry-run and Bash LSP bundling, not remediations an application root reproduces.
+The `bash-language-server` vendor-patch override is omitted from this snippet;
+it is a file-path override (`file:vendor/...`) specific to this repo's Bash LSP
+bundling, not a remediation an application root reproduces.
 
 ## Reporting a vulnerability
 

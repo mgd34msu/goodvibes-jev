@@ -7,6 +7,7 @@ import type { EmailService } from '../../email/email-service.js';
 import type { EmailMailboxObservation } from '../../email/reply-subject-source.js';
 import { createProtectedSourceOwner } from '../../security/source-screening/owner.js';
 import type { ProtectedSourceOwnerOptions, ProtectedSource } from '../../security/source-screening/types.js';
+import type { OwnedInboxReadLease } from '../registration.js';
 import { digestSender, normalizeWhitespace, stripMarkup } from '../text-normalization.js';
 import { POLL_CADENCE_MS, type ImapUidCheckpoint, type InboundChannelItem, type InboundProviderAdapter, type ProviderPollOptions, type ProviderPollResult } from '../provider-adapter.js';
 
@@ -27,6 +28,10 @@ export interface EmailInboxOwnerOptions {
   readonly getCheckpoint: () => ImapUidCheckpoint | null;
   readonly signal?: AbortSignal;
 }
+/** Preserve the original asynchronous callable contract while adding a final fence. */
+export interface EmailInboxReadLease extends OwnedInboxReadLease {
+  (): Promise<void>;
+}
 export interface EmailInboxOwner {
   readonly account: EmailInboxAccount;
   readonly scopeId: string;
@@ -34,7 +39,7 @@ export interface EmailInboxOwner {
   /** Authenticated metadata only; independent of committed UID progress. */
   verifyEligibility?(): Promise<{ readonly signal: AbortSignal; assertCurrent(): void }>;
   assertReadCurrent(): Promise<void>;
-  acquireReadLease(): Promise<() => Promise<void>>;
+  acquireReadLease(): Promise<EmailInboxReadLease>;
   close(): Promise<void>;
 }
 
@@ -252,14 +257,26 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
     },
     async assertReadCurrent() { await verifyRead(); },
     async acquireReadLease() {
+      const authorityAtAcquisition = authorityEpoch;
       const original = await verifyRead();
-      return async () => {
-        const latest = await verifyRead();
+      const identityAtAcquisition = identityEpoch;
+      const assertCurrent = (): void => {
         current(); original.assertCurrent();
-        if (latest.accountRevision !== original.accountRevision || latest.uidValidity !== original.uidValidity) {
+        const checkpoint = getCheckpoint();
+        if (authorityAtAcquisition !== authorityEpoch || identityAtAcquisition !== identityEpoch
+          || !checkpoint || checkpoint.uidValidity !== original.uidValidity) {
           throw new Error('Email inbox read generation changed');
         }
       };
+      assertCurrent();
+      return Object.freeze(Object.assign(async () => {
+        assertCurrent();
+        const latest = await verifyRead();
+        assertCurrent();
+        if (latest.accountRevision !== original.accountRevision || latest.uidValidity !== original.uidValidity) {
+          throw new Error('Email inbox read generation changed');
+        }
+      }, { assertCurrent }));
     },
     close() {
       if (!closing) {

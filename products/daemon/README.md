@@ -164,3 +164,15 @@ for local artifact proof and release limitations. The strict `migration:complete
 continue to reject this partial workspace. The original source is
 `mgd34msu/goodvibes-daemon` at `443e5ee4d6cda0d36d57e2886398d0836074a4a9`,
 reconciled through `254699bf5d834cdca41436211ada1ae32bf89258`.
+
+### Multiple explicitly owned inbox sources
+
+Trusted launchers can combine `createSlackDaemonInboxSourceFactory` and
+`createEmailDaemonInboxSourceFactory` with
+`createMultiOwnerDaemonInboxFactory([...sources])`, exported from the daemon CLI
+boundary. The composite registers one canonical `channels.inbox.list` timeline;
+each source retains its own account database, lock, read proof and cluster gate.
+Duplicate wire provider IDs are rejected. Explicit provider membership is still
+required: this does not supply a Discord adapter or enable default all-provider
+serving. See `docs/audit/daemon-multiowner-inbox-composition.md` for lifecycle,
+pagination and protected-read contracts.
