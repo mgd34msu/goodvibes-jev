@@ -190,7 +190,7 @@ function fixture(remote = endpoints(), settings: { root?: string; account?: Slac
         users: [{ username: 'admin', passwordHash: UserAuthManager.hashPassword('fixture'), roles: ['admin'] }] }),
     },
     daemon: { host: '127.0.0.1', port: 0, token: 'synthetic-slack-daemon-token', serveFactory },
-  }, { async createRuntime(options) {
+  }, { providerDiscovery: { scan: async () => ({ servers: [], scannedHosts: 0, scannedPorts: 0, durationMs: 0 }) }, async createRuntime(options) {
     const before = remote.slackCalls.length;
     const runtime = await createRuntimeServices(options);
     graphWasCold = remote.slackCalls.length === before;

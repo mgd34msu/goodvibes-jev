@@ -167,7 +167,7 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
         await floor.providerRegistry.ready();
         // Copy the daemon registry's discovery snapshot into this floor. The
         // explicit host preloads its home/surface cache before server admission;
-        // it does not launch a LAN scan. Later explicit registry changes reach
+        // its owned background scan can later update that snapshot. Changes reach
         // new floors only; existing floors do not watch the persisted cache.
         const discovered = services.providerRegistry.listDiscoveredServers();
         if (discovered.length > 0) floor.providerRegistry.registerDiscoveredProviders([...discovered]);
