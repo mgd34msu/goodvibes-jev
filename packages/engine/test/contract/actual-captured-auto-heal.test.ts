@@ -126,6 +126,20 @@ async function fixture(mode: Mode, outcome: Outcome) {
   // Bounded, value-free observations of the actual original-owner read filter.
   // Preserve the real permission answer; never log paths, source bytes or tokens.
   const readChecks: { candidate: 'owner-source' | 'member-source' | 'other'; decision: 'allow' | 'restricted'; boundary: string; memberCalls: number }[] = [];
+  const originalReadAccess = runtime.permissionManager.readAccess;
+  runtime.permissionManager.readAccess = async (path) => {
+    const decision = await originalReadAccess.call(runtime.permissionManager, path);
+    if (readChecks.length < 128) {
+      const boundary = judgmentInputBoundary('read', { path }, root);
+      readChecks.push({
+        candidate: path === join(root, 'src/csv.ts') ? 'owner-source'
+          : path.endsWith('/src/csv.ts') && path.includes('/.worktrees/') ? 'member-source' : 'other',
+        decision, boundary: boundary.passed ? 'pass' : boundary.checks[0]?.detail ?? 'refused', memberCalls,
+      });
+    }
+    return decision;
+  };
+  const firstToolResult = deferred<void>();
   const assertOwnerState = (): void => {
     expect(readFileSync(join(root, 'owner.txt'), 'utf8')).toBe('OWNER_UNSTAGED\n');
     expect(readFileSync(join(root, 'owner-untracked.txt'), 'utf8')).toBe('OWNER_UNTRACKED\n');
@@ -218,18 +232,7 @@ async function fixture(mode: Mode, outcome: Outcome) {
     }),
     fleetCapacity: () => ({ active: 0, maxSize: 8, capKey: 'fleet.maxSize' }),
     priceUsage: () => 0, priceProvenance: () => ({ source: 'catalog', asOf: '2026-10-08' }), store,
-    readAccessFilter: async (path) => {
-      const decision = await runtime.permissionManager.readAccess(path);
-      if (readChecks.length < 64) {
-        const boundary = judgmentInputBoundary('read', { path }, root);
-        readChecks.push({
-          candidate: path === join(root, 'src/csv.ts') ? 'owner-source'
-            : path.endsWith('/src/csv.ts') && path.includes('/.worktrees/') ? 'member-source' : 'other',
-          decision, boundary: boundary.passed ? 'pass' : boundary.checks[0]?.detail ?? 'refused', memberCalls,
-        });
-      }
-      return decision === 'allow';
-    },
+    readAccessFilter: async (path) => await runtime.permissionManager.readAccess(path) === 'allow',
   });
   let runner = buildRunner();
   function bindRunner(): void {
@@ -241,6 +244,7 @@ async function fixture(mode: Mode, outcome: Outcome) {
           for (const result of turn.results) {
             results.set(result.callId, result);
             if (result.callId === call.id) {
+              firstToolResult.resolve();
               const source = join(record.workingDirectory!, 'src/csv.ts');
               memberContent = existsSync(source) ? readFileSync(source, 'utf8') : undefined;
               if (mode === 'write' && result.success) {
@@ -263,8 +267,12 @@ async function fixture(mode: Mode, outcome: Outcome) {
   return {
     root, runtime, get runner() { return runner; }, results, requests, repairRequests, acceptance, repairEntered, releaseRepair, repairReturned, resumePaused,
     assertOwnerState, assertOwnerUnchanged, denyOriginal,
+    awaitRepair: () => Promise.race([
+      repairEntered.promise.then(() => 'entered' as const),
+      firstToolResult.promise.then(() => 'ended-before-repair' as const),
+    ]),
     member: () => runtime.agentManager.list().find((record) => record.contractRole === 'unit')!,
-    state: () => ({ memberCalls, plannerCalls, memberRoot, memberContent, backups, checkedBeforeDelivery, readChecks }),
+    state: () => ({ memberCalls, plannerCalls, memberRoot, memberContent, backups, checkedBeforeDelivery, repairRequestCount: repairRequests.length, readChecks }),
     start() {
       id = runner.start({ ask: 'Add a CSV parser module', sessionId: 'actual-captured-heal-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' }).contract.id;
       return id;
@@ -290,7 +298,7 @@ async function fixture(mode: Mode, outcome: Outcome) {
     async dispose() {
       releaseRepair.resolve();
       if (id) { runner.cancel(id, 'fixture cleanup'); await runner.join(id); }
-      runner.dispose(); store.dispose(); runtime.dispose(); installJudgmentPort(previous);
+      runner.dispose(); store.dispose(); runtime.dispose(); runtime.permissionManager.readAccess = originalReadAccess; installJudgmentPort(previous);
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -388,8 +396,9 @@ for (const outcome of ['deny-pending', 'revoke-pending', 'cancel-pending'] as co
     const f = await fixture('write', outcome);
     try {
       const id = f.start();
-      expect((await observed(f.repairEntered.promise, 60_000)).state,
-        JSON.stringify({ state: f.state(), contract: f.runner.get(id)?.error, results: [...f.results] })).toBe('settled');
+      const entry = await observed(f.awaitRepair(), 60_000);
+      expect(entry.state === 'settled' ? entry.value : entry.state,
+        JSON.stringify({ state: f.state(), contract: f.runner.get(id)?.error, results: [...f.results] })).toBe('entered');
       const member = f.member(); const source = join(member.workingDirectory!, 'src/csv.ts');
       expect(readFileSync(source, 'utf8')).toBe(broken); f.assertOwnerUnchanged();
       const execution = f.runtime.agentManager.join(member.id);
