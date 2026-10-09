@@ -156,11 +156,16 @@ export interface HttpResponse {
 }
 
 /** A single outbound HTTP request the connector issues. */
-export interface HttpRequest {
+export interface HttpRequest extends CalendarRequestOptions {
   readonly url: string;
   readonly method: 'GET' | 'POST' | 'DELETE' | 'PATCH';
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: string;
+}
+
+/** Optional lifecycle cancellation for a provider request and its error reading. */
+export interface CalendarRequestOptions {
+  readonly signal?: AbortSignal;
 }
 
 /** Injected network boundary. Tests supply a fake server behind this. */
