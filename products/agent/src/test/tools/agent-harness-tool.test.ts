@@ -2,7 +2,7 @@ import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../help
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { buildTestModelDefinition } from '../helpers/test-managers.ts';
 import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engine/sdk/platform/routing';
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -5042,6 +5042,8 @@ describe('agent_harness tool', () => {
   });
 
   test('surfaces email and calendar MCP connectors as Personal Ops setup routes', async () => {
+    // This real epoch millisecond passes Luhn: decimal filenames used to trip the PAN gate.
+    setSystemTime(new Date(1_791_559_463_008));
     const artifactStore = createHarnessArtifactStore();
     const fixture = makeFixture({ artifactStore: artifactStore.store });
     try {
@@ -5211,6 +5213,7 @@ describe('agent_harness tool', () => {
                 from: 'lead@example.test',
                 receivedAt: '2026-06-06T14:00:00Z',
                 snippet: 'unblock proposal review token=SECRET123',
+                'token=SYNTHETIC_KEY': 'provider key carried only through rawKeys',
               }],
             },
           };
@@ -5536,6 +5539,25 @@ describe('agent_harness tool', () => {
       expect(executedRead.reviewRecords?.[0]?.followUpBoundary).toContain('separate confirmed route');
       expect(executedRead.savedReviewArtifact?.status).toBe('saved');
       expect(executedRead.savedReviewArtifact?.artifactId).toBe('artifact-1');
+      expect(artifactStore.store.get('artifact-1')?.filename).toBe('Inbox-triage-cards-at-2026-10-09T15-24-23.008Z.json');
+      expect(artifactStore.store.get('artifact-1')?.filename).not.toContain(String(Date.now()));
+      const savedReview = await artifactStore.store.readContent('artifact-1');
+      const savedReviewText = savedReview.buffer.toString('utf8');
+      const savedPayload = JSON.parse(savedReviewText) as {
+        readonly createdAt: string;
+        readonly outputPreview: string;
+        readonly inputFieldKeys: readonly string[];
+        readonly reviewRecords: readonly { readonly summary: string; readonly rawKeys: readonly string[] }[];
+      };
+      expect(savedPayload.createdAt).toBe('2026-10-09T15:24:23.008Z');
+      expect(savedPayload.outputPreview).toContain('password=<redacted>');
+      expect(savedPayload.reviewRecords[0]?.summary).toContain('token=<redacted>');
+      expect(savedPayload.reviewRecords[0]?.rawKeys).toContain('subject');
+      expect(savedPayload.reviewRecords[0]?.rawKeys).toContain('token=<redacted>');
+      expect(savedReviewText).not.toContain('SYNTHETIC_KEY');
+      expect(savedPayload.inputFieldKeys).toContain('query');
+      expect(savedReviewText).not.toContain('SECRET123');
+      expect(savedReviewText).not.toContain('hunter2');
       expect(executedRead.savedReviewArtifact?.modelRoute).toContain('agent_artifacts');
       expect(executedRead.savedReviewArtifact?.policy).toContain('redacted review cards');
       expect(executedRead.nextRoutes?.lane?.modelRoute).toBe('personal_ops action:"lane" laneId:"inbox" includeParameters:true');
@@ -5785,6 +5807,7 @@ describe('agent_harness tool', () => {
       expect(compactQueue.queue).toHaveLength(1);
       expect(compactQueue.queue[0]?.queueItemId).toBe('inbox:review-thread:artifact-1:msg-1');
     } finally {
+      setSystemTime();
       fixture.cleanup();
     }
   });

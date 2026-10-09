@@ -389,8 +389,13 @@ export async function savePersonalOpsReviewArtifact(options: {
   const descriptor = await store.create({
     kind: 'data',
     mimeType: 'application/json',
-    filename: `${safeTitle}-${Date.now()}.json`,
-    text: `${redactedPersonalOpsText(JSON.stringify(payload, null, 2))}\n`,
+    // Keep generated identity out of the PAN-shaped decimal namespace. The ISO
+    // separators preserve timestamp precision without exempting filenames from screening.
+    filename: `${safeTitle}-at-${createdAt.replaceAll(':', '-')}.json`,
+    // Payload/card keys are fixed schema; connector keys are string elements in
+    // rawKeys/inputFieldKeys. Redact values before JSON escaping so quotes and
+    // backslashes remain data rather than becoming broken JSON delimiters.
+    text: `${JSON.stringify(payload, (_key, value: unknown) => typeof value === 'string' ? redactedPersonalOpsText(value) : value, 2)}\n`,
     acquisitionMode: 'inline-data',
     fetchMode: 'not-applicable',
     metadata: {
