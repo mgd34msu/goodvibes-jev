@@ -236,6 +236,8 @@ export interface McpAttackPathReview {
 
 /** Permission verdict for a single tool invocation. */
 export interface McpPermission {
+  readonly causes?: readonly ('risk-policy' | 'uncertain-reading' | 'role-mismatch' | 'capability-out-of-scope' | 'path-out-of-scope' | 'host-out-of-scope')[] | undefined;
+  readonly judgmentDecisionIds?: readonly string[] | undefined;
   /** Whether the tool call is permitted. */
   allowed: boolean;
   /** Human-readable explanation for the verdict. */

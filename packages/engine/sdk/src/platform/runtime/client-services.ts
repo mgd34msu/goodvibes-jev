@@ -511,8 +511,9 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   // MCP input requests use the canonical autonomous owner and current operation facts.
   const externalPermissionLifetime = new AbortController();
   disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
-  mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler({ port: judgment.port, permissionManager,
-    config: configManager, signal: externalPermissionLifetime.signal }));
+  const externalPermissionHost = { port: judgment.port, permissionManager, config: configManager, signal: externalPermissionLifetime.signal };
+  mcpRegistry.setPermissionHost(externalPermissionHost);
+  mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler(externalPermissionHost));
 
   const pluginManager = new PluginManager({
     pathOptions: { cwd: shellPaths.workingDirectory, homeDir: shellPaths.homeDirectory },

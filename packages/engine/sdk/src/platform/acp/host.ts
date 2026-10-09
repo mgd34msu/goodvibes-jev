@@ -1,3 +1,4 @@
+import { captureAcpPermissionRequest, readProtocolRequest, type CapturedProtocolRequest } from '../permissions/protocol-request.js';
 import { AcpPermissionWire } from './permission-wire.js';
 /**
  * acp/host.ts, HOSTING third-party coding agents over the Agent Client
@@ -36,7 +37,6 @@ import type { Agent, Client, NewSessionResponse, PromptResponse, RequestPermissi
 import { permissionOutcomeFor, type AcpPermissionOptionLike } from './protocol.js';
 import type { PermissionRequestHandler } from '../permissions/prompt.js';
 import { admitExternalRequest, type ExternalPermissionHost } from '../permissions/external-request.js';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { captureAutonomousSource, type AutonomousToolSource } from '../permissions/autonomous.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -459,7 +459,8 @@ export class AcpHostService {
         const operation = record.operation;
         if (!host || !operation || record.lifetime.signal.aborted) return cancelled;
         let owned: RequestPermissionRequest;
-        try { owned = snapshotJudgmentInput(params) as RequestPermissionRequest; } catch { return cancelled; }
+        let protocolSubject: CapturedProtocolRequest;
+        try { protocolSubject = captureAcpPermissionRequest(params); owned = readProtocolRequest(protocolSubject).wire as RequestPermissionRequest; } catch { return cancelled; }
         const sessionId = record.acpSessionId;
         const connection = record.conn;
         const requestId = owned.toolCall?.toolCallId;
@@ -467,6 +468,7 @@ export class AcpHostService {
           try {
             if (!wireBinding?.request) return cancelled;
             wireBinding.assertCurrent(); owned = wireBinding.request;
+            if (!wireBinding.protocolSubject) return cancelled; protocolSubject = wireBinding.protocolSubject;
           } catch { return cancelled; }
         }
         if (!sessionId || !connection || owned.sessionId !== sessionId || typeof requestId !== 'string' || !requestId || !Array.isArray(owned.options)
@@ -492,9 +494,9 @@ export class AcpHostService {
         try {
           admission = await admitExternalRequest(host, { connectionId: record.info.id, destination: record.info.binaryPath, signal, assertCurrent },
             { sourceOf: () => operation.source, assertCurrent, signal }, {
-              tool: owned.toolCall.title ?? 'ACP action',
+              tool: owned.toolCall.title ?? 'ACP action', protocolSubject,
               args: { ...(owned.toolCall.rawInput && typeof owned.toolCall.rawInput === 'object' && !Array.isArray(owned.toolCall.rawInput)
-                ? owned.toolCall.rawInput as Record<string, unknown> : {}), protocolRequest: owned,
+                ? owned.toolCall.rawInput as Record<string, unknown> : {}),
                 destination: { binaryPath: record.info.binaryPath, cwd: record.info.cwd } },
             });
           assertCurrent();

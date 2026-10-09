@@ -1,6 +1,7 @@
+import { captureMcpInputRequired, readProtocolRequest } from '../permissions/protocol-request.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
-import type { ExternalOperationSource } from '../permissions/external-request.js';
+import type { ExternalOperationSource, ExternalRequestScope } from '../permissions/external-request.js';
 import { awaitPermission } from '../permissions/cancellation.js';
 import { bindMcpElicitationResponse, commitMcpElicitation, discardMcpElicitation } from './elicitation-autonomous.js';
 import type { McpElicitationOutcome } from './elicitation.js';
@@ -97,6 +98,24 @@ export class McpClient {
   }
   private renewConnection(): void {
     this.retireConnection(); this.connectionId = randomUUID(); this.connectionLife = new AbortController();
+  }
+
+  /** Capture the actual destination and connection before asynchronous tool admission. */
+  captureToolScope(): ExternalRequestScope {
+    const connectionId = this.connectionId, proc = this.proc, http = this.http;
+    const httpSession = http?.sessionGeneration;
+    const serverName = this.config.name;
+    const destination = this.config.url ?? this.options?.processSpec?.command ?? this.config.command ?? '';
+    const signal = AbortSignal.any([this.connectionLife.signal, AbortSignal.timeout(this.options?.timeout ?? DEFAULT_TIMEOUT_MS)]);
+    const assertCurrent = () => {
+      signal.throwIfAborted();
+      if (this.connectionId !== connectionId || this.proc !== proc || this.http !== http || http?.sessionGeneration !== httpSession
+        || this.config.name !== serverName || !this.isConnected
+        || (this.config.url ?? this.options?.processSpec?.command ?? this.config.command ?? '') !== destination)
+        throw new Error('MCP tool destination changed');
+    };
+    assertCurrent();
+    return { connectionId, destination, signal, assertCurrent };
   }
 
   private async resolveElicitation(id: JsonRpcId, params: unknown, operation?: ExternalOperationSource, nested = false): Promise<McpElicitationOutcome> {
@@ -268,7 +287,7 @@ export class McpClient {
    * (Multi Round-Trip Requests); elicitation input requests are resolved
    * through the wired resolver and the call is retried with inputResponses.
    */
-  async callTool(toolName: string, args: Record<string, unknown>, operation?: ExternalOperationSource): Promise<unknown> {
+  async callTool(toolName: string, args: Record<string, unknown>, operation?: ExternalOperationSource, effect?: { readonly assertCurrent: () => void; readonly claim: () => void }): Promise<unknown> {
     if (!this.isConnected) throw new Error(`McpClient(${this.config.name}): not connected`);
     const ownedArgs = snapshotJudgmentInput(args, toolName) as Record<string, unknown>;
     const connectionId = this.connectionId, proc = this.proc, http = this.http;
@@ -277,11 +296,12 @@ export class McpClient {
     const lifetime = new AbortController();
     const signal = AbortSignal.any([this.connectionLife.signal, lifetime.signal, ...(operation?.signal ? [operation.signal] : [])]);
     const assertCurrent = () => {
-      signal.throwIfAborted(); operation?.assertCurrent();
+      signal.throwIfAborted(); operation?.assertCurrent(); effect?.assertCurrent();
       if (this.config.name !== serverName || this.connectionId !== connectionId || this.proc !== proc || this.http !== http || http?.sessionGeneration !== httpSession || !this.isConnected) throw new Error('MCP tool operation changed');
     };
     const boundOperation = operation ? { ...operation, operationId: randomUUID(), signal, assertCurrent } : undefined;
     let responses: Record<string, unknown> | null = null;
+    let claimed = false;
     try {
       assertCurrent();
       if (!this.schemaCache.has(toolName)) await this.getToolSchema(toolName);
@@ -290,11 +310,11 @@ export class McpClient {
       for (let roundTrip = 0; roundTrip <= MAX_MRTR_ROUND_TRIPS; roundTrip++) {
         assertCurrent();
         const pendingResponses = responses;
-        const beforeSend = () => { assertCurrent(); if (pendingResponses) for (const response of Object.values(pendingResponses)) commitMcpElicitation(response); };
+        const beforeSend = () => { assertCurrent(); if (!claimed) { effect?.claim(); claimed = true; } if (pendingResponses) for (const response of Object.values(pendingResponses)) commitMcpElicitation(response); };
         const result = await this._request('tools/call', params, this._toolCallHeaders(toolName, ownedArgs), boundOperation, beforeSend);
         assertCurrent(); responses = null;
         if (this.negotiated?.era !== 'modern' || !isInputRequiredResult(result)) return result;
-        const ownedResult = snapshotJudgmentInput(result) as typeof result;
+        const ownedResult = readProtocolRequest(captureMcpInputRequired(result)).wire as typeof result;
         responses = await this._resolveInputRequests(toolName, ownedResult.inputRequests, boundOperation);
         assertCurrent();
         params = { name: toolName, arguments: ownedArgs, ...(responses ? { inputResponses: responses } : {}),
