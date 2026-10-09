@@ -5,6 +5,8 @@ import { WELL_KNOWN_LOCAL_ENDPOINTS } from './well-known-endpoints.js';
 export interface BuiltinProviderDefinition {
   readonly id: string;
   readonly label: string;
+  /** Declared setup evidence for runtime presentation, not classification or routing. */
+  readonly setupDescription?: string | undefined;
   readonly envVars: readonly string[];
   readonly serviceNames?: readonly string[] | undefined;
   readonly aliases?: readonly string[] | undefined;
@@ -163,6 +165,7 @@ export const BUILTIN_COMPAT_PROVIDERS: readonly BuiltinCompatDefinition[] = [
     modelsAsOf: '2026-07-12',
     id: 'microsoft-foundry',
     label: 'Microsoft Foundry',
+    setupDescription: 'Uses an Azure cloud account resource endpoint and account-scoped API key; usage is billed to that cloud account.',
     envVars: getBuiltinProviderEnvVars('microsoft-foundry'),
     serviceNames: ['microsoft-foundry'],
     baseURL: 'https://example.openai.azure.com/openai/v1',
@@ -234,6 +237,7 @@ export const BUILTIN_COMPAT_PROVIDERS: readonly BuiltinCompatDefinition[] = [
     modelsAsOf: '2026-07-12',
     id: 'sglang',
     label: 'SGLang',
+    setupDescription: 'Operator-managed self-hosted model serving endpoint; setup and upstream charges belong to its operator.',
     envVars: getBuiltinProviderEnvVars('sglang'),
     serviceNames: ['sglang'],
     baseURL: 'http://127.0.0.1:30000/v1',

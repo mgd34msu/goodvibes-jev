@@ -21,11 +21,16 @@ interface NoticeDelivery {
   readonly isCurrent: () => boolean;
   readonly deliver: (reading: UserFacingError | null) => void;
   readonly discard?: () => void;
+  /** Related narration joins this same queue/deadline; it never runs after delivery. */
+  readonly prepare?: (signal: AbortSignal) => Promise<void>;
 }
 interface PendingNotice {
   delivery: NoticeDelivery | undefined;
   timer: ReturnType<typeof setTimeout> | undefined;
   ready: boolean;
+  errorReady: boolean;
+  preparationReady: boolean;
+  readonly controller: AbortController;
   reading: UserFacingError | null;
 }
 
@@ -47,6 +52,7 @@ export function createErrorNoticeOwner(timeoutMs = ERROR_NOTICE_TIMEOUT_MS) {
   };
   const release = (item: PendingNotice): NoticeDelivery | undefined => {
     if (item.timer !== undefined) clearTimeout(item.timer);
+    item.controller.abort();
     const delivery = item.delivery;
     item.delivery = undefined;
     item.timer = undefined;
@@ -71,17 +77,37 @@ export function createErrorNoticeOwner(timeoutMs = ERROR_NOTICE_TIMEOUT_MS) {
   return {
     enqueue(error: unknown, site: string, delivery: NoticeDelivery): void {
       if (closed) { if (delivery.discard) safely(delivery.discard); return; }
-      const item: PendingNotice = { delivery, timer: undefined, ready: false, reading: null };
+      const item: PendingNotice = {
+        delivery, timer: undefined, ready: false, reading: null,
+        errorReady: false, preparationReady: delivery.prepare === undefined,
+        controller: new AbortController(),
+      };
       pending.push(item);
-      const settle = (reading: UserFacingError | null): void => {
+      const update = (): void => {
         if (!item.delivery || item.ready) return;
-        item.reading = reading; item.ready = true;
+        if (!item.errorReady || !item.preparationReady) return;
+        item.ready = true;
         if (item.timer !== undefined) clearTimeout(item.timer);
         flush();
       };
-      item.timer = setTimeout(() => settle(null), timeoutMs);
+      const settleError = (reading: UserFacingError | null): void => {
+        if (!item.delivery || item.ready) return;
+        item.reading = reading; item.errorReady = true; update();
+      };
+      const settlePreparation = (): void => {
+        if (!item.delivery || item.ready) return;
+        item.preparationReady = true; update();
+      };
+      item.timer = setTimeout(() => {
+        if (!item.delivery || item.ready) return;
+        // Preserve an error already read successfully if only setup facts stalled.
+        item.controller.abort(); item.ready = true; flush();
+      }, timeoutMs);
       item.timer.unref?.();
-      void readUserFacingError(error, site).then(settle, () => settle(null));
+      void readUserFacingError(error, site).then(settleError, () => settleError(null));
+      if (delivery.prepare) void Promise.resolve().then(() => {
+        if (!item.controller.signal.aborted) return item.delivery?.prepare?.(item.controller.signal);
+      }).then(settlePreparation, settlePreparation);
     },
     cancel,
     dispose(): void { closed = true; cancel(); },

@@ -5,6 +5,7 @@ import {
   normalizeAtSchedule,
   normalizeCronSchedule,
   normalizeEverySchedule,
+  readNaturalLanguageSchedule,
 } from '@goodvibes-jev/engine/sdk/platform/automation';
 import type { AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
 import type { AutomationJob } from '@goodvibes-jev/engine/sdk/platform/automation';
@@ -12,7 +13,6 @@ import type { AutomationScheduleDefinition } from '@goodvibes-jev/engine/sdk/pla
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { REASONING_EFFORT_SEVERITY, reasoningEffortRank } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { buildAutomationEmptyState } from '@goodvibes-jev/engine/sdk/platform/runtime/feature-announcements';
-import { parseNaturalLanguageSchedule } from './schedule-nl.ts';
 import type {
   AutomationExecutionPolicy,
   AutomationExternalContentSource,
@@ -31,7 +31,7 @@ function formatSchedule(schedule: AutomationScheduleDefinition): string {
     case 'every':
       return formatEveryInterval(schedule.intervalMs);
     case 'at':
-      return new Date(schedule.at).toLocaleString();
+      return new Date(schedule.at).toISOString();
   }
 }
 
@@ -109,13 +109,27 @@ export function registerScheduleRuntimeCommands(registry: CommandRegistry): void
     usage: 'add <cron|every|at|when> <value> <prompt...> | list | remove <id> | enable <id> | disable <id> | run <id>',
     argsHint: 'add cron <expr> | add every <interval> | add at <timestamp> | add when "<natural language>" | list | remove | enable | disable | run',
     async handler(args, ctx) {
+      args = [...args];
       const manager = ctx.ops.automationManager;
       if (!manager) {
         ctx.print('Automation manager is not available in this runtime.');
         return;
       }
-      await manager.start();
       const sub = args[0];
+      if (sub === 'add' && args[1] !== 'when') ctx.scheduleReading?.cancel();
+      // Capture ownership and clock before the first await. Repeated delivery
+      // while pending cannot start another reading or create another job.
+      const reading = sub === 'add' && args[1] === 'when'
+        ? ctx.scheduleReading?.begin(JSON.stringify(args)) : undefined;
+      if (sub === 'add' && args[1] === 'when' && !reading) {
+        ctx.print('Schedule reading is unavailable or this submission is already pending.');
+        return;
+      }
+      const submittedAt = Date.now();
+      const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      try {
+      await manager.start();
+      if (reading && !reading.current()) return;
 
       if (!sub || sub === 'list') {
         const jobs = manager.listJobs();
@@ -239,19 +253,20 @@ export function registerScheduleRuntimeCommands(registry: CommandRegistry): void
         try {
           let schedule: AutomationScheduleDefinition;
           if (scheduleKind === 'when') {
-            // Natural-language phrase: parse locally, ALWAYS echo the concrete
-            // interpretation before saving so nothing is scheduled silently.
-            const parsed = parseNaturalLanguageSchedule(scheduleArg);
-            if (parsed.kind === 'error') {
-              ctx.print(`Error: ${parsed.error}`);
+            const sourceTimezone = timezone ?? localTimezone;
+            ctx.print('Reading schedule with Jev…');
+            const parsed = await readNaturalLanguageSchedule({ phrase: scheduleArg, now: submittedAt, timezone: sourceTimezone, staggerMs }, {
+              signal: reading!.signal,
+              beforeAttempt: reading!.assertCurrent,
+              onRetry: () => { if (reading!.current()) ctx.print('Waiting for Jev to read the schedule…'); },
+            });
+            if (!reading!.current()) return;
+            if (parsed.kind === 'unknown') {
+              ctx.print(`Schedule timing is ${parsed.reason}. No automation job was created.`);
               return;
             }
-            schedule = parsed.kind === 'cron'
-              ? normalizeCronSchedule(parsed.expression, timezone, staggerMs)
-              : parsed.kind === 'every'
-                ? normalizeEverySchedule(parsed.interval)
-                : normalizeAtSchedule(parsed.at);
-            ctx.print(`Interpreted "${scheduleArg}" as: ${parsed.description}\n  → ${formatSchedule(schedule)}`);
+            schedule = parsed.schedule;
+            ctx.print(`Interpreted "${scheduleArg}" as: ${formatSchedule(schedule)}`);
           } else {
             schedule = legacyCronMode
               ? normalizeCronSchedule(scheduleArg, timezone, staggerMs)
@@ -260,6 +275,13 @@ export function registerScheduleRuntimeCommands(registry: CommandRegistry): void
                 : scheduleKind === 'every'
                   ? normalizeEverySchedule(scheduleArg)
                   : normalizeAtSchedule(parseAtValue(scheduleArg));
+          }
+          // The read cannot outlive Escape, a new submission, the session or
+          // the terminal. There is no await between this check and dispatch.
+          if (reading && !reading.current()) return;
+          if (reading && schedule.kind === 'at' && schedule.at <= Date.now()) {
+            ctx.print('The interpreted time has already passed. No automation job was created.');
+            return;
           }
           const job = await manager.createJob({
             name: name ?? prompt.slice(0, 40),
@@ -280,6 +302,7 @@ export function registerScheduleRuntimeCommands(registry: CommandRegistry): void
             lightContext,
             enabled: true,
           });
+          if (reading && !reading.current()) return;
           ctx.print(
             `Automation job created: ${job.id}\n`
             + `  name: ${job.name}\n`
@@ -287,7 +310,7 @@ export function registerScheduleRuntimeCommands(registry: CommandRegistry): void
             + `  next run: ${formatNextRun(job.nextRunAt)}`
           );
         } catch (error) {
-          ctx.print(`Error: ${summarizeError(error)}`);
+          if (!reading || reading.current()) ctx.print(`Error: ${summarizeError(error)}`);
         }
         return;
       }
@@ -366,6 +389,12 @@ export function registerScheduleRuntimeCommands(registry: CommandRegistry): void
         + '  /schedule disable <id>\n'
         + '  /schedule run <id>'
       );
+      } catch (error) {
+        if (!reading) throw error;
+        // Startup belongs to the same operation as reading. Neither a late
+        // rejection nor the terminal fallback may outlive that ownership.
+        if (reading.current()) ctx.print(`Error: ${summarizeError(error)}`);
+      } finally { reading?.finish(); }
     },
   });
 }

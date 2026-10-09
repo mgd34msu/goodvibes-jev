@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { beforeEach, afterEach } from 'bun:test';
 import { installUserErrorReading, flushErrorNotices } from '../helpers/user-error-reading.ts';
 let restoreUserErrorReading: () => void;
@@ -1011,6 +1013,17 @@ describe('wireStreamEventMetrics: failover notice reaches the conversation uncon
     });
     const { options, messages } =
       makeRestoringOptions(turns, tools, { providerOptimizer: optimizer, retryTurn: () => true });
+    const instances = new Map(['anthropic', 'openai-subscriber'].map(id => [id, {}]));
+    options.providerRegistry.getRegistered = id => instances.get(id)!;
+    options.providerRegistry.describeRuntime = async (id) => ({
+      setup: { description: id === 'openai-subscriber' ? 'Stored subscription session' : 'Direct provider API key' },
+    });
+    const { port } = fakePort((name, question, state) => question.type === 'choice'
+      ? choiceAnswer(question, name === 'failure__category' ? 'unknown' : 'none', 0.99)
+      : noulAnswer(name === 'failure__rate_limited'
+        || (name === 'subscription' && String(state).includes('Stored subscription session'))
+        || (name === 'api_key' && String(state).includes('Direct provider API key')) ? 0.99 : 0.01));
+    installJudgmentPort(port);
     wireStreamEventMetrics(options);
 
     turns.emitTurnError('rate limit exceeded');
