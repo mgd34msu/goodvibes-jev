@@ -45,8 +45,8 @@ export function migrateStore(raw: unknown): SettingsControlPlaneStore {
   };
 }
 
-/** Read typed host lock metadata without quarantine, repair, or persistence. */
-export function readHostManagedSettingLock(key: string, configDir: string): Readonly<Omit<ManagedSettingLock, 'key'>> | null {
+/** Read lock metadata without quarantine, repair, persistence, or silent unlock. */
+export function readStrictManagedSettingLock(key: string, configDir: string): Readonly<Omit<ManagedSettingLock, 'key'>> | null {
   let raw: string;
   try { raw = readFileSync(getSettingsControlPath(configDir), 'utf8'); }
   catch (error) {
@@ -72,5 +72,11 @@ export function readHostManagedSettingLock(key: string, configDir: string): Read
 }
 
 function policyReadFailure(): ConfigError {
-  return new ConfigError('Host setting metadata is unavailable because managed policy could not be read.');
+  return new ConfigError('Setting metadata is unavailable because managed policy could not be read.');
+}
+
+/** Compatibility alias for guarded host readers. */
+export function readHostManagedSettingLock(key: string, configDir: string): Readonly<Omit<ManagedSettingLock, 'key'>> | null {
+  try { return readStrictManagedSettingLock(key, configDir); }
+  catch { throw new ConfigError('Host setting metadata is unavailable because managed policy could not be read.'); }
 }
