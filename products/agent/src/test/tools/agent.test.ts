@@ -83,6 +83,10 @@ function makeAgentHarness(options: { readonly guarded?: boolean } = {}) {
 
 /** Recorded fixture answers; the actual Agent registry, admission and config owners execute. */
 function settingsGuardRuntime() {
+  // The imported helper's beforeEach belongs to its first importing test file.
+  // Own a fresh graph here even when that file ran earlier in the suite.
+  // Keep this owner for every call within the fixture, including reject → act.
+  resetTestRuntimeServices();
   const services = getTestRuntimeServices();
   const log = new SqliteDecisionLog(':memory:');
   let selected: 'act' | 'reject' = 'act';
@@ -1015,6 +1019,30 @@ describe('spawn mode', () => {
       expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
       expect(f.config.get('display.theme')).toBe(value); expect(f.prompts()).toBe(0);
     } finally { f.close(); }
+  });
+
+  test('recorded settings fixtures own fresh services when their source IDs repeat', async () => {
+    const first = settingsGuardRuntime();
+    const before = first.config.get('display.theme');
+    const value = before === 'nord' ? 'vaporwave' : 'nord';
+    const args = { mode: 'set', key: 'display.theme', value, confirm: true };
+    try {
+      expect((await first.run(args)).autonomousDecision?.outcome).toBe('act');
+      expect(first.config.get('display.theme')).toBe(value);
+    } finally { first.close(); }
+
+    const second = settingsGuardRuntime();
+    try {
+      // run() starts at the same turn/call IDs in each fixture. A reused owner
+      // must retain its consumed-source refusal, so only a fresh owner can act.
+      const result = await second.run(args);
+      expect(result.success).toBe(true); expect(result.autonomousDecision?.outcome).toBe('act');
+      expect(second.config).not.toBe(first.config);
+      expect(second.config.getConfigPath()).not.toBe(first.config.getConfigPath());
+      expect(second.config.get('display.theme')).toBe(value);
+      expect(first.config.get('display.theme')).toBe(value);
+      expect(second.prompts()).toBe(0);
+    } finally { second.close(); }
   });
 
   test('Agent runtime guard preserves recorded settings denial despite caller request text', async () => {
