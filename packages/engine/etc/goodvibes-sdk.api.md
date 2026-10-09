@@ -12049,9 +12049,32 @@ export interface OperatorMethodOutputMap {
             id: string;
             ranAt: number;
             trigger: "manual" | "scheduled";
-            outcome: "delivered" | "error" | "quiet" | "skipped-disabled" | "skipped-quiet-hours";
+            outcome: "cancelled" | "delivered" | "error" | "quiet" | "skipped-disabled" | "skipped-quiet-hours" | "skipped-stale";
             briefingSummary: string;
             decisionReason?: string;
+            judgment?: {
+                decisionId: string;
+                model: string;
+                reading: {
+                    kind: "yes-no";
+                    probability: number;
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                note?: {
+                    decisionId: string;
+                    fidelity: "contradicted" | "fabricated" | "supported" | "unsupported";
+                    reading: {
+                        kind: "choice";
+                        choice: string;
+                        confidence: number;
+                        probabilities: ({} & {
+                            readonly [key: string]: number;
+                        });
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                };
+            };
             deliveredMessage?: string;
             deliveryChannel?: string;
             deliveryId?: string;

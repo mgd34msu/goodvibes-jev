@@ -202,6 +202,8 @@ export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerChannelSyncGatewayMethods',
   'registerChannelTestGatewayMethods',
   'registerCheckinGatewayMethods',
+  // Same four probed handlers; real runtime wiring is exercised by checkin-composed.test.ts.
+  'registerComposedCheckinGatewayMethods',
   'registerCheckpointGatewayMethods',
   'registerCiGatewayMethods',
   'registerContractGatewayMethods',

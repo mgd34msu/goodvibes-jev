@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '../utils/logger.js';
@@ -411,7 +412,7 @@ export class SlackIntegration {
    * Post a message to a channel using the Slack Web API (chat.postMessage).
    * Requires SLACK_BOT_TOKEN.
    */
-  async postMessage(channel: string, text: string, blocks?: unknown[]): Promise<void> {
+  async postMessage(channel: string, text: string, blocks?: unknown[], lifetime: DeliveryLifetime = {}): Promise<void> {
     if (!this.botToken) {
       throw new Error('SlackIntegration: botToken is required for postMessage');
     }
@@ -419,6 +420,7 @@ export class SlackIntegration {
     if (blocks && blocks.length > 0) {
       payload.blocks = blocks;
     }
+    assertDeliveryCurrent(lifetime);
     const res = await fetchWithTimeout('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: {
@@ -426,6 +428,7 @@ export class SlackIntegration {
         Authorization: `Bearer ${this.botToken}`,
       },
       body: JSON.stringify(payload),
+      ...(lifetime.signal ? { signal: lifetime.signal } : {}),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -441,7 +444,7 @@ export class SlackIntegration {
    * Post a message via an Incoming Webhook URL.
    * Requires SLACK_WEBHOOK_URL or a URL passed at call time.
    */
-  async postWebhook(text: string, blocks?: unknown[], url?: string): Promise<void> {
+  async postWebhook(text: string, blocks?: unknown[], url?: string, lifetime: DeliveryLifetime = {}): Promise<void> {
     const target = url ?? this.webhookUrl;
     if (!target) {
       throw new Error('SlackIntegration: webhookUrl is required for postWebhook');
@@ -450,10 +453,12 @@ export class SlackIntegration {
     if (blocks && blocks.length > 0) {
       payload.blocks = blocks;
     }
+    assertDeliveryCurrent(lifetime);
     const res = await fetchWithTimeout(target, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      ...(lifetime.signal ? { signal: lifetime.signal } : {}),
     });
     if (!res.ok) {
       const err = await res.text();

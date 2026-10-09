@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { retireDeliveryResponse } from './delivery-diagnostics.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -309,7 +310,7 @@ export class DiscordIntegration {
   /**
    * Post a message via Discord webhook URL.
    */
-  async postWebhook(content: string, embeds?: unknown[], url?: string): Promise<void> {
+  async postWebhook(content: string, embeds?: unknown[], url?: string, lifetime: DeliveryLifetime = {}): Promise<void> {
     const target = url ?? this.webhookUrl;
     if (!target) {
       throw new Error('DiscordIntegration: webhookUrl is required for postWebhook');
@@ -318,10 +319,12 @@ export class DiscordIntegration {
     if (content) payload.content = content;
     if (embeds && embeds.length > 0) payload.embeds = embeds;
 
+    assertDeliveryCurrent(lifetime);
     const res = await instrumentedFetch(target, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      ...(lifetime.signal ? { signal: lifetime.signal } : {}),
     }, 'opaque-url');
     if (!res.ok) {
       const err = await res.text();
@@ -334,7 +337,7 @@ export class DiscordIntegration {
    * Post a message to a channel via the Discord Bot API.
    * Requires DISCORD_BOT_TOKEN.
    */
-  async postMessage(channelId: string, content: string, embeds?: unknown[]): Promise<void> {
+  async postMessage(channelId: string, content: string, embeds?: unknown[], lifetime: DeliveryLifetime = {}): Promise<void> {
     if (!this.botToken) {
       throw new Error('DiscordIntegration: botToken is required for postMessage');
     }
@@ -343,6 +346,7 @@ export class DiscordIntegration {
     if (content) payload.content = content;
     if (embeds && embeds.length > 0) payload.embeds = embeds;
 
+    assertDeliveryCurrent(lifetime);
     const res = await instrumentedFetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
       method: 'POST',
       headers: {
@@ -350,6 +354,7 @@ export class DiscordIntegration {
         Authorization: `Bot ${this.botToken}`,
       },
       body: JSON.stringify(payload),
+      ...(lifetime.signal ? { signal: lifetime.signal } : {}),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -397,17 +402,20 @@ export class DiscordIntegration {
     interactionToken: string,
     content: string,
     embeds?: unknown[],
+    lifetime: DeliveryLifetime = {},
   ): Promise<void> {
     this.validateSnowflake(applicationId, 'applicationId');
     const payload: Record<string, unknown> = { content };
     if (embeds && embeds.length > 0) payload.embeds = embeds;
 
+    assertDeliveryCurrent(lifetime);
     const res = await instrumentedFetch(
       `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}/messages/@original`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        ...(lifetime.signal ? { signal: lifetime.signal } : {}),
       },
       'opaque-url',
     );

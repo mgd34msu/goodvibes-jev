@@ -1,3 +1,4 @@
+import type { DeliveryLifetime } from '../../utils/delivery-lifetime.js';
 import type { ArtifactReference } from '../../artifacts/index.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { SecretsManager } from '../../config/secrets.js';
@@ -47,7 +48,7 @@ export interface ChannelDeliveryRouteBinding {
   readonly metadata: Record<string, unknown>;
 }
 
-export interface ChannelDeliveryRequest {
+export interface ChannelDeliveryRequest extends DeliveryLifetime {
   readonly target: ChannelDeliveryTarget;
   readonly body: string;
   readonly title: string;
@@ -70,6 +71,8 @@ export interface ChannelDeliveryResult {
 
 export interface ChannelDeliveryStrategy {
   readonly id: string;
+  /** Promises to enforce signal/assertCurrent at the actual send boundary, after async preparation. */
+  readonly supportsGuardedDelivery?: boolean | undefined;
   canHandle(request: ChannelDeliveryRequest): boolean;
   deliver(request: ChannelDeliveryRequest): Promise<ChannelDeliveryResult>;
 }

@@ -7099,6 +7099,27 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "outcome": "delivered",
           "briefingSummary": "sample",
           "decisionReason": "sample",
+          "judgment": {
+            "decisionId": "sample",
+            "model": "sample",
+            "reading": {
+              "kind": "yes-no",
+              "probability": 0,
+              "verdict": "yes",
+              "outcome": "act"
+            },
+            "note": {
+              "decisionId": "sample",
+              "fidelity": "supported",
+              "reading": {
+                "kind": "choice",
+                "choice": "sample",
+                "confidence": 0,
+                "probabilities": {},
+                "outcome": "act"
+              }
+            }
+          },
           "deliveredMessage": "sample",
           "deliveryChannel": "sample",
           "deliveryId": "sample",

@@ -56,18 +56,11 @@ import {
   type InboundIntakeBroker,
 } from '../../channel-profiles/index.js';
 import type { ChannelPolicyManager } from '../../channels/policy-manager.js';
-import { registerCheckinGatewayMethods } from './checkin.js';
-import {
-  CheckinService,
-  CheckinReceiptStore,
-  createProviderBackedCheckinJudge,
-  createRuntimeCheckinStateReader,
-  type CheckinSessionView,
-} from '../../checkin/index.js';
+import { registerComposedCheckinGatewayMethods } from './checkin-composition.js';
+import type { CheckinSessionView } from '../../checkin/index.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
 import type { AutomationManager } from '../../automation/index.js';
 import type { ChannelDeliveryRouter } from '../../channels/delivery-router.js';
-import { parseChannelDeliveryTarget } from '../../channels/delivery/types.js';
 import { composeCiWatchGatewayVerbs } from './ci-watch-composition.js';
 import type { CiPollingHost, FixSessionStartOutcome } from '../../ci-watch/index.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -211,7 +204,7 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
    * read/write. A set flows to surfaces as runtime.permissions via the
    * already-wired mode-change binding.
    */
-  readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'onDidInvalidate'>>;
   /**
    * Runtime store backing sessions.contextUsage.get and the local-session
    * resolution the session-runtime verbs gate on (getState().session.id).
@@ -531,52 +524,7 @@ export function registerGatewayVerbGroups(catalog: GatewayMethodCatalog, deps: G
     });
   }
 
-  // Proactive check-in (the "heartbeat initiative"): a briefing→judgment→
-  // conditional-delivery loop that rides the automation scheduler as a
-  // kind:'checkin' job. Registered only when the full runtime wired the channel
-  // delivery router, provider registry, and automation manager (the pieces the
-  // loop genuinely needs); absent → the verbs stay cataloged-but-unhandled,
-  // never a facade that pretends to deliver.
-  if (deps.channelDeliveryRouter && deps.providerRegistry && deps.automationManager && deps.sessionLister) {
-    const channelDeliveryRouter = deps.channelDeliveryRouter;
-    const automation = deps.automationManager;
-    const sessionLister = deps.sessionLister;
-    // The checkin.* keys are string-keyed (they live in the config defaults tree,
-    // not the grandfathered ConfigKey union); adapt the daemon's ConfigManager to
-    // the check-in's string-keyed config surface.
-    const configManager = deps.configManager;
-    const checkinConfig = {
-      get: (key: string): unknown => configManager.get(key as ConfigKey),
-      set: (key: string, value: string | boolean): void => configManager.set(key as ConfigKey, value as never),
-    };
-    const checkinService = new CheckinService({
-      config: checkinConfig,
-      stateReader: createRuntimeCheckinStateReader({
-        listSessions: () => sessionLister.listSessions(500),
-        listRuns: () => automation.listRuns(),
-      }),
-      judge: createProviderBackedCheckinJudge(deps.providerRegistry),
-      deliverer: {
-        deliver: async (channel, message) => {
-          return channelDeliveryRouter.deliver({
-            target: parseChannelDeliveryTarget(channel),
-            body: message,
-            title: 'Check-in',
-            jobId: 'checkin',
-            runId: `checkin-${Date.now()}`,
-            includeLinks: false,
-          });
-        },
-      },
-      receipts: new CheckinReceiptStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'checkin-receipts.json')),
-      automation,
-    });
-    registerCheckinGatewayMethods(catalog, checkinService);
-    void checkinService.attach().catch(() => {
-      // Automation may be disabled at construction; the schedule syncs on the
-      // next checkin.config.set once it is enabled. Never fail construction.
-    });
-  }
+  registerComposedCheckinGatewayMethods(catalog, deps);
 
   // Session-scoped permission mode (get/set) + context-usage exposure on the
   // wire, over the daemon's own config + runtime store (its live local

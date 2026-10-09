@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent } from '../../utils/delivery-lifetime.js';
 import { retireDeliveryResponse } from '../../integrations/delivery-diagnostics.js';
 import { ArtifactStore } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
@@ -12,6 +13,7 @@ import { resolveReachableBaseUrl } from '../../utils/reachable-base-url.js';
 import type { ChannelDeliveryStrategy } from './types.js';
 import {
   appendAttachmentSummary,
+  deliveryFetch,
   extractResponseId,
   firstNonEmpty,
   requireOkResponse,
@@ -22,7 +24,6 @@ import {
   titleFromBody,
   trimForSurface,
 } from './shared.js';
-import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 export function createWebhookDeliveryStrategy(
@@ -34,6 +35,7 @@ export function createWebhookDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:webhook',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return request.target.kind === 'webhook' || resolveChannelDeliverySurfaceKind(request.target) === 'webhook';
     },
@@ -59,7 +61,7 @@ export function createWebhookDeliveryStrategy(
         headers: {
           'Content-Type': 'application/json',
         },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
           text: request.body,
           message: request.body,
@@ -70,7 +72,7 @@ export function createWebhookDeliveryStrategy(
           attachments,
           artifacts: attachments,
         }),
-      }, options);
+      }, { ...options, assertCurrent: request.assertCurrent });
       if (!response.ok) {
         throw new HttpStatusError(`HTTP ${response.status}: ${await response.text().catch(() => '')}`, { status: response.status });
       }
@@ -88,6 +90,7 @@ export function createSlackDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:slack',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'slack';
     },
@@ -99,7 +102,7 @@ export function createSlackDeliveryStrategy(
         ? request.binding.metadata.responseUrl
         : undefined;
       if (responseUrl?.startsWith('https://hooks.slack.com/')) {
-        const response = await instrumentedFetch(responseUrl, {
+        const response = await deliveryFetch(request, responseUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -114,7 +117,7 @@ export function createSlackDeliveryStrategy(
         return success();
       }
       if (request.target.address?.startsWith('https://')) {
-        await slack.postWebhook(bodyWithAttachments, undefined, request.target.address);
+        await slack.postWebhook(bodyWithAttachments, undefined, request.target.address, request);
         return success();
       }
       const channelId = firstNonEmpty(
@@ -128,11 +131,11 @@ export function createSlackDeliveryStrategy(
           serviceName: 'slack', serviceField: 'primary', configKey: 'surfaces.slack.botToken',
           environmentValue: process.env.SLACK_BOT_TOKEN,
         });
-        await new SlackIntegration('', botToken ?? '').postMessage(channelId, bodyWithAttachments);
+        await new SlackIntegration('', botToken ?? '').postMessage(channelId, bodyWithAttachments, undefined, request);
         return success(channelId);
       }
       const webhookUrl = await serviceRegistry.resolveSecret('slack', 'webhookUrl') ?? process.env.SLACK_WEBHOOK_URL;
-      await new SlackIntegration(webhookUrl ?? '', '').postWebhook(bodyWithAttachments);
+      await new SlackIntegration(webhookUrl ?? '', '').postWebhook(bodyWithAttachments, undefined, undefined, request);
       return success();
     },
   };
@@ -146,6 +149,7 @@ export function createDiscordDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:discord',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'discord';
     },
@@ -165,11 +169,12 @@ export function createDiscordDeliveryStrategy(
           interactionToken,
           '',
           [discord.formatAgentResult(request.agentId ?? request.runId, request.title, bodyWithAttachments)],
+          request,
         );
         return success();
       }
       if (request.target.address?.startsWith('https://')) {
-        await discord.postWebhook(bodyWithAttachments, undefined, request.target.address);
+        await discord.postWebhook(bodyWithAttachments, undefined, request.target.address, request);
         return success();
       }
       const channelId = firstNonEmpty(
@@ -183,11 +188,11 @@ export function createDiscordDeliveryStrategy(
           serviceName: 'discord', serviceField: 'primary', configKey: 'surfaces.discord.botToken',
           environmentValue: process.env.DISCORD_BOT_TOKEN,
         });
-        await new DiscordIntegration('', botToken ?? '').postMessage(channelId, bodyWithAttachments);
+        await new DiscordIntegration('', botToken ?? '').postMessage(channelId, bodyWithAttachments, undefined, request);
         return success(channelId);
       }
       const webhookUrl = await serviceRegistry.resolveSecret('discord', 'webhookUrl') ?? process.env.DISCORD_WEBHOOK_URL;
-      await new DiscordIntegration(webhookUrl ?? '', '').postWebhook(bodyWithAttachments);
+      await new DiscordIntegration(webhookUrl ?? '', '').postWebhook(bodyWithAttachments, undefined, undefined, request);
       return success();
     },
   };
@@ -201,6 +206,7 @@ export function createNtfyDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:ntfy',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'ntfy';
     },
@@ -229,6 +235,8 @@ export function createNtfyDeliveryStrategy(
         ...(primaryAttachment?.contentUrl ? { attach: primaryAttachment.contentUrl } : {}),
         markGoodVibesOrigin: true,
         allowDuplicate: request.allowDuplicate === true,
+        signal: request.signal,
+        assertCurrent: request.assertCurrent,
       });
       return success(topic);
     },
@@ -242,6 +250,7 @@ export function createWebControlPlaneDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:web-control-plane',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'web';
     },
@@ -251,6 +260,7 @@ export function createWebControlPlaneDeliveryStrategy(
       if (!gateway) {
         throw new Error('Web control-plane gateway unavailable');
       }
+      assertDeliveryCurrent(request);
       const published = gateway.publishSurfaceMessage({
         surface: 'web',
         title: request.target.label ?? request.title,
@@ -278,6 +288,7 @@ export function createHomeAssistantDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:homeassistant',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'homeassistant';
     },
@@ -342,7 +353,7 @@ export function createHomeAssistantDeliveryStrategy(
           conversationId,
           attachments,
         },
-      });
+      }, request);
       return success(extractResponseId(result) ?? eventType);
     },
   };
@@ -356,6 +367,7 @@ export function createTelegramDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:telegram',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'telegram';
     },
@@ -373,7 +385,7 @@ export function createTelegramDeliveryStrategy(
       );
       if (!token) throw new Error('Missing Telegram bot token');
       if (!chatId) throw new Error('Missing Telegram chat id');
-      const response = await instrumentedFetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`, {
+      const response = await deliveryFetch(request, `https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -402,6 +414,7 @@ export function createGoogleChatDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:google-chat',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'google-chat';
     },
@@ -423,7 +436,7 @@ export function createGoogleChatDeliveryStrategy(
         throw new Error('Missing Google Chat webhook URL');
       }
       const threadKey = firstNonEmpty(request.binding?.threadId, request.binding?.channelId, request.binding?.externalId);
-      const response = await instrumentedFetch(webhookUrl, {
+      const response = await deliveryFetch(request, webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=UTF-8' },
         body: JSON.stringify({

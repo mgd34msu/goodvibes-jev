@@ -5,6 +5,7 @@ import type { SecretsManager } from '../../config/secrets.js';
 import type { ChannelDeliveryStrategy } from './types.js';
 import {
   appendAttachmentSummary,
+  deliveryFetch,
   extractResponseId,
   firstNonEmpty,
   normalizeBaseUrl,
@@ -16,7 +17,6 @@ import {
   success,
   trimForSurface,
 } from './shared.js';
-import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 
 export function createSignalDeliveryStrategy(
   configManager: ConfigManager,
@@ -26,6 +26,7 @@ export function createSignalDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:signal',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'signal';
     },
@@ -64,6 +65,7 @@ export function createSignalDeliveryStrategy(
         attachments,
       }, {
         label: 'Signal bridge delivery failed',
+        lifetime: request,
         token,
       });
       return success(responseId ?? recipient);
@@ -79,6 +81,7 @@ export function createWhatsAppDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:whatsapp',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'whatsapp';
     },
@@ -117,6 +120,7 @@ export function createWhatsAppDeliveryStrategy(
           attachments,
         }, {
           label: 'WhatsApp bridge delivery failed',
+          lifetime: request,
           token,
         });
         return success(responseId ?? recipient);
@@ -132,7 +136,7 @@ export function createWhatsAppDeliveryStrategy(
       if (!phoneNumberId) throw new Error('Missing WhatsApp phone number id');
       if (!accessToken) throw new Error('Missing WhatsApp access token');
       const apiBaseUrl = firstNonEmpty(process.env.WHATSAPP_BASE_URL, 'https://graph.facebook.com/v17.0')!;
-      const response = await instrumentedFetch(`${normalizeBaseUrl(apiBaseUrl)}/${encodeURIComponent(phoneNumberId)}/messages`, {
+      const response = await deliveryFetch(request, `${normalizeBaseUrl(apiBaseUrl)}/${encodeURIComponent(phoneNumberId)}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,6 +175,7 @@ export function createTelephonyDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:telephony',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'telephony';
     },
@@ -216,6 +221,7 @@ export function createTelephonyDeliveryStrategy(
           attachments,
         }, {
           label: 'Telephony bridge delivery failed',
+          lifetime: request,
           token,
         });
         return success(responseId ?? recipient);
@@ -243,7 +249,7 @@ export function createTelephonyDeliveryStrategy(
             }),
       });
       const endpoint = mode === 'voice' ? 'Calls' : 'Messages';
-      const response = await instrumentedFetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/${endpoint}.json`, {
+      const response = await deliveryFetch(request, `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/${endpoint}.json`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -265,6 +271,7 @@ export function createIMessageDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:imessage',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'imessage';
     },
@@ -303,6 +310,7 @@ export function createIMessageDeliveryStrategy(
         attachments,
       }, {
         label: 'iMessage bridge delivery failed',
+        lifetime: request,
         token,
       });
       return success(responseId ?? chatId);
@@ -318,6 +326,7 @@ export function createBlueBubblesDeliveryStrategy(
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:bluebubbles',
+    supportsGuardedDelivery: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'bluebubbles';
     },
@@ -344,7 +353,7 @@ export function createBlueBubblesDeliveryStrategy(
       if (!serverUrl) throw new Error('Missing BlueBubbles server URL');
       if (!password) throw new Error('Missing BlueBubbles password');
       if (!chatGuid) throw new Error('Missing BlueBubbles chat guid');
-      const response = await instrumentedFetch(`${normalizeBaseUrl(serverUrl)}/api/v1/message/text?password=${encodeURIComponent(password)}`, {
+      const response = await deliveryFetch(request, `${normalizeBaseUrl(serverUrl)}/api/v1/message/text?password=${encodeURIComponent(password)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

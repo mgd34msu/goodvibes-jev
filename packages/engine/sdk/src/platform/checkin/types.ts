@@ -1,3 +1,4 @@
+import type { CallOptions, ChoiceReading, Fidelity, YesNoReading } from '@goodvibes-jev/judgment';
 /**
  * checkin/types.ts
  *
@@ -35,8 +36,19 @@ export interface CheckinStateSnapshot {
   readonly needsAttention: readonly string[];
 }
 
-/** The model's judgment: whether to contact the user, and (if so) with what message. */
+export interface CheckinJudgmentReceipt {
+  readonly decisionId: string;
+  readonly model: string;
+  readonly reading: YesNoReading;
+  readonly note?: { readonly decisionId: string; readonly fidelity: Fidelity; readonly reading: ChoiceReading } | undefined;
+}
+export type CheckinJudgeOptions = Pick<CallOptions, 'signal' | 'beforeAttempt' | 'onRetry'> & {
+  readonly onJudgment?: (judgment: CheckinJudgmentReceipt) => void;
+};
+
+/** The typed judgment and verified note, never a scraped chat decision. */
 export interface CheckinDecision {
+  readonly judgment?: CheckinJudgmentReceipt | undefined;
   readonly contact: boolean;
   readonly reason: string;
   readonly message?: string | undefined;
@@ -48,6 +60,8 @@ export type CheckinReceiptOutcome =
   | 'quiet'
   | 'skipped-disabled'
   | 'skipped-quiet-hours'
+  | 'skipped-stale'
+  | 'cancelled'
   | 'error';
 
 /** The visible receipt every check-in run leaves, ran / decided-quiet / delivered-what. */
@@ -58,6 +72,7 @@ export interface CheckinReceipt {
   readonly outcome: CheckinReceiptOutcome;
   readonly briefingSummary: string;
   readonly decisionReason?: string | undefined;
+  readonly judgment?: CheckinJudgmentReceipt | undefined;
   readonly deliveredMessage?: string | undefined;
   readonly deliveryChannel?: string | undefined;
   readonly deliveryId?: string | undefined;
@@ -71,12 +86,12 @@ export interface CheckinStateReader {
 
 /** The judgment seam: given a briefing, decide whether to contact the user. */
 export interface CheckinJudge {
-  decide(briefing: string): Promise<CheckinDecision>;
+  decide(briefing: string, options?: CheckinJudgeOptions): Promise<CheckinDecision>;
 }
 
 /** The delivery seam: put a check-in message on a channel, returning a delivery id when known. */
 export interface CheckinDeliverer {
-  deliver(channel: string, message: string): Promise<string | undefined>;
+  deliver(channel: string, message: string, lifetime?: { readonly signal: AbortSignal; readonly assertCurrent: () => void }): Promise<string | undefined>;
 }
 
 export const CHECKIN_CONFIG_KEYS = {
