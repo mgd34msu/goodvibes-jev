@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent } from './delivery-lifetime.js';
 /**
  * Public webhook URLs: the checks every webhook callback and delivery target
  * passes, and the delivery request itself.
@@ -56,8 +57,10 @@ export function validatePublicWebhookUrl(rawUrl: string): { ok: true; url: strin
 export async function postToPublicWebhook(
   rawUrl: string,
   init: RequestInit,
-  options: { readonly resolveHost?: HostResolver | undefined } = {},
+  options: { readonly resolveHost?: HostResolver | undefined; readonly assertCurrent?: (() => void) | undefined } = {},
 ): Promise<Response> {
+  const lifetime = { signal: init.signal ?? undefined, assertCurrent: options.assertCurrent };
+  assertDeliveryCurrent(lifetime);
   const validation = validatePublicWebhookUrl(rawUrl);
   if (!validation.ok) throw new Error(validation.error);
   const addresses = await resolveCheckedAddresses(validation.url, {
@@ -66,5 +69,6 @@ export async function postToPublicWebhook(
     resolveHost: options.resolveHost,
     diagnosticMode: 'opaque-url',
   });
-  return pinnedFetch(validation.url, { ...init, redirect: 'manual' }, addresses, 'opaque-url');
+  assertDeliveryCurrent(lifetime);
+  return pinnedFetch(validation.url, { ...init, redirect: 'manual' }, addresses, 'opaque-url', options.assertCurrent);
 }

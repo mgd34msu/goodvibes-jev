@@ -21,7 +21,7 @@ const channelMethods = {
   authorizeActorAction: 'async', getActionAvailabilityState: 'async', listCapabilities: 'either', listTools: 'either', runTool: 'async', listOperatorActions: 'either', runOperatorAction: 'async',
   lookupDirectory: 'async', queryDirectory: 'async', listGroupMembers: 'async', parseExplicitTarget: 'either', inferTargetConversationKind: 'either', resolveTarget: 'async', resolveSessionTarget: 'either', resolveParentConversationCandidates: 'async', listAgentTools: 'sync',
 } satisfies Modes<ChannelPlugin>;
-const deliveryMethods = { id: 'value', canHandle: 'sync', deliver: 'async' } satisfies Modes<ChannelDeliveryStrategy>;
+const deliveryMethods = { id: 'value', supportsGuardedDelivery: 'value', canHandle: 'sync', deliver: 'async' } satisfies Modes<ChannelDeliveryStrategy>;
 const memoryMethods = { capturedInputAdmission: 'value', id: 'value', label: 'value', dimensions: 'value', deterministic: 'value', local: 'value', embedSync: 'sync', embed: 'async', status: 'either' } satisfies Modes<MemoryEmbeddingProvider>;
 const voiceMethods = { id: 'value', label: 'value', capabilities: 'value', billing: 'value', status: 'either', listVoices: 'either', synthesize: 'async', synthesizeStream: 'either', transcribe: 'async', openRealtimeSession: 'async', resetEngineFailureState: 'sync' } satisfies Modes<VoiceProvider>;
 const mediaMethods = { id: 'value', label: 'value', capabilities: 'value', status: 'either', analyze: 'async', transform: 'async', generate: 'async' } satisfies Modes<MediaProvider>;
@@ -91,6 +91,10 @@ function facade<T extends object>(source: T, modes: Modes<T>, track: Track, opti
     has: (_target, key) => Reflect.has(source, key),
     ownKeys: () => [...new Set([...Reflect.ownKeys(source), ...Object.keys(modes).filter((key) => Reflect.has(source, key))])],
     getOwnPropertyDescriptor: (_target, key) => {
+      // Captured guarded-delivery support is host-owned data, not a live getter.
+      if (key === 'supportsGuardedDelivery' && options.replacements && Object.hasOwn(options.replacements, key)) {
+        return { configurable: true, enumerable: true, writable: false, value: options.replacements[key] };
+      }
       const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
       const declaredField = typeof key === 'string' && Object.hasOwn(modes, key) && Reflect.has(source, key);
       return descriptor || declaredField ? { configurable: true, enumerable: declaredField || descriptor?.enumerable === true, get: () => get(key) } : undefined;
@@ -302,7 +306,13 @@ export function createOwnedPluginCapabilities(track: Track) {
       streams: { handleInbound: (call, args) => holdResult(track, call, (value, release) =>
         ownResponse(value, release, args[0] as Request | undefined)) },
     }),
-    delivery: (source: ChannelDeliveryStrategy): ChannelDeliveryStrategy => facade(source, deliveryMethods, track),
+    delivery: (source: ChannelDeliveryStrategy): ChannelDeliveryStrategy => {
+      // Guarded delivery is an explicit captured contract, not inherited/live
+      // metadata. Do not execute an accessor merely to grant this capability.
+      const descriptor = Object.getOwnPropertyDescriptor(source, 'supportsGuardedDelivery');
+      const supportsGuardedDelivery = descriptor !== undefined && 'value' in descriptor && descriptor.value === true;
+      return facade(source, deliveryMethods, track, { replacements: { supportsGuardedDelivery } });
+    },
     memory: (source: MemoryEmbeddingProvider): MemoryEmbeddingProvider => facade(source, memoryMethods, track),
     voice: (source: VoiceProvider): VoiceProvider => facade(source, voiceMethods, track, { streams: {
       synthesizeStream: (call) => holdResult(track, call, (value, release) => {

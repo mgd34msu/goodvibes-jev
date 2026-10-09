@@ -20,8 +20,12 @@ async function deleteChat(page: Page, title: string) {
     // Work opens a detail panel and auto-collapses the desktop sidebar. Reveal
     // Recent through the real controls; pin it so moving to the confirmation
     // cannot dismiss the hover peek and hide the later restore/delete proof.
-    const expand = sidebar.getByRole('button', { name: 'Expand sidebar', exact: true });
-    if (await expand.isVisible()) await expand.click();
+    // Work's detail auto-collapse must settle before entering the rail. A
+    // hover on the initial expanded sidebar is lost when that layout narrows.
+    await page.getByRole('main').hover();
+    await expect(sidebar).toHaveAttribute('data-form', 'rail');
+    await sidebar.hover();
+    await expect(sidebar).toHaveAttribute('data-form', 'peek');
     await sidebar.getByRole('button', { name: 'Pin sidebar open', exact: true }).click();
     await expect(sidebar).toHaveAttribute('data-form', 'expanded');
     await sidebar.getByRole('button', { name: title, exact: true }).hover();

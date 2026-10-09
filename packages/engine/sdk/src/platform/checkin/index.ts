@@ -11,7 +11,7 @@ export { CheckinService, type CheckinServiceDeps, type SetCheckinConfigInput } f
 export { CheckinReceiptStore } from './receipts.js';
 export { assembleCheckinBriefing, summarizeCheckinState } from './briefing.js';
 export { isQuietHours, parseQuietHours } from './quiet-hours.js';
-export { createProviderBackedCheckinJudge, parseCheckinDecision } from './judge.js';
+export { createProviderBackedCheckinJudge } from './judge.js';
 export {
   createRuntimeCheckinStateReader,
   type CheckinRuntimeReaders,

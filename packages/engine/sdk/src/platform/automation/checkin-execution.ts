@@ -27,7 +27,7 @@ export interface AutomationCheckinOutcome {
   readonly summary: string;
   /** The channel delivery id when a message was delivered. */
   readonly deliveryId?: string | undefined;
-  /** The error detail when outcome is 'error'. */
+  /** Failure detail, or a durability warning alongside an already confirmed delivery. */
   readonly error?: string | undefined;
 }
 
@@ -95,19 +95,15 @@ export async function executeCheckinJob(
       result: { checkin: evaluation.outcome, summary: evaluation.summary },
       ...(evaluation.error ? { error: evaluation.error } : {}),
     };
-    const finalJob: AutomationJob = {
-      ...runningJob,
-      successCount: failed ? runningJob.successCount : runningJob.successCount + 1,
-      failureCount: failed ? runningJob.failureCount + 1 : runningJob.failureCount,
-      updatedAt: end,
-    };
+    const currentJob = context.jobs.get(runningJob.id);
+    const finalJob = currentJob ? settleCurrentJob(currentJob, runningJob, end, failed) : undefined;
     context.runs.set(terminal.id, terminal);
-    context.jobs.set(finalJob.id, finalJob);
-    context.pruneRunHistory(finalJob.id);
+    if (finalJob) context.jobs.set(finalJob.id, finalJob);
+    context.pruneRunHistory(runningJob.id);
     await Promise.all([context.saveJobs(), context.saveRuns()]);
     context.syncRunToRuntime(terminal, 'automation.checkin');
-    context.syncJobToRuntime(finalJob, 'automation.checkin');
-    context.emitRunCompleted(finalJob, terminal, failed ? 'failed' : 'success');
+    if (finalJob) context.syncJobToRuntime(finalJob, 'automation.checkin');
+    context.emitRunCompleted(finalJob ?? runningJob, terminal, failed ? 'failed' : 'success');
     return terminal;
   } catch (error) {
     const end = Date.now();
@@ -119,18 +115,23 @@ export async function executeCheckinJob(
       durationMs: end - now,
       error: message,
     };
-    const finalJob: AutomationJob = {
-      ...runningJob,
-      failureCount: runningJob.failureCount + 1,
-      updatedAt: end,
-    };
+    const currentJob = context.jobs.get(runningJob.id);
+    const finalJob = currentJob ? settleCurrentJob(currentJob, runningJob, end, true) : undefined;
     context.runs.set(failedRun.id, failedRun);
-    context.jobs.set(finalJob.id, finalJob);
-    context.pruneRunHistory(finalJob.id);
+    if (finalJob) context.jobs.set(finalJob.id, finalJob);
+    context.pruneRunHistory(runningJob.id);
     await Promise.all([context.saveJobs(), context.saveRuns()]);
     context.syncRunToRuntime(failedRun, 'automation.checkin');
-    context.syncJobToRuntime(finalJob, 'automation.checkin');
-    context.emitRunFailed(finalJob, failedRun, message, false);
+    if (finalJob) context.syncJobToRuntime(finalJob, 'automation.checkin');
+    context.emitRunFailed(finalJob ?? runningJob, failedRun, message, false);
     return failedRun;
   }
+}
+
+/** Pending reads must never resurrect a deleted job or restore captured settings/ownership. */
+function settleCurrentJob(current: AutomationJob, captured: AutomationJob, endedAt: number, failed: boolean): AutomationJob {
+  if (current.createdAt !== captured.createdAt || current.createdBy !== captured.createdBy
+    || JSON.stringify(current.source) !== JSON.stringify(captured.source)) return current;
+  return { ...current, successCount: failed ? current.successCount : current.successCount + 1,
+    failureCount: failed ? current.failureCount + 1 : current.failureCount, updatedAt: endedAt };
 }

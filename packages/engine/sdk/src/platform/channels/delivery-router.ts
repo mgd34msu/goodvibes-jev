@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent } from '../utils/delivery-lifetime.js';
 import { ArtifactStore } from '../artifacts/index.js';
 import { ConfigManager } from '../config/manager.js';
 import type { SecretsManager } from '../config/secrets.js';
@@ -126,6 +127,8 @@ export function createDefaultChannelDeliveryStrategies(
 
 export class ChannelDeliveryRouter {
   private readonly strategies: ChannelDeliveryStrategy[];
+  /** A removed registration cannot be revived by re-adding the same strategy object. */
+  private readonly strategyRegistrations = new WeakMap<ChannelDeliveryStrategy, { readonly guarded: boolean }>();
   private controlPlaneGateway: ControlPlaneGateway | null;
 
   /**
@@ -145,6 +148,7 @@ export class ChannelDeliveryRouter {
     if (config.strategies) {
       this.strategies = [...config.strategies];
       this.ensureAgentStrategy();
+      for (const strategy of this.strategies) this.strategyRegistrations.set(strategy, this.captureRegistration(strategy));
       return;
     }
     if (!config.configManager || !config.serviceRegistry || !config.artifactStore || !config.secretsManager) {
@@ -162,6 +166,7 @@ export class ChannelDeliveryRouter {
       config.secretsManager,
     );
     this.ensureAgentStrategy();
+    for (const strategy of this.strategies) this.strategyRegistrations.set(strategy, this.captureRegistration(strategy));
   }
 
   /** Append the agent strategy unless the caller already supplied one. */
@@ -184,17 +189,26 @@ export class ChannelDeliveryRouter {
       if (!options.replace) {
         throw new Error(`Channel delivery strategy already registered: ${strategy.id}`);
       }
+      this.strategyRegistrations.delete(this.strategies[existingIndex]!);
       this.strategies.splice(existingIndex, 1, strategy);
+      this.strategyRegistrations.set(strategy, this.captureRegistration(strategy));
       return;
     }
     this.strategies.push(strategy);
+    this.strategyRegistrations.set(strategy, this.captureRegistration(strategy));
   }
 
   unregisterStrategy(strategyId: string): boolean {
     const existingIndex = this.strategies.findIndex((entry) => entry.id === strategyId);
     if (existingIndex < 0) return false;
+    this.strategyRegistrations.delete(this.strategies[existingIndex]!);
     this.strategies.splice(existingIndex, 1);
     return true;
+  }
+
+  private captureRegistration(strategy: ChannelDeliveryStrategy): { readonly guarded: boolean } {
+    const descriptor = Object.getOwnPropertyDescriptor(strategy, 'supportsGuardedDelivery');
+    return Object.freeze({ guarded: descriptor !== undefined && 'value' in descriptor && descriptor.value === true });
   }
 
   async deliver(request: ChannelDeliveryRequest): Promise<string | undefined> {
@@ -212,7 +226,22 @@ export class ChannelDeliveryRouter {
       throw new Error('Unsupported channel delivery target');
     }
     try {
-      const result = await strategy.deliver(request);
+      const guarded = request.signal !== undefined || request.assertCurrent !== undefined;
+      const registration = this.strategyRegistrations.get(strategy);
+      if (guarded && registration?.guarded !== true) {
+        throw new Error('Channel delivery strategy does not support guarded delivery');
+      }
+      const deliveryRequest = guarded ? {
+        ...request,
+        assertCurrent: () => {
+          assertDeliveryCurrent(request);
+          if (registration === undefined || this.strategyRegistrations.get(strategy) !== registration) {
+            throw new Error('Channel delivery strategy registration is no longer current');
+          }
+        },
+      } : request;
+      assertDeliveryCurrent(deliveryRequest);
+      const result = await strategy.deliver(deliveryRequest);
       return result.responseId;
     } catch (error) {
       // The original failure remains private retry evidence. Published diagnostics

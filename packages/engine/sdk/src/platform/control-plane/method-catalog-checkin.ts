@@ -29,9 +29,27 @@ export const CHECKIN_CONFIG_SCHEMA = objectSchema({
 const CHECKIN_TRIGGER_SCHEMA = { type: 'string', enum: ['scheduled', 'manual'] } as const;
 const CHECKIN_RECEIPT_OUTCOME_SCHEMA = {
   type: 'string',
-  enum: ['delivered', 'quiet', 'skipped-disabled', 'skipped-quiet-hours', 'error'],
+  enum: ['delivered', 'quiet', 'skipped-disabled', 'skipped-quiet-hours', 'skipped-stale', 'cancelled', 'error'],
 } as const;
 const CHECKIN_RUN_OUTCOME_SCHEMA = { type: 'string', enum: ['delivered', 'quiet', 'skipped', 'error'] } as const;
+
+const READING_OUTCOME_SCHEMA = { type: 'string', enum: ['act', 'confirm', 'escalate'] } as const;
+const CHECKIN_JUDGMENT_SCHEMA = objectSchema({
+  decisionId: STRING_SCHEMA,
+  model: STRING_SCHEMA,
+  reading: objectSchema({
+    kind: { type: 'string', enum: ['yes-no'] }, probability: NUMBER_SCHEMA,
+    verdict: { type: 'string', enum: ['yes', 'no', 'uncertain'] }, outcome: READING_OUTCOME_SCHEMA,
+  }, ['kind', 'probability', 'verdict', 'outcome']),
+  note: objectSchema({
+    decisionId: STRING_SCHEMA,
+    fidelity: { type: 'string', enum: ['supported', 'contradicted', 'unsupported', 'fabricated'] },
+    reading: objectSchema({
+      kind: { type: 'string', enum: ['choice'] }, choice: STRING_SCHEMA, confidence: NUMBER_SCHEMA,
+      probabilities: { type: 'object', additionalProperties: NUMBER_SCHEMA }, outcome: READING_OUTCOME_SCHEMA,
+    }, ['kind', 'choice', 'confidence', 'probabilities', 'outcome']),
+  }, ['decisionId', 'fidelity', 'reading']),
+}, ['decisionId', 'model', 'reading']);
 
 export const CHECKIN_RECEIPT_SCHEMA = objectSchema({
   id: STRING_SCHEMA,
@@ -40,6 +58,7 @@ export const CHECKIN_RECEIPT_SCHEMA = objectSchema({
   outcome: CHECKIN_RECEIPT_OUTCOME_SCHEMA,
   briefingSummary: STRING_SCHEMA,
   decisionReason: STRING_SCHEMA,
+  judgment: CHECKIN_JUDGMENT_SCHEMA,
   deliveredMessage: STRING_SCHEMA,
   deliveryChannel: STRING_SCHEMA,
   deliveryId: STRING_SCHEMA,

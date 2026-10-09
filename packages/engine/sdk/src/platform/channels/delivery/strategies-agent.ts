@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../../utils/delivery-lifetime.js';
 /**
  * strategies-agent.ts, the agent's own conversation as a push destination.
  *
@@ -74,7 +75,9 @@ export interface AgentConversationMessage {
 export interface AgentConversationSender {
   /** Names the implementation in logs and in a takeover refusal. */
   readonly id: string;
-  send(message: AgentConversationMessage): Promise<string | undefined>;
+  /** The sender must recheck after its own async preparation, immediately before landing the message. */
+  readonly supportsGuardedDelivery?: boolean | undefined;
+  send(message: AgentConversationMessage, lifetime?: DeliveryLifetime): Promise<string | undefined>;
 }
 
 /**
@@ -88,6 +91,7 @@ export interface AgentConversationSender {
  */
 export class AgentDeliveryRegistry {
   private sender: AgentConversationSender | null = null;
+  private registration: { readonly guarded: boolean } | undefined;
 
   /**
    * Register the sender, and hand back the undo.
@@ -107,9 +111,21 @@ export class AgentDeliveryRegistry {
         + 'Pass { replace: true } to take the destination over.',
       );
     }
+    const descriptor = Object.getOwnPropertyDescriptor(sender, 'supportsGuardedDelivery');
+    const registration = Object.freeze({ guarded: descriptor !== undefined && 'value' in descriptor && descriptor.value === true });
     this.sender = sender;
+    this.registration = registration;
     return (): void => {
-      if (this.sender === sender) this.sender = null;
+      if (this.registration === registration) { this.sender = null; this.registration = undefined; }
+    };
+  }
+
+  /** Capture one explicit sender registration; replacement or remove/re-add invalidates its final-send guard. */
+  guardFor(sender: AgentConversationSender): () => void {
+    const registration = this.registration;
+    if (this.sender !== sender || registration?.guarded !== true) throw new Error('Agent conversation sender does not support guarded delivery');
+    return () => {
+      if (this.sender !== sender || this.registration !== registration) throw new Error('Agent conversation sender registration is no longer current');
     };
   }
 
@@ -132,10 +148,11 @@ export class AgentDeliveryRegistry {
  * runtime graph the agent product is started from.
  */
 export function createAgentDeliveryStrategy(
-  registry: Pick<AgentDeliveryRegistry, 'current'>,
+  registry: Pick<AgentDeliveryRegistry, 'current'> & Partial<Pick<AgentDeliveryRegistry, 'guardFor'>>,
 ): ChannelDeliveryStrategy {
   return {
     id: AGENT_DELIVERY_STRATEGY_ID,
+    supportsGuardedDelivery: true,
     canHandle(request: ChannelDeliveryRequest): boolean {
       return resolveChannelDeliverySurfaceKind(request.target) === 'agent';
     },
@@ -159,7 +176,11 @@ export function createAgentDeliveryStrategy(
         request.binding?.channelId,
         request.binding?.externalId,
       );
-      const responseId = await sender.send({
+      const guarded = request.signal !== undefined || request.assertCurrent !== undefined;
+      if (guarded && !registry.guardFor) throw new Error('Agent conversation sender does not support guarded delivery');
+      const senderCurrent = guarded ? registry.guardFor!(sender) : undefined;
+      const lifetime = { signal: request.signal, assertCurrent: () => { assertDeliveryCurrent(request); senderCurrent?.(); } };
+      const message: AgentConversationMessage = {
         title: request.title.trim().length > 0 ? request.title : titleFromBody(request.body),
         body: request.body,
         ...(conversationId === undefined ? {} : { conversationId }),
@@ -168,7 +189,11 @@ export function createAgentDeliveryStrategy(
         ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
         ...(request.attachments === undefined ? {} : { attachments: request.attachments }),
         ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
-      });
+      };
+      assertDeliveryCurrent(lifetime);
+      const responseId = await (guarded
+        ? sender.send(message, lifetime)
+        : sender.send(message));
       return success(responseId ?? conversationId);
     },
   };

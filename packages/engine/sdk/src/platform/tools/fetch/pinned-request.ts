@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent } from '../../utils/delivery-lifetime.js';
 /**
  * Resolve, check and pin one fetch hop.
  *
@@ -95,11 +96,15 @@ export async function pinnedFetch(
   init: RequestInit,
   addresses: readonly ResolvedAddress[],
   diagnosticMode: 'default' | 'opaque-url' = 'default',
+  assertCurrent?: () => void,
 ): Promise<Response> {
   const host = bareHost(new URL(url));
+  const lifetime = { signal: init.signal ?? undefined, assertCurrent };
+  assertDeliveryCurrent(lifetime);
   if (isIP(host)) return instrumentedFetch(url, init, diagnosticMode);
   let lastError: unknown;
   for (const address of addresses) {
+    assertDeliveryCurrent(lifetime);
     try {
       return await fetchAddress(url, init, host, address, diagnosticMode);
     } catch (error) {

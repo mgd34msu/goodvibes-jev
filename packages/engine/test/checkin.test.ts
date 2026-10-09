@@ -15,7 +15,6 @@ import {
   assembleCheckinBriefing,
   createRuntimeCheckinStateReader,
   isQuietHours,
-  parseCheckinDecision,
   type CheckinDecision,
   type CheckinStateSnapshot,
 } from '../sdk/src/platform/checkin/index.ts';
@@ -79,16 +78,6 @@ function makeService(opts: {
 }
 
 describe('check-in building blocks', () => {
-  test('parseCheckinDecision: contact needs a message, otherwise stays quiet honestly', () => {
-    expect(parseCheckinDecision('{"contact":true,"reason":"blocked","message":"You have a blocked deploy"}'))
-      .toEqual({ contact: true, reason: 'blocked', message: 'You have a blocked deploy' });
-    expect(parseCheckinDecision('{"contact":false,"reason":"all quiet"}').contact).toBe(false);
-    // contact:true with no message must NOT fabricate a reason to interrupt.
-    expect(parseCheckinDecision('{"contact":true,"reason":"x"}').contact).toBe(false);
-    expect(parseCheckinDecision('not json').contact).toBe(false);
-    expect(parseCheckinDecision('').contact).toBe(false);
-  });
-
   test('isQuietHours handles same-day and midnight-wrapping windows', () => {
     const at = (h: number, m = 0): number => new Date(2026, 6, 10, h, m).getTime();
     expect(isQuietHours(at(23), '22:00-08:00')).toBe(true);
