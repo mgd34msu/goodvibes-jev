@@ -55,8 +55,11 @@ const MAX_DEPTH = 64;
 const MAX_NODES = 20_000;
 const MAX_TEXT_CHARS = 1_000_000;
 
-/** Own the descriptor values once; later scans and projection never read input again. */
-function captureInput(value: unknown): unknown {
+/** Structural capture only. Callers must separately privacy-screen every semantic field.
+ * Internal protocol adapters use this to separate validated identity from raw content.
+ * A host may add structural rejections (e.g. Node proxies), never transform or exempt data.
+ */
+export function captureOwnedJson(value: unknown, rejectObject?: (value: object) => boolean): unknown {
   let nodes = 0;
   let chars = 0;
   let slots = 0;
@@ -71,7 +74,7 @@ function captureInput(value: unknown): unknown {
     }
     if (entry === null || entry === undefined || typeof entry === 'boolean') return entry;
     if (typeof entry === 'number') return Number.isFinite(entry) ? entry : unsupported();
-    if (typeof entry !== 'object' || ancestors.has(entry)) return unsupported();
+    if (typeof entry !== 'object' || ancestors.has(entry) || rejectObject?.(entry)) return unsupported();
     const array = Array.isArray(entry);
     const prototype: unknown = Object.getPrototypeOf(entry);
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return unsupported();
@@ -252,7 +255,7 @@ function snapshotProblem(value: unknown, toolName: string): JudgmentInputProblem
 
 /** Immutable, fully inspected data for consumers that will project or serialize it. */
 export function snapshotJudgmentInput(value: unknown, toolName = ''): unknown {
-  const snapshot = captureInput(value);
+  const snapshot = captureOwnedJson(value);
   const problem = snapshotProblem(snapshot, toolName);
   if (problem) throw new JudgmentInputError(problem);
   return snapshot;

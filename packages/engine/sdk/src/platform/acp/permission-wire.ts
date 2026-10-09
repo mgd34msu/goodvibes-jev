@@ -1,5 +1,5 @@
+import { captureAcpPermissionRequest, readProtocolRequest, type CapturedProtocolRequest } from '../permissions/protocol-request.js';
 /** Final ACP response fence, after SDK dispatch and immediately before stdio write. */
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import type { RequestPermissionRequest, RequestPermissionResponse } from './protocol.js';
 import type { admitExternalRequest } from '../permissions/external-request.js';
 
@@ -8,6 +8,7 @@ interface WireScope { readonly assertCurrent: () => void; readonly close: () => 
 interface PendingPermission {
   readonly id: string;
   readonly request?: RequestPermissionRequest;
+  readonly protocolSubject?: CapturedProtocolRequest;
   readonly toolCallId: string;
   readonly scope: WireScope;
   readonly lifetime: AbortController;
@@ -40,8 +41,9 @@ export class AcpPermissionWire {
     if (prior) { prior.invalid = true; prior.lifetime.abort(); this.finish(prior); }
     if (this.pending.size >= 1024) { this.close(); throw new Error('ACP pending permission capacity reached'); }
     let request: RequestPermissionRequest | undefined;
-    try { request = snapshotJudgmentInput(params) as RequestPermissionRequest; } catch { /* protected frames cannot be selected */ }
-    const pending: PendingPermission = { id, ...(request ? { request } : {}), toolCallId, scope: this.captureScope(),
+    let protocolSubject: CapturedProtocolRequest | undefined;
+    try { protocolSubject = captureAcpPermissionRequest(params); request = readProtocolRequest(protocolSubject).wire as RequestPermissionRequest; } catch { /* protected frames cannot be selected */ }
+    const pending: PendingPermission = { id, ...(request && protocolSubject ? { request, protocolSubject } : {}), toolCallId, scope: this.captureScope(),
       lifetime: new AbortController(), invalid: !request || !!prior, finished: false };
     this.requests.set(id, pending); this.byTool.set(toolCallId, pending); this.pending.add(pending);
   }
@@ -55,7 +57,7 @@ export class AcpPermissionWire {
       if (pending.finished || pending.invalid || this.requests.get(pending.id) !== pending || this.byTool.get(toolCallId) !== pending)
         throw new Error('ACP permission wire owner changed');
     };
-    return { request: pending.request, signal: pending.lifetime.signal, assertCurrent,
+    return { request: pending.request, protocolSubject: pending.protocolSubject, signal: pending.lifetime.signal, assertCurrent,
       bindTerminal: (response: RequestPermissionResponse) => { this.responses.set(response, pending); },
       defer: (response: RequestPermissionResponse, admission: Admission, claim: boolean, cleanup: () => void) => {
         assertCurrent(); if (pending.response) throw new Error('ACP permission response already bound');
