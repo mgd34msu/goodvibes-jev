@@ -1,13 +1,8 @@
-// MCP elicitation → the one approval broker.
-//
-// STANDING RULE: an MCP server's `elicitation/create` request (the spec's
-// ask-the-user channel) must reach the model and the human through the SAME
-// approval broker as a permission ask, not a separate, unrendered path and not
-// a silent `-32601` drop. This module is the translation seam: it turns an
-// incoming elicitation request into a `PermissionPromptRequest` (attributed to
-// the MCP server) and turns the broker's approve/deny decision back into the
-// MCP elicitation response shape. Every surface's existing approval UI then
-// renders it and background-agent bubbling applies, for free.
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { McpElicitationContext } from './elicitation-autonomous.js';
+// MCP protocol shapes and the explicitly selected legacy human adapter.
+// Runtime compositions install createMcpAutonomousElicitationHandler instead:
+// their decisions use the existing recorded autonomous admission owner.
 import { randomUUID } from 'node:crypto';
 import type { PermissionPromptDecision, PermissionPromptRequest } from '../permissions/prompt.js';
 
@@ -19,6 +14,7 @@ import type { PermissionPromptDecision, PermissionPromptRequest } from '../permi
  * fabricated). `rawParams` is the untouched params object for provenance.
  */
 export interface McpElicitationRequest {
+  readonly requestId?: string | number | undefined;
   readonly serverName: string;
   readonly message: string;
   readonly requestedSchema?: Record<string, unknown> | undefined;
@@ -37,13 +33,15 @@ export interface McpElicitationOutcome {
   readonly content?: Record<string, unknown> | undefined;
 }
 
-/** Resolves an elicitation request to an outcome (the broker-backed handler). */
+/** Resolves a request with its trusted, nonserialized operation context. */
 export type McpElicitationHandler = (
   request: McpElicitationRequest,
+  context?: McpElicitationContext,
 ) => Promise<McpElicitationOutcome>;
 
 /** Parse a raw JSON-RPC `elicitation/create` params object into a typed request. */
-export function parseElicitationParams(serverName: string, params: unknown): McpElicitationRequest {
+export function parseElicitationParams(serverName: string, params: unknown, requestId?: string | number): McpElicitationRequest {
+  params = snapshotJudgmentInput(params);
   const record = params && typeof params === 'object' ? (params as Record<string, unknown>) : {};
   const message = typeof record['message'] === 'string' && record['message'].trim().length > 0
     ? record['message']
@@ -53,6 +51,7 @@ export function parseElicitationParams(serverName: string, params: unknown): Mcp
     : undefined;
   return {
     serverName,
+    ...(requestId === undefined ? {} : { requestId }),
     message,
     ...(requestedSchema ? { requestedSchema } : {}),
     ...(params !== undefined ? { rawParams: params } : {}),
@@ -60,6 +59,7 @@ export function parseElicitationParams(serverName: string, params: unknown): Mcp
 }
 
 /**
+ * @deprecated Explicit legacy human-mode adapter; never installed by runtime compositions.
  * Build the broker-backed elicitation handler. Every incoming elicitation
  * becomes a `PermissionPromptRequest` in the `delegate` category (an MCP server
  * asking the operator to act is a delegation, not a filesystem/exec/network

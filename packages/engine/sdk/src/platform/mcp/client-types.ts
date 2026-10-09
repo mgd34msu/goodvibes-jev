@@ -1,6 +1,7 @@
 /**
  * Public option and observation types for McpClient.
  */
+import type { McpElicitationContext } from './elicitation-autonomous.js';
 import type { JsonRpcId } from './jsonrpc.js';
 
 export interface McpProcessSpec {
@@ -53,6 +54,7 @@ export type McpElicitationResolver = (input: {
   serverName: string;
   id: JsonRpcId;
   params?: unknown | undefined;
+  context?: McpElicitationContext | undefined;
 }) => Promise<{ action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> | undefined }>;
 
 export interface McpClientOptions {

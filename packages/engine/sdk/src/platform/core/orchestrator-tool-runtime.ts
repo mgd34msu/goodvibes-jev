@@ -1,3 +1,4 @@
+import { withExternalOperationSource } from '../permissions/external-operation-scope.js';
 import { hashState } from '@goodvibes-jev/judgment';
 import { captureAutonomousChoices, type AutonomousToolSource } from '../permissions/autonomous.js';
 import { UnknownPreparedToolError } from '../tools/preparation-error.js';
@@ -344,7 +345,10 @@ export async function executeToolCalls(
         // Open a cost-attribution origin scope around the tool body: any LLM usage
         // a tool drives synchronously (e.g. an MCP tool's model call) is attributed
         // to this tool/MCP server rather than the agent's own reasoning.
-        result = await withCostOriginAsync(
+        result = await withExternalOperationSource(sourceOf && autonomous ? {
+          sourceOf, signal: callSignal, assertCurrent: () => { assertTurnActive(); callSignal?.throwIfAborted(); },
+          inputFacts: [prepared?.args ?? call.arguments],
+        } : undefined, () => withCostOriginAsync(
           { tool: call.name, callId: call.id, mcpServer: mcpServerOfToolName(call.name) },
           () => {
             if (!prepared || !admission) return deps.toolRegistry.execute(call.id, call.name,
@@ -358,7 +362,7 @@ export async function executeToolCalls(
               ? admission : admission.claim;
             return deps.toolRegistry.executePrepared(prepared, preparedAdmission, callSignal ? { signal: callSignal } : undefined);
           },
-        );
+        ));
         if (checkResult.autonomousDecision) result = { ...result, autonomousDecision: checkResult.autonomousDecision };
         if (callSignal?.aborted) {
           // The user cancelled THIS call mid-flight: the model sees a structured

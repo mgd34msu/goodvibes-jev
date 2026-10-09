@@ -1,3 +1,7 @@
+import { awaitPermission } from '../permissions/cancellation.js';
+import type { ExternalOperationSource } from '../permissions/external-request.js';
+import { commitMcpElicitation, discardMcpElicitation } from './elicitation-autonomous.js';
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 /**
  * Streamable HTTP connection for the MCP client.
  *
@@ -40,7 +44,7 @@ export interface McpHttpServerMessageHandlers {
    * Return a result to answer it; throw (or return undefined) to have the
    * connection answer method-not-found.
    */
-  onServerRequest?: ((id: number | string, method: string, params?: unknown) => Promise<unknown> | unknown) | undefined;
+  onServerRequest?: ((id: number | string, method: string, params?: unknown, operation?: ExternalOperationSource) => Promise<unknown> | unknown) | undefined;
 }
 
 export interface McpHttpConnectionOptions {
@@ -103,8 +107,13 @@ export class McpHttpConnection {
   private sessionId: string | null = null;
   private closed = false;
   private nextId = 1;
+  private sessionEpoch = 0;
+  private readonly lifetime = new AbortController();
 
   constructor(private readonly options: McpHttpConnectionOptions) {}
+
+  /** Monotonic session identity; a pending input response cannot cross a session replacement. */
+  get sessionGeneration(): number { return this.sessionEpoch; }
 
   get isOpen(): boolean {
     return !this.closed && this.negotiatedProtocol !== null;
@@ -183,7 +192,7 @@ export class McpHttpConnection {
   }
 
   /** Send a request and return its JSON-RPC result. */
-  async request(method: string, params: unknown, extraHeaders?: Record<string, string>): Promise<unknown> {
+  async request(method: string, params: unknown, extraHeaders?: Record<string, string>, operation?: ExternalOperationSource, beforeSend?: () => void): Promise<unknown> {
     const negotiated = this.negotiatedProtocol;
     if (!negotiated) throw new Error(`MCP server '${this.options.serverName}': not connected`);
     const finalParams = negotiated.era === 'modern'
@@ -193,6 +202,7 @@ export class McpHttpConnection {
       era: negotiated.era,
       version: negotiated.version,
       ...(extraHeaders ? { extraHeaders } : {}),
+      ...(operation ? { operation } : {}), ...(beforeSend ? { beforeSend } : {}),
     });
   }
 
@@ -216,6 +226,8 @@ export class McpHttpConnection {
   /** Best-effort session termination (legacy sessions only). */
   async close(): Promise<void> {
     this.closed = true;
+    this.lifetime.abort();
+    this.sessionEpoch++;
     if (this.sessionId) {
       try {
         await this.fetchImpl(this.options.url, {
@@ -267,7 +279,7 @@ export class McpHttpConnection {
   private async postAndParse(
     method: string,
     params: unknown,
-    options: { era: 'modern' | 'legacy'; version: string; initialize?: boolean; extraHeaders?: Record<string, string> },
+    options: { era: 'modern' | 'legacy'; version: string; initialize?: boolean; extraHeaders?: Record<string, string>; operation?: ExternalOperationSource; beforeSend?: () => void },
   ): Promise<unknown> {
     const id = this.nextId++;
     const body = { jsonrpc: '2.0', id, method, params };
@@ -283,10 +295,11 @@ export class McpHttpConnection {
       throw new Error(`MCP server '${this.options.serverName}': HTTP ${response.status} for '${method}'`);
     }
 
+    this.lifetime.signal.throwIfAborted();
     this.captureSessionId(response);
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('text/event-stream')) {
-      return this.readSseResponse(response, id, method);
+      return this.readSseResponse(response, id, method, options.operation);
     }
     const parsed: unknown = await response.json();
     return this.resolveJsonRpcResponse(parsed, method);
@@ -294,17 +307,19 @@ export class McpHttpConnection {
 
   private async post(
     body: unknown,
-    options: { era: 'modern' | 'legacy'; version: string; method: string; params: unknown; initialize?: boolean; extraHeaders?: Record<string, string> },
+    options: { era: 'modern' | 'legacy'; version: string; method: string; params: unknown; initialize?: boolean; extraHeaders?: Record<string, string>; beforeSend?: () => void },
   ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
     (timer as { unref?: () => void }).unref?.();
     try {
+      const headers = this.buildHeaders(options);
+      const serialized = JSON.stringify(body);
+      this.lifetime.signal.throwIfAborted();
+      options.beforeSend?.();
       return await this.fetchImpl(this.options.url, {
-        method: 'POST',
-        headers: this.buildHeaders(options),
-        body: JSON.stringify(body),
-        signal: controller.signal,
+        method: 'POST', headers, body: serialized,
+        signal: AbortSignal.any([controller.signal, this.lifetime.signal]),
       });
     } finally {
       clearTimeout(timer);
@@ -313,7 +328,7 @@ export class McpHttpConnection {
 
   private captureSessionId(response: Response): void {
     const session = response.headers.get('mcp-session-id');
-    if (session) this.sessionId = session;
+    if (session && session !== this.sessionId) { this.sessionEpoch++; this.sessionId = session; }
   }
 
   private resolveJsonRpcResponse(message: unknown, method: string): unknown {
@@ -325,15 +340,20 @@ export class McpHttpConnection {
     return message.result;
   }
 
-  private async readSseResponse(response: Response, requestId: number, method: string): Promise<unknown> {
+  private async readSseResponse(response: Response, requestId: number, method: string, operation?: ExternalOperationSource): Promise<unknown> {
     const bodyStream = response.body;
     if (!bodyStream) throw new Error(`MCP server '${this.options.serverName}': empty SSE body for '${method}'`);
+    const streamLife = new AbortController();
+    const epoch = this.sessionEpoch;
+    const signal = AbortSignal.any([this.lifetime.signal, streamLife.signal, ...(operation?.signal ? [operation.signal] : [])]);
+    const assertCurrent = () => { signal.throwIfAborted(); operation?.assertCurrent(); if (this.sessionEpoch !== epoch) throw new Error('MCP HTTP session changed'); };
+    const boundOperation = operation ? { ...operation, signal, assertCurrent } : undefined;
     const reader = bodyStream.getReader();
     const decoder = new TextDecoder();
     const parser = new SseEventParser();
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await awaitPermission(() => reader.read(), signal);
         if (done) break;
         for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
           let message: unknown;
@@ -347,22 +367,24 @@ export class McpHttpConnection {
           if (message.id === requestId && !('method' in message)) {
             return this.resolveJsonRpcResponse(message, method);
           }
-          this.dispatchStreamMessage(message);
+          this.dispatchStreamMessage(message, boundOperation);
         }
       }
     } finally {
+      streamLife.abort();
+      void reader.cancel().catch(() => undefined);
       reader.releaseLock();
     }
     throw new Error(`MCP server '${this.options.serverName}': SSE stream for '${method}' ended without a response`);
   }
 
-  private dispatchStreamMessage(message: Record<string, unknown>): void {
+  private dispatchStreamMessage(message: Record<string, unknown>, operation?: ExternalOperationSource): void {
     const method = typeof message.method === 'string' ? message.method : null;
     if (!method) return;
     const id = message.id;
     if (typeof id === 'number' || typeof id === 'string') {
       // Legacy servers may send JSON-RPC requests on SSE streams; answer via POST.
-      void this.answerServerRequest(id, method, message.params);
+      void this.answerServerRequest(id, method, message.params, operation);
       return;
     }
     try {
@@ -375,28 +397,37 @@ export class McpHttpConnection {
     }
   }
 
-  private async answerServerRequest(id: number | string, method: string, params: unknown): Promise<void> {
+  private async answerServerRequest(id: number | string, method: string, params: unknown, operation?: ExternalOperationSource): Promise<void> {
     const negotiated = this.negotiatedProtocol;
     const era = negotiated?.era ?? 'legacy';
     const version = negotiated?.version ?? MCP_LEGACY_REVISIONS[0];
+    const epoch = this.sessionEpoch, destination = this.options.url;
+    const assertCurrent = () => { this.lifetime.signal.throwIfAborted(); operation?.assertCurrent();
+      if (this.closed || this.sessionEpoch !== epoch || this.options.url !== destination) throw new Error('MCP HTTP request owner changed'); };
+    let outcome: unknown;
     let body: Record<string, unknown>;
     try {
       const handler = this.options.handlers?.onServerRequest;
-      const result = handler ? await handler(id, method, params) : undefined;
+      const ownedParams = snapshotJudgmentInput(params);
+      assertCurrent();
+      const result = handler ? await handler(id, method, ownedParams, operation) : undefined;
+      outcome = result;
+      assertCurrent();
       body = result === undefined
         ? { jsonrpc: '2.0', id, error: { code: -32601, message: `Client method '${method}' is not supported` } }
         : { jsonrpc: '2.0', id, result };
     } catch (err) {
-      body = { jsonrpc: '2.0', id, error: { code: -32603, message: summarizeError(err) } };
+      body = { jsonrpc: '2.0', id, error: { code: -32603, message: 'MCP input request could not be resolved' } };
     }
     try {
-      await this.post(body, { era, version, method, params });
+      assertCurrent();
+      await this.post(body, { era, version, method, params, beforeSend() { assertCurrent(); commitMcpElicitation(outcome); } });
     } catch (err) {
       logger.warn('McpHttpConnection: failed to answer server request', {
         server: this.options.serverName,
         method,
         err: summarizeError(err),
       });
-    }
+    } finally { discardMcpElicitation(outcome); }
   }
 }

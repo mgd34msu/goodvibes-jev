@@ -81,7 +81,7 @@ import { PairingTokenManager } from '../pairing/pairing-token-store.js';
 import { AcpHostService } from '../acp/host.js';
 import { WebhookNotifier } from '../integrations/webhooks.js';
 import { McpRegistry } from '../mcp/registry.js';
-import { createMcpElicitationApprovalHandler } from '../mcp/elicitation.js';
+import { createMcpAutonomousElicitationHandler } from '../mcp/elicitation-autonomous.js';
 import {
   createApprovalDerivedHandlers,
   createBrokeredPermissionManager,
@@ -753,9 +753,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   });
   mcpRegistry.setRuntimeBus(options.runtimeBus);
   mcpRegistry.setSandboxRuntime(configManager, sandboxSessionRegistry);
-  // MCP elicitation/create requests ride the SAME approval broker as a permission
-  // ask (see mcp/elicitation.ts) instead of the client dropping them with -32601.
-  mcpRegistry.setElicitationHandler(createMcpElicitationApprovalHandler((input) => approvalBroker.requestApproval(input)));
+
   const tokenAuditor = new ApiTokenAuditor({
     managed: configManager.get('security.tokenAudit.managed'),
     featureFlags,
@@ -928,9 +926,14 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // comment for the dispose story (no RuntimeServices-wide shutdown seam yet).
   // Archive-aware: finished agent/swarm subtrees can be moved out of the
   // live fleet view into a session-scoped archive (see fleet/archive.ts).
-  // Hosted third-party coding agents (ACP): permission asks route through the SHARED approval broker (approvals panel + push like any native ask); each hosted agent maps onto a kind-'acp' shared session.
+  // ACP/MCP protocol decisions use the same recorded autonomous owner as native tools.
+  const externalPermissionLifetime = new AbortController();
+  disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
+  const externalPermissionHost = { port: judgment.port, permissionManager: backgroundPermissionManager,
+    config: configManager, signal: externalPermissionLifetime.signal };
+  mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler(externalPermissionHost));
   const acpHost = new AcpHostService({
-    requestPermission: (request) => approvalBroker.requestApproval({ request }),
+    permissionHost: externalPermissionHost,
     registerSession: ({ id, title, agentTitle, cwd }) => void sessionBroker
       .register({ sessionId: id, kind: 'acp', title, project: cwd, participant: { surfaceKind: 'service', surfaceId: `acp-host:${agentTitle}`, lastSeenAt: Date.now() } })
       .catch(() => { /* best-effort; the fleet row is authoritative */ }),

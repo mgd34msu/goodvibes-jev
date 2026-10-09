@@ -1,3 +1,5 @@
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { currentExternalOperationSource } from '../permissions/external-operation-scope.js';
 /**
  * McpRegistry, manages all connected MCP servers.
  *
@@ -88,6 +90,16 @@ export class McpRegistry {
   private clients = new Map<string, McpClient>();
   private serverConfigs = new Map<string, McpServerConfig>();
   private permissions = new McpPermissionManager();
+  private readonly policyLifetimes = new Map<string, AbortController>();
+  private policyLifetime(serverName: string): AbortController {
+    let lifetime = this.policyLifetimes.get(serverName);
+    if (!lifetime) { lifetime = new AbortController(); this.policyLifetimes.set(serverName, lifetime); }
+    return lifetime;
+  }
+  private invalidatePolicyLifetime(serverName: string): void {
+    this.policyLifetimes.get(serverName)?.abort();
+    this.policyLifetimes.set(serverName, new AbortController());
+  }
   private freshness = new McpSchemaFreshnessTracker();
   private runtimeBus: RuntimeEventBus | null = null;
   private sandboxConfigManager: ConfigManager | null = null;
@@ -115,6 +127,7 @@ export class McpRegistry {
    * them. Set once at composition; applies to servers connected afterwards.
    */
   setElicitationHandler(handler: McpElicitationHandler | null): void {
+    for (const name of this.clients.keys()) this.invalidatePolicyLifetime(name);
     this.elicitationHandler = handler;
   }
 
@@ -254,6 +267,8 @@ export class McpRegistry {
    * Fetches the full schema on first use.
    */
   async callTool(qualifiedName: string, args: Record<string, unknown>): Promise<unknown> {
+    const source = currentExternalOperationSource();
+    args = snapshotJudgmentInput(args, qualifiedName) as Record<string, unknown>;
     const parsed = this._parseQualifiedName(qualifiedName);
     if (!parsed) {
       throw new Error(`McpRegistry: invalid qualified tool name '${qualifiedName}'`);
@@ -265,6 +280,14 @@ export class McpRegistry {
     if (!client.isConnected) {
       throw new Error(`McpRegistry: server '${parsed.serverName}' is not connected`);
     }
+    const policyLife = this.policyLifetime(parsed.serverName);
+    const assertCurrent = () => {
+      policyLife.signal.throwIfAborted(); source?.signal?.throwIfAborted(); source?.assertCurrent();
+      if (this.clients.get(parsed.serverName) !== client || this.freshness.isQuarantined(parsed.serverName)) throw new Error('MCP operation authority changed');
+    };
+    const operation = source ? { ...source, inputFacts: [args, ...(source.inputFacts ?? [])], assertCurrent,
+      signal: source.signal ? AbortSignal.any([source.signal, policyLife.signal]) : policyLife.signal } : undefined;
+    assertCurrent();
     if (this.freshness.isQuarantined(parsed.serverName)) {
       const record = this.freshness.getRecord(parsed.serverName);
       throw new Error(
@@ -273,6 +296,7 @@ export class McpRegistry {
     }
 
     const permission = await this.permissions.evaluateToolCall(parsed.serverName, parsed.toolName, args);
+    assertCurrent();
     if (permission.verdict === 'deny') {
       throw new Error(`MCP call '${qualifiedName}' denied: ${permission.reason}`);
     }
@@ -301,7 +325,9 @@ export class McpRegistry {
     }
 
     try {
-      const result = await client.callTool(parsed.toolName, args);
+      assertCurrent();
+      const result = await client.callTool(parsed.toolName, args, operation);
+      assertCurrent();
       this.freshness.markFresh(parsed.serverName);
       // Post:mcp:call hook (fire-and-forget)
       const postEvent: HookEvent = {
@@ -334,6 +360,7 @@ export class McpRegistry {
    * disconnectAll, Stop all connected MCP server processes.
    */
   async disconnectAll(): Promise<void> {
+    for (const name of this.clients.keys()) this.invalidatePolicyLifetime(name);
     // Lifecycle:mcp:disconnected hooks (fire-and-forget for each server)
     const dispatcher = this.hookDispatcher;
     for (const name of this.clients.keys()) {
@@ -358,10 +385,11 @@ export class McpRegistry {
   }
 
   async disconnectServer(serverName: string, reason = 'manual'): Promise<boolean> {
+    this.invalidatePolicyLifetime(serverName);
     const client = this.clients.get(serverName);
     if (!client) return false;
     await client.disconnect();
-    this.clients.delete(serverName);
+    if (this.clients.get(serverName) === client) this.clients.delete(serverName);
     const sessionId = this.sandboxSessionByServer.get(serverName);
     if (sessionId) {
       this.sandboxSessions.stop(sessionId);
@@ -487,11 +515,13 @@ export class McpRegistry {
   }
 
   setServerTrustMode(serverName: string, mode: import('../runtime/mcp/types.js').McpTrustMode): void {
+    this.invalidatePolicyLifetime(serverName);
     this.permissions.setTrustMode(serverName, mode);
     this._emitPolicyUpdate(serverName);
   }
 
   setServerRole(serverName: string, role: import('../runtime/mcp/types.js').McpServerRole): void {
+    this.invalidatePolicyLifetime(serverName);
     this.permissions.setServerRole(serverName, role);
     this._emitPolicyUpdate(serverName);
   }
@@ -501,6 +531,7 @@ export class McpRegistry {
   }
 
   quarantineSchema(serverName: string, reason: QuarantineReason, detail?: string): void {
+    this.invalidatePolicyLifetime(serverName);
     this.freshness.markQuarantined(serverName, reason, detail);
     if (this.runtimeBus) {
       emitMcpSchemaQuarantined(this.runtimeBus, {
@@ -512,6 +543,7 @@ export class McpRegistry {
   }
 
   approveSchemaQuarantine(serverName: string, operatorId: string): void {
+    this.invalidatePolicyLifetime(serverName);
     this.freshness.approveQuarantine(serverName, operatorId);
     if (this.runtimeBus) {
       emitMcpSchemaQuarantineApproved(this.runtimeBus, {
@@ -551,8 +583,16 @@ export class McpRegistry {
       onUnhandledResponse: (response) => this._handleClientUnhandledResponse(response),
       ...(elicitationHandler
         ? {
-            onElicitation: (input) =>
-              elicitationHandler(parseElicitationParams(input.serverName, input.params)),
+            onElicitation: (input) => {
+              const currentHandler = this.elicitationHandler;
+              if (!currentHandler) return Promise.resolve({ action: 'cancel' as const });
+              const scope = input.context?.scope;
+              const context = scope && input.context ? { ...input.context, scope: { ...scope, assertCurrent: () => {
+                scope.assertCurrent();
+                if (this.elicitationHandler !== currentHandler) throw new Error('MCP input resolver changed');
+              } } } : input.context;
+              return currentHandler(parseElicitationParams(input.serverName, input.params, input.id), context);
+            },
           }
         : {}),
     });
