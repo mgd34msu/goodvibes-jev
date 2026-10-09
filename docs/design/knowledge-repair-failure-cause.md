@@ -91,10 +91,58 @@ cases: both scoped/whole-store semantic positive cases and both misleading-word
 negative/unknown cases fail. They pass against this implementation. This is
 behavioral regression evidence, not measured model accuracy or calibration.
 
-Final local qualification (synthetic only): 43 new failure-cause tests plus 31
+Initial checkpoint qualification (synthetic only): 43 new failure-cause tests plus 31
 existing self-improvement/runtime/repair tests passed in serial runs. The root
 `tsc -b`, SDK type-contract project, engine build, and `api:check` passed under a
 shared compiler lock with a 3,904 MiB Node heap cap. The committed API/subpath
 surface is unchanged. API Extractor retained existing dependency/ambient-type
 warnings; these did not fail extraction or introduce an API diff. No unrelated
 full suite or live-provider calibration is claimed.
+
+
+## Commit-time disposition ownership
+
+Reciprocal review found that a caller-side guard was insufficient: both stores
+can yield during initialization, and the first disposition write can yield
+before the second write. A newer nonterminal task could therefore be overwritten
+even though classification itself had correctly rejected stale responses.
+
+The follow-up is based on current main `c9badc8c25da9294c2a9f39b234a220aa9218da9`,
+preserving the settings-admission changes. It adds one internal disposition owner:
+
+- Exact expected gap and task records and a fixed issue snapshot are captured.
+  Cancellation and captured judgment ownership are checked independently of the
+  data snapshots for every conclusion, including structural and unconfigured
+  causes. Absent-to-absent runtime ownership remains valid and mechanical causes
+  never require a judgment request. The owner's legitimate repair-status change is not mistaken
+  for an external lifecycle change.
+- The node write carries the assertion through its existing observed-evidence
+  authority to the final prepared-node commit check after initialization.
+- The refinement task input carries an internal WeakMap-bound assertion, checked
+  after initialization and immediately before synchronous SQL/cache mutation.
+  There is no public store parameter or serialized compare-and-swap field.
+- Expected snapshots advance only to exact records returned from this owner's
+  writes. A live store reread after an await can never adopt a newer attempt.
+- A lost guard stops disposition without a fallback failure write. A final guard
+  also prevents returning a current retry receipt after authority changed.
+
+The existing order of writes remains: deferred gap then blocked task, or failed
+task then failed gap. This is not an all-or-none transaction. A first write that
+was authorized at its own commit point may remain if authority changes before
+the second; the second write and current-disposition receipt are refused.
+
+The original 24-case commit-boundary reproduction had 17 failures before the
+fix. The expanded matrix covers both branches at initial node initialization,
+final prepared-node initialization, task initialization, and after either commit.
+It injects newer nonterminal attempts, cancellation, port replacement, deletion,
+issue resolution, and gap replacement. Legitimate positive/negative flows remain
+covered separately. The reproduction and initial fixture failures are retained
+as evidence; they are not described as passing original behavior.
+
+The disposition wait remains inside the active-gap-repair lifetime. Only explicit
+stale/cancelled authority errors are treated as stopped work: a real persistence
+failure after an own SQL/cache commit remains observable, rather than being
+mistaken for a stale snapshot. Dedicated save-failure fixtures and active-owner
+assertions cover these integration details. Structural writes additionally cover
+absent-to-installed runtime, port replacement, and model changes, with unchanged
+configured and unconfigured positive controls and zero judgment requests.

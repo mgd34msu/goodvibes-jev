@@ -12,10 +12,10 @@ import { AGENT_MCP_CALL_MODE, isAgentMcpCallRouteInstalled } from './agent-mcp-c
 import { wrapReadToolForAgentPolicy, validateAgentReadMechanics } from './agent-read-policy.ts';
 import {
   AGENT_SETTINGS_TOOL_DESCRIPTION,
-  validateSettingsToolInvocationForAgentPolicy,
-  wrapSettingsToolForAgentPolicy,
   type SettingsToolArgs,
 } from './agent-settings-write-policy.ts';
+import { wrapSettingsToolForAdmittedAgentPolicy as wrapSettingsToolForAgentPolicy,
+  validateAgentSettingsMechanics } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { wrapWebSearchToolForAgentPolicy } from './agent-web-search-policy.ts';
 import type {
   AgentToolArgs,
@@ -526,10 +526,10 @@ export function explainAgentToolPolicyInvocation(
     return denied ? deniedByAgentPolicy(denied, READ_ONLY_STATE_TOOL_MODES) : allowedByAgentPolicy('Agent policy allows read-only runtime state inspection.', READ_ONLY_STATE_TOOL_MODES);
   }
   if (toolName === 'goodvibes_settings') {
-    const denied = validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs);
+    const denied = validateAgentSettingsMechanics(args as SettingsToolArgs);
     return denied
       ? deniedByAgentPolicy(denied)
-      : allowedByAgentPolicy('Agent policy allows reading and applying settings; a short confirmation-gated list is named in the refusal when it applies.');
+      : allowedByAgentPolicy('Mechanical settings checks pass; the original host source and resolved effect still require current recorded admission. This explanation grants no authority.');
   }
   if (toolName === 'inspect') {
     const denied = validateInspectToolInvocationForAgentPolicy(args as InspectToolArgs);

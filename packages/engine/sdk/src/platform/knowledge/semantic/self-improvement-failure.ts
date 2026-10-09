@@ -15,6 +15,7 @@ export interface RepairFailureConclusion {
   readonly decisionId?: string;
   readonly retries?: number;
   readonly isCurrent: () => boolean;
+  readonly isOwnerCurrent: () => boolean;
 }
 function field(value: unknown, key: string): unknown {
   if (!value || typeof value !== 'object') return undefined;
@@ -44,22 +45,26 @@ function structuralCause(error: unknown): { cause: Cause; basis: string } | unde
 }
 
 /** Capture the composition before repair yields. Never borrow a later owner's port or memo. */
-export function captureRepairFailureReader(options: { readonly signal?: AbortSignal | undefined; readonly deadlineAt: number; readonly shouldStop: () => boolean }) {
-  const ownerStopped = () => options.signal?.aborted === true || options.shouldStop();
+export function captureRepairFailureReader(options: { readonly signal?: AbortSignal | undefined; readonly deadlineAt: number; readonly shouldStop: () => boolean; readonly ownerStopped?: () => boolean }) {
+  const ownerStopped = () => options.signal?.aborted === true || (options.ownerStopped ?? options.shouldStop)();
   let port: JudgmentPort | undefined;
   let model: string | undefined;
   try { port = judgmentPort(SITE); model = port.model; } catch { /* Explicit unconfigured result if text needs reading. */ }
+  const ownerCurrent = () => {
+    if (ownerStopped()) return false;
+    try {
+      const current = judgmentPort(SITE);
+      return current === port && current.model === model;
+    } catch { return port === undefined; }
+  };
   return async (error: unknown): Promise<RepairFailureConclusion> => {
     let structural: ReturnType<typeof structuralCause>;
     try { structural = structuralCause(error); }
-    catch { return { cause: 'unknown', basis: 'unreadable-structure', isCurrent: () => !ownerStopped() }; }
-    if (structural) return { ...structural, isCurrent: () => !ownerStopped() };
+    catch { return { cause: 'unknown', basis: 'unreadable-structure', isCurrent: () => ownerCurrent() && !options.shouldStop(), isOwnerCurrent: ownerCurrent }; }
+    if (structural) return { ...structural, isCurrent: () => ownerCurrent() && !options.shouldStop(), isOwnerCurrent: ownerCurrent };
     let retries = 0;
-    const current = () => {
-      if (ownerStopped()) return false;
-      try { return port !== undefined && judgmentPort(SITE) === port && port.model === model; } catch { return false; }
-    };
-    const unresolved = (basis: string): RepairFailureConclusion => ({ cause: 'unknown', basis, retries, isCurrent: () => !ownerStopped() && (port === undefined || current()) });
+    const current = () => !options.shouldStop() && ownerCurrent();
+    const unresolved = (basis: string): RepairFailureConclusion => ({ cause: 'unknown', basis, retries, isCurrent: current, isOwnerCurrent: ownerCurrent });
     if (ownerStopped()) return unresolved('cancelled');
     if (!port) return unresolved('unconfigured');
     if (!current()) return unresolved('stale');
@@ -101,7 +106,7 @@ export function captureRepairFailureReader(options: { readonly signal?: AbortSig
       const reading = run.readings.cause;
       const cause = reading.outcome === 'act' ? reading.choice : 'unknown';
       run.recordAction(cause === 'request_timeout' || cause === 'run_budget' ? `cause established: ${cause}; existing owner decides deferral` : 'no budget deferral established');
-      return { cause, basis: 'reading', outcome: reading.outcome, ...(run.result.decisionId ? { decisionId: run.result.decisionId } : {}), retries, isCurrent: current };
+      return { cause, basis: 'reading', outcome: reading.outcome, ...(run.result.decisionId ? { decisionId: run.result.decisionId } : {}), retries, isCurrent: current, isOwnerCurrent: ownerCurrent };
     } catch {
       return unresolved(stopReason ?? 'unavailable');
     } finally {

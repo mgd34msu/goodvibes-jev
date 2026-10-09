@@ -144,6 +144,8 @@ export interface AtomicWriteOptions {
   readonly mode?: number;
   /** Opt in to file + complete pathname-ancestry durability before success. */
   readonly durable?: boolean;
+  /** Omit opportunistic deletion of other writes' stale temp files for a bounded effect. */
+  readonly cleanupStaleTemps?: boolean;
 }
 
 export interface AtomicJsonWriteOptions extends AtomicWriteOptions {
@@ -265,7 +267,7 @@ export function writeFileAtomic(filePath: string, contents: string, options: Ato
   let published = false;
   try {
     mkdirSync(dir, { recursive: true });
-    cleanupStaleTempFiles(dir, filePath);
+    if (options.cleanupStaleTemps !== false) cleanupStaleTempFiles(dir, filePath);
     tmpPath = createAtomicTempPath(filePath);
     const fd = openSync(tmpPath, 'w', mode);
     try {

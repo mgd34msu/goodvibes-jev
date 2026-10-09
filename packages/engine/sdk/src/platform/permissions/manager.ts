@@ -7,7 +7,7 @@ import { getProcessUntrustedContentLedger } from '../security/untrusted-content.
 import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
 import type { PreparedToolCall, ToolRegistry } from '../tools/registry.js';
-import { projectionProperty } from '../tools/input-projection.js';
+import { projectionProperty, type ToolPreparedSettingsMutation } from '../tools/input-projection.js';
 import type { JevDecisionBinding, JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { bindTurnHookDispatcher, type TurnHookOwner } from '../hooks/turn-ownership.js';
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
@@ -34,7 +34,7 @@ import type { CommandClassification, PermissionDecision as LayeredPermissionDeci
 import type { FeatureFlagManager } from '../runtime/feature-flags/index.js';
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookCategory, HookEventPath, HookPhase } from '../hooks/types.js';
-import type { ConfigManager } from '../config/manager.js';
+import type { ConfigManager, PreparedConfigMutationTransition } from '../config/manager.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -100,6 +100,8 @@ function readDecisionOtlpConfig(configManager: Pick<ConfigManager, 'get'>): Deci
   };
 }
 
+const permissionConfigOwners = new WeakMap<PermissionConfigReader, object>();
+
 export function createPermissionConfigReader(
   configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot'>>,
 ): PermissionConfigReader {
@@ -107,7 +109,7 @@ export function createPermissionConfigReader(
   // copies current permission state; unrelated configuration domains need not
   // be cloned for each original-owner/runtime path in a captured read sweep.
   const permissionSnapshot = configManager.getAutonomousPermissionSnapshot?.bind(configManager);
-  return {
+  const reader: PermissionConfigReader = {
     ...(permissionSnapshot ? { getAutonomousSnapshot: permissionSnapshot } : {}),
     isAutoApproveEnabled: () => isAutoApproveEnabled(configManager),
     getSnapshot: permissionSnapshot
@@ -117,6 +119,8 @@ export function createPermissionConfigReader(
     // Read per decision, not captured: switching export on is a live change.
     getDecisionOtlpConfig: () => readDecisionOtlpConfig(configManager),
   };
+  permissionConfigOwners.set(reader, configManager);
+  return reader;
 }
 
 /** Maps tool names to permission categories and config tool keys. */
@@ -262,12 +266,30 @@ interface AuthenticAutonomousAdmission {
   readonly call: PreparedToolCall;
   readonly claim: () => void;
   readonly assertCurrent: () => void;
+  readonly assertConfigTransition?: ((binding: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => void) | undefined;
+  readonly settingsPresentation?: Readonly<{ previous: unknown; current: unknown }> | undefined;
   consumed: boolean;
 }
 
 // The only writer lives after this manager's successful recorded act decision.
 // Public admission objects and claim callbacks are not themselves capabilities.
 const authenticAutonomousAdmissions = new WeakMap<AutonomousPermissionAdmission, AuthenticAutonomousAdmission>();
+const authenticConfigTransitions = new WeakMap<() => void, NonNullable<AuthenticAutonomousAdmission['assertConfigTransition']>>();
+const settingsPresentations = new WeakMap<() => void, Readonly<{ previous: unknown; current: unknown }>>();
+
+/** @internal Data-only display result from the same recorded pre-admission observations. */
+export function readAutonomousSettingsPresentation(guard: () => void): Readonly<{ previous: unknown; current: unknown }> | undefined {
+  return settingsPresentations.get(guard);
+}
+
+/** @internal Only the consumed, exact invocation guard can validate its own owner transition. */
+export function assertAutonomousConfigTransition(assertCurrent: () => void, binding: ToolPreparedSettingsMutation,
+  transition: PreparedConfigMutationTransition): void {
+  const check = authenticConfigTransitions.get(assertCurrent);
+  if (!check) throw new Error('Autonomous settings transition has no authentic execution owner');
+  authenticConfigTransitions.delete(assertCurrent);
+  check(binding, transition);
+}
 
 /** @internal Identity-only compatibility query. Never validates, consumes or creates authority. */
 export function isAuthenticAutonomousAdmission(admission: unknown): boolean {
@@ -287,6 +309,8 @@ export function consumeAutonomousAdmission(admission: AutonomousPermissionAdmiss
   }
   record.consumed = true;
   record.claim();
+  if (record.assertConfigTransition) authenticConfigTransitions.set(record.assertCurrent, record.assertConfigTransition);
+  if (record.settingsPresentation) settingsPresentations.set(record.assertCurrent, record.settingsPresentation);
   return record.assertCurrent;
 }
 
@@ -448,7 +472,8 @@ export class PermissionManager {
       if (preparedCall.call.name !== toolName || preparedCall.call.args !== preparedArgs
         || preparedCall.call.schemaRevision !== schemaRevision) throw new Error('Autonomous admission prepared call binding changed');
     }
-    const admissionEvidence = preparedCall?.registry.readPreparedAdmissionEvidence(preparedCall.call);
+    const admissionEvidence = preparedCall?.registry.readPreparedOwnedAdmissionEvidence(preparedCall.call);
+    const settingsMutation = preparedCall?.registry.readPreparedSettingsMutation(preparedCall.call);
     const ledger = this.gate.ledger ?? getProcessUntrustedContentLedger();
     const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection);
     // A running selected projection is already claimed. Its body compares the
@@ -529,12 +554,14 @@ export class PermissionManager {
       signal, port: scopedPort });
     assertCurrent();
     if (reading) analysis = withReading(analysis, reading, category);
-    const boundary = await runBoundary({ toolName, args, reading, surfaceId: this.gate.surfaceOf?.(), ledger, signal, port: scopedPort });
+    const declaredMutation = admissionEvidence?.kind === 'agent-settings';
+    const boundary = await runBoundary({ toolName, args, reading, declaredMutation, surfaceId: this.gate.surfaceOf?.(), ledger, signal, port: scopedPort });
     assertCurrent();
     const agentRead = admissionEvidence?.kind === 'agent-read'
       ? await readAgentReadEvidence(admissionEvidence, source, scopedPort, signal) : null;
     assertCurrent();
-    const settings = toolName === 'goodvibes_settings' ? await readSettingsWriteEvidence(args, scopedPort, signal) : null;
+    const settings = toolName === 'goodvibes_settings' ? await readSettingsWriteEvidence(args, scopedPort, signal,
+      admissionEvidence?.kind === 'agent-settings' ? { source: autonomousSourceEvidence(source), effect: admissionEvidence.effect } : undefined) : null;
     assertCurrent();
     if (settings && !settings.judgmentDecisionId) throw new Error('Settings evidence has no recorded judgment provenance');
     const permissions = capturedAuthority.permissions;
@@ -543,12 +570,14 @@ export class PermissionManager {
     const explicitToolDeny = preset.perTool && TOOL_CONFIG_KEYS[toolName] !== undefined
       && permissions?.tools?.[TOOL_CONFIG_KEYS[toolName]!] === 'deny';
     const durable = this.rememberedDecision(this.getApprovalKey(toolName, args), toolName, args);
+    const observedClassification = reading ? classificationFromReading(reading) : 'read';
+    const policyClassification = declaredMutation && observedClassification === 'read' ? 'write' : observedClassification;
     const policy = this.featureFlags?.isEnabled('permissions-policy-engine') === true
-      ? this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, reading ? classificationFromReading(reading) : 'read'), analysis)
+      ? this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, policyClassification), analysis)
       : null;
     const allowAct = boundary.passed && !explicitToolDeny && durable?.approved !== false && policy?.approved !== false
       && agentRead?.allowed !== false
-      && !(preset.readOnly && reading !== null && (reading.mutates || reading.outward));
+      && !(preset.readOnly && (declaredMutation || (reading !== null && (reading.mutates || reading.outward))));
     if (offered.resumeConditions?.some(condition => condition.id === sourceCondition.id || condition.id === legacySourceConditionId)) throw new Error('Host condition conflicts with the source condition');
     const choices = {
       revisions: (offered.revisions ?? []).filter(item => !options.consumedRevisions?.includes(item.ref.id) && (!options.permittedRevisionIds || options.permittedRevisionIds.includes(item.ref.id))),
@@ -560,12 +589,13 @@ export class PermissionManager {
       port: scopedPort, binding,
       state: readingArguments({ tool: toolName, arguments: args, source: autonomousSourceEvidence(source), ...(directory ? { workingDirectory: directory } : {}),
         evidence: { boundary: boundaryRecord(boundary), ...(reading ? { reading: readingRecord(reading) } : {}),
-          ...(agentRead && admissionEvidence ? { agentRead: { root: admissionEvidence.root, paths: agentRead.paths, allowed: agentRead.allowed } } : {}),
+          ...(agentRead && admissionEvidence?.kind === 'agent-read' ? { agentRead: { root: admissionEvidence.root, paths: agentRead.paths, allowed: agentRead.allowed } } : {}),
+          ...(admissionEvidence?.kind === 'agent-settings' ? { settingsEffect: admissionEvidence.effect } : {}),
           ...(settings ? { settings: { key: settings.key, hazard: settings.hazard.choice, hazardOutcome: settings.hazard.outcome,
             requested: settings.requested?.verdict ?? null, requestedOutcome: settings.requested?.outcome ?? null } } : {}),
           constraints: { allowAct, mode, explicitToolDeny: explicitToolDeny === true, durableEffect: durable?.approved ?? null } } }) as import('@goodvibes-jev/judgment').EntryType,
       evidence: [{ id: 'prepared-tool-input', revision: inputRevision }, { id: 'source-goal-and-criteria', revision: sourceRevision }, { id: 'live-authority', revision: authorityRevision },
-        ...(admissionEvidence ? [{ id: 'agent-read-subjects', revision: admissionEvidence.revision }] : [])],
+        ...(admissionEvidence ? [{ id: admissionEvidence.kind === 'agent-read' ? 'agent-read-subjects' : 'agent-settings-effect', revision: admissionEvidence.revision }] : [])],
       supportingDecisionIds: [...supportingIds],
       choices, allowAct, assertCurrent, signal,
     });
@@ -607,6 +637,27 @@ export class PermissionManager {
     if (receipt.outcome === 'act' && preparedCall) {
       authenticAutonomousAdmissions.set(admission, {
         issuer: this, registry: preparedCall.registry, call: preparedCall.call, claim: admission.claim, consumed: false,
+        ...(settings?.presentation ? { settingsPresentation: settings.presentation } : {}),
+        ...(settingsMutation ? { assertConfigTransition: (actual: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => {
+          assertPermissionActive(signal);
+          if (actual !== settingsMutation || permissionConfigOwners.get(this.configReader) !== actual.owner
+            || this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
+            throw new Error('Autonomous settings owner or invocation changed');
+          }
+          // Owner callbacks run before sampling. Only this exact prepared mutation's
+          // authentic pre-value invalidation is exempt; no generic generation waiver.
+          const current = this.autonomousAuthority(sourceId, sourceOf);
+          const transitionFacts = actual.owner.inspectPreparedMutationTransition(actual.mutation, transition);
+          actual.owner.assertPreparedMutationTransition(actual.mutation, transition);
+          const before = (rawAuthority as Readonly<Record<string, unknown>>)['incarnation'];
+          const now = (current as Readonly<Record<string, unknown>>)['incarnation'];
+          if (before !== transitionFacts.beforeIncarnation || now !== transitionFacts.afterIncarnation
+            || transitionFacts.afterIncarnation !== transitionFacts.beforeIncarnation + 1
+            || hashState({ ...current, incarnation: before } as unknown as EntryType) !== rawAuthorityRevision) {
+            throw new Error('Autonomous settings authority, source or scope changed');
+          }
+          assertPermissionActive(signal);
+        } } : {}),
         assertCurrent: () => {
           assertPermissionActive(signal);
           if (this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {

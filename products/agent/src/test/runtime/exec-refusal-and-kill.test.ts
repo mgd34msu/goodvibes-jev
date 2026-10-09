@@ -55,6 +55,9 @@ function execReadings() {
     if (name === 'disposition' && question.type === 'choice') return choiceAnswer(question, Object.hasOwn(question.criteria, 'act') ? 'act' : 'reject', 0.99);
     const foreignTerminal = JSON.stringify(state).includes('tmux -L gv-exec-refusal-');
     const readsFile = (state as { tool?: string }).tool === 'read';
+    if (name === 'hazard') return choiceAnswer(question, 'none', 0.99);
+    if (name === 'requested') return noulAnswer(0.999);
+    if (name === 'credential_material') return noulAnswer(0.001);
     if (name === 'family' || name === 'capability') return choiceAnswer(question, 'generic', 0.99);
     if (name === 'kind') return choiceAnswer(question, readsFile ? 'read' : 'other', 0.99);
     if (name === 'mutates') return noulAnswer(readsFile ? 0.001 : 0.999);
@@ -387,7 +390,7 @@ function composeWithRecorders(services: RuntimeServices): { registry: ToolRegist
       received.set(name, options?.signal);
       return { success: true, output: 'recorded' };
     };
-    // Preserve the real input projector and its captured read-resource evidence.
+    // Preserve the real projectors and their captured read/settings owner evidence.
     register.call(this, tool, options);
   };
   let registry: ToolRegistry;
@@ -443,23 +446,27 @@ describe('the cancel signal reaches the tool through every agent wrapper chain',
       const inner = DELEGATES_TO[name] ?? name;
       const controller = new AbortController();
       received.clear();
-      if (name === 'read') {
-        // Adopted READ needs the same owner readiness, resource preparation and
-        // admission as a live turn; a direct empty call must never reach it.
+      if (name === 'read' || name === 'goodvibes_settings') {
+        // Adopted tools need the same owner readiness, preparation and recorded
+        // admission as a live turn; a direct empty call must never reach them.
         const deps = agentExecutionDeps(services, registry, {
           open: () => controller.signal,
           close: () => {},
         });
-        const [result] = await executeToolCalls(deps, 'turn-read-wrapper-signal', [{
-          id: 'read-wrapper-signal', name, arguments: { files: [{ path: readPath }] },
+        const [result] = await executeToolCalls(deps, `turn-${name}-wrapper-signal`, [{
+          id: `${name}-wrapper-signal`, name, arguments: name === 'read'
+            ? { files: [{ path: readPath }] }
+            : { mode: 'set', key: 'display.theme', value: 'nord', confirm: true },
         }]);
         expect(result?.success).toBe(true);
         expect(result?.autonomousDecision?.outcome).toBe('act');
-        for (const site of ['engine.gate.agent-read-secrets', 'engine.gate.agent-read-scope']) {
+        for (const site of name === 'read'
+          ? ['engine.gate.agent-read-secrets', 'engine.gate.agent-read-scope']
+          : ['engine.gate.settings-write']) {
           const evidence = judgmentLog.query({ site });
           expect(evidence).toHaveLength(1);
           const request = answers.requests.find(request => request.context?.site === site);
-          expect(JSON.stringify(request?.state)).toContain(readPath);
+          expect(JSON.stringify(request?.state)).toContain(name === 'read' ? readPath : 'display.theme');
         }
       } else {
         await tool.execute({}, { signal: controller.signal });
@@ -467,11 +474,23 @@ describe('the cancel signal reaches the tool through every agent wrapper chain',
       if (!received.has(inner)) neverReached.push(name);
       else if (received.get(inner) !== controller.signal) dropped.push(name);
     }
-    // Every chain reached its platform tool, including genuinely admitted READ,
+    // Every chain reached its platform tool, including genuinely admitted READ and SETTINGS,
     // and every one delivered the call's own signal.
     expect(neverReached).toEqual([]);
     expect(dropped).toEqual([]);
   }, 60_000);
+
+  test('a direct valid SETTINGS call cannot reach its recorder through request text alone', async () => {
+    const { services } = agentRuntime('exec-cancel-direct-settings');
+    const { registry, received } = composeWithRecorders(services);
+    const settings = registry.list().find(tool => tool.definition.name === 'goodvibes_settings');
+    expect(settings).toBeDefined();
+    const result = await settings!.execute({ mode: 'set', key: 'display.theme', value: 'nord',
+      confirm: true, explicitUserRequest: 'Set the theme to nord' },
+    { signal: new AbortController().signal });
+    expect(result.success).toBe(false); expect(result.error).toBeTruthy();
+    expect(received.has('goodvibes_settings')).toBe(false);
+  });
 
   test('a direct READ with a real ordinary path still cannot reach its recorder without admission', async () => {
     const { services, workspace } = agentRuntime('exec-cancel-direct-read');

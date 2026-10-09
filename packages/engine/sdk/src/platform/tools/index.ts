@@ -70,6 +70,7 @@ import { OverflowHandler } from './shared/overflow.js';
 import type { SessionChangeTracker } from '../sessions/change-tracker.js';
 import type { ArchetypeLoader } from '../agents/archetypes.js';
 import { createGoodVibesContextTool, createGoodVibesSettingsTool } from './goodvibes-runtime/index.js';
+import { createAgentSettingsInputProjector } from './goodvibes-runtime/settings-admission.js';
 
 export {
   applyRoutedConfigWrite,
@@ -282,6 +283,8 @@ export function registerAllTools(
     surfaceRoot: string;
     /** Restrictive, construction-owned Agent read surface; never an execution option. */
     readAdmissionPolicy?: 'agent-main-conversation' | undefined;
+    /** Restrictive adopted settings surface; omitted preserves legacy SDK calls. */
+    settingsAdmissionPolicy?: 'agent-main-conversation' | undefined;
     /**
      * How the settings tools reach the runtime that OWNS a given key. Without
      * it a client writes daemon-owned settings into its own store, where they
@@ -473,7 +476,10 @@ export function registerAllTools(
     createGoodVibesSettingsTool({
       configManager: deps.configManager,
       configRouting: deps.configRouting,
+      admissionPolicy: deps.settingsAdmissionPolicy,
     }),
+    deps.settingsAdmissionPolicy === 'agent-main-conversation'
+      ? { inputProjection: createAgentSettingsInputProjector(deps.configManager, deps.configRouting) } : undefined,
   );
   if (deps.personalCapture) {
     const captureConfig = deps.configManager;

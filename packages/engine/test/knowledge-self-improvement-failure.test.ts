@@ -52,6 +52,19 @@ describe('knowledge repair failure cause', () => {
     expect((await reader()(new GoodVibesSdkError('Remote operation ran out of time'))).cause).toBe('request_timeout');
     expect(fake.requests).toHaveLength(1);
   });
+  test('structural and unconfigured results retain composition ownership without needing a reading', async () => {
+    install();
+    const absent = reader();
+    const known = await absent(new KnowledgeRepairBudgetError());
+    const unknown = await absent(new Error('unknown cause'));
+    expect(known.cause).toBe('run_budget'); expect(known.isOwnerCurrent()).toBe(true);
+    expect(unknown.basis).toBe('unconfigured'); expect(unknown.isOwnerCurrent()).toBe(true);
+    const fake = fixture('other');
+    expect(known.isOwnerCurrent()).toBe(false); expect(unknown.isOwnerCurrent()).toBe(false);
+    const structured = await reader()(new KnowledgeRepairBudgetError());
+    expect(structured.isOwnerCurrent()).toBe(true); expect(fake.requests).toHaveLength(0);
+    fixture('other'); expect(structured.isOwnerCurrent()).toBe(false);
+  });
   test('uncertain does not authorize deferral', async () => {
     fixture('run_budget', 0.55);
     expect((await reader()(new Error('budget'))).cause).toBe('unknown');
@@ -233,4 +246,137 @@ describe('actual semantic service failure path', () => {
     expect(store.getNode(gap.id)?.metadata.repairStatus).toBe('failed');
     expect(store.getNode(gap.id)?.metadata.nextRepairAttemptAt).toBeGreaterThan(Date.now());
   });
+});
+
+describe('failure disposition commit boundaries', () => {
+  const snapshot = (value: unknown): string => JSON.stringify(value ?? null);
+  test.each(['unchanged-none', 'unchanged-port', 'install', 'replace', 'model'])('structural write composition control: %s', async (change) => {
+    const fake = fakePort((_name, question) => choiceAnswer(question, 'other', 0.99));
+    let model = 'synthetic-first';
+    install(change === 'unchanged-none' || change === 'install' ? undefined : { ...fake.port, get model() { return model; } });
+    const { store, service, gap, spaceId } = await serviceFixture(new KnowledgeRepairBudgetError());
+    const originalInit = store.init.bind(store), originalTask = store.upsertRefinementTask.bind(store);
+    let committing = false, paused = false;
+    store.init = async () => {
+      await originalInit();
+      if (committing && !paused) {
+        paused = true;
+        if (change === 'install' || change === 'replace') install(fake.port);
+        if (change === 'model') model = 'synthetic-second';
+      }
+    };
+    store.upsertRefinementTask = async (input) => {
+      if (input.state === 'blocked') committing = true;
+      try { return await originalTask(input); }
+      finally { committing = false; }
+    };
+    const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
+    expect(paused).toBe(true); expect(fake.requests).toHaveLength(0);
+    const task = store.getRefinementTask(result.taskIds[0]!)!;
+    if (change.startsWith('unchanged')) {
+      expect(task.state).toBe('blocked'); expect(result.nextRepairAttemptAt).toBeGreaterThan(Date.now());
+    } else {
+      expect(task.state).toBe('searching'); expect(result.skippedGaps).toBe(1); expect(result.nextRepairAttemptAt).toBeUndefined();
+    }
+  });
+
+  test.each(['run_budget', 'other'])('a durable save failure after the %s branch first commit remains observable', async (cause) => {
+    fixture(cause);
+    const { store, service, gap, spaceId } = await serviceFixture(new Error('synthetic repair failure'));
+    const sqlite = (store as unknown as { sqlite: { save(): Promise<void> } }).sqlite;
+    const save = sqlite.save.bind(sqlite);
+    const storageFailure = new Error('synthetic durable save failure');
+    sqlite.save = async () => {
+      const firstWriteCommitted = cause === 'run_budget'
+        ? store.getNode(gap.id)?.metadata.repairStatus === 'deferred'
+        : store.listRefinementTasks(10, { spaceId })[0]?.state === 'failed';
+      if (firstWriteCommitted) throw storageFailure;
+      await save();
+    };
+    try {
+      await expect(service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true })).rejects.toBe(storageFailure);
+    } finally { sqlite.save = save; }
+  });
+
+  for (const cause of ['run_budget', 'other']) {
+    for (const boundary of ['gap-init', 'gap-commit-init', 'task-init', 'after-gap-commit', 'after-task-commit']) {
+      for (const action of ['replace-task', 'cancel', 'replace-port', 'delete-gap', 'resolve-issue', 'replace-gap']) {
+        test(`${cause}: ${action} at ${boundary} cannot authorize a later stale write`, async () => {
+          fixture(cause);
+          const { store, service, gap, spaceId } = await serviceFixture(new Error('synthetic failure'));
+          const controller = new AbortController();
+          const activeRepairs = (service as unknown as { activeGapRepairs: Set<string> }).activeGapRepairs;
+          const issue = await store.upsertIssue({ severity: 'warning', code: 'synthetic-review', message: 'Synthetic review', nodeId: gap.id, status: 'open', metadata: { knowledgeSpaceId: spaceId } });
+          const originalInit = store.init.bind(store), originalNode = store.upsertNode.bind(store), originalTask = store.upsertRefinementTask.bind(store), originalPrepared = store.upsertPreparedNode.bind(store);
+          let active: 'gap' | 'gap-commit' | 'task' | undefined, changed = false;
+          let replacement: string | undefined;
+          let targetBefore = '';
+          let gapAtMutation = '', taskAtMutation = '';
+          const taskNow = () => store.listRefinementTasks(10, { spaceId })[0]!;
+          const mutate = async () => {
+            expect(activeRepairs.size).toBe(1);
+            changed = true;
+            gapAtMutation = snapshot(store.getNode(gap.id)); taskAtMutation = snapshot(taskNow());
+            targetBefore = snapshot(boundary.startsWith('gap') ? store.getNode(gap.id) : taskNow());
+            if (action === 'replace-task') {
+              const task = taskNow();
+              const record = await originalTask({ ...task, state: 'searching', attemptCount: task.attemptCount + 1, metadata: { ...task.metadata, newerAttempt: true } });
+              replacement = snapshot(record);
+            } else if (action === 'cancel') controller.abort();
+            else if (action === 'replace-port') fixture('other');
+            else if (action === 'delete-gap') await store.deleteNode(gap.id);
+            else if (action === 'resolve-issue') await store.upsertIssue({ ...issue, status: 'resolved' });
+            else await seedKnowledgeResearchTask(store, { ...store.getNode(gap.id)!, title: 'New operator research question' });
+            targetBefore = snapshot(boundary.startsWith('gap') ? store.getNode(gap.id) : taskNow());
+            gapAtMutation = snapshot(store.getNode(gap.id)); taskAtMutation = snapshot(taskNow());
+
+          };
+          store.init = async () => {
+            await originalInit();
+            if (!changed && boundary === `${active}-init`) await mutate();
+          };
+          store.upsertNode = async (input, mutation) => {
+            const disposition = input.id === gap.id && ['deferred', 'failed'].includes(String(input.metadata?.repairStatus));
+            if (disposition) active = 'gap';
+            try {
+              const record = await originalNode(input, mutation);
+              if (disposition && !changed && boundary === 'after-gap-commit') await mutate();
+              return record;
+            } finally { if (disposition) active = undefined; }
+          };
+          store.upsertPreparedNode = async (prepared, index) => {
+            const previous = active;
+            if (active === 'gap') active = 'gap-commit';
+            try { return await originalPrepared(prepared, index); }
+            finally { active = previous; }
+          };
+          store.upsertRefinementTask = async (input) => {
+            const disposition = ['blocked', 'failed'].includes(input.state);
+            if (disposition) active = 'task';
+            try {
+              const record = await originalTask(input);
+              if (disposition && !changed && boundary === 'after-task-commit') await mutate();
+              return record;
+            } finally { if (disposition) active = undefined; }
+          };
+          const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true, signal: controller.signal });
+          expect(changed).toBe(true);
+          expect(activeRepairs.size).toBe(0);
+          if (action === 'replace-task') expect(snapshot(taskNow())).toBe(replacement ?? 'replacement was not captured');
+          if (action === 'delete-gap') expect(store.getNode(gap.id)).toBeNull();
+          if (action === 'replace-gap') expect(store.getNode(gap.id)?.title).toBe('New operator research question');
+          if (action === 'resolve-issue') expect(store.getIssue(issue.id)?.status).toBe('resolved');
+          if (boundary.endsWith('-init') && action !== 'replace-task') {
+            expect(snapshot(boundary.startsWith('gap') ? store.getNode(gap.id) : taskNow())).toBe(targetBefore);
+          }
+          // A post-final-write change may leave the already authorized writes,
+          // but must not produce a fresh stale mutation or a current disposition receipt.
+          if (boundary === 'after-task-commit' && cause === 'other') expect(snapshot(store.getNode(gap.id))).toBe(gapAtMutation);
+          if (boundary === 'after-gap-commit' && cause === 'run_budget') expect(snapshot(taskNow())).toBe(replacement ?? taskAtMutation);
+          expect(result.nextRepairAttemptAt).toBeUndefined();
+          expect(result.skippedGaps).toBe(1);
+        });
+      }
+    }
+  }
 });

@@ -28,6 +28,7 @@ import { summarizeError } from '../../utils/error-display.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { SETUP_INTENT_CONTRACT_PROMPT } from '../../runtime/setup-contract.js';
 import { isCredentialConfigKey, redactConfigValue, redactObjectByPath } from './credential-redaction.js';
+import { executeAdmittedAgentSettings } from './settings-admission.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -144,7 +145,8 @@ export function createGoodVibesContextTool(deps: GoodVibesRuntimeToolDeps): Tool
 }
 
 export function createGoodVibesSettingsTool(
-  deps: Pick<GoodVibesRuntimeToolDeps, 'configManager'> & { readonly configRouting?: ConfigRoutingOptions | undefined },
+  deps: Pick<GoodVibesRuntimeToolDeps, 'configManager'> & { readonly configRouting?: ConfigRoutingOptions | undefined;
+    readonly admissionPolicy?: 'agent-main-conversation' | undefined },
 ): Tool {
   const routing = deps.configRouting ?? {};
   const definition: ToolDefinition = {
@@ -169,8 +171,9 @@ export function createGoodVibesSettingsTool(
     concurrency: 'serial',
   };
 
-  async function execute(args: JsonRecord): Promise<{ success: boolean; output?: string; error?: string }> {
+  async function execute(args: JsonRecord, options?: import('../../types/tools.js').ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
     try {
+      if (deps.admissionPolicy === 'agent-main-conversation') return await executeAdmittedAgentSettings(args, options);
       if (args.confirm !== true) {
         return { success: false, error: 'Set confirm=true to change GoodVibes settings.' };
       }

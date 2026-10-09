@@ -7,7 +7,13 @@
 - Replace knowledge repair failure keyword guessing with structural causes and a
   bounded typed judgment reading. Preserve confirmed timeout deferral, distinguish
   request timeouts from run-budget exhaustion, and keep unknown/unavailable
-  readings from inventing a budget cause. Existing failed-gap cooldown is unchanged.
+  readings from inventing a budget cause. Fence both disposition commits against
+  concurrent task/gap/review changes and cancellation. Existing failed-gap cooldown
+  is unchanged.
+
+- Retain the last complete configuration and tier ownership if any reload
+  layer refuses, while preserving lifetime invalidation, permission-incarnation
+  advancement, restrictive host-setting defaults, and successful-load behavior.
 
 - Observe bounded service-manager handover outcomes before claiming success or
   exiting. Order reload before start enqueue, preserve completed update/rollback
