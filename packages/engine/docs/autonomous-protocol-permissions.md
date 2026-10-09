@@ -33,3 +33,38 @@ The [official transport specification](https://modelcontextprotocol.io/specifica
 ## Verification
 
 `external-autonomous-permissions.test.ts` uses synthetic recorded Jev answers and intercepted transports. It covers typed act/reject, conflicting prose, exact facts, unsupported/protected inputs, immutable/single-use responses, concurrent HTTP operations, process/session replacement, configuration invalidation, duplicate requests, and ACP stopping while cancellation is pending. A scripted ACP process exercises the actual SDK wire protocol. These are integration and mechanism tests, not live-model calibration evidence.
+
+## Autonomous MCP tool dispatch
+
+The actual Agent facade now conditionally forwards `callTool` and `getToolSchema`
+to its registry owner. Cancellation reaches the registry and final transport write.
+A default coherent high/critical `ask-on-risk` request, or coherent medium request
+under `constrained`, is an eligible risk-policy ask. The registry admits it through
+the same canonical autonomous owner used by native tools. Uncertain capability,
+facts, family, boundary or scoped-value readings cannot become eligible asks;
+explicit denies and constrained high/critical requests remain refused.
+
+Destination and configured server policy are detached, protected-input-screened
+host evidence. An opaque adapter token prevents remote metadata from impersonating
+that evidence. Canonical risk readings and disposition see its meaning, and the
+receipt input revision covers it without changing the actual arguments or original
+source. Evidence never overrides structural restrictions. Live policy, source,
+connection, destination and cancellation guards run before judgment attempts and
+at writes. One logical tool admission is claimed at the first `tools/call` write;
+MRTR continuations retain those guards and independently claim each input response.
+
+Synthetic qualification covers actual stdio and HTTP writes, the real Agent route
+and facade, typed non-act results, scoped uncertainty, endpoint/policy/source swaps,
+reconnect, delayed schema loading, cancellation, and MRTR revocation. These proofs
+do not assert live-provider calibration or support for uncorrelated legacy input.
+
+Protocol identity is captured separately from business content. Only the declared
+ACP session/tool-call/permission-option IDs, MCP elicitation request ID, and MRTR
+request-map keys use the canonical typed-reference rules. Their original bytes
+remain in the immutable request and its revision, while semantic readings see
+fixed role markers. A UUID-shaped value in arguments, messages, schemas, diffs,
+destinations or undeclared fields still crosses the full raw privacy boundary.
+Native selected-diff provenance likewise remains in source identity while only
+its screened semantic projection is read. Descriptor-safe capture rejects
+executable views before serialization; neither identity nor a captured subject
+creates approval authority.

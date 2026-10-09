@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- MCP dispatch now resolves confidently coherent risk-policy asks through canonical autonomous Jev admission, binds destination and server-policy evidence through final write, and exposes supported calls through the Agent facade with cancellation propagation.
+
 - Replace knowledge repair failure keyword guessing with structural causes and a
   bounded typed judgment reading. Preserve confirmed timeout deferral, distinguish
   request timeouts from run-budget exhaustion, and keep unknown/unavailable

@@ -931,6 +931,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
   const externalPermissionHost = { port: judgment.port, permissionManager: backgroundPermissionManager,
     config: configManager, signal: externalPermissionLifetime.signal };
+  mcpRegistry.setPermissionHost(externalPermissionHost);
   mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler(externalPermissionHost));
   const acpHost = new AcpHostService({
     permissionHost: externalPermissionHost,

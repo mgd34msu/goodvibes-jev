@@ -1,3 +1,9 @@
+import { autonomousSourceRevision } from '../permissions/autonomous-protocol-binding.js';
+import { captureExternalRequestEvidence } from '../permissions/external-request-evidence.js';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { admitExternalRequest, type ExternalPermissionHost } from '../permissions/external-request.js';
+import { autonomousRevision } from '../permissions/autonomous.js';
+import { awaitPermission } from '../permissions/cancellation.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { currentExternalOperationSource } from '../permissions/external-operation-scope.js';
 /**
@@ -106,6 +112,11 @@ export class McpRegistry {
   private sandboxSessions: SandboxSessionRegistry;
   private sandboxSessionByServer = new Map<string, string>();
   private readonly hookDispatcher: Pick<HookDispatcher, 'fire'>;
+  private permissionHost: ExternalPermissionHost | undefined;
+  setPermissionHost(host: ExternalPermissionHost): void {
+    for (const name of this.clients.keys()) this.invalidatePolicyLifetime(name);
+    this.permissionHost = host;
+  }
   private elicitationHandler: McpElicitationHandler | null = null;
 
   constructor(options: {
@@ -266,7 +277,7 @@ export class McpRegistry {
    * callTool, Execute a tool by its qualified name.
    * Fetches the full schema on first use.
    */
-  async callTool(qualifiedName: string, args: Record<string, unknown>): Promise<unknown> {
+  async callTool(qualifiedName: string, args: Record<string, unknown>, options?: { readonly signal?: AbortSignal | undefined }): Promise<unknown> {
     const source = currentExternalOperationSource();
     args = snapshotJudgmentInput(args, qualifiedName) as Record<string, unknown>;
     const parsed = this._parseQualifiedName(qualifiedName);
@@ -280,80 +291,119 @@ export class McpRegistry {
     if (!client.isConnected) {
       throw new Error(`McpRegistry: server '${parsed.serverName}' is not connected`);
     }
+    const sourceRevision = source ? autonomousSourceRevision(source.sourceOf()) : undefined;
     const policyLife = this.policyLifetime(parsed.serverName);
+    const host = this.permissionHost;
+    const transport = client.captureToolScope();
+    const configLife = new AbortController();
+    const signal = AbortSignal.any([policyLife.signal, transport.signal, configLife.signal,
+      ...(host ? [host.signal] : []), ...(source?.signal ? [source.signal] : []), ...(options?.signal ? [options.signal] : [])]);
+    const policySnapshot = () => {
+      const record = this.permissions.getServerPermissions(parsed.serverName);
+      return snapshotJudgmentInput(record ? {
+        trustLevel: record.trustLevel, profile: { role: record.profile.role, mode: record.profile.mode,
+          allowedPaths: record.profile.allowedPaths, allowedHosts: record.profile.allowedHosts,
+          allowedCapabilities: record.profile.allowedCapabilities }, toolOverrides: [...record.toolOverrides],
+      } : null) as Readonly<Record<string, unknown>>;
+    };
+    const serverPolicy = policySnapshot();
+    const policyRevision = () => autonomousRevision(policySnapshot());
+    const revision = autonomousRevision(serverPolicy);
+    const externalRequestEvidence = captureExternalRequestEvidence({ destination: transport.destination, serverPolicy });
     const assertCurrent = () => {
-      policyLife.signal.throwIfAborted(); source?.signal?.throwIfAborted(); source?.assertCurrent();
+      signal.throwIfAborted(); transport.assertCurrent(); source?.assertCurrent();
+      if (source && autonomousSourceRevision(source.sourceOf()) !== sourceRevision) throw new Error('MCP original operation source changed');
+      if (policyRevision() !== revision || this.permissionHost !== host) throw new Error('MCP server policy changed');
       if (this.clients.get(parsed.serverName) !== client || this.freshness.isQuarantined(parsed.serverName)) throw new Error('MCP operation authority changed');
     };
     const operation = source ? { ...source, inputFacts: [args, ...(source.inputFacts ?? [])], assertCurrent,
-      signal: source.signal ? AbortSignal.any([source.signal, policyLife.signal]) : policyLife.signal } : undefined;
-    assertCurrent();
-    if (this.freshness.isQuarantined(parsed.serverName)) {
-      const record = this.freshness.getRecord(parsed.serverName);
-      throw new Error(
-        `MCP call '${qualifiedName}' blocked: schema quarantined (${record?.quarantine?.reason ?? 'unknown'})${record?.quarantine?.detail ? `, ${record.quarantine.detail}` : ''}`,
-      );
-    }
-
-    const permission = await this.permissions.evaluateToolCall(parsed.serverName, parsed.toolName, args);
-    assertCurrent();
-    if (permission.verdict === 'deny') {
-      throw new Error(`MCP call '${qualifiedName}' denied: ${permission.reason}`);
-    }
-    if (permission.verdict === 'ask') {
-      throw new Error(`MCP call '${qualifiedName}' requires approval: ${permission.reason}`);
-    }
-
-    // Pre:mcp:call hook
-    const dispatcher = this.hookDispatcher;
-    const preEvent: HookEvent = {
-      path: 'Pre:mcp:call',
-      phase: 'Pre',
-      category: 'mcp',
-      specific: 'call',
-      sessionId: '', timestamp: Date.now(),
-      payload: { tool: qualifiedName, args },
-    };
-    const preResult = await dispatcher.fire(preEvent).catch((error) => {
-      throw new Error(`MCP call '${qualifiedName}' pre-call hook failed: ${summarizeError(error)}`);
-    });
-    if (preResult.ok === false) {
-      throw new Error(`MCP call '${qualifiedName}' pre-call hook failed: ${preResult.error ?? 'unknown error'}`);
-    }
-    if (preResult.decision === 'deny') {
-      throw new Error(`MCP call '${qualifiedName}' denied by hook: ${(preResult as { reason?: string }).reason ?? 'no reason'}`);
-    }
-
+      signal } : undefined;
+    let admission: Awaited<ReturnType<typeof admitExternalRequest>> | undefined;
+    const unsubscribe = host?.config.onDidInvalidate(() => configLife.abort());
     try {
       assertCurrent();
-      const result = await client.callTool(parsed.toolName, args, operation);
+      if (this.freshness.isQuarantined(parsed.serverName)) {
+        const record = this.freshness.getRecord(parsed.serverName);
+        throw new Error(
+          `MCP call '${qualifiedName}' blocked: schema quarantined (${record?.quarantine?.reason ?? 'unknown'})${record?.quarantine?.detail ? `, ${record.quarantine.detail}` : ''}`,
+        );
+      }
+
+      const installed = host?.port;
+      const port: JudgmentPort | undefined = installed ? {
+        get model() { return installed.model; },
+        ...(installed.recorder ? { recorder: installed.recorder } : {}),
+        ask(request) {
+          assertCurrent(); const prior = request.beforeAttempt;
+          return awaitPermission(() => installed.ask({ ...request, signal, beforeAttempt() { assertCurrent(); prior?.(); } }), signal);
+        },
+      } : undefined;
+      const permission = await this.permissions.evaluateToolCall(parsed.serverName, parsed.toolName, args, { port, signal, externalRequestEvidence });
       assertCurrent();
-      this.freshness.markFresh(parsed.serverName);
-      // Post:mcp:call hook (fire-and-forget)
-      const postEvent: HookEvent = {
-        path: 'Post:mcp:call',
-        phase: 'Post',
+      if (permission.verdict === 'deny') {
+        throw new Error(`MCP call '${qualifiedName}' denied: ${permission.reason}`);
+      }
+      if (permission.verdict === 'ask') {
+        if (permission.causes?.length !== 1 || permission.causes[0] !== 'risk-policy' || !host || !operation)
+          throw new Error(`MCP call '${qualifiedName}' has unresolved permission: ${permission.reason}`);
+        admission = await admitExternalRequest(host, { ...transport, signal, assertCurrent }, operation, {
+          tool: qualifiedName, args, serverPolicy, supportingDecisionIds: permission.judgmentDecisionIds ?? [],
+        });
+        assertCurrent();
+        if (admission.result.autonomousDecision?.outcome !== 'act') throw new Error(`MCP call '${qualifiedName}' autonomous admission did not act`);
+      }
+
+      // Pre:mcp:call hook
+      const dispatcher = this.hookDispatcher;
+      const preEvent: HookEvent = {
+        path: 'Pre:mcp:call',
+        phase: 'Pre',
         category: 'mcp',
         specific: 'call',
         sessionId: '', timestamp: Date.now(),
         payload: { tool: qualifiedName, args },
       };
-      dispatcher.fire(postEvent).catch((err: unknown) => { logger.warn('Post:mcp:call hook error', { error: summarizeError(err) }); });
-      return result;
-    } catch (err) {
-      this.freshness.markFailed(parsed.serverName, summarizeError(err));
-      // Fail:mcp:call hook (fire-and-forget)
-      const failEvent: HookEvent = {
-        path: 'Fail:mcp:call',
-        phase: 'Fail',
-        category: 'mcp',
-        specific: 'call',
-        sessionId: '', timestamp: Date.now(),
-        payload: { tool: qualifiedName, args, error: summarizeError(err) },
-      };
-      dispatcher.fire(failEvent).catch((hookErr: unknown) => { logger.warn('Fail:mcp:call hook error', { error: String(hookErr) }); });
-      throw err;
-    }
+      const preResult = await dispatcher.fire(preEvent).catch((error) => {
+        throw new Error(`MCP call '${qualifiedName}' pre-call hook failed: ${summarizeError(error)}`);
+      });
+      if (preResult.ok === false) {
+        throw new Error(`MCP call '${qualifiedName}' pre-call hook failed: ${preResult.error ?? 'unknown error'}`);
+      }
+      if (preResult.decision === 'deny') {
+        throw new Error(`MCP call '${qualifiedName}' denied by hook: ${(preResult as { reason?: string }).reason ?? 'no reason'}`);
+      }
+
+      try {
+        assertCurrent();
+        const result = await client.callTool(parsed.toolName, args, operation, { assertCurrent, claim: () => { assertCurrent(); admission?.claim(); } });
+        assertCurrent();
+        this.freshness.markFresh(parsed.serverName);
+        // Post:mcp:call hook (fire-and-forget)
+        const postEvent: HookEvent = {
+          path: 'Post:mcp:call',
+          phase: 'Post',
+          category: 'mcp',
+          specific: 'call',
+          sessionId: '', timestamp: Date.now(),
+          payload: { tool: qualifiedName, args },
+        };
+        dispatcher.fire(postEvent).catch((err: unknown) => { logger.warn('Post:mcp:call hook error', { error: summarizeError(err) }); });
+        return result;
+      } catch (err) {
+        this.freshness.markFailed(parsed.serverName, summarizeError(err));
+        // Fail:mcp:call hook (fire-and-forget)
+        const failEvent: HookEvent = {
+          path: 'Fail:mcp:call',
+          phase: 'Fail',
+          category: 'mcp',
+          specific: 'call',
+          sessionId: '', timestamp: Date.now(),
+          payload: { tool: qualifiedName, args, error: summarizeError(err) },
+        };
+        dispatcher.fire(failEvent).catch((hookErr: unknown) => { logger.warn('Fail:mcp:call hook error', { error: String(hookErr) }); });
+        throw err;
+      }
+    } finally { admission?.close(); unsubscribe?.(); configLife.abort(); }
   }
 
   /**

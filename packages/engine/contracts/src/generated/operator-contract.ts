@@ -26391,6 +26391,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "quiet",
                       "skipped-disabled",
                       "skipped-quiet-hours",
+                      "skipped-stale",
+                      "cancelled",
                       "error"
                     ]
                   },
@@ -26399,6 +26401,122 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   },
                   "decisionReason": {
                     "type": "string"
+                  },
+                  "judgment": {
+                    "type": "object",
+                    "properties": {
+                      "decisionId": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "reading": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "yes-no"
+                            ]
+                          },
+                          "probability": {
+                            "type": "number"
+                          },
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "probability",
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "note": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "fidelity": {
+                            "type": "string",
+                            "enum": [
+                              "supported",
+                              "contradicted",
+                              "unsupported",
+                              "fabricated"
+                            ]
+                          },
+                          "reading": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number"
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number"
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "fidelity",
+                          "reading"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "decisionId",
+                      "model",
+                      "reading"
+                    ],
+                    "additionalProperties": false
                   },
                   "deliveredMessage": {
                     "type": "string"

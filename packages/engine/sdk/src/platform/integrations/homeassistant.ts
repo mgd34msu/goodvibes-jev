@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../utils/delivery-lifetime.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -100,11 +101,12 @@ export class HomeAssistantIntegration {
     });
   }
 
-  async fireEvent(eventType: string, eventData: Record<string, unknown> = {}): Promise<unknown> {
+  async fireEvent(eventType: string, eventData: Record<string, unknown> = {}, lifetime: DeliveryLifetime = {}): Promise<unknown> {
     return this.requestJson(`/api/events/${encodeURIComponent(eventType)}`, {
       auth: true,
       method: 'POST',
       body: eventData,
+      lifetime,
     });
   }
 
@@ -120,17 +122,18 @@ export class HomeAssistantIntegration {
     return payload;
   }
 
-  async publishGoodVibesEvent(eventType: string, event: HomeAssistantGoodVibesEvent): Promise<unknown> {
+  async publishGoodVibesEvent(eventType: string, event: HomeAssistantGoodVibesEvent, lifetime: DeliveryLifetime = {}): Promise<unknown> {
     return this.fireEvent(eventType, {
       ...event,
       source: 'goodvibes',
       emittedAt: new Date().toISOString(),
-    });
+    }, lifetime);
   }
 
   private async requestJson(
     path: string,
     options: {
+      readonly lifetime?: DeliveryLifetime | undefined;
       readonly auth?: boolean | undefined;
       readonly method?: string | undefined;
       readonly body?: Record<string, unknown> | undefined;
@@ -170,6 +173,7 @@ export class HomeAssistantIntegration {
   private async request(
     path: string,
     options: {
+      readonly lifetime?: DeliveryLifetime | undefined;
       readonly auth?: boolean | undefined;
       readonly method?: string | undefined;
       readonly body?: Record<string, unknown> | undefined;
@@ -186,11 +190,14 @@ export class HomeAssistantIntegration {
     if (/^[a-z][a-z0-9+\-.]*:/i.test(path)) {
       throw new Error(`Absolute path not allowed in Home Assistant request: ${path}`);
     }
+    assertDeliveryCurrent(options.lifetime ?? {});
     return instrumentedFetch(new URL(path, `${this.baseUrl}/`).toString(), {
       method: options.method ?? 'GET',
       headers,
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: options.lifetime?.signal
+        ? AbortSignal.any([options.lifetime.signal, AbortSignal.timeout(this.timeoutMs)])
+        : AbortSignal.timeout(this.timeoutMs),
     });
   }
 }

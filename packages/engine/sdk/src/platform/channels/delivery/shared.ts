@@ -1,3 +1,4 @@
+import { assertDeliveryCurrent, type DeliveryLifetime } from '../../utils/delivery-lifetime.js';
 import { ArtifactStore, type ArtifactAttachment, type ArtifactReference } from '../../artifacts/index.js';
 import { ConfigManager } from '../../config/manager.js';
 import type { ConfigKey } from '../../config/schema-types.js';
@@ -13,6 +14,20 @@ import type {
 import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 import { resolveReachableBaseUrl } from '../../utils/reachable-base-url.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
+
+/** The lifetime is checked only after payload preparation, without an intervening await. */
+export function deliveryFetch(
+  lifetime: DeliveryLifetime,
+  url: string | URL | Request,
+  init?: RequestInit,
+  diagnosticMode: 'default' | 'opaque-url' = 'default',
+): Promise<Response> {
+  assertDeliveryCurrent(lifetime);
+  return instrumentedFetch(url, {
+    ...init,
+    ...(lifetime.signal ? { signal: init?.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal } : {}),
+  }, diagnosticMode);
+}
 
 export function resolveChannelDeliverySurfaceKind(
   target: ChannelDeliveryTarget,
@@ -122,6 +137,7 @@ export async function resolveMSTeamsAccessToken(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
+  lifetime: DeliveryLifetime = {},
 ): Promise<string> {
   const appId = firstNonEmpty(
     String(configManager.get('surfaces.msteams.appId') ?? ''),
@@ -151,7 +167,7 @@ export async function resolveMSTeamsAccessToken(
     client_secret: appPassword,
     scope: 'https://api.botframework.com/.default',
   });
-  const response = await instrumentedFetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
+  const response = await deliveryFetch(lifetime, `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
@@ -224,9 +240,10 @@ export async function postBridgePayload(
   options: {
     readonly label: string;
     readonly token?: string | undefined;
+    readonly lifetime?: DeliveryLifetime | undefined;
   },
 ): Promise<string | undefined> {
-  const response = await instrumentedFetch(bridgeUrl, {
+  const response = await deliveryFetch(options.lifetime ?? {}, bridgeUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -1,3 +1,4 @@
+import { readExternalRequestEvidence, type ExternalRequestEvidence } from './external-request-evidence.js';
 import { readSettingsWriteEvidence } from '../gate/policy/settings-write-evidence.js';
 import { readAgentReadEvidence } from '../gate/policy/agent-read-evidence.js';
 import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
@@ -247,6 +248,8 @@ export interface AutonomousPermissionAdmission {
 }
 
 export interface AutonomousPermissionOptions extends PermissionExecutionOptions {
+  /** Opaque, detached adapter evidence; never an authority override. */
+  readonly externalRequestEvidence?: ExternalRequestEvidence | undefined;
   readonly decoratePort?: ((port: JudgmentPort) => JudgmentPort) | undefined;
   /** Handle minted by this manager before any logical-call preparation. */
   readonly choiceProjection?: AutonomousChoiceProjection | undefined;
@@ -459,6 +462,8 @@ export class PermissionManager {
     const sourceOf = options.sourceOf;
     const choiceProjection = options.choiceProjection;
     const schemaRevision = options.schemaRevision;
+    const externalRequestToken = projectionProperty(options, 'externalRequestEvidence');
+    const externalRequestEvidence = readExternalRequestEvidence(externalRequestToken);
     const suppliedPrepared = projectionProperty(options, 'preparedCall');
     if (suppliedPrepared !== undefined && (!suppliedPrepared || typeof suppliedPrepared !== 'object')) {
       throw new Error('Autonomous admission requires a registry-owned prepared call');
@@ -493,6 +498,7 @@ export class PermissionManager {
     // source handles are typed protocol identities and retain that validation.
     captureAutonomousChoices({ resumeConditions: [{ id: sourceId, revision: schemaRevision ?? 'unversioned-schema' }] });
     const inputRevision = hashState({ toolName, args, directory, schemaRevision, source,
+      ...(externalRequestEvidence ? { externalRequestEvidence } : {}),
       ...(admissionEvidence ? { admissionEvidence } : {}) } as unknown as EntryType);
     // A source condition is a typed protocol reference, not raw action text.
     // Keep its canonical identity intact: prefixing a generated SHA can make
@@ -551,7 +557,7 @@ export class PermissionManager {
     };
     const reading = await readToolCall({ toolName, args, workingDirectory: directory,
       askKind: TOOL_CATEGORIES[toolName] === undefined, askObfuscated: shellCommandsIn(args).length > 0,
-      signal, port: scopedPort });
+      externalRequestEvidence: externalRequestToken as ExternalRequestEvidence | undefined, signal, port: scopedPort });
     assertCurrent();
     if (reading) analysis = withReading(analysis, reading, category);
     const declaredMutation = admissionEvidence?.kind === 'agent-settings';
@@ -588,7 +594,7 @@ export class PermissionManager {
     const decision = await decideAutonomousTool({
       port: scopedPort, binding,
       state: readingArguments({ tool: toolName, arguments: args, source: autonomousSourceEvidence(source), ...(directory ? { workingDirectory: directory } : {}),
-        evidence: { boundary: boundaryRecord(boundary), ...(reading ? { reading: readingRecord(reading) } : {}),
+        evidence: { ...(externalRequestEvidence ? { externalRequest: externalRequestEvidence } : {}), boundary: boundaryRecord(boundary), ...(reading ? { reading: readingRecord(reading) } : {}),
           ...(agentRead && admissionEvidence?.kind === 'agent-read' ? { agentRead: { root: admissionEvidence.root, paths: agentRead.paths, allowed: agentRead.allowed } } : {}),
           ...(admissionEvidence?.kind === 'agent-settings' ? { settingsEffect: admissionEvidence.effect } : {}),
           ...(settings ? { settings: { key: settings.key, hazard: settings.hazard.choice, hazardOutcome: settings.hazard.outcome,

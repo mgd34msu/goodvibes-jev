@@ -41,8 +41,13 @@ function createReceiptsListHandler(service: CheckinGatewayService): GatewayMetho
 }
 
 function createRunHandler(service: CheckinGatewayService): GatewayMethodHandler {
-  return async () => {
-    const outcome = await service.evaluate('manual');
+  return async (invocation) => {
+    const assertAuthority = () => {
+      if (invocation.isAuthorized && !invocation.isAuthorized(['write:checkin'])) {
+        throw new GatewayVerbError('Check-in invocation authority was revoked', 'FORBIDDEN', 403);
+      }
+    };
+    const outcome = await service.evaluate('manual', undefined, invocation.signal, assertAuthority);
     return {
       outcome: outcome.outcome,
       summary: outcome.summary,
