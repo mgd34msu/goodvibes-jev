@@ -199,7 +199,7 @@ test('an external model change aborts an already-entered native retry admission'
     f.turns.emit('TURN_ERROR', { turnId: 'turn-a', error: 'failed' }); await native.waiting;
     expect(native.orchestrator.isThinking).toBe(false);
     f.changeModel('third:three'); expect(controller.signal.aborted).toBe(true);
-    native.release(); expect(await outcome).toMatchObject({ name: 'AbortError' });
+    native.release(); expect(await outcome).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' }, signalAborted: true, messageCount: 0 });
     expect(native.conversation.getMessageCount()).toBe(0); expect(f.model()).toBe('third:three');
   } finally { f.close(); native.dispose(); await outcome; }
 });
