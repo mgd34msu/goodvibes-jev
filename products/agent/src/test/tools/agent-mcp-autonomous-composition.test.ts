@@ -1,23 +1,29 @@
 import { expect, test } from 'bun:test';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { gateReadingsPort } from '../../../../../packages/engine/test/_helpers/gate-readings.ts';
-import { PermissionManager, type PermissionConfigReader } from '../../../../../packages/engine/sdk/src/platform/permissions/manager.ts';
-import { PolicyRuntimeState } from '../../../../../packages/engine/sdk/src/platform/runtime/permissions/policy-runtime.ts';
-import { McpRegistry } from '../../../../../packages/engine/sdk/src/platform/mcp/registry.ts';
-import { McpClient } from '../../../../../packages/engine/sdk/src/platform/mcp/client.ts';
-import { createRuntimeMcpApi } from '../../../../../packages/engine/sdk/src/platform/runtime/runtime-mcp-api.ts';
-import { withExternalOperationSource } from '../../../../../packages/engine/sdk/src/platform/permissions/external-operation-scope.ts';
-import { createToolRegistryDouble } from '../helpers/tool-registry-double.ts';
+import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import { McpClient } from '@goodvibes-jev/engine/sdk/platform/mcp';
+import { createRuntimeMcpApi } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { executeToolCalls, type ToolExecutionDeps } from '@goodvibes-jev/engine/sdk/platform/core';
+import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { installAgentMcpCallRoute, resetAgentMcpCallRouteForTests } from '../../tools/agent-mcp-call-route.ts';
 
 for (const outcome of ['act', 'reject', 'abort']) test(`real Agent route and facade reach canonical HTTP ${outcome}`, async () => {
   using log = new SqliteDecisionLog(':memory:');
-  const gate = gateReadingsPort([['', { outward: true, capability: 'network_write' }]]);
-  const semantic = fakePort((_name, question) => choiceAnswer(question, outcome === 'reject' ? 'reject' : 'act', 0.99));
+  const gate = fakePort((name, question) => question.type === 'noul'
+    ? noulAnswer(name === 'mutates' || name === 'outward' ? 0.97 : 0.03)
+    : choiceAnswer(question, name === 'capability' ? 'network_write' : name === 'family' ? 'generic' : 'other', 0.99));
+  let registryDispositions = 0;
+  const semantic = fakePort((_name, question, state) => {
+    const registryCall = (state as { input?: { tool?: string } }).input?.tool === 'mcp:synthetic:write';
+    if (registryCall) registryDispositions++;
+    return choiceAnswer(question, registryCall && outcome === 'reject' ? 'reject' : 'act', 0.99);
+  });
   const port: JudgmentPort = withDecisionLog({ model: gate.port.model, ask(request) {
     request.beforeAttempt?.(); return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
   } }, log);
@@ -51,12 +57,18 @@ for (const outcome of ['act', 'reject', 'abort']) test(`real Agent route and fac
     const internal = registry as unknown as { clients: Map<string, McpClient>; permissions: { registerServer(name: string): void } };
     internal.clients.set('synthetic', client); internal.permissions.registerServer('synthetic');
     const api = createRuntimeMcpApi(registry);
-    const tools = createToolRegistryDouble();
+    const tools = new ToolRegistry();
     const tool: Tool = { definition: { name: 'mcp', description: 'MCP', parameters: { type: 'object', properties: { mode: { type: 'string', enum: ['servers'] } } } }, execute: async () => ({ success: true }) };
     tools.register(tool); resetAgentMcpCallRouteForTests();
     expect(installAgentMcpCallRoute(tools, { clients: { mcpApi: api } } as unknown as CommandContext)).toBe(true);
-    const result = await withExternalOperationSource({ sourceOf: () => ({ goal: 'Perform the requested synthetic write', criteria: [] }), assertCurrent() {} },
-      () => tool.execute({ mode: 'call', qualifiedName: 'mcp:synthetic:write', input: { text: 'requested' } }, { signal: controller.signal }));
-    expect(result.success).toBe(outcome === 'act'); expect(writes).toBe(outcome === 'act' ? 1 : 0); expect(humans).toBe(0);
+    const deps: ToolExecutionDeps = { autonomousSource: () => ({ goal: 'Perform the requested synthetic write', criteria: [] }),
+      autonomousPort: () => port, permissionManager: manager, toolRegistry: tools, hookDispatcher: null, runtimeBus: null,
+      turnSignal: controller.signal, sessionId: 'synthetic-session',
+      emitterContext: () => ({ sessionId: 'synthetic-session', traceId: 'synthetic-trace', source: 'orchestrator' }) };
+    const result = await executeToolCalls(deps, 'synthetic-turn', [{ id: 'synthetic-call', name: 'mcp',
+      arguments: { mode: 'call', qualifiedName: 'mcp:synthetic:write', input: { text: 'requested' } } }])
+      .then(results => results[0], (error: unknown) => ({ success: false, error }));
+    expect(result?.success).toBe(outcome === 'act'); expect(registryDispositions).toBe(1);
+    expect(writes).toBe(outcome === 'act' ? 1 : 0); expect(humans).toBe(0);
   } finally { await client.disconnect(); installJudgmentPort(prior); resetAgentMcpCallRouteForTests(); }
 });
