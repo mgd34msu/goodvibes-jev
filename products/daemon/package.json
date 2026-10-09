@@ -23,6 +23,7 @@
   },
   "scripts": {
     "build": "bunx tsc -p tsconfig.build.json",
+    "release:prepare": "bun scripts/release-prepare.ts",
     "build:binary": "bun scripts/run-toolchain.ts build",
     "smoke:binary": "bun scripts/run-toolchain.ts smoke",
     "verify:binary": "node scripts/verify-binary.mjs",

@@ -721,7 +721,21 @@
       "targets": [
         "products/daemon/src/test/daemon/lifecycle.test.ts"
       ]
+    },
+    {
+      "source": "scripts/release-prepare.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/scripts/release-prepare.ts"
+      ]
+    },
+    {
+      "source": "src/test/scripts/release-prepare.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/scripts/release-prepare.test.ts"
+      ]
     }
   ],
-  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Bounded discovery, effective-token startup pairing, Linux native producer/consumer qualification, account-eligible clustered Slack/email owners and canonical multi-owner composition are implemented; see docs/audit/daemon-migration-status-2026-10-08.md for evidence and remaining A\u2013G acceptance criteria. The lifecycle artifact resolver and its tests are mapped without activating updates. The shipped entrypoint now composes complete Slack/Discord/email unconfigured membership with no provider polling; configured sources still require trusted local authority and a production Discord catalog. Explicit owned triage read-enrichment/scoring integration is credited to PR215; automatic service/update lifecycle policy and wiring, remaining token pruning/legacy adoption/public-URL persistence, actual compiled hosted-model/Jev proof and platform/release acceptance remain open. The partial src/daemon/cli.ts and inbox/index.ts adaptations are intentionally not marked fully migrated. This partial workspace does not satisfy migration:complete; all five upstream release/compiled-hosting/toolchain acceptance rows remain deferred. Source-level fixtures and Linux artifact proof do not establish live provider/service calibration or whole-session transport bounds."
+  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Bounded discovery, effective-token startup pairing, Linux native producer/consumer qualification, account-eligible clustered Slack/email owners and canonical multi-owner composition are implemented; see docs/audit/daemon-migration-status-2026-10-08.md for evidence and remaining A\u2013G acceptance criteria. The lifecycle artifact resolver and its tests are mapped without activating updates. The shipped entrypoint now composes complete Slack/Discord/email unconfigured membership with no provider polling; configured sources still require trusted local authority and a production Discord catalog. Explicit owned triage read-enrichment/scoring integration is credited to PR215; automatic service/update lifecycle policy and wiring, remaining token pruning/legacy adoption/public-URL persistence, actual compiled hosted-model/Jev proof and platform/release acceptance remain open. The partial src/daemon/cli.ts and inbox/index.ts adaptations are intentionally not marked fully migrated. This partial workspace does not satisfy migration:complete; the two release-preparation source/test rows now have explicit-input local mechanics and fixture proof (docs/audit/daemon-release-preparation.md). The other three release/compiled-hosting/toolchain rows and product release/version policy remain separately incomplete; no release or update activation is configured. Source-level fixtures and Linux artifact proof do not establish live provider/service calibration or whole-session transport bounds."
 }

@@ -184,3 +184,24 @@ Duplicate wire provider IDs are rejected. Explicit provider membership is still
 required for custom composition. The production constructor includes explicit
 unconfigured membership, but does not supply an active Discord adapter. See `docs/audit/daemon-multiowner-inbox-composition.md` for lifecycle,
 pagination and protected-read contracts.
+
+## Explicit local release preparation
+
+`bun run release:prepare --no-bump --no-changelog` synchronizes the compiled
+version fallback with this product's manifest (and a README version badge if
+one exists). It is opt-in; ordinary builds still only validate the fallback.
+
+After a product release/version policy is chosen, the same mechanics accept one
+explicit `--patch`, `--minor`, `--major`, or `--version X.Y.Z` instead of
+`--no-bump`. To scaffold notes, provide a product-owned `CHANGELOG.md` and
+`--date YYYY-MM-DD` instead of `--no-changelog`. The section is inserted above
+the first existing section, preserving old notes. Review and complete the notes.
+Exact-version and no-bump runs are byte-idempotent; another arithmetic bump is
+a new bump. Missing/ambiguous inputs fail before writes. Ordinary write failures
+attempt to restore every touched file, reporting incomplete restoration. This
+is not a crash-safe or concurrent multi-file transaction; use a clean, exclusive
+checkout and inspect the diff before continuing.
+
+These mechanics do not select shared versus daemon-specific version ownership,
+migrate saved updater settings, configure release-cut, publish, tag, commit,
+install or deploy anything. See [the bounded audit](../../docs/audit/daemon-release-preparation.md).
