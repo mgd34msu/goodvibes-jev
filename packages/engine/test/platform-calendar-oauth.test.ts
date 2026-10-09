@@ -24,10 +24,15 @@
  *    401 -> reconnect-needed.
  *  - tokens live only in the secret store, never echoed into account/state.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { createSystemOnePort, PINNED_MODEL, type EntryType, type Question, type JudgmentConfig } from '@goodvibes-jev/judgment';
+import { missingPermission } from '../sdk/src/platform/calendar/batteries/missing-permission.ts';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { createSha256Hash } from '../sdk/src/platform/runtime/auth/crypto-adapter.ts';
 import {
   CalendarApiError,
+  errorFromResponse,
   CalendarConnector,
   CalendarTokenStore,
   OAuthFlowError,
@@ -35,6 +40,7 @@ import {
   parseTokenResponse,
   providerProfile,
   resolveClientConfig,
+  type CalendarProviderId,
   type HttpFetch,
   type HttpRequest,
   type HttpResponse,
@@ -85,6 +91,7 @@ interface ServerState {
   readonly revoked: Set<string>;
   nextAccess: number;
   /** toggles for degraded-state tests. */
+  eventsErrorBody?: unknown;
   eventsStatus: number; // 200 normal, 401/403/429 to force a degraded state
   /** account email surfaced by the primary calendar. */
   googleEmail: string;
@@ -197,7 +204,7 @@ function makeFakeFetch(state: ServerState): HttpFetch {
       }
       if (path.startsWith('/calendar/v3/calendars/') && path.endsWith('/events') && req.method === 'GET') {
         if (state.eventsStatus === 403) {
-          return jsonResponse(403, { error: { message: 'insufficient scope: calendar.readonly' } });
+          return jsonResponse(403, state.eventsErrorBody ?? { error: { message: 'insufficient scope: calendar.readonly' } });
         }
         if (state.eventsStatus === 429) {
           return jsonResponse(429, { error: { message: 'rate limit' } }, { 'Retry-After': '30' });
@@ -236,7 +243,7 @@ function makeFakeFetch(state: ServerState): HttpFetch {
         });
       }
       if (path.includes('/calendarView')) {
-        if (state.eventsStatus === 403) return jsonResponse(403, { error: { message: 'Access denied: Calendars.Read' } });
+        if (state.eventsStatus === 403) return jsonResponse(403, state.eventsErrorBody ?? { error: { message: 'Access denied: Calendars.Read' } });
         const skip = url.searchParams.get('$skiptoken');
         if (!skip) {
           return jsonResponse(200, {
@@ -804,5 +811,284 @@ describe('Microsoft Graph API', () => {
     });
     expect(created.source).toBe('microsoft-graph');
     expect(created.sourceEventId).toBe('m-created');
+  });
+});
+
+// A semantic fixture answer is injected at the canonical port; production still
+// traverses token store → CalendarConnector → provider client → HTTP failure.
+function scopePort(selected: string | null, confidence = 0.97) {
+  return fakePort((name, question, state) => {
+    const tokens = (state as { tokens: { id: string; text: string }[] }).tokens;
+    const chosen = selected === null ? 'none' : selected === 'unresolved' ? 'unresolved'
+      : tokens.find((token) => token.text === selected)?.id;
+    if (!chosen) throw new Error(`Fixture cannot find selected source token: ${selected}`);
+    if (name === 'pick') return choiceAnswer(question, chosen, confidence);
+    return noulAnswer(name === `fits_${chosen}` ? 0.98 : 0.02);
+  });
+}
+let previousScopePort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousScopePort = installJudgmentPort(scopePort('calendar.readonly').port); });
+afterEach(() => { installJudgmentPort(previousScopePort); });
+
+async function scopeFailure(body: unknown, selected: string | null, confidence = 0.97) {
+  const fake = scopePort(selected, confidence);
+  installJudgmentPort(fake.port);
+  const { connector, state } = await connectedGoogle();
+  state.eventsStatus = 403;
+  state.eventsErrorBody = body;
+  let error: unknown;
+  try { await connector.listEvents(realConfig('google'), { timeMin: '2026-07-01T00:00:00Z', timeMax: '2026-08-01T00:00:00Z' }); }
+  catch (caught) { error = caught; }
+  return { error, requests: fake.requests };
+}
+
+describe('calendar missing-permission judgment through the connector', () => {
+  test('names the missing permission without a scope keyword', async () => {
+    const { error, requests } = await scopeFailure({ error: { message: 'The application lacks calendar.events.readonly for this operation.' } }, 'calendar.events.readonly');
+    expect(error).toBeInstanceOf(CalendarApiError);
+    expect((error as CalendarApiError).degraded).toMatchObject({ kind: 'insufficient-scope', missingScope: 'calendar.events.readonly' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.context?.battery).toBe('engine.calendar.missing-permission');
+  });
+  test('does not take already-granted or incidental scopes before the actual missing permission', async () => {
+    const body = { error: { message: 'Granted scopes: calendar.readonly. Documentation mentions calendar.events. This request requires calendar.events.owned, which is absent.' } };
+    const { error } = await scopeFailure(body, 'calendar.events.owned');
+    expect((error as CalendarApiError).degraded).toMatchObject({ kind: 'insufficient-scope', missingScope: 'calendar.events.owned' });
+  });
+  test('settled none preserves forbidden without inventing an insufficient scope', async () => {
+    const { error, requests } = await scopeFailure({ error: { message: 'The account has calendar.readonly. Access is denied by an organization policy.' } }, null);
+    expect((error as CalendarApiError).degraded).toMatchObject({ kind: 'provider-error', status: 403 });
+    expect(requests).toHaveLength(1);
+  });
+  test('keeps complete evidence, including the missing permission after a long introduction', async () => {
+    const body = { error: { message: 'No changes. '.repeat(250) + 'The application lacks calendar.events.owned for this request.' } };
+    const { error, requests } = await scopeFailure(body, 'calendar.events.owned');
+    expect((error as CalendarApiError).degraded).toMatchObject({ kind: 'insufficient-scope', missingScope: 'calendar.events.owned' });
+    expect(JSON.stringify(requests[0]?.state)).toContain(body.error.message);
+  });
+  test.each([0.6, 0.2])('uncertain reading at %s remains an explicit operational failure', async (confidence) => {
+    const { error } = await scopeFailure({ error: { message: 'Missing scope: calendar.readonly' } }, 'calendar.readonly', confidence);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe('CalendarScopeReadingError');
+    expect(error).not.toBeInstanceOf(CalendarApiError);
+  });
+  test('explicit unresolved is not settled none', async () => {
+    const { error } = await scopeFailure({ error: { message: 'A permission may or may not be absent.' } }, 'unresolved');
+    expect((error as Error).name).toBe('CalendarScopeReadingError');
+  });
+  test('unconfigured port never falls back to a regex answer', async () => {
+    const { connector, state } = await connectedGoogle();
+    state.eventsStatus = 403;
+    installJudgmentPort(undefined);
+    await expect(connector.listEvents(realConfig('google'), { timeMin: '2026-07-01T00:00:00Z', timeMax: '2026-08-01T00:00:00Z' })).rejects.toMatchObject({ name: 'JudgmentPortMissingError' });
+  });
+});
+
+async function seededConnector(provider: CalendarProviderId, response: HttpResponse) {
+  const secrets = makeSecrets();
+  await new CalendarTokenStore({ secrets }).save(provider, {
+    accessToken: 'synthetic-private-calendar-token', tokenType: 'Bearer', expiresAt: Date.now() + 3_600_000, obtainedAt: Date.now(),
+  }, { provider, accountId: provider, label: 'Fixture account', scopes: [], connectedAt: Date.now() });
+  const requests: HttpRequest[] = [];
+  const connector = new CalendarConnector({ secrets, fetchImpl: async (request) => { requests.push(request); return response; } });
+  return { connector, requests };
+}
+const WINDOW = { timeMin: '2026-07-01T00:00:00Z', timeMax: '2026-08-01T00:00:00Z' };
+
+describe('calendar permission provenance and complete evidence', () => {
+  test.each(['google', 'microsoft'] as const)('%s uses a single RFC6750 required scope without a judgment call', async (provider) => {
+    installJudgmentPort(undefined);
+    const { connector } = await seededConnector(provider, jsonResponse(403, { error: 'Forbidden' }, {
+      'WWW-Authenticate': 'Bearer realm="calendar", error="insufficient_scope", scope="Calendars.ReadWrite"',
+    }));
+    await expect(connector.listCalendars(realConfig(provider))).rejects.toMatchObject({ degraded: { kind: 'insufficient-scope', missingScope: 'Calendars.ReadWrite' } });
+  });
+  test.each([
+    'Bearer scope="Calendars.Read", error="invalid_token"',
+    'Bearer error="insufficient_scope", scope="Calendars.Read Calendars.ReadWrite"',
+    'Bearer error="insufficient_scope", scope="Calendars.Read", scope="Calendars.Write"',
+    'Bearer error="insufficient_scope", scope="Calendars.Read", Basic realm="other"',
+  ])('an ambiguous or differently purposed challenge needs semantic evidence: %s', async (challenge) => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    const error = await errorFromResponse(jsonResponse(403, { error: { message: 'No particular permission is established as missing.' } }, { 'WWW-Authenticate': challenge }), 'microsoft');
+    expect(error.degraded.kind).toBe('provider-error');
+    expect(fake.requests).toHaveLength(1);
+    expect((fake.requests[0]?.state as { authenticationChallenge: string }).authenticationChallenge).toBe(challenge);
+  });
+  test('Microsoft selects the exact absent permission after a granted permission and incidental example', async () => {
+    const fake = scopePort('Calendars.ReadWrite'); installJudgmentPort(fake.port);
+    const { connector } = await seededConnector('microsoft', jsonResponse(403, { error: { code: 'ErrorAccessDenied',
+      message: 'Calendars.Read has been granted; examples use Calendars.Read.Shared. Calendars.ReadWrite is missing for this request.' } }));
+    await expect(connector.listCalendars(realConfig('microsoft'))).rejects.toMatchObject({ degraded: { kind: 'insufficient-scope', missingScope: 'Calendars.ReadWrite' } });
+    expect(JSON.stringify(fake.requests[0]?.state)).not.toContain('synthetic-private-calendar-token');
+  });
+  test('arbitrary JSON scope field is evidence, not an authoritative missing permission', async () => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    const error = await errorFromResponse(jsonResponse(403, { error: { code: 'accessDenied', scope: 'Calendars.Read', message: 'This is the granted scope. The account license is missing.' } }), 'microsoft');
+    expect(error.degraded).toMatchObject({ kind: 'provider-error', status: 403 });
+    expect(fake.requests).toHaveLength(1);
+  });
+  test('preserves raw evidence and decoded identifier spelling', async () => {
+    const fake = scopePort('Calendars.ReadWrite'); installJudgmentPort(fake.port);
+    const raw = '{"error":{"message":"Missing Calendars\\u002eReadWrite"}}';
+    const error = await errorFromResponse(jsonResponse(403, raw), 'microsoft');
+    expect(error.degraded).toMatchObject({ missingScope: 'Calendars.ReadWrite' });
+    expect((fake.requests[0]?.state as { rawResponseBody: string }).rawResponseBody).toBe(raw);
+  });
+  test.each([
+    '{"error":{"access_token":"synthetic-protected-value","access_token":"","message":"Account disabled"}}',
+    '{"error":{"\\u0061ccess_token":"synthetic-protected-value","access_token":"","message":"Account disabled"}}',
+    JSON.stringify({ error: { message: '{"access_token":"synthetic-protected-value","access_token":""}' } }),
+    '{"error":{"\\u0061ccess_token":"synthetic-protected-value",broken',
+  ])('ambiguous or malformed encoded evidence cannot hide declared credentials', async (body) => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    await expect(errorFromResponse(jsonResponse(403, body), 'google')).rejects.toBeInstanceOf(Error);
+    expect(fake.requests).toHaveLength(0);
+  });
+  test('direct registered battery entry also refuses overwritten protected raw fields', async () => {
+    const fake = scopePort(null);
+    const rawResponseBody = '{"error":{"\\u0061ccess_token":"synthetic-protected-value","access_token":"","message":"Account disabled"}}';
+    await expect(missingPermission.read(fake.port, { provider: 'google', rawResponseBody,
+      responseBody: JSON.parse(rawResponseBody), authenticationChallenge: '' })).rejects.toBeInstanceOf(Error);
+    expect(fake.requests).toHaveLength(0);
+  });
+  test('candidate overflow is refused rather than dropping later evidence', async () => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    await expect(errorFromResponse(jsonResponse(403, Array.from({ length: 260 }, (_, index) => `word${index}`).join(' ') + ' Missing Calendars.Read.'), 'microsoft'))
+      .rejects.toMatchObject({ name: 'CalendarScopeReadingError', reason: 'evidence-limit' });
+    expect(fake.requests).toHaveLength(0);
+  });
+  test('context overflow is refused without clipping even with few repeated tokens', async () => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    await expect(errorFromResponse(jsonResponse(403, 'word '.repeat(20_000)), 'google'))
+      .rejects.toMatchObject({ name: 'CalendarScopeReadingError', reason: 'evidence-limit' });
+    expect(fake.requests).toHaveLength(0);
+  });
+  test.each([
+    JSON.stringify({ error: { message: 'intro '.repeat(1_000), access_token: 'synthetic-protected-value' } }),
+    '{"error":{"message":"denied","\\u0061ccess_token":"synthetic-protected-value"}}',
+  ])('complete protected evidence is checked before projection or port use', async (body) => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    await expect(errorFromResponse(jsonResponse(403, body), 'google')).rejects.toMatchObject({ name: 'JudgmentInputError' });
+    expect(fake.requests).toHaveLength(0);
+  });
+  test.each([
+    'Bearer error="insufficient_scope", scope="access_token=synthetic-protected-value"',
+    '{"access_token":"synthetic-protected-value","access_token":""}',
+    'Bearer error_description=' + JSON.stringify('{"\\u0061ccess_token":"synthetic-protected-value","access_token":""}'),
+  ])('authentication challenge credential material never reaches the port', async (challenge) => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    await expect(errorFromResponse(jsonResponse(403, 'Denied', { 'WWW-Authenticate': challenge }), 'google')).rejects.toBeInstanceOf(Error);
+    expect(fake.requests).toHaveLength(0);
+  });
+  test('an unreadable response is not a settled none', async () => {
+    const fake = scopePort(null); installJudgmentPort(fake.port);
+    const response = { ...jsonResponse(403, ''), text: async () => { throw new Error('synthetic body read failure'); } };
+    await expect(errorFromResponse(response, 'google')).rejects.toMatchObject({ name: 'CalendarScopeReadingError', reason: 'unreadable-response' });
+    expect(fake.requests).toHaveLength(0);
+  });
+  test.each(['outside-candidates', 'missing-answer', 'invalid-fit', 'missing-probabilities'])('rejects malformed injected %s answers', async (failure) => {
+    const valid = scopePort('Calendars.Read');
+    installJudgmentPort({ model: valid.port.model, async ask(request) {
+      const result = await valid.port.ask(request);
+      const answers = result.answers as unknown as Record<string, unknown>;
+      if (failure === 'outside-candidates') answers.pick = { type: 'choice', choice: 'invented', confidence: 0.99, probabilities: { invented: 1 } };
+      if (failure === 'missing-answer') delete answers.pick;
+      if (failure === 'missing-probabilities') answers.pick = { type: 'choice', choice: 'none', confidence: 0.99 };
+      if (failure === 'invalid-fit') answers[Object.keys(answers).find((key) => key.startsWith('fits_'))!] = { type: 'noul', noul: NaN };
+      return result;
+    } });
+    await expect(errorFromResponse(jsonResponse(403, 'Missing Calendars.Read'), 'microsoft')).rejects.toMatchObject({ name: 'CalendarScopeReadingError', reason: 'malformed' });
+  });
+  test('a none choice contradicted by a positive fit stays unresolved', async () => {
+    const fake = fakePort((_name, question) => question.type === 'choice' ? choiceAnswer(question, 'none', 0.99) : noulAnswer(0.99));
+    installJudgmentPort(fake.port);
+    await expect(errorFromResponse(jsonResponse(403, 'Missing Calendars.Read'), 'microsoft')).rejects.toMatchObject({ name: 'CalendarScopeReadingError', reason: 'unresolved' });
+  });
+  test.each([401, 429])('%s remains mechanical even with no port and credential-like error text', async (status) => {
+    installJudgmentPort(undefined);
+    const error = await errorFromResponse(jsonResponse(status, 'access_token=synthetic', { 'Retry-After': '3' }), 'google');
+    expect(error.degraded).toMatchObject(status === 401 ? { kind: 'reconnect-needed' } : { kind: 'rate-limited', retryAfterMs: 3_000 });
+  });
+  test.each([['', 1_000], ['nonsense', 1_000], ['-1', 0], ['1.5', 1_500]] as const)('Retry-After %j keeps its mechanical value', async (header, expected) => {
+    installJudgmentPort(undefined);
+    const error = await errorFromResponse(jsonResponse(429, '', { 'Retry-After': header }), 'microsoft');
+    expect(error.degraded).toMatchObject({ kind: 'rate-limited', retryAfterMs: expected });
+  });
+  test('HTTP-date Retry-After remains honored without Jev', async () => {
+    installJudgmentPort(undefined);
+    const error = await errorFromResponse(jsonResponse(429, '', { 'Retry-After': new Date(Date.now() + 60_000).toUTCString() }), 'google');
+    expect(error.degraded.kind).toBe('rate-limited');
+    if (error.degraded.kind === 'rate-limited') expect(error.degraded.retryAfterMs).toBeGreaterThan(58_000);
+  });
+  test('registered battery fixtures exercise scope, none, and unresolved', async () => {
+    const expectations: Record<string, string | null> = {
+      'google without scope keyword': 'https://www.googleapis.com/auth/calendar.events.readonly',
+      'graph granted before missing': 'Calendars.ReadWrite',
+      'incidental permission and policy denial': null,
+      'google structured rate denial is not scope': null,
+      'negated permission absence': null,
+      'ambiguous permission': 'unresolved',
+    };
+    const fake = scopePort(null);
+    const results = await missingPermission.checkFixtures({ model: fake.port.model, async ask(request) {
+      return scopePort(expectations[request.context?.fixture ?? ''] ?? null).port.ask(request);
+    } });
+    expect(results).toHaveLength(6);
+    expect(results.every((result) => result.correct)).toBe(true);
+  });
+});
+
+function transportConfig(fetchImpl: NonNullable<JudgmentConfig['fetch']>): JudgmentConfig {
+  return { endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-judgment-key' },
+    model: PINNED_MODEL, timeoutMs: 1_000, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch: fetchImpl };
+}
+function permissionWireResponse(body: string): Response {
+  const { state, questions } = JSON.parse(body) as { state: EntryType; questions: Record<string, Question> };
+  const token = (state as { tokens: { id: string; text: string }[] }).tokens.find((candidate) => candidate.text === 'Calendars.ReadWrite')!;
+  const answers = Object.fromEntries(Object.entries(questions).map(([name, question]) => [name,
+    name === 'pick' ? choiceAnswer(question, token.id, 0.98) : noulAnswer(name === `fits_${token.id}` ? 0.98 : 0.02)]));
+  return Response.json({ model: PINNED_MODEL, answers, usage: { input_tokens: 1, output_tokens: 1 } });
+}
+
+describe('calendar connector uses the shared judgment retry and cancellation lifecycle', () => {
+  test('transient Jev outage recovers without repeating a failed calendar write', async () => {
+    let attempts = 0;
+    installJudgmentPort(createSystemOnePort(transportConfig(async (_url, init) => {
+      if (++attempts < 3) return Response.json({}, { status: 503 });
+      return permissionWireResponse(String(init?.body));
+    })));
+    const { connector, requests } = await seededConnector('microsoft', jsonResponse(403, 'Missing Calendars.ReadWrite'));
+    await expect(connector.createEvent(realConfig('microsoft'), 'calendar-id', 'Private calendar', {
+      summary: 'Never send this event to Jev', start: { value: '2026-07-06', kind: 'date', zone: 'floating' },
+    })).rejects.toMatchObject({ degraded: { kind: 'insufficient-scope', missingScope: 'Calendars.ReadWrite' } });
+    expect(attempts).toBe(3);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe('POST');
+  });
+  test.each(['google', 'microsoft'] as const)('%s cancellation interrupts shared outage wait without a fabricated scope or repeated provider call', async (provider) => {
+    const controller = new AbortController();
+    let began!: () => void;
+    const entered = new Promise<void>((resolve) => { began = resolve; });
+    let attempts = 0;
+    installJudgmentPort(createSystemOnePort(transportConfig(async () => { attempts++; began(); return Response.json({}, { status: 503 }); })));
+    const { connector, requests } = await seededConnector(provider, jsonResponse(403, 'Missing Calendars.ReadWrite'));
+    const pending = connector.listEvents(realConfig(provider), WINDOW, { signal: controller.signal });
+    await entered;
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ kind: 'aborted' });
+    const stoppedAt = attempts;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(attempts).toBe(stoppedAt);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.signal).toBe(controller.signal);
+  });
+  test('a permanent Jev failure is explicit and does not retry or relabel as none', async () => {
+    let attempts = 0;
+    installJudgmentPort(createSystemOnePort(transportConfig(async () => { attempts++; return Response.json({}, { status: 401 }); })));
+    const { connector, requests } = await seededConnector('google', jsonResponse(403, 'Missing Calendars.ReadWrite'));
+    await expect(connector.listCalendars(realConfig('google'))).rejects.toMatchObject({ kind: 'rejected' });
+    expect(attempts).toBe(1);
+    expect(requests).toHaveLength(1);
   });
 });

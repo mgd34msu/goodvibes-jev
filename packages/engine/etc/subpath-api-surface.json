@@ -11652,7 +11652,7 @@
         "resolveConfig",
         "resolveConfigFromSettings"
       ],
-      "text": "export declare class CalendarConnector { private readonly secrets; private readonly fetchImpl; private readonly clock; private readonly listenerFactory?; private readonly sleep; private readonly store; private readonly recordUntrustedIngest?; constructor(options: CalendarConnectorOptions); resolveConfig(provider: CalendarProviderId, overrides?: OAuthClientOverrides): ResolvedClientConfig; resolveConfigFromSettings(provider: CalendarProviderId, sources: { readonly config: CalendarConfigReader; readonly secretGet?: CalendarSecretReader | undefined; readonly extra?: Omit<OAuthClientOverrides, 'clientId' | 'clientSecret'> | undefined; }): Promise<ResolvedClientConfig>; listAccounts(): Promise<ConnectedAccount[]>; connectionState(provider: CalendarProviderId): Promise<ConnectionState>; beginConnectAuthCode(config: ResolvedClientConfig): Promise<{ readonly start: AuthCodeFlowStart; readonly waiter: LoopbackWaiter; }>; completeConnectAuthCode(config: ResolvedClientConfig, input: { readonly code: string; readonly verifier: string; readonly redirectUri: string; }): Promise<ConnectedAccount>; beginConnectDeviceCode(config: ResolvedClientConfig): Promise<DeviceCodeFlowStart>; completeConnectDeviceCode(config: ResolvedClientConfig, start: DeviceCodeFlowStart): Promise<ConnectedAccount>; disconnect(provider: CalendarProviderId, overrides?: OAuthClientOverrides): Promise<{ readonly revokedRemotely: boolean; }>; listCalendars(config: ResolvedClientConfig): Promise<ProviderCalendar[]>; listEvents(config: ResolvedClientConfig, window: EventWindow): Promise<MergedCalendarEvent[]>; createEvent(config: ResolvedClientConfig, calendarId: string, calendarLabel: string, event: NewCalendarEvent): Promise<MergedCalendarEvent>; private persistConnection; private deriveLabel; } ;; via Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class CalendarConnector { private readonly secrets; private readonly fetchImpl; private readonly clock; private readonly listenerFactory?; private readonly sleep; private readonly store; private readonly recordUntrustedIngest?; constructor(options: CalendarConnectorOptions); resolveConfig(provider: CalendarProviderId, overrides?: OAuthClientOverrides): ResolvedClientConfig; resolveConfigFromSettings(provider: CalendarProviderId, sources: { readonly config: CalendarConfigReader; readonly secretGet?: CalendarSecretReader | undefined; readonly extra?: Omit<OAuthClientOverrides, 'clientId' | 'clientSecret'> | undefined; }): Promise<ResolvedClientConfig>; listAccounts(): Promise<ConnectedAccount[]>; connectionState(provider: CalendarProviderId): Promise<ConnectionState>; beginConnectAuthCode(config: ResolvedClientConfig): Promise<{ readonly start: AuthCodeFlowStart; readonly waiter: LoopbackWaiter; }>; completeConnectAuthCode(config: ResolvedClientConfig, input: { readonly code: string; readonly verifier: string; readonly redirectUri: string; }): Promise<ConnectedAccount>; beginConnectDeviceCode(config: ResolvedClientConfig): Promise<DeviceCodeFlowStart>; completeConnectDeviceCode(config: ResolvedClientConfig, start: DeviceCodeFlowStart): Promise<ConnectedAccount>; disconnect(provider: CalendarProviderId, overrides?: OAuthClientOverrides): Promise<{ readonly revokedRemotely: boolean; }>; listCalendars(config: ResolvedClientConfig, options?: CalendarRequestOptions): Promise<ProviderCalendar[]>; listEvents(config: ResolvedClientConfig, window: EventWindow, options?: CalendarRequestOptions): Promise<MergedCalendarEvent[]>; createEvent(config: ResolvedClientConfig, calendarId: string, calendarLabel: string, event: NewCalendarEvent, options?: CalendarRequestOptions): Promise<MergedCalendarEvent>; private persistConnection; private deriveLabel; } ;; via Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "CalendarConnectorOptions",
@@ -11682,6 +11682,20 @@
       "name": "CalendarProviderId",
       "kind": "type",
       "text": "export type CalendarProviderId = 'google' | 'microsoft';"
+    },
+    {
+      "name": "CalendarRequestOptions",
+      "kind": "interface",
+      "text": "export interface CalendarRequestOptions { readonly signal?: AbortSignal; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
+      "name": "CalendarScopeReadingError",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "reason"
+      ],
+      "text": "export declare class CalendarScopeReadingError extends Error { readonly reason: 'unresolved' | 'malformed' | 'evidence-limit' | 'unreadable-response'; constructor(reason: 'unresolved' | 'malformed' | 'evidence-limit' | 'unreadable-response'); }"
     },
     {
       "name": "CalendarSecretReader",
@@ -11881,7 +11895,7 @@
         "method",
         "url"
       ],
-      "text": "export interface HttpRequest { readonly url: string; readonly method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; readonly headers?: Readonly<Record<string, string>>; readonly body?: string; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface HttpRequest extends CalendarRequestOptions { readonly url: string; readonly method: 'GET' | 'POST' | 'DELETE' | 'PATCH'; readonly headers?: Readonly<Record<string, string>>; readonly body?: string; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "HttpResponse",
@@ -12154,7 +12168,7 @@
     {
       "name": "authedRequest",
       "kind": "function",
-      "text": "export declare function authedRequest(fetchImpl: HttpFetch, provider: CalendarProviderId, input: { readonly url: string; readonly method: 'GET' | 'POST'; readonly token: string; readonly body?: unknown; readonly extraHeaders?: Readonly<Record<string, string>>; }): Promise<unknown>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function authedRequest(fetchImpl: HttpFetch, provider: CalendarProviderId, input: { readonly url: string; readonly method: 'GET' | 'POST'; readonly token: string; readonly body?: unknown; readonly extraHeaders?: Readonly<Record<string, string>>; }, options?: CalendarRequestOptions): Promise<unknown>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "beginAuthCodeFlow",
@@ -12204,12 +12218,12 @@
     {
       "name": "createGoogleEvent",
       "kind": "function",
-      "text": "export declare function createGoogleEvent(fetchImpl: HttpFetch, token: string, calendarId: string, calendarLabel: string, event: NewCalendarEvent): Promise<MergedCalendarEvent>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function createGoogleEvent(fetchImpl: HttpFetch, token: string, calendarId: string, calendarLabel: string, event: NewCalendarEvent, options?: CalendarRequestOptions): Promise<MergedCalendarEvent>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "createGraphEvent",
       "kind": "function",
-      "text": "export declare function createGraphEvent(fetchImpl: HttpFetch, token: string, calendarId: string, calendarLabel: string, event: NewCalendarEvent): Promise<MergedCalendarEvent>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function createGraphEvent(fetchImpl: HttpFetch, token: string, calendarId: string, calendarLabel: string, event: NewCalendarEvent, options?: CalendarRequestOptions): Promise<MergedCalendarEvent>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "createPkcePair",
@@ -12224,7 +12238,7 @@
     {
       "name": "errorFromResponse",
       "kind": "function",
-      "text": "export declare function errorFromResponse(res: HttpResponse, provider: CalendarProviderId): Promise<CalendarApiError>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function errorFromResponse(res: HttpResponse, provider: CalendarProviderId, options?: CalendarRequestOptions): Promise<CalendarApiError>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "eventDateTimeEpochMs",
@@ -12239,27 +12253,27 @@
     {
       "name": "fetchAdapter",
       "kind": "function",
-      "text": "export declare function fetchAdapter(fetchImpl?: FetchLike): HttpFetch; ;; via FetchLike = type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; }) => Promise<{ status: number; ok: boolean; headers: { get(name: string): string | null; }; json(): Promise<unknown>; text(): Promise<string>; }>;"
+      "text": "export declare function fetchAdapter(fetchImpl?: FetchLike): HttpFetch; ;; via FetchLike = type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal; }) => Promise<{ status: number; ok: boolean; headers: { get(name: string): string | null; }; json(): Promise<unknown>; text(): Promise<string>; }>;"
     },
     {
       "name": "listGoogleCalendars",
       "kind": "function",
-      "text": "export declare function listGoogleCalendars(fetchImpl: HttpFetch, token: string): Promise<ProviderCalendar[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function listGoogleCalendars(fetchImpl: HttpFetch, token: string, options?: CalendarRequestOptions): Promise<ProviderCalendar[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "listGoogleEvents",
       "kind": "function",
-      "text": "export declare function listGoogleEvents(fetchImpl: HttpFetch, token: string, query: GoogleEventsQuery): Promise<MergedCalendarEvent[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function listGoogleEvents(fetchImpl: HttpFetch, token: string, query: GoogleEventsQuery, options?: CalendarRequestOptions): Promise<MergedCalendarEvent[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "listGraphCalendars",
       "kind": "function",
-      "text": "export declare function listGraphCalendars(fetchImpl: HttpFetch, token: string): Promise<ProviderCalendar[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function listGraphCalendars(fetchImpl: HttpFetch, token: string, options?: CalendarRequestOptions): Promise<ProviderCalendar[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "listGraphEvents",
       "kind": "function",
-      "text": "export declare function listGraphEvents(fetchImpl: HttpFetch, token: string, query: GraphEventsQuery): Promise<MergedCalendarEvent[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function listGraphEvents(fetchImpl: HttpFetch, token: string, query: GraphEventsQuery, options?: CalendarRequestOptions): Promise<MergedCalendarEvent[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "maskFeedUrl",

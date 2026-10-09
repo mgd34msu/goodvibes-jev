@@ -1,13 +1,15 @@
 /**
  * calendar-api-shared.ts, the bearer-auth HTTP helper and honest degraded-state
  * mapping shared by the Google Calendar and Microsoft Graph clients. Every failed
- * response is turned into a NAMED ApiDegradedState (never a generic throw): a 401 is
+ * response is turned into a named ApiDegradedState once its meaning is settled.
+ * An unresolved 403 reading remains an explicit operational failure. A 401 is
  * `reconnect-needed`, a 403 that names a missing scope is `insufficient-scope` naming
  * that scope, a 429 is `rate-limited` carrying the honored Retry-After, everything
  * else is `provider-error` with the status.
  */
 
-import type { ApiDegradedState, CalendarProviderId, HttpFetch, HttpResponse } from './oauth-types.js';
+import { CalendarScopeReadingError, readMissingPermission } from './batteries/missing-permission.js';
+import type { ApiDegradedState, CalendarProviderId, CalendarRequestOptions, HttpFetch, HttpResponse } from './oauth-types.js';
 
 /** A named, honest API failure. */
 export class CalendarApiError extends Error {
@@ -28,24 +30,12 @@ function retryAfterMs(res: HttpResponse): number {
   return Number.isFinite(when) ? Math.max(0, when - Date.now()) : 1000;
 }
 
-/**
- * Best-effort extraction of the scope a 403 says is missing. Google returns it in
- * the error message / details; Graph names it in the error message. When we cannot
- * pin the exact scope, we say so honestly rather than invent one.
- */
-function missingScopeFrom(bodyText: string, provider: CalendarProviderId): string {
-  const scopeMatch = /scope[s]?['"\s:=]+([A-Za-z0-9_.:/-]+)/i.exec(bodyText);
-  if (scopeMatch) return scopeMatch[1]!;
-  const graphPerm = /(Calendars\.[A-Za-z]+)/.exec(bodyText);
-  if (graphPerm) return graphPerm[1]!;
-  return provider === 'google'
-    ? 'a Google Calendar scope not granted to this connection'
-    : 'a Microsoft Graph Calendars permission not granted to this connection';
-}
-
-/** Map a non-OK response to a CalendarApiError with a named degraded state. */
-export async function errorFromResponse(res: HttpResponse, provider: CalendarProviderId): Promise<CalendarApiError> {
-  const bodyText = await res.text().catch(() => '');
+/** Map a non-OK response; unresolved 403 meaning throws an operational reading error. */
+export async function errorFromResponse(res: HttpResponse, provider: CalendarProviderId, options: CalendarRequestOptions = {}): Promise<CalendarApiError> {
+  const bodyText = await res.text().catch(() => {
+    if (res.status === 403) throw new CalendarScopeReadingError('unreadable-response');
+    return '';
+  });
   if (res.status === 401) {
     return new CalendarApiError({
       kind: 'reconnect-needed',
@@ -53,9 +43,14 @@ export async function errorFromResponse(res: HttpResponse, provider: CalendarPro
     });
   }
   if (res.status === 403) {
+    const missingScope = await readMissingPermission(provider, bodyText, res.header('www-authenticate') ?? '', options);
+    if (missingScope === undefined) return new CalendarApiError({
+      kind: 'provider-error', status: 403,
+      detail: `${provider} refused the request (403); the response identifies no specific missing permission.`,
+    });
     return new CalendarApiError({
       kind: 'insufficient-scope',
-      missingScope: missingScopeFrom(bodyText, provider),
+      missingScope,
       detail: `${provider} refused the request for lack of a granted scope (403).`,
     });
   }
@@ -84,7 +79,9 @@ export async function authedRequest(
     readonly body?: unknown;
     readonly extraHeaders?: Readonly<Record<string, string>>;
   },
+  options: CalendarRequestOptions = {},
 ): Promise<unknown> {
+  options.signal?.throwIfAborted();
   const headers: Record<string, string> = {
     Authorization: `Bearer ${input.token}`,
     Accept: 'application/json',
@@ -97,14 +94,17 @@ export async function authedRequest(
       url: input.url,
       method: input.method,
       headers,
+      ...(options.signal ? { signal: options.signal } : {}),
       ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
     });
   } catch (error) {
+    options.signal?.throwIfAborted();
     throw new CalendarApiError({
       kind: 'network-error',
       detail: `Reaching ${provider} failed: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
-  if (!res.ok) throw await errorFromResponse(res, provider);
+  options.signal?.throwIfAborted();
+  if (!res.ok) throw await errorFromResponse(res, provider, options);
   return res.json();
 }

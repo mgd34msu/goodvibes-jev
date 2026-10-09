@@ -10,17 +10,17 @@
 import { authedRequest } from './calendar-api-shared.js';
 import { normalizeGraphEvent } from './merged-calendar-model.js';
 import type { EventDateTime } from './types.js';
-import type { HttpFetch, MergedCalendarEvent, NewCalendarEvent, ProviderCalendar } from './oauth-types.js';
+import type { CalendarRequestOptions, HttpFetch, MergedCalendarEvent, NewCalendarEvent, ProviderCalendar } from './oauth-types.js';
 
 const BASE = 'https://graph.microsoft.com/v1.0';
 const UTC_PREFER = { Prefer: 'outlook.timezone="UTC"' } as const;
 
 /** List the user's calendars; write access comes from canEdit. */
-export async function listGraphCalendars(fetchImpl: HttpFetch, token: string): Promise<ProviderCalendar[]> {
+export async function listGraphCalendars(fetchImpl: HttpFetch, token: string, options: CalendarRequestOptions = {}): Promise<ProviderCalendar[]> {
   const out: ProviderCalendar[] = [];
   let next: string | undefined = `${BASE}/me/calendars?$select=id,name,canEdit,isDefaultCalendar&$top=100`;
   while (next) {
-    const body = (await authedRequest(fetchImpl, 'microsoft', { url: next, method: 'GET', token })) as {
+    const body = (await authedRequest(fetchImpl, 'microsoft', { url: next, method: 'GET', token }, options)) as {
       value?: unknown[];
       '@odata.nextLink'?: unknown;
     };
@@ -55,6 +55,7 @@ export async function listGraphEvents(
   fetchImpl: HttpFetch,
   token: string,
   query: GraphEventsQuery,
+  options: CalendarRequestOptions = {},
 ): Promise<MergedCalendarEvent[]> {
   const out: MergedCalendarEvent[] = [];
   const first = new URL(`${BASE}/me/calendars/${encodeURIComponent(query.calendarId)}/calendarView`);
@@ -70,7 +71,7 @@ export async function listGraphEvents(
       method: 'GET',
       token,
       extraHeaders: UTC_PREFER,
-    })) as { value?: unknown[]; '@odata.nextLink'?: unknown };
+    }, options)) as { value?: unknown[]; '@odata.nextLink'?: unknown };
     for (const raw of body.value ?? []) {
       const event = normalizeGraphEvent(raw, query.calendarId, query.calendarLabel);
       if (event) out.push(event);
@@ -87,6 +88,7 @@ export async function createGraphEvent(
   calendarId: string,
   calendarLabel: string,
   event: NewCalendarEvent,
+  options: CalendarRequestOptions = {},
 ): Promise<MergedCalendarEvent> {
   const isAllDay = event.start.kind === 'date';
   const payload: Record<string, unknown> = {
@@ -104,7 +106,7 @@ export async function createGraphEvent(
     token,
     body: payload,
     extraHeaders: UTC_PREFER,
-  });
+  }, options);
   const normalized = normalizeGraphEvent(created, calendarId, calendarLabel);
   if (!normalized) throw new Error('Microsoft Graph accepted the event but returned an unreadable body.');
   return normalized;

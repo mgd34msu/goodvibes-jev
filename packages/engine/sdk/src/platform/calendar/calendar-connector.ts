@@ -40,6 +40,7 @@ import {
 import type {
   AuthCodeFlowStart,
   CalendarProviderId,
+  CalendarRequestOptions,
   Clock,
   ConnectedAccount,
   ConnectionState,
@@ -191,11 +192,12 @@ export class CalendarConnector {
   // --- Read: calendars + events ---------------------------------------------
 
   /** List the provider's calendars (refreshing the token first when due). */
-  async listCalendars(config: ResolvedClientConfig): Promise<ProviderCalendar[]> {
+  async listCalendars(config: ResolvedClientConfig, options: CalendarRequestOptions = {}): Promise<ProviderCalendar[]> {
+    options.signal?.throwIfAborted();
     const token = await this.store.getFreshAccessToken(config.provider, config, this.fetchImpl);
     return config.provider === 'google'
-      ? listGoogleCalendars(this.fetchImpl, token)
-      : listGraphCalendars(this.fetchImpl, token);
+      ? listGoogleCalendars(this.fetchImpl, token, options)
+      : listGraphCalendars(this.fetchImpl, token, options);
   }
 
   /**
@@ -206,11 +208,12 @@ export class CalendarConnector {
    * is wrong once utc and tzid/floating events are mixed). Callers merge this with
    * A9's ICS/local events into the unified /calendar view.
    */
-  async listEvents(config: ResolvedClientConfig, window: EventWindow): Promise<MergedCalendarEvent[]> {
+  async listEvents(config: ResolvedClientConfig, window: EventWindow, options: CalendarRequestOptions = {}): Promise<MergedCalendarEvent[]> {
+    options.signal?.throwIfAborted();
     const token = await this.store.getFreshAccessToken(config.provider, config, this.fetchImpl);
     const calendars = config.provider === 'google'
-      ? await listGoogleCalendars(this.fetchImpl, token)
-      : await listGraphCalendars(this.fetchImpl, token);
+      ? await listGoogleCalendars(this.fetchImpl, token, options)
+      : await listGraphCalendars(this.fetchImpl, token, options);
     const out: MergedCalendarEvent[] = [];
     for (const calendar of calendars) {
       const events = config.provider === 'google'
@@ -219,13 +222,13 @@ export class CalendarConnector {
             calendarLabel: calendar.name,
             timeMin: window.timeMin,
             timeMax: window.timeMax,
-          })
+          }, options)
         : await listGraphEvents(this.fetchImpl, token, {
             calendarId: calendar.id,
             calendarLabel: calendar.name,
             start: window.timeMin,
             end: window.timeMax,
-          });
+          }, options);
       out.push(...events);
       // Recorded here, at the READ, and per calendar so the label in an origin
       // names the calendar the invitation landed on. Nothing records at fetch
@@ -251,11 +254,13 @@ export class CalendarConnector {
     calendarId: string,
     calendarLabel: string,
     event: NewCalendarEvent,
+    options: CalendarRequestOptions = {},
   ): Promise<MergedCalendarEvent> {
+    options.signal?.throwIfAborted();
     const token = await this.store.getFreshAccessToken(config.provider, config, this.fetchImpl);
     return config.provider === 'google'
-      ? createGoogleEvent(this.fetchImpl, token, calendarId, calendarLabel, event)
-      : createGraphEvent(this.fetchImpl, token, calendarId, calendarLabel, event);
+      ? createGoogleEvent(this.fetchImpl, token, calendarId, calendarLabel, event, options)
+      : createGraphEvent(this.fetchImpl, token, calendarId, calendarLabel, event, options);
   }
 
   // --- internals ------------------------------------------------------------

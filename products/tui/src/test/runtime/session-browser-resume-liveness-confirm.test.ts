@@ -200,7 +200,7 @@ test('the browser resume seam revokes pending native retry admission before repl
     await native.waiting; expect(native.orchestrator.isThinking).toBe(false);
     await createResumeSessionHandler(options)('other-session');
     expect(cancelled).toBe(1); expect(runtime.sessionId).toBe('other-session');
-    native.release(); expect(await result).toMatchObject({ name: 'AbortError' });
+    native.release(); expect(await result).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' }, signalAborted: true, messageCount: 0 });
     expect(native.conversation.getMessageCount()).toBe(0);
   } finally { native.dispose(); await result; }
 });
