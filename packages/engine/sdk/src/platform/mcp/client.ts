@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { ExternalOperationSource } from '../permissions/external-request.js';
+import { awaitPermission } from '../permissions/cancellation.js';
+import { bindMcpElicitationResponse, commitMcpElicitation, discardMcpElicitation } from './elicitation-autonomous.js';
+import type { McpElicitationOutcome } from './elicitation.js';
 /**
  * McpClient, connects to a single MCP server over stdio (spawned process,
  * newline-delimited JSON-RPC 2.0) or Streamable HTTP (config `url`).
@@ -81,6 +87,47 @@ export type {
 } from './client-types.js';
 
 export class McpClient {
+  private connectionId = randomUUID();
+  private connectionLife = new AbortController();
+  private readonly incoming = new Map<string, AbortController>();
+  private retireConnection(): void {
+    this.connectionLife.abort();
+    for (const request of this.incoming.values()) request.abort();
+    this.incoming.clear();
+  }
+  private renewConnection(): void {
+    this.retireConnection(); this.connectionId = randomUUID(); this.connectionLife = new AbortController();
+  }
+
+  private async resolveElicitation(id: JsonRpcId, params: unknown, operation?: ExternalOperationSource, nested = false): Promise<McpElicitationOutcome> {
+    const resolver = this.options?.onElicitation;
+    if (!resolver) return { action: 'cancel' };
+    const key = nested ? `${operation?.operationId ?? 'unowned'}:${jsonRpcIdKey(id)}` : jsonRpcIdKey(id);
+    const prior = this.incoming.get(key);
+    if (prior) { prior.abort(); throw new Error('Duplicate MCP request id'); }
+    const controller = new AbortController(); this.incoming.set(key, controller);
+    const connectionId = this.connectionId, proc = this.proc, http = this.http;
+    const httpSession = http?.sessionGeneration;
+    const serverName = this.config.name;
+    const signal = AbortSignal.any([this.connectionLife.signal, controller.signal, AbortSignal.timeout(this.options?.timeout ?? DEFAULT_TIMEOUT_MS), ...(operation?.signal ? [operation.signal] : [])]);
+    const destination = this.config.url ?? this.options?.processSpec?.command ?? this.config.command ?? '';
+    const assertCurrent = () => {
+      signal.throwIfAborted(); operation?.assertCurrent();
+      if (this.config.name !== serverName || this.connectionId !== connectionId || this.proc !== proc || this.http !== http || http?.sessionGeneration !== httpSession
+        || this.incoming.get(key) !== controller || (this.config.url ?? this.options?.processSpec?.command ?? this.config.command ?? '') !== destination
+        || !this.isConnected) throw new Error('MCP request connection changed');
+    };
+    const close = () => { if (this.incoming.get(key) === controller) this.incoming.delete(key); controller.abort(); };
+    try {
+      const owned = snapshotJudgmentInput(params);
+      assertCurrent();
+      const outcome = await awaitPermission(() => resolver({ serverName, id, params: owned,
+        context: { scope: { connectionId, destination, signal, assertCurrent }, ...(operation ? { operation } : {}) } }), signal);
+      assertCurrent();
+      return bindMcpElicitationResponse(outcome, assertCurrent, close);
+    } catch (error) { close(); throw error; }
+  }
+
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private nextId = 1;
   private pendingRequests = new Map<string, PendingRequest>();
@@ -134,6 +181,7 @@ export class McpClient {
   async connect(): Promise<void> {
     if (this.config.url) {
       if (this.http?.isOpen) return;
+      this.renewConnection();
       this.http = new McpHttpConnection({
         serverName: this.config.name,
         url: this.config.url,
@@ -145,7 +193,7 @@ export class McpClient {
           onNotification: (method, params) => {
             this._handleNotification({ jsonrpc: '2.0', method, ...(params !== undefined ? { params } : {}) });
           },
-          onServerRequest: (id, method, params) => this._answerServerRequestOverHttp(id, method, params),
+          onServerRequest: (id, method, params, operation) => this._answerServerRequestOverHttp(id, method, params, operation),
         },
       });
       this.negotiated = await this.http.negotiate();
@@ -220,30 +268,40 @@ export class McpClient {
    * (Multi Round-Trip Requests); elicitation input requests are resolved
    * through the wired resolver and the call is retried with inputResponses.
    */
-  async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-    if (!this.isConnected) {
-      throw new Error(`McpClient(${this.config.name}): not connected`);
-    }
-    // Ensure schema is cached on first use
-    if (!this.schemaCache.has(toolName)) {
-      await this.getToolSchema(toolName);
-    }
-
-    let params: Record<string, unknown> = { name: toolName, arguments: args };
-    for (let roundTrip = 0; roundTrip <= MAX_MRTR_ROUND_TRIPS; roundTrip++) {
-      const result = await this._request('tools/call', params, this._toolCallHeaders(toolName, args));
-      if (this.negotiated?.era !== 'modern' || !isInputRequiredResult(result)) {
-        return result;
+  async callTool(toolName: string, args: Record<string, unknown>, operation?: ExternalOperationSource): Promise<unknown> {
+    if (!this.isConnected) throw new Error(`McpClient(${this.config.name}): not connected`);
+    const ownedArgs = snapshotJudgmentInput(args, toolName) as Record<string, unknown>;
+    const connectionId = this.connectionId, proc = this.proc, http = this.http;
+    const httpSession = http?.sessionGeneration;
+    const serverName = this.config.name;
+    const lifetime = new AbortController();
+    const signal = AbortSignal.any([this.connectionLife.signal, lifetime.signal, ...(operation?.signal ? [operation.signal] : [])]);
+    const assertCurrent = () => {
+      signal.throwIfAborted(); operation?.assertCurrent();
+      if (this.config.name !== serverName || this.connectionId !== connectionId || this.proc !== proc || this.http !== http || http?.sessionGeneration !== httpSession || !this.isConnected) throw new Error('MCP tool operation changed');
+    };
+    const boundOperation = operation ? { ...operation, operationId: randomUUID(), signal, assertCurrent } : undefined;
+    let responses: Record<string, unknown> | null = null;
+    try {
+      assertCurrent();
+      if (!this.schemaCache.has(toolName)) await this.getToolSchema(toolName);
+      assertCurrent();
+      let params: Record<string, unknown> = { name: toolName, arguments: ownedArgs };
+      for (let roundTrip = 0; roundTrip <= MAX_MRTR_ROUND_TRIPS; roundTrip++) {
+        assertCurrent();
+        const pendingResponses = responses;
+        const beforeSend = () => { assertCurrent(); if (pendingResponses) for (const response of Object.values(pendingResponses)) commitMcpElicitation(response); };
+        const result = await this._request('tools/call', params, this._toolCallHeaders(toolName, ownedArgs), boundOperation, beforeSend);
+        assertCurrent(); responses = null;
+        if (this.negotiated?.era !== 'modern' || !isInputRequiredResult(result)) return result;
+        const ownedResult = snapshotJudgmentInput(result) as typeof result;
+        responses = await this._resolveInputRequests(toolName, ownedResult.inputRequests, boundOperation);
+        assertCurrent();
+        params = { name: toolName, arguments: ownedArgs, ...(responses ? { inputResponses: responses } : {}),
+          ...(typeof ownedResult.requestState === 'string' ? { requestState: ownedResult.requestState } : {}) };
       }
-      const inputResponses = await this._resolveInputRequests(toolName, result.inputRequests);
-      params = {
-        name: toolName,
-        arguments: args,
-        ...(inputResponses ? { inputResponses } : {}),
-        ...(typeof result.requestState === 'string' ? { requestState: result.requestState } : {}),
-      };
-    }
-    throw new Error(`McpClient(${this.config.name}): tool '${toolName}' still required input after ${MAX_MRTR_ROUND_TRIPS} round trips`);
+      throw new Error(`McpClient(${this.config.name}): tool '${toolName}' still required input after ${MAX_MRTR_ROUND_TRIPS} round trips`);
+    } finally { if (responses) for (const response of Object.values(responses)) discardMcpElicitation(response); lifetime.abort(); }
   }
 
   /** Mcp-Param-* headers for a tools/call on the modern HTTP transport. */
@@ -259,10 +317,12 @@ export class McpClient {
   private async _resolveInputRequests(
     toolName: string,
     inputRequests: Record<string, unknown> | undefined,
+    operation?: ExternalOperationSource,
   ): Promise<Record<string, unknown> | null> {
     if (!inputRequests) return null;
     const resolver = this.options?.onElicitation;
-    const responses: Record<string, unknown> = {};
+    const responses = Object.create(null) as Record<string, unknown>;
+    try {
     for (const [key, request] of Object.entries(inputRequests)) {
       const method = isRecord(request) && typeof request.method === 'string' ? request.method : 'unknown';
       if (method !== 'elicitation/create' || !resolver) {
@@ -271,9 +331,10 @@ export class McpClient {
         );
       }
       const params = isRecord(request) ? request.params : undefined;
-      responses[key] = await resolver({ serverName: this.config.name, id: key, params });
+      responses[key] = await this.resolveElicitation(key, params, operation, true);
     }
     return responses;
+    } catch (error) { for (const response of Object.values(responses)) discardMcpElicitation(response); throw error; }
   }
 
   /**
@@ -284,13 +345,15 @@ export class McpClient {
     // resurrect the process via _scheduleRestart(). Set synchronously before
     // any await so it is already true when the detached read loop runs.
     this.intentionalClose = true;
+    this.retireConnection();
     if (this.http) {
-      await this.http.close();
-      this.http = null;
-      this.negotiated = null;
+      const http = this.http;
+      await http.close();
+      if (this.http === http) { this.http = null; this.negotiated = null; }
       return;
     }
     if (!this.proc) return;
+    const proc = this.proc;
     // Reject all pending requests
     for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
@@ -299,13 +362,14 @@ export class McpClient {
     this.pendingRequests.clear();
 
     try {
-      (this.proc.stdin as import('bun').FileSink).end();
-      this.proc.kill();
-      await this.proc.exited;
+      (proc.stdin as import('bun').FileSink).end();
+      proc.kill();
+      await proc.exited;
     } catch (err: unknown) {
       // The process may already be gone; record the shutdown error for ops.
       logger.warn('[McpClient] error during process shutdown', { error: String(err) });
     } finally {
+      if (this.proc !== proc) return;
       this.proc = null;
       this.buffer = '';
       this.readLoopRunning = false;
@@ -319,6 +383,7 @@ export class McpClient {
   // ---------------------------------------------------------------------------
 
   private async _startProcess(): Promise<void> {
+    this.renewConnection();
     const processSpec = this.options?.processSpec;
     const cmd = processSpec?.command ?? this.config.command;
     if (!cmd) {
@@ -420,20 +485,20 @@ export class McpClient {
    * Send a JSON-RPC request; returns the result. In the modern era the
    * request params carry the per-request `_meta` the revision requires.
    */
-  private _request<T = unknown>(method: string, params?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  private _request<T = unknown>(method: string, params?: unknown, extraHeaders?: Record<string, string>, operation?: ExternalOperationSource, beforeSend?: () => void): Promise<T> {
     let finalParams = params;
     if (this.negotiated?.era === 'modern') {
       const meta = buildModernMeta(this.negotiated.version, { name: 'goodvibes-sdk', version: VERSION }, this._clientCapabilities());
       finalParams = withModernMeta(params, meta);
     }
     if (this.http) {
-      return this.http.request(method, finalParams, extraHeaders) as Promise<T>;
+      return this.http.request(method, finalParams, extraHeaders, operation, beforeSend) as Promise<T>;
     }
-    return this._rawRequest<T>(method, finalParams);
+    return this._rawRequest<T>(method, finalParams, undefined, beforeSend);
   }
 
   /** Send a JSON-RPC request over stdio without protocol decoration. */
-  private _rawRequest<T = unknown>(method: string, params?: unknown, timeoutOverrideMs?: number): Promise<T> {
+  private _rawRequest<T = unknown>(method: string, params?: unknown, timeoutOverrideMs?: number, beforeSend?: () => void): Promise<T> {
     if (!this.proc) {
       return Promise.reject(new Error(`McpClient(${this.config.name}): not running`));
     }
@@ -458,6 +523,7 @@ export class McpClient {
       });
 
       try {
+        beforeSend?.();
         (this.proc?.stdin as import('bun').FileSink | undefined)?.write(line);
       } catch (err) {
         clearTimeout(timer);
@@ -500,6 +566,8 @@ export class McpClient {
       } catch (err) {
         logger.warn('McpClient: stdout read loop ended', { server: this.config.name, err: summarizeError(err) });
       } finally {
+        if (this.proc !== proc) return;
+        this.retireConnection();
         this.readLoopRunning = false;
         // The process is gone; any restart must re-negotiate the protocol.
         this.initialized = false;
@@ -591,6 +659,10 @@ export class McpClient {
   }
 
   private _handleNotification(notification: JsonRpcNotification): void {
+    if (notification.method === 'notifications/cancelled' && isRecord(notification.params)) {
+      const requestId = notification.params.requestId;
+      if (typeof requestId === 'string' || typeof requestId === 'number') this.incoming.get(jsonRpcIdKey(requestId))?.abort();
+    }
     logger.debug('McpClient: received JSON-RPC notification', {
       server: this.config.name,
       method: notification.method,
@@ -604,6 +676,7 @@ export class McpClient {
   }
 
   private _handleServerRequest(request: JsonRpcRequest): void {
+    try { request = snapshotJudgmentInput(request) as JsonRpcRequest; } catch { return; }
     const observed: McpClientServerRequest = {
       serverName: this.config.name,
       id: request.id,
@@ -623,9 +696,14 @@ export class McpClient {
         server: this.config.name,
         id: request.id,
       });
-      void elicit({ serverName: this.config.name, id: request.id, params: request.params })
+      const proc = this.proc, connectionId = this.connectionId;
+      void this.resolveElicitation(request.id, request.params)
         .then((outcome) => {
-          this._sendJsonRpcResult(request.id, outcome);
+          try {
+            if (this.proc !== proc || this.connectionId !== connectionId || !this.isConnected) return;
+            commitMcpElicitation(outcome);
+            this._sendJsonRpcResult(request.id, outcome);
+          } finally { discardMcpElicitation(outcome); }
         })
         .catch((err: unknown) => {
           logger.warn('McpClient: elicitation resolver failed', {
@@ -635,7 +713,8 @@ export class McpClient {
           });
           // A resolver failure is not the same as an unsupported method, report
           // an internal error so the server can distinguish the two.
-          this._sendJsonRpcError(request.id, -32603, 'Elicitation request could not be resolved');
+          if (this.proc === proc && this.connectionId === connectionId && this.isConnected && !this.connectionLife.signal.aborted)
+            this._sendJsonRpcError(request.id, -32603, 'Elicitation request could not be resolved');
         });
       return;
     }
@@ -758,7 +837,7 @@ export class McpClient {
    * stream. Elicitation routes to the wired resolver; everything else is
    * unsupported (the connection answers method-not-found for undefined).
    */
-  private async _answerServerRequestOverHttp(id: JsonRpcId, method: string, params: unknown): Promise<unknown> {
+  private async _answerServerRequestOverHttp(id: JsonRpcId, method: string, params: unknown, operation?: ExternalOperationSource): Promise<unknown> {
     this._callObserver('server request', () => this.options?.onServerRequest?.({
       serverName: this.config.name,
       id,
@@ -767,7 +846,7 @@ export class McpClient {
     }));
     const elicit = this.options?.onElicitation;
     if (method === 'elicitation/create' && elicit) {
-      return elicit({ serverName: this.config.name, id, params });
+      return this.resolveElicitation(id, params, operation);
     }
     return undefined;
   }

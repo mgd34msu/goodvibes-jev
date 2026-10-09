@@ -94,7 +94,7 @@ import { PluginManager } from '../plugins/manager.js';
 import { SessionManager } from '../sessions/manager.js';
 import { CrossSessionTaskRegistry } from '../sessions/orchestration/index.js';
 import { McpRegistry } from '../mcp/registry.js';
-import { createMcpElicitationApprovalHandler } from '../mcp/elicitation.js';
+import { createMcpAutonomousElicitationHandler } from '../mcp/elicitation-autonomous.js';
 import { WebSearchProviderRegistry, WebSearchService } from '../web-search/index.js';
 import { PermissionManager } from '../permissions/manager.js';
 import { bindPermissionModeChangeEvent } from '../permissions/mode-change-emitter.js';
@@ -508,8 +508,11 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   const mcpRegistry = new McpRegistry({ hookDispatcher, sandboxSessions: sandboxSessionRegistry });
   mcpRegistry.setRuntimeBus(options.runtimeBus);
   mcpRegistry.setSandboxRuntime(configManager, sandboxSessionRegistry);
-  // MCP elicitation/create requests ride the SAME ask seam as a permission ask.
-  mcpRegistry.setElicitationHandler(createMcpElicitationApprovalHandler((input) => options.requestApproval(input)));
+  // MCP input requests use the canonical autonomous owner and current operation facts.
+  const externalPermissionLifetime = new AbortController();
+  disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
+  mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler({ port: judgment.port, permissionManager,
+    config: configManager, signal: externalPermissionLifetime.signal }));
 
   const pluginManager = new PluginManager({
     pathOptions: { cwd: shellPaths.workingDirectory, homeDir: shellPaths.homeDirectory },

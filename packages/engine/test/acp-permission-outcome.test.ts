@@ -24,8 +24,9 @@ describe('ACP permission answer by option kind', () => {
     expect(permissionOutcomeFor(rejectFirst, { approved: false, rememberTier: 'session' })).toEqual({ outcome: { outcome: 'selected', optionId: 'no-ever' } });
   });
 
-  test('the other variant of the decision is used when the preferred one is not offered', () => {
-    expect(permissionOutcomeFor([rejectFirst[3]!], { approved: true })).toEqual({ outcome: { outcome: 'selected', optionId: 'yes-ever' } });
+  test('a one-shot decision cannot widen into a remembered grant', () => {
+    expect(permissionOutcomeFor([rejectFirst[3]!], { approved: true })).toEqual({ outcome: { outcome: 'cancelled' } });
+    expect(permissionOutcomeFor([rejectFirst[2]!], { approved: true, remember: true })).toEqual({ outcome: { outcome: 'selected', optionId: 'yes' } });
   });
 
   test('an approval with no allow option offered is answered cancelled, not with a reject', () => {

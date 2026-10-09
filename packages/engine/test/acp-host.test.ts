@@ -89,51 +89,15 @@ describe('AcpHostService: full round-trip against the real protocol', () => {
     expect(host.prompt(hosted.id, 'nope').queued).toBe(false);
   }, 30_000);
 
-  test('a pending permission ask classifies as awaiting-approval and resolves through the handler', async () => {
-    let resolvePermission: ((approved: boolean) => void) | null = null;
-    const asked: string[] = [];
-    const host = new AcpHostService({
-      requestPermission: async (request) => {
-        asked.push(request.tool);
-        const approved = await new Promise<boolean>((resolveAsk) => { resolvePermission = resolveAsk; });
-        return { approved, remember: false };
-      },
-    });
-
-    const hosted = await host.spawnAgent({ agent: fakeAgent('permission'), cwd: import.meta.dir });
-    expect(hosted.state).toBe('idle');
+  test('without an autonomous owner permission requests cancel without a human fallback', async () => {
+    let humans = 0;
+    const host = new AcpHostService({ requestPermission: async () => { humans++; return { approved: true }; } });
+    const hosted = await host.spawnAgent({ agent: fakeAgent('permission-reject-first'), cwd: import.meta.dir });
     host.prompt(hosted.id, 'do the thing');
-
-    // The ask arrives → the row is waiting on a human, with the tool as detail.
-    await waitUntil(() => host.get(hosted.id)?.state === 'awaiting-approval');
-    expect(host.get(hosted.id)?.pendingPermission).toBe('write a file');
-    expect(asked).toEqual(['write a file']);
-
-    // Approve → the turn completes and the attention clears.
-    resolvePermission!(true);
-    await waitUntil(() => host.get(hosted.id)?.state === 'idle');
-    expect(host.get(hosted.id)?.pendingPermission).toBeUndefined();
-    await waitUntil(() => (host.get(hosted.id)?.progress ?? '').includes('permission granted'));
-
+    await waitUntil(() => (host.get(hosted.id)?.progress ?? '').includes('permission denied'));
+    expect(humans).toBe(0);
+    expect(host.get(hosted.id)?.state).not.toBe('awaiting-approval');
     await host.stop(hosted.id);
-  }, 30_000);
-
-  test('an approval answers with the allow option by its kind, even when the agent lists reject first', async () => {
-    const decisions = [true, false];
-    const host = new AcpHostService({
-      requestPermission: async () => ({ approved: decisions.shift() ?? false, remember: false }),
-    });
-    const approvedRun = await host.spawnAgent({ agent: fakeAgent('permission-reject-first'), cwd: import.meta.dir });
-    host.prompt(approvedRun.id, 'do the thing');
-    await waitUntil(() => /permission (granted|denied)/.test(host.get(approvedRun.id)?.progress ?? ''));
-    expect(host.get(approvedRun.id)?.progress).toContain('permission granted');
-    await host.stop(approvedRun.id);
-
-    const deniedRun = await host.spawnAgent({ agent: fakeAgent('permission-reject-first'), cwd: import.meta.dir });
-    host.prompt(deniedRun.id, 'do the thing');
-    await waitUntil(() => /permission (granted|denied)/.test(host.get(deniedRun.id)?.progress ?? ''));
-    expect(host.get(deniedRun.id)?.progress).toContain('permission denied');
-    await host.stop(deniedRun.id);
   }, 30_000);
 
   test('stop lands cleanly on a mid-turn (slow) agent: cancelled, not failed', async () => {

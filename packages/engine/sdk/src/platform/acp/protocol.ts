@@ -91,8 +91,8 @@ export interface SubagentTask {
  * The answer to an ACP permission request for the owner's decision: the
  * option whose declared `kind` matches it. An approval selects allow_once
  * (allow_always when the decision is remembered), a refusal reject_once
- * (reject_always when remembered); the other variant of the same decision is
- * taken when the preferred one is not offered. When the agent offered no
+ * (reject_always when remembered). A remembered decision may narrow to once;
+ * a one-shot decision never widens to an always option. When the agent offered no
  * option of the needed kind the request is answered cancelled, so an
  * approval is never sent as whatever option happens to come first.
  */
@@ -106,13 +106,15 @@ export function permissionOutcomeFor(
   options: readonly AcpPermissionOptionLike[],
   decision: { readonly approved: boolean; readonly remember?: boolean | undefined; readonly rememberTier?: unknown },
 ): RequestPermissionResponse {
+  if (new Set(options.map(option => option.optionId)).size !== options.length) return { outcome: { outcome: 'cancelled' } };
   const remembered = decision.remember === true || decision.rememberTier !== undefined;
   const kinds: readonly AcpPermissionOptionLike['kind'][] = decision.approved
-    ? (remembered ? ['allow_always', 'allow_once'] : ['allow_once', 'allow_always'])
-    : (remembered ? ['reject_always', 'reject_once'] : ['reject_once', 'reject_always']);
+    ? (remembered ? ['allow_always', 'allow_once'] : ['allow_once'])
+    : (remembered ? ['reject_always', 'reject_once'] : ['reject_once']);
   for (const kind of kinds) {
-    const option = options.find((candidate) => candidate.kind === kind);
-    if (option) return { outcome: { outcome: 'selected', optionId: option.optionId } };
+    const matching = options.filter((candidate) => candidate.kind === kind);
+    if (matching.length > 1) return { outcome: { outcome: 'cancelled' } };
+    if (matching[0]) return { outcome: { outcome: 'selected', optionId: matching[0].optionId } };
   }
   return { outcome: { outcome: 'cancelled' } };
 }
