@@ -34,6 +34,7 @@
 
 import { dirname, isAbsolute, resolve } from 'path';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { acquireCrossProcessLock } from '../workspace/checkpoint/cross-process-lock.js';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import type { ConfigManager } from './manager.js';
 import {
@@ -253,6 +254,7 @@ export class SecretsManager {
     }
   }
 
+  private readonly ownedMutationPaths = new Set<string>();
   private encKey: Buffer | null = null;
   private readonly keyFilePath: string;
   private readonly options: SecretsManagerOptions;
@@ -304,7 +306,26 @@ export class SecretsManager {
   }
 
   async get(key: string): Promise<string | null> {
+    if (process.env[key] === undefined) await this.migrateLegacyReads(this.getReadOrder());
     return this.getInternal(key, new Set([key]));
+  }
+
+  /** Atomic first creation for daemon-owned material, shared across process creators.
+   * References and unreadable tiers cannot be treated as missing material.
+   * This does not authorize replacing an existing key or changing its scope.
+   */
+  async getOrCreateDaemonSecret(key: string, create: () => string): Promise<string> {
+    const policy = this.getPolicy();
+    const paths = this.writeStorePaths('daemon', 'secure', policy);
+    return this.withStoreMutations(paths, () => {
+      if (this.getPolicy() !== policy) throw new Error('Secret storage policy changed during acquisition');
+      const current = this.resolveLocalSecretSync(key);
+      if (current.state === 'unsupported') throw new Error('Daemon key material is unavailable; existing material was preserved.');
+      if (current.state === 'resolved') return current.value;
+      const value = create();
+      this.setOwned(key, value, { scope: 'daemon', medium: 'secure' });
+      return value;
+    }, paths.slice(1));
   }
 
   /**
@@ -345,6 +366,7 @@ export class SecretsManager {
    * would copy the pointed-at value over the pointer.
    */
   async getFromScope(key: string, scope: SecretScope, storePath?: string): Promise<string | null> {
+    await this.migrateLegacyReads(this.getMigratableStores().filter(store => storePath !== undefined ? store.path === storePath : store.scope === scope));
     for (const path of this.getMigratableStores()) {
       if (storePath !== undefined ? path.path !== storePath : path.scope !== scope) continue;
       const secrets = path.secure ? this.readEncryptedFile(path.path) : this.readPlaintextFile(path.path);
@@ -402,6 +424,64 @@ export class SecretsManager {
   }
 
   async set(key: string, value: string, options: SecretWriteOptions = {}): Promise<void> {
+    const scope = resolveSecretWriteScope(key, options.scope);
+    const policy = this.getPolicy();
+    const medium = options.medium ?? this.getDefaultWriteMedium(policy);
+    if (policy === 'require_secure' && medium === 'plaintext') throw new Error('Secret policy require_secure forbids plaintext persistence');
+    const paths = this.writeStorePaths(scope, medium, policy);
+    await this.withStoreMutations(paths, () => {
+      if (this.getPolicy() !== policy) throw new Error('Secret storage policy changed during acquisition');
+      this.setOwned(key, value, { ...options, medium });
+    }, paths.slice(1));
+  }
+
+  /** A legacy read rewrites a whole file too. Re-read after acquiring its
+   * actual mutation namespace, never publish the pre-lock snapshot.
+   * Failed migration retains readable legacy material, as before.
+   */
+  private async migrateLegacyReads(stores: readonly SecretStorePath[]): Promise<void> {
+    for (const store of stores) {
+      if (!store.secure) continue;
+      try {
+        const envelope = JSON.parse(readFileSync(store.path, 'utf8')) as Partial<EncryptedStoreEnvelope> | null;
+        if (!envelope || envelope.version !== undefined) continue;
+        await this.withStoreMutations([store.path], () => this.readEncryptedStore(store.path));
+      } catch { /* Ordinary read below reports unreadable material; no replacement. */ }
+    }
+  }
+
+  private writeStorePaths(scope: SecretScope, medium: SecretStorageMedium, policy: SecretStorageMode): string[] {
+    const target = this.resolveWriteTarget(scope, medium);
+    return [target.path, ...(target.secure && policy === 'preferred_secure'
+      ? [this.resolveWriteTarget(scope, 'plaintext').path] : [])];
+  }
+
+  /** Lock actual whole-file mutation targets; independent homes may share a tier. */
+  private async withStoreMutations<T>(paths: readonly string[], operation: () => T, optionalPaths: readonly string[] = []): Promise<T> {
+    const owned: string[] = [];
+    const releases: Array<() => void> = [];
+    try {
+      for (const path of [...new Set(paths)].sort()) {
+        try {
+          mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+          releases.push(await acquireCrossProcessLock(`${path}.mutation.lock`, { strictOwnership: true, totalTimeoutMs: 10_000 }));
+          owned.push(path);
+        } catch (error) {
+          // An unusable fallback must not prevent a valid secure write. A busy
+          // lock is never bypassed, and this target remains unwritable below.
+          if (path === paths[0] || !optionalPaths.includes(path)
+            || !['EEXIST', 'ENOTDIR', 'EACCES', 'EPERM', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        }
+      }
+      for (const path of owned) this.ownedMutationPaths.add(path);
+      return operation();
+    } finally {
+      for (const path of owned) this.ownedMutationPaths.delete(path);
+      for (const release of releases.reverse()) release();
+    }
+  }
+
+  private setOwned(key: string, value: string, options: SecretWriteOptions): void {
     const policy = this.getPolicy();
     const medium = options.medium ?? this.getDefaultWriteMedium(policy);
     const scope = resolveSecretWriteScope(key, options.scope);
@@ -437,6 +517,7 @@ export class SecretsManager {
     } catch (error) {
       if (policy === 'preferred_secure' && target.secure && !(error instanceof SecretStoreUnreadableError)) {
         const fallback = this.resolveWriteTarget(scope, 'plaintext');
+        if (!this.ownedMutationPaths.has(fallback.path)) throw error;
         const fallbackExisting = this.readStoreForWrite(fallback);
         fallbackExisting[key] = value;
         this.writePlaintextFile(fallback.path, fallbackExisting);
@@ -470,6 +551,7 @@ export class SecretsManager {
   }
 
   async list(): Promise<string[]> {
+    await this.migrateLegacyReads(this.getReadOrder());
     const keys = new Set<string>();
     for (const path of this.getReadOrder()) {
       const values = path.secure
@@ -482,6 +564,7 @@ export class SecretsManager {
   }
 
   async listDetailed(): Promise<SecretRecord[]> {
+    await this.migrateLegacyReads(this.getReadOrder());
     const envKeys = new Set(Object.keys(process.env));
     const records: SecretRecord[] = [];
 
@@ -518,6 +601,7 @@ export class SecretsManager {
   }
 
   async inspect(): Promise<SecretStorageReview> {
+    await this.migrateLegacyReads(this.getAllCandidateStores());
     const policy = this.getPolicy();
     const records = await this.listDetailed();
     const storedRecords = records.filter((record) => record.source !== 'env');
@@ -577,9 +661,19 @@ export class SecretsManager {
     const stores = this.getAllCandidateStores().filter((store) => {
       if (scopeFilter && store.scope !== scopeFilter) return false;
       if (options.medium && (options.medium === 'secure') !== store.secure) return false;
-      return true;
+      return existsSync(store.path) && this.storeContainsKey(store, key);
     });
+    await this.withStoreMutations(stores.map(store => store.path), () => this.deleteOwned(key, stores));
+  }
 
+  private storeContainsKey(store: SecretStorePath, key: string): boolean {
+    // Preserve no-op deletion from unrelated/read-only tiers. Re-read under
+    // ownership before changing any selected file, so unrelated writes survive.
+    const values = store.secure ? this.readEncryptedFile(store.path) : this.readPlaintextFile(store.path);
+    return values !== null && Object.hasOwn(values, key);
+  }
+
+  private deleteOwned(key: string, stores: readonly SecretStorePath[]): void {
     let removed = false;
     for (const store of stores) {
       const values = store.secure
@@ -604,9 +698,15 @@ export class SecretsManager {
    * and the migration reached for the wrong one. Migration is the only caller.
    */
   async deleteFromScope(key: string, scope: SecretScope, storePath?: string): Promise<void> {
+    const stores = this.getMigratableStores().filter(store =>
+      (storePath !== undefined ? store.path === storePath : store.scope === scope)
+      && existsSync(store.path) && this.storeContainsKey(store, key));
+    await this.withStoreMutations(stores.map(store => store.path), () => this.deleteFromScopeOwned(key, stores));
+  }
+
+  private deleteFromScopeOwned(key: string, stores: readonly SecretStorePath[]): void {
     let removed = false;
-    for (const store of this.getMigratableStores()) {
-      if (storePath !== undefined ? store.path !== storePath : store.scope !== scope) continue;
+    for (const store of stores) {
       const values = store.secure ? this.readEncryptedFile(store.path) : this.readPlaintextFile(store.path);
       if (!values || !(key in values)) continue;
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
@@ -638,6 +738,7 @@ export class SecretsManager {
 
   /** Every credential a migration could move, across every surface's silo. */
   async listDetailedForMigration(): Promise<SecretRecord[]> {
+    await this.migrateLegacyReads(this.getMigratableStores());
     return listMigratableSecrets(
       this.getMigratableStores(),
       (path, secure) => (secure ? this.readEncryptedFile(path) : this.readPlaintextFile(path)),
@@ -734,6 +835,7 @@ export class SecretsManager {
     } catch {
       return { status: 'unreadable', reason: 'legacy store decrypted to malformed content' };
     }
+    if (!this.ownedMutationPaths.has(filePath)) return { status: 'ok', secrets };
     try {
       this.writeEncryptedFile(filePath, secrets);
       logger.info('SecretsManager: migrated legacy encrypted secrets store to keyfile encryption', { path: filePath });

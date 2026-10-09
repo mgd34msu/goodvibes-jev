@@ -1,3 +1,5 @@
+import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
+import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -175,6 +177,27 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
+      const personalOpsOwner = agentResearchSourceOwner(deps.toolRegistry);
+      const personalOpsSession = deps.commandContext.session?.runtime;
+      const personalOpsSessionId = personalOpsSession?.sessionId;
+      const personalOpsApi = deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry;
+      const personalOpsOptions = { signal, sourceOwner: personalOpsOwner, assertCurrent: () => {
+        signal?.throwIfAborted();
+        if (agentResearchSourceOwner(deps.toolRegistry) !== personalOpsOwner
+          || deps.commandContext.session?.runtime !== personalOpsSession
+          || deps.commandContext.session?.runtime?.sessionId !== personalOpsSessionId
+          || (deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry) !== personalOpsApi) throw new Error('PersonalOps source owner changed.');
+      } };
+      if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args, personalOpsOptions));
+      if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, personalOpsOptions));
+      if (dispatchMode === 'personal_ops_lane') {
+        const resolved = await describePersonalOpsLane(deps.commandContext, args, personalOpsOptions);
+        if (resolved.status === 'found') return output(resolved.lane);
+        if (resolved.status === 'deferred') return output(resolved);
+        if (resolved.status === 'ambiguous') return error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
+        return error(resolved.usage);
+      }
+      if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, personalOpsOptions));
       try {
         if (dispatchMode === 'summary') {
           const channelReadiness = channelReadinessCatalogStatus(deps.commandContext);
@@ -482,15 +505,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         if (dispatchMode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args));
         if (dispatchMode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args));
-        if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args));
-        if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args));
-        if (dispatchMode === 'personal_ops_lane') {
-          const resolved = await describePersonalOpsLane(deps.commandContext, args);
-          if (resolved.status === 'found') return output(resolved.lane);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
-        }
-        if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args));
+
         if (dispatchMode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args));
         if (dispatchMode === 'memory_provider') {
           const resolved = await describeMemoryProvider(deps.commandContext, args);
@@ -810,5 +825,5 @@ export function registerAgentHarnessTool(
   commandContext: CommandContext,
   taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources,
 ): void {
-  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createAgentHarnessResearchProjector(registry) });
+  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry)) });
 }

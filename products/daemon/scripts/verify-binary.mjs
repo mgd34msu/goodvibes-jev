@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -84,7 +84,7 @@ try {
   ]) {
     const result = await run(argv); assert.equal(result.code, 2); assert.equal(result.stdout, ''); assert(result.stderr.includes(text));
   }
-  for (const argv of [[], ['serve'], ['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y']]) {
+  for (const argv of [['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y']]) {
     const result = await run(argv); assert.equal(result.code, 2); assert.match(result.stderr, /composition|not been migrated/);
   }
   for (const path of [daemon, tree, join(home, '.goodvibes'), join(home, '.config'), join(root, 'xdg'), join(work, 'elsewhere')]) {
@@ -131,7 +131,71 @@ try {
   assert.equal(readFileSync(join(daemon, 'secrets.json'), 'utf8'), secrets);
   assert(!readdirSync(root, { recursive: true }).map(String).join('\n').match(/operator-tokens|daemon-lifecycle|daemon-receipts|detached-daemon/));
   assert(!existsSync(join(home, '.goodvibes')));
-  console.log(`Native daemon ${manifest.version}: relocated shared smoke, exact identity, help, refusal, config and argv/stdin send passed without checkout or node_modules.`);
+  // The real installed entrypoint now admits genuinely unconfigured inbox
+  // providers. A separate selected home prevents the send fixture's settings
+  // or identity from leaking into this host proof.
+  const serveRoot = join(root, 'serving'); const serveHome = join(serveRoot, 'home');
+  const serveTree = join(serveRoot, 'tree'); const serveDaemon = join(serveRoot, 'daemon');
+  const serveWork = join(serveRoot, 'work');
+  for (const directory of [serveHome, serveDaemon, serveWork]) mkdirSync(directory, { recursive: true });
+  writeJson(join(serveDaemon, 'settings.json'), { cluster: { enabled: false }, relay: { enabled: false } });
+  const lease = createServer();
+  await new Promise((yes, no) => { lease.once('error', no); lease.listen(0, '127.0.0.1', yes); });
+  const servePort = lease.address().port;
+  await new Promise((yes, no) => lease.close(error => error ? no(error) : yes()));
+  // Run the owned daemon as namespace PID 1 and ask bubblewrap for its
+  // outer PID. Signalling the supervisor kills the namespace rather than
+  // exercising the daemon's shutdown handler.
+  const host = spawn('bwrap', [...boundary.slice(0, -1), '--as-pid-1', '--json-status-fd', '3', '--', binary, 'serve', '--hostname', '127.0.0.1', '--port', String(servePort)], {
+    env: { ...env, HOME: serveHome, GOODVIBES_HOME: serveTree, GOODVIBES_DAEMON_HOME: serveDaemon,
+      GOODVIBES_WORKING_DIR: serveWork, GOODVIBES_DAEMON_TOKEN: 'synthetic-native-inbox-token' },
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+  });
+  let childPid; let statusBuffer = '';
+  host.stdio[3].on('data', chunk => {
+    statusBuffer += chunk;
+    let end;
+    while ((end = statusBuffer.indexOf('\n')) !== -1) {
+      const status = JSON.parse(statusBuffer.slice(0, end));
+      statusBuffer = statusBuffer.slice(end + 1);
+      if (Number.isSafeInteger(status['child-pid']) && status['child-pid'] > 0) childPid = status['child-pid'];
+    }
+  });
+  let output = ''; let errors = ''; let exited = false;
+  host.stdout.on('data', chunk => { output += chunk; }); host.stderr.on('data', chunk => { errors += chunk; });
+  const stopped = new Promise((yes, no) => {
+    host.once('error', no); host.once('close', (code, signal) => { exited = true; yes({ code, signal }); });
+  });
+  void stopped.catch(() => {});
+  let timer;
+  try {
+    const started = Date.now();
+    while (!output.includes('host started') || childPid === undefined) {
+      assert(!exited, `Native host exited before readiness: ${output} ${errors}`);
+      assert(Date.now() - started < 20_000, `Native host startup deadline: ${output} ${errors}`);
+      await new Promise(yes => setTimeout(yes, 25));
+    }
+    const response = await fetch(`http://127.0.0.1:${servePort}/api/channels/inbox`, {
+      headers: { Authorization: 'Bearer synthetic-native-inbox-token' }, signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(response.status, 200); const receipt = await response.json();
+    assert.deepEqual(receipt.providers ?? receipt.data?.providers, ['slack', 'discord', 'email'].map(provider => ({
+      provider, state: 'unconfigured', configured: false, syncing: false, itemCount: 0, storedCount: 0,
+    })));
+    assert(!exited, 'Native host exited before shutdown');
+    assert.equal(readlinkSync(`/proc/${childPid}/exe`), binary, 'Signal only the verified owned native executable');
+    process.kill(childPid, 'SIGTERM');
+    assert.deepEqual(await Promise.race([stopped, new Promise((_, no) => {
+      timer = setTimeout(() => no(new Error('Native host shutdown deadline')), 15_000);
+    })]), { code: 0, signal: null });
+    await assert.rejects(fetch(`http://127.0.0.1:${servePort}/api/channels/inbox`, {
+      headers: { Authorization: 'Bearer synthetic-native-inbox-token' }, signal: AbortSignal.timeout(1_000),
+    }), 'Daemon listener must be closed after clean shutdown');
+  } finally {
+    clearTimeout(timer); if (!exited) host.kill('SIGKILL');
+    await stopped; host.stdout.destroy(); host.stderr.destroy(); host.stdio[3].destroy();
+  }
+  console.log(`Native daemon ${manifest.version}: relocated shared smoke, exact identity, help, service refusal, config, argv/stdin send and production inbox startup/shutdown passed without checkout or node_modules.`);
 } finally {
   if (server?.listening) { server.closeAllConnections(); await new Promise((yes, no) => server.close(error => error ? no(error) : yes())); }
   rmSync(root, { recursive: true, force: true });

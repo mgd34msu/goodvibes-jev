@@ -1,3 +1,5 @@
+import { types as nodeTypes } from 'node:util';
+import type { CallOptions } from '@goodvibes-jev/judgment';
 // ---------------------------------------------------------------------------
 // gist-uploader, upload export content to a GitHub Gist
 // ---------------------------------------------------------------------------
@@ -16,6 +18,8 @@
 // the URL can view it).
 // ---------------------------------------------------------------------------
 
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { readCredentialHeader } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 export type UploadResult =
@@ -40,27 +44,48 @@ export interface GistUploaderOptions {
   description?: string;
 }
 
+/** Capture own data properties without invoking getters or retaining mutable input. */
+export function captureGithubAuthHeaders(headers: Record<string, string> | null | undefined): Record<string, string> {
+  const captured: Record<string, string> = Object.create(null);
+  if (!headers) return captured;
+  if (nodeTypes.isProxy(headers) || ![Object.prototype, null].includes(Object.getPrototypeOf(headers))
+    || Object.getOwnPropertySymbols(headers).length) throw new TypeError('Invalid GitHub auth header');
+  for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(headers))) {
+    if (!('value' in descriptor) || typeof descriptor.value !== 'string') throw new TypeError('Invalid GitHub auth header');
+    if (!descriptor.enumerable) continue;
+    captured[name] = descriptor.value;
+  }
+  return Object.freeze(captured);
+}
+
 /**
  * resolveGithubToken, try auth header map then env var.
  * Returns undefined when no token is available.
  */
-export function resolveGithubToken(
+export async function resolveGithubToken(
   authHeaders: Record<string, string> | null | undefined,
-): string | undefined {
-  if (authHeaders) {
+  options: CallOptions = {},
+): Promise<string | undefined> {
+  options.signal?.throwIfAborted();
+  const captured = captureGithubAuthHeaders(authHeaders);
+  const envToken = process.env['GITHUB_TOKEN'];
+  if (captured) {
     // Service registry returns { Authorization: 'Bearer <token>' } for bearer type
-    const authHeader = authHeaders['Authorization'] ?? authHeaders['authorization'];
+    const authHeader = captured['Authorization'] ?? captured['authorization'];
     if (authHeader) {
       const match = /^Bearer (.+)$/.exec(authHeader);
       if (match?.[1]) return match[1];
     }
-    // Fallback: raw token value under any key that contains 'token'
-    for (const [key, val] of Object.entries(authHeaders)) {
-      if (key.toLowerCase().includes('token') && val) return val;
+    // Screen every name before any projection or request; values stay local.
+    snapshotJudgmentInput(Object.keys(captured));
+    // Nonstandard names are read without ever sending their values to judgment.
+    for (const [key, val] of Object.entries(captured)) {
+      if (!val || key.toLowerCase() === 'authorization') continue;
+      if (await readCredentialHeader(key, { ...options, site: 'tui.gist.credential-header' }) === true) return val;
     }
   }
   // Env var fallback
-  const envToken = process.env['GITHUB_TOKEN'];
+  options.signal?.throwIfAborted();
   return envToken || undefined;
 }
 
@@ -76,7 +101,8 @@ export class GistUploadTarget implements UploadTarget {
     this.description = description ?? 'GoodVibes session export';
   }
 
-  async upload(content: string, filename: string): Promise<UploadResult> {
+  async upload(content: string, filename: string, signal?: AbortSignal): Promise<UploadResult> {
+    signal?.throwIfAborted();
     const body = JSON.stringify({
       description: this.description,
       public: false, // secret gist: unlisted, not private
@@ -89,6 +115,7 @@ export class GistUploadTarget implements UploadTarget {
     try {
       response = await fetch('https://api.github.com/gists', {
         method: 'POST',
+        signal,
         headers: {
           'Accept': 'application/vnd.github+json',
           'Authorization': `Bearer ${this.token}`,

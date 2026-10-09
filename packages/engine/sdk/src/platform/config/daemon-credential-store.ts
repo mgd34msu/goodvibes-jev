@@ -36,6 +36,10 @@ export interface DaemonCredentialStore {
     opts?: { scope?: SecretScope; medium?: 'plaintext' | 'secure' },
   ): Promise<void>;
   has(secretKey: string): Promise<boolean>;
+  /** Atomic namespace owner, required before creating new persistent cipher material. */
+  getOrCreateDaemonSecret?(secretKey: string, create: () => string): Promise<string>;
+  /** Local literal presence only; no reference resolution or nullable failure conflation. */
+  inspectConfigSecret?(configKey: string): 'absent' | 'present' | 'unavailable';
 }
 
 /** Extract the trailing secret-key segment from a goodvibes://secrets/ reference. */
@@ -46,8 +50,18 @@ function secretKeyFromReference(ref: string): string {
   return decodeURIComponent(last);
 }
 
-export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' | 'set'>): DaemonCredentialStore {
+export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' | 'set'> & Partial<Pick<SecretsManager, 'getOrCreateDaemonSecret' | 'resolveLocalSecretSync'>>): DaemonCredentialStore {
   return {
+    ...(secrets.resolveLocalSecretSync ? {
+      inspectConfigSecret(configKey: string): 'absent' | 'present' | 'unavailable' {
+        const current = secrets.resolveLocalSecretSync!(daemonSecretKeyFor(configKey));
+        return current.state === 'absent' ? 'absent'
+          : current.state === 'resolved' ? (current.value.trim() ? 'present' : 'absent') : 'unavailable';
+      },
+    } : {}),
+    ...(secrets.getOrCreateDaemonSecret ? {
+      getOrCreateDaemonSecret: (key: string, create: () => string) => secrets.getOrCreateDaemonSecret!(key, create),
+    } : {}),
     async resolveRef(ref: string): Promise<string | null> {
       const key = isSecretReferenceValue(ref) ? secretKeyFromReference(ref) : ref;
       return secrets.get(key);
@@ -94,13 +108,15 @@ async function loadOrCreateKey(
   const existing = await store.resolveRef(keyName);
   if (existing !== null) {
     const buf = Buffer.from(existing, 'base64');
-    if (buf.length === AES_KEY_BYTES) return buf;
+    if (buf.length === AES_KEY_BYTES && buf.toString('base64') === existing) return buf;
     throw new Error('Draft encryption key is invalid; existing material was preserved.');
   }
   if (!allowCreate) throw new Error('Draft encryption key is missing; no replacement was created.');
-  const generated = randomBytes(AES_KEY_BYTES);
-  await store.put(keyName, generated.toString('base64'), { scope: 'daemon', medium: 'secure' });
-  return generated;
+  if (!store.getOrCreateDaemonSecret) throw new Error('Draft encryption key creation requires an atomic namespace owner.');
+  const selected = await store.getOrCreateDaemonSecret(keyName, () => randomBytes(AES_KEY_BYTES).toString('base64'));
+  const key = Buffer.from(selected, 'base64');
+  if (key.length !== AES_KEY_BYTES || key.toString('base64') !== selected) throw new Error('Draft encryption key is invalid; existing material was preserved.');
+  return key;
 }
 
 /**
@@ -108,7 +124,7 @@ async function loadOrCreateKey(
  * encrypt() returns base64(iv | tag | ciphertext). Uses node:crypto (Bun-compatible).
  * Existing malformed keys are preserved and refused. Decrypt never creates a key.
  * Creation is lazy on explicit encrypt; one instance shares its pending read/write.
- * Cross-process first-write coordination remains the backing store's responsibility.
+ * First creation requires the backing store's atomic daemon namespace owner.
  * NEVER log resolved keys or plaintext.
  */
 export function createAtRestCipher(

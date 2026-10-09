@@ -155,3 +155,20 @@ describe('inbox query and wire contracts', () => {
     expect(toWireItem({ ...source, subjectPreview: '' }).subject).toBeUndefined();
   });
 });
+
+test('proven absent admission is unconfigured without inventing a poll, while unknown and configured states retain pending/error', () => {
+  const statuses = [
+    { id: 'absent', state: 'unavailable' as const, configured: false, polled: false, itemCount: 0 },
+    { id: 'unknown', state: 'unavailable' as const, polled: false, itemCount: 0, error: 'credential lookup failed' },
+    { id: 'configured', state: 'unavailable' as const, configured: true, polled: false, itemCount: 0 },
+    { id: 'outage', state: 'unavailable' as const, configured: true, polled: true, itemCount: 0, error: 'transient provider failure' },
+  ];
+  const out = aggregateInbox({
+    store: { listItems: () => [], countItems: () => 0, countItemsByProvider: () => new Map(),
+      maxReceivedAt: () => 0, getImapCheckpoint: () => null },
+    poller: { snapshotStatuses: () => statuses, isProviderRunning: () => false },
+  }, normalizeInboxQuery({}));
+  expect(out.providers.map(row => row.state)).toEqual(['unconfigured', 'pending', 'pending', 'error']);
+  expect(out.providers.every(row => row.lastSyncAt === undefined)).toBe(true);
+  expect(out.cursor).toBeUndefined(); expect(out.partial).toBe(true);
+});

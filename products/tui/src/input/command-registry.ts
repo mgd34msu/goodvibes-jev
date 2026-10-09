@@ -104,6 +104,8 @@ export interface CommandUiActions {
   cancelGeneration?: () => void;
   /** Revoke only an async failed-turn recovery before replacing session identity/history. */
   cancelPendingRecovery?: () => boolean;
+  /** Owned Gist upload reading; revoked by Escape/session changes/shutdown. */
+  shareReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
   /** Owned natural-language schedule submission; revoked by the same shell lifecycle. */
   scheduleReading?: import('./commands/schedule-reading-lifetime.ts').ScheduleReadingLifetime;
   /**

@@ -758,9 +758,29 @@ describe('agent_harness tool', () => {
       // credential-shaped names are withheld, ordinary fixture env passes.
       return noulAnswer(/key|token|secret|password|credential/i.test(state.name) ? 0.999 : 0.001);
     });
+    // Explicit canonical PersonalOps readings. These fixtures are not lexical search rules.
+    const personalOpsPicks: Readonly<Record<string, string>> = {
+      'review-thread:artifact-1:msg-1': 'inbox:review-thread:artifact-1:msg-1',
+      'Triage my unread inbox.': 'inbox-triage-briefing',
+      'Triage my unread email.': 'inbox-triage-briefing',
+      'Draft a reply to this email thread.': 'inbox-draft-reply',
+      'Brief my calendar for today.': 'calendar-agenda-briefing',
+      'Search and list email messages for triage. User request: Triage my unread email.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.search_messages',
+      'Read the selected email conversation to draft a reply. User request: Draft a reply to this email thread.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.get_thread',
+      'Send the reviewed reply only after separate confirmation. User request: Draft a reply to this email thread.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.send_reply',
+      'Edit the selected calendar event only after separate confirmation. User request: Brief my calendar for today.': '',
+      'Read upcoming agenda events. User request: Brief my calendar for today.': 'mcp:caldav-agenda:mcp:caldav-agenda:caldav.list_events',
+    };
+    const personalOps = fakePort((_name, _question, rawState) => {
+      const state = rawState as unknown as { query: string; candidate: { name: string } };
+      const pick = personalOpsPicks[state.query];
+      if (pick === undefined) throw new Error(`Unscripted PersonalOps fixture ${state.query}`);
+      return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
+    });
     const port: JudgmentPort = {
       model: security.port.model,
-      ask: request => Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
+      ask: request => request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
+        : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
         ? credentials.port.ask(request) : security.port.ask(request),
     };
     previousPort = installJudgmentPort(port);

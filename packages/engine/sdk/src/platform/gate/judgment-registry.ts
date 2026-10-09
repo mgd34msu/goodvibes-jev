@@ -105,3 +105,6 @@ registry.register(sourceScreeningVerification);
 
 import { researchReferenceParameterRole } from '../security/source-screening/reference.js';
 registry.register(researchReferenceParameterRole);
+
+import { walkDirectoryReading } from '../utils/directory-reading.js';
+registry.register(walkDirectoryReading);

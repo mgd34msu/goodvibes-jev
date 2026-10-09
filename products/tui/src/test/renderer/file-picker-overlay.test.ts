@@ -90,3 +90,12 @@ describe('renderFilePickerOverlay', () => {
     expect(row[at + 2]!.fg).not.toBe(activeTokens().brand);
   });
 });
+
+
+test('an unavailable directory reading is rendered instead of an endless loading state', () => {
+  const picker = new FilePickerModal({ workingDirectory: '/unused' });
+  picker.loadError = 'File listing unavailable. Close and reopen to retry.';
+  const text = renderFilePickerOverlay(picker, 100, 24).map(lineToString).join('\n');
+  expect(text).toContain('File listing unavailable');
+  expect(text).not.toContain('Loading files');
+});

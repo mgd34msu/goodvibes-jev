@@ -29,3 +29,7 @@ export type { EmailDaemonInboxOptions, EmailDaemonInboxFactories, EmailDaemonInb
 
 export { createMultiOwnerDaemonInboxFactory } from '../runtime/multiowner-inbox-composition.js';
 export type { DaemonInboxSourceFactory } from '../runtime/multiowner-inbox-composition.js';
+
+export { createProductionDaemonRuntime } from './production-runtime.js';
+export { createProductionDaemonInboxFactory, BUILTIN_DAEMON_INBOX_PROVIDERS } from '../runtime/production-inbox-composition.js';
+export type { ProductionDaemonInboxOptions } from '../runtime/production-inbox-composition.js';

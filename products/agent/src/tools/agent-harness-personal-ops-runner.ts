@@ -1,3 +1,5 @@
+import type { Ranked } from '@goodvibes-jev/judgment';
+import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { PERSONAL_OPS_READ_CONTROL_FIELDS, type PersonalOpsConnectorSignal, type PersonalOpsConnectorTool, type PersonalOpsExecutionStep, type PersonalOpsIntakeCandidate, type PersonalOpsLane, type PersonalOpsLaneId, type PersonalOpsLiveRecord, type PersonalOpsReadRunResult, type PersonalOpsRoutePacket, type PersonalOpsWorkflow, type PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
@@ -603,14 +605,15 @@ export function summarizeRunRecord(record: PersonalOpsLiveRecord, lane: Personal
   };
 }
 
-export function resolveRunRecord(
+export async function resolveRunRecord(
   lanes: readonly PersonalOpsLane[],
   options: { readonly laneId: string; readonly recordId: string; readonly target: string; readonly query: string },
-): { readonly lane: PersonalOpsLane; readonly record: PersonalOpsLiveRecord } | null | { readonly status: 'ambiguous'; readonly input: string; readonly candidates: readonly Record<string, unknown>[] } {
+  rankingOptions: CatalogRankingOptions = {},
+): Promise<{ readonly lane: PersonalOpsLane; readonly record: PersonalOpsLiveRecord } | null | { readonly status: 'ambiguous'; readonly input: string; readonly candidates: readonly Record<string, unknown>[] } | { readonly status: 'deferred'; readonly reason: 'uncertain_record_reading'; readonly judgments: readonly Ranked[] } | { readonly status: 'selection_required'; readonly reason: 'exact_record_identity_required'; readonly candidates: readonly Record<string, unknown>[]; readonly judgments: readonly Ranked[] }> {
+  rankingOptions.signal?.throwIfAborted();
   const scopedLanes = options.laneId ? lanes.filter((lane) => lane.id === options.laneId) : lanes;
   const lookup = options.recordId || options.target || options.query;
   if (!lookup) return null;
-  const normalized = lookup.toLowerCase();
   const exact = scopedLanes.flatMap((lane) => (lane.liveRecords ?? [])
     .filter((record) => record.id === lookup || record.qualifiedName === lookup)
     .map((record) => ({ lane, record })));
@@ -622,15 +625,21 @@ export function resolveRunRecord(
       candidates: exact.map(({ lane, record }) => summarizeRunRecord(record, lane, false)),
     };
   }
-  const matches = scopedLanes.flatMap((lane) => (lane.liveRecords ?? [])
-    .filter((record) => liveRecordSearchText(record).includes(normalized))
-    .map((record) => ({ lane, record })));
-  if (matches.length === 1) return matches[0]!;
-  if (matches.length > 1) {
+  // Explicit record ids are structural identities; a missing id never silently selects another record.
+  if (options.recordId) return null;
+  const catalog = scopedLanes.flatMap((lane) => (lane.liveRecords ?? []).map((record) => ({ lane, record })));
+  const ranking = await rankHarnessCatalog(catalog, lookup, ({ lane, record }) => ({
+    id: `${lane.id}:${record.id}`, description: liveRecordSearchText(record),
+  }), 'agent.personal-ops.record', rankingOptions);
+  if (ranking.matches.length > 0 && !ranking.matches.some(({ judgment }) => judgment.reading.verdict === 'yes')) {
+    return { status: 'deferred', reason: 'uncertain_record_reading', judgments: ranking.judgments };
+  }
+  const matches = ranking.matches.map(({ entry }) => entry);
+  if (matches.length > 0) {
     return {
-      status: 'ambiguous',
-      input: lookup,
+      status: 'selection_required', reason: 'exact_record_identity_required',
       candidates: matches.slice(0, 8).map(({ lane, record }) => summarizeRunRecord(record, lane, false)),
+      judgments: ranking.judgments,
     };
   }
   return null;

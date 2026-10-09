@@ -1,3 +1,5 @@
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
@@ -347,7 +349,9 @@ function queueSearchText(item: { readonly lane: PersonalOpsLane; readonly record
   ].join('\n').toLowerCase();
 }
 
-export async function personalOpsQueueSummary(context: CommandContext, args: AgentHarnessPersonalOpsArgs): Promise<Record<string, unknown>> {
+export async function personalOpsQueueSummary(context: CommandContext, args: AgentHarnessPersonalOpsArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted();
+  args = snapshotJudgmentInput(args) as AgentHarnessPersonalOpsArgs;
   const includeParameters = args.includeParameters === true;
   const query = readString(args.query) || readString(args.target);
   const tools = await mcpToolRecords(context);
@@ -356,13 +360,17 @@ export async function personalOpsQueueSummary(context: CommandContext, args: Age
     schemasByQualifiedName: includeParameters ? await mcpToolSchemas(context, tools) : new Map<string, McpToolSchema>(),
   });
   const queueLanes = lanes.filter((lane) => lane.id === 'inbox' || lane.id === 'calendar');
-  const allItems = queueLanes
+  const catalogItems = queueLanes
     .flatMap((lane) => (lane.liveRecords ?? [])
       .filter(isPersonalOpsQueueRecord)
       .map((record) => ({ lane, record })))
-    .filter((item) => !query || queueSearchText(item).includes(query.toLowerCase()))
     .sort((left, right) => queueStatusRank(right.record) - queueStatusRank(left.record) || left.lane.id.localeCompare(right.lane.id) || left.record.label.localeCompare(right.record.label));
+  const ranking = query ? await rankHarnessCatalog(catalogItems, query, ({ lane, record }) => ({
+    id: `${lane.id}:${record.id}`, description: queueSearchText({ lane, record }),
+  }), 'agent.personal-ops.queue', options) : undefined;
+  const allItems = ranking ? ranking.matches.map(({ entry }) => entry) : catalogItems;
   const limit = readLimit(args.limit, includeParameters ? 20 : 8);
+  options.signal?.throwIfAborted();
   const items = allItems.slice(0, limit).map((item) => describeQueueItem(item.lane, item.record, includeParameters));
   const readRecords = allItems.filter((item) => item.record.effect === 'read-only');
   const confirmedFollowUps = allItems.reduce((total, item) => total + (item.record.followUpRoutes ?? []).filter((route) => route.requiresConfirmation).length, 0);
@@ -373,6 +381,7 @@ export async function personalOpsQueueSummary(context: CommandContext, args: Age
   return {
     status: allItems.length > 0 ? attentionRecords > 0 ? 'attention' : 'ready' : 'empty',
     queue: items,
+    ...(ranking ? { judgments: ranking.judgments } : {}),
     returned: items.length,
     total: allItems.length,
     summary: {
@@ -407,7 +416,9 @@ export async function personalOpsQueueSummary(context: CommandContext, args: Age
   };
 }
 
-export async function personalOpsIntakeSummary(context: CommandContext, args: AgentHarnessPersonalOpsArgs): Promise<Record<string, unknown>> {
+export async function personalOpsIntakeSummary(context: CommandContext, args: AgentHarnessPersonalOpsArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted();
+  args = snapshotJudgmentInput(args) as AgentHarnessPersonalOpsArgs;
   const request = readString(args.query) || readString(args.target);
   if (!request) {
     return {
@@ -429,32 +440,38 @@ export async function personalOpsIntakeSummary(context: CommandContext, args: Ag
     schemasByQualifiedName: await mcpToolSchemas(context, tools),
   });
   const limit = readLimit(args.limit, includeParameters ? 8 : 4);
-  const candidates = buildPersonalOpsIntakeCandidates(request, lanes, includeParameters).slice(0, limit);
-  const preferred = candidates[0]!;
+  const ranking = await buildPersonalOpsIntakeCandidates(request, lanes, includeParameters, options);
+  const candidates = ranking.candidates.slice(0, limit);
+  const preferred = candidates.find((candidate) => candidate.judgment?.reading.verdict === 'yes');
   return {
-    status: 'ready',
+    status: preferred ? 'ready' : 'deferred',
     request: previewHarnessText(request, includeParameters ? 220 : 120),
-    preferred,
+    ...(preferred ? { preferred } : { reason: candidates.length > 0 ? 'uncertain_intake_reading' : 'no_matching_intake_route' }),
+    judgments: ranking.judgments,
     candidates,
     personalOpsRoute: 'personal_ops action:"status"',
-    laneRoute: `personal_ops action:"lane" laneId:"${preferred.laneId}"`,
+    ...(preferred ? { laneRoute: `personal_ops action:"lane" laneId:"${preferred.laneId}"` } : {}),
     policy: 'Personal Ops intake is read-only. It chooses the safest visible lane and route; live personal-data reads must use reviewed connector or daemon routes, and every send, edit, schedule, or external effect still requires explicit confirmation.',
   };
 }
 
-export async function runPersonalOpsRead(context: CommandContext, args: AgentHarnessPersonalOpsArgs): Promise<PersonalOpsReadRunResult> {
+export async function runPersonalOpsRead(context: CommandContext, args: AgentHarnessPersonalOpsArgs, options: CatalogRankingOptions = {}): Promise<PersonalOpsReadRunResult> {
+  options.signal?.throwIfAborted();
+  args = snapshotJudgmentInput(args) as AgentHarnessPersonalOpsArgs;
+  const sourceApi = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
+  const sessionId = context.session?.runtime?.sessionId;
   const includeParameters = args.includeParameters === true;
   const tools = await mcpToolRecords(context);
   const lanes = buildLanes(context, {
     toolsByServer: toolsByServer(tools),
     schemasByQualifiedName: await mcpToolSchemas(context, tools),
   });
-  const resolved = resolveRunRecord(lanes, {
+  const resolved = await resolveRunRecord(lanes, {
     laneId: readString(args.laneId),
     recordId: readString(args.recordId),
     target: readString(args.target),
     query: readString(args.query),
-  });
+  }, options);
   if (!resolved) {
     return {
       status: 'missing_lookup',
@@ -530,7 +547,14 @@ export async function runPersonalOpsRead(context: CommandContext, args: AgentHar
   }
 
   try {
-    const result = await callTool(record.qualifiedName, fields);
+    options.signal?.throwIfAborted();
+    options.assertCurrent?.();
+    if ((context.clients?.mcpApi ?? context.extensions?.mcpRegistry) !== sourceApi || context.session?.runtime?.sessionId !== sessionId) {
+      return { status: 'deferred', reason: 'personal_ops_source_changed' };
+    }
+    // Exact identity is required; MCP remains the live admission/permission owner.
+    const result = await callTool(record.qualifiedName, fields, { signal: options.signal });
+    options.signal?.throwIfAborted();
     const reviewRecords = personalOpsReadReviewRecords(lane, record, result, includeParameters);
     const output = boundedPersonalOpsResult(result, includeParameters);
     const saveRequested = readRunControlBoolean(args.fields, ['saveReviewCards', 'saveReview']);
@@ -545,6 +569,7 @@ export async function runPersonalOpsRead(context: CommandContext, args: AgentHar
         title: readRunControlString(args.fields, 'artifactTitle'),
       })
       : null;
+    options.signal?.throwIfAborted();
     const nextRoutes = personalOpsReadNextRoutes({ lane, runRoute, savedReviewArtifact });
     return {
       status: 'executed',
@@ -566,6 +591,7 @@ export async function runPersonalOpsRead(context: CommandContext, args: AgentHar
       policy: 'This route executed one selected read-only MCP connector tool and returned bounded, redacted output for review.',
     };
   } catch (error) {
+    options.signal?.throwIfAborted();
     return {
       status: 'failed',
       record: recordSummary,
@@ -576,7 +602,9 @@ export async function runPersonalOpsRead(context: CommandContext, args: AgentHar
   }
 }
 
-export async function describePersonalOpsLane(context: CommandContext, args: AgentHarnessPersonalOpsArgs): Promise<PersonalOpsLaneResolution> {
+export async function describePersonalOpsLane(context: CommandContext, args: AgentHarnessPersonalOpsArgs, options: CatalogRankingOptions = {}): Promise<PersonalOpsLaneResolution> {
+  options.signal?.throwIfAborted();
+  args = snapshotJudgmentInput(args) as AgentHarnessPersonalOpsArgs;
   const laneId = readString(args.laneId);
   const target = readString(args.target);
   const query = readString(args.query);
@@ -590,10 +618,17 @@ export async function describePersonalOpsLane(context: CommandContext, args: Age
   const normalized = input.toLowerCase();
   const tools = await mcpToolRecords(context);
   const lanes = buildLanes(context, { toolsByServer: toolsByServer(tools), schemasByQualifiedName: await mcpToolSchemas(context, tools) });
+  options.signal?.throwIfAborted();
   const exact = lanes.find((lane) => lane.id === normalized);
   if (exact) return { status: 'found', lane: describeLane(exact, true) };
-  const matches = lanes.filter((lane) => searchText(lane).includes(normalized));
-  if (matches.length === 1) return { status: 'found', lane: describeLane(matches[0]!, true) };
+  const ranking = await rankHarnessCatalog(lanes, input, (lane) => ({ id: lane.id, description: searchText(lane) }), 'agent.personal-ops.lane', options);
+  if (ranking.matches.length > 0 && !ranking.matches.some(({ judgment }) => judgment.reading.verdict === 'yes')) {
+    return { status: 'deferred', reason: 'uncertain_lane_reading', judgments: ranking.judgments };
+  }
+  const matches = ranking.matches.map(({ entry }) => entry);
+  if (matches.length === 1 && ranking.matches[0]!.judgment.reading.verdict === 'yes') {
+    return { status: 'found', lane: { ...describeLane(matches[0]!, true), judgment: ranking.matches[0]!.judgment } };
+  }
   if (matches.length > 1) {
     return {
       status: 'ambiguous',

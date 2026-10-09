@@ -11,7 +11,8 @@ export interface HandlerLogger {
 export interface HandlerContext {
   readonly catalog: GatewayMethodCatalog;
   readonly credentials: DaemonCredentialStore;
-  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>
+    & Partial<Pick<ConfigManager, 'getIngestionQuarantine'>>;
   readonly workingDirectory: string;
   readonly homeDirectory: string;
   readonly logger: HandlerLogger;

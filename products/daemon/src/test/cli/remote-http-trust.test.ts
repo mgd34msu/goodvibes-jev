@@ -1,4 +1,4 @@
-/** Owned HTTPS proof for the emitted CLI. WSS remains a separate transport. */
+/** Owned HTTPS/WSS proof through emitted command callers. */
 import { expect, test } from 'bun:test';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -30,12 +30,14 @@ function httpsFixture() {
   const credentials = certificate(root, 'server');
   const requests: Array<{ path: string; method: string; authorization: string | null }> = [];
   let beforeReply: (() => Promise<void>) | undefined;
+  const calls: string[] = [];
   const server = Bun.serve({
     hostname: '127.0.0.1', port: 0, tls: credentials,
-    async fetch(request): Promise<Response> {
+    async fetch(request, server): Promise<Response | undefined> {
       const path = new URL(request.url).pathname;
       requests.push({ path, method: request.method, authorization: request.headers.get('authorization') });
       if (request.headers.get('authorization') !== `Bearer ${TOKEN}`) return new Response('Unauthorized', { status: 401 });
+      if (path === '/api/control-plane/ws' && server.upgrade(request)) return;
       if (path === '/status') {
         await beforeReply?.();
         return Response.json({ status: 'running', version: 'owned-https-version', cluster: { enabled: false } });
@@ -47,8 +49,19 @@ function httpsFixture() {
       if (path === '/api/cluster/status') return Response.json({ ok: true, data: { membership: 'no-group', nodeName: 'owned-node' } });
       return new Response('No fixture route', { status: 404 });
     },
+    websocket: {
+      message(socket, message) {
+        const frame = JSON.parse(String(message));
+        if (frame.type === 'auth') { socket.send(JSON.stringify({ type: 'auth', ok: frame.token === TOKEN })); return; }
+        if (frame.type === 'call') {
+          calls.push(frame.methodId);
+          socket.send(JSON.stringify({ type: 'response', id: frame.id, ok: true, status: 200,
+            body: { sessions: [{ id: 'owned-wss-session', status: 'detached' }] } }));
+        }
+      },
+    },
   });
-  return { root, credentials, requests, port: server.port!,
+  return { root, credentials, requests, calls, port: server.port!,
     holdReplies(callback: () => Promise<void>) { beforeReply = callback; },
     async close() { await server.stop(true); },
   };
@@ -87,15 +100,15 @@ function configuration(f: ReturnType<typeof httpsFixture>, name: string, mode: T
   writeFileSync(receipts, JSON.stringify([{ id: 'owned-receipt', text: 'Owned update receipt', at: 1_700_000_000_000 }]));
   const unchanged = new Map([settings, daemonSettings, token, receipts].map((path) => [path, readFileSync(path)]));
   return { root, home, tree, cwd, daemon, envDaemon, configDir, env, config,
-    args(command: 'status' | 'update') { return ['--daemon-home', 'selected-daemon', command, ...(command === 'update' ? ['--check'] : []), '--json']; },
+    args(command: 'status' | 'update' | 'sessions' | 'cluster') { return [...(command === 'cluster' ? [] : ['--daemon-home', 'selected-daemon']), command, ...(command === 'update' ? ['--check'] : command === 'sessions' ? ['list'] : command === 'cluster' ? ['status'] : []), '--json']; },
     assertUnchanged() { for (const [path, bytes] of unchanged) expect(readFileSync(path)).toEqual(bytes); },
     track(path: string) { unchanged.set(path, readFileSync(path)); },
   };
 }
 
-async function cli(c: ReturnType<typeof configuration>, command: 'status' | 'update'): Promise<Result> {
+async function cli(c: ReturnType<typeof configuration>, command: 'status' | 'update' | 'sessions' | 'cluster'): Promise<Result> {
   const child = spawn(process.execPath, ['--preload', guard, entrypoint, ...c.args(command)], {
-    cwd: c.cwd, env: c.env, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: c.cwd, env: command === 'cluster' ? { ...c.env, GOODVIBES_DAEMON_HOME: c.daemon } : c.env, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = ''; let stderr = ''; let exited = false;
   child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -119,7 +132,7 @@ async function cli(c: ReturnType<typeof configuration>, command: 'status' | 'upd
   }
 }
 
-async function programmatic(c: ReturnType<typeof configuration>, command: 'status' | 'update'): Promise<Result> {
+async function programmatic(c: ReturnType<typeof configuration>, command: 'status' | 'update' | 'sessions' | 'cluster'): Promise<Result> {
   const { runDaemonCli } = await import(emittedRun) as typeof import('../../cli/run.js');
   const stdout: string[] = []; const stderr: string[] = [];
   const code = await runDaemonCli(c.args(command), { env: c.env, cwd: c.cwd,
@@ -138,9 +151,8 @@ function successfulStatus(result: Result, port: number) {
     channels: { channels: [{ id: 'owned-channel', state: 'ready' }] },
     cluster: { membership: 'no-group', nodeName: 'owned-node' },
   } });
-  // This slice changes HTTPS fetch only. It must not claim the WSS query worked.
-  expect(receipt.data.hostedSessions.error).toBeString();
-  expect(receipt.data.hostedSessions.count).toBeUndefined();
+  expect(receipt.data.hostedSessions.error).toBeUndefined();
+  expect(receipt.data.hostedSessions.count).toBe(1);
   expect(result.stdout + result.stderr).not.toContain(TOKEN);
 }
 
@@ -160,12 +172,12 @@ function rejected(result: Result) {
   expect(result.stdout + result.stderr).not.toContain(TOKEN);
 }
 
-test('emitted status trusts the selected custom CA for every HTTP document, with WSS reported separately', async () => {
+test('emitted status trusts the selected custom CA for every HTTP document, including the hosted WSS query', async () => {
   const f = httpsFixture();
   try {
     const c = configuration(f, 'valid-custom');
     successfulStatus(await cli(c, 'status'), f.port);
-    expect(f.requests.map((request) => request.path).sort()).toEqual(['/api/channels/status', '/api/cluster/status', '/api/health', '/status']);
+    expect(f.requests.map((request) => request.path).sort()).toEqual(['/api/channels/status', '/api/cluster/status', '/api/control-plane/ws', '/api/health', '/status']);
     expect(f.requests.every((request) => request.method === 'GET' && request.authorization === `Bearer ${TOKEN}`)).toBe(true);
     c.assertUnchanged();
   } finally { await f.close(); }
@@ -324,3 +336,24 @@ test('strict CLI trust cannot inherit another home custom CA from an installed g
     previous.assertUnchanged(); strict.assertUnchanged();
   } finally { globalThis.fetch = originalFetch; await f.close(); }
 }, 30_000);
+
+for (const command of ['sessions', 'cluster'] as const) {
+  for (const mode of ['custom', 'bundled+custom', 'bundled'] as const) {
+    test(`emitted ${command} uses selected ${mode} trust without global ownership`, async () => {
+      const f = httpsFixture();
+      try {
+        const c = configuration(f, `${command}-${mode}`, mode);
+        const answer = await cli(c, command);
+        if (mode === 'bundled') {
+          expect(answer.code).toBe(1); expect(f.requests).toHaveLength(0);
+        } else {
+          expect(answer, answer.stderr).toMatchObject({ code: 0, stderr: '' });
+          if (command === 'sessions') expect(f.calls).toEqual(['sessions.hosted.list']);
+          else expect(f.requests.map(row => row.path)).toEqual(['/api/cluster/status']);
+        }
+        expect(answer.stdout + answer.stderr).not.toContain(TOKEN);
+        c.assertUnchanged();
+      } finally { await f.close(); }
+    }, 30_000);
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createAtRestCipher, type DaemonCredentialStore } from '../sdk/src/platform/config/daemon-credential-store.js';
+import { createAtRestCipher, createDaemonCredentialStore, type DaemonCredentialStore } from '../sdk/src/platform/config/daemon-credential-store.js';
 
 const FIXTURE_KEY = Buffer.alloc(32, 7).toString('base64');
 function store(initial: string | null) {
@@ -10,6 +10,10 @@ function store(initial: string | null) {
     async resolveConfigSecret() { return value; },
     async put(_name, next) { writes++; value = next; },
     async has() { return value !== null; },
+    async getOrCreateDaemonSecret(name, create) {
+      if (value !== null) return value;
+      const next = create(); await port.put(name, next); return next;
+    },
   };
   return { port, get value() { return value; }, get writes() { return writes; } };
 }
@@ -81,4 +85,13 @@ describe('draft cipher lifecycle', () => {
       expect(fixture.value === invalid).toBe(true);
     });
   }
+});
+
+test('local presence distinguishes empty literal credentials, material, references and unavailable stores', () => {
+  let current: { state: 'resolved'; value: string } | { state: 'absent' | 'unsupported' } = { state: 'absent' };
+  const credentials = createDaemonCredentialStore({ async get() { throw new Error('Must not resolve external credentials'); },
+    async set() {}, resolveLocalSecretSync() { return current; } });
+  for (const value of ['', '   ']) { current = { state: 'resolved', value }; expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('absent'); }
+  current = { state: 'resolved', value: 'synthetic-present' }; expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('present');
+  current = { state: 'unsupported' }; expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('unavailable');
 });
