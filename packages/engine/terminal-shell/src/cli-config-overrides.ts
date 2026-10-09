@@ -3,18 +3,11 @@
  * `--disable`, `--hostname`/`--port`, and a front-end's own launch-time
  * settings defaults onto a live ConfigManager.
  */
-import { existsSync, readFileSync } from 'node:fs';
-import type { ConfigKey, ConfigManager, ConfigSetting, GoodVibesConfig } from '@goodvibes-jev/engine/sdk/platform/config';
-import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
-import { ConfigError } from '@goodvibes-jev/engine/sdk/platform/types';
+import type { ConfigKey, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { featureEnablementWrite, getFeatureSetting } from './cli-feature-settings.js';
 import type { GoodVibesCliCommand, GoodVibesCliFlags } from './cli-types.js';
 import { RUNTIME_ENDPOINT_CONFIG_KEYS, hostModeForHostname } from './cli-endpoints.js';
 import type { RuntimeEndpointId } from './cli-endpoints.js';
-
-const CONFIG_SCHEMA_BY_KEY = new Map<string, ConfigSetting>(
-  CONFIG_SCHEMA.map((setting) => [setting.key, setting]),
-);
 
 /**
  * Read a settings value as a command line writes it.
@@ -44,118 +37,16 @@ export function parseConfigValueText(value: string): unknown {
   }
 }
 
-function getRuntimeConfig(configManager: ConfigManager): GoodVibesConfig {
-  const mutable = configManager as unknown as { config?: GoodVibesConfig };
-  if (!mutable.config || typeof mutable.config !== 'object') {
-    throw new ConfigError('ConfigManager runtime config is not available for CLI overrides.');
-  }
-  return mutable.config;
-}
-
-function validateConfigValue(setting: ConfigSetting, value: unknown): void {
-  if (setting.type === 'boolean' && typeof value !== 'boolean') {
-    throw new ConfigError(`Invalid value for ${setting.key}: expected boolean.`);
-  }
-  if (setting.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) {
-    throw new ConfigError(`Invalid value for ${setting.key}: expected number.`);
-  }
-  if (setting.type === 'string' && typeof value !== 'string') {
-    throw new ConfigError(`Invalid value for ${setting.key}: expected string.`);
-  }
-  if (setting.type === 'enum' && setting.enumValues && !setting.enumValues.includes(String(value))) {
-    throw new ConfigError(`Invalid value for ${setting.key}: "${String(value)}". Allowed: ${setting.enumValues.join(', ')}`);
-  }
-  if (setting.validate && !setting.validate(value)) {
-    throw new ConfigError(`Invalid value for ${setting.key}: ${String(value)}`);
-  }
-}
-
-function setNestedConfigValue(config: GoodVibesConfig, key: ConfigKey, value: unknown): void {
-  const parts = key.split('.');
-  let cursor: unknown = config;
-  for (const part of parts.slice(0, -1)) {
-    if (cursor == null || typeof cursor !== 'object' || !(part in cursor)) {
-      throw new ConfigError(`Invalid config path: section '${part}' does not exist`);
-    }
-    cursor = (cursor as Record<string, unknown>)[part];
-  }
-  if (cursor == null || typeof cursor !== 'object') {
-    throw new ConfigError(`Invalid config path: section '${parts.slice(0, -1).join('.')}' does not exist`);
-  }
-  (cursor as Record<string, unknown>)[parts[parts.length - 1]!] = value;
-}
-
-/**
- * Typed accessor for the SDK's private file paths on ConfigManager.
- *
- * `configPath` and `projectConfigPath` are declared `private readonly` on the
- * SDK's ConfigManager; no public accessor exists as of the SDK version this
- * package targets. This cast is the narrowest possible workaround.
- *
- * Fail-open: if the cast produces undefined (an SDK internal rename), the
- * paths are treated as absent and the default is applied safely.
- */
-function getPersistedPaths(configManager: ConfigManager): { configPath: string | undefined; projectConfigPath: string | undefined } {
-  const manager = configManager as unknown as { configPath?: string; projectConfigPath?: string };
-  return {
-    configPath: typeof manager.configPath === 'string' ? manager.configPath : undefined,
-    projectConfigPath: typeof manager.projectConfigPath === 'string' ? manager.projectConfigPath : undefined,
-  };
-}
-
-/**
- * Returns true if the given dot-path key is explicitly present anywhere
- * in the provided raw JSON object.
- */
-function isKeyPresentInRaw(raw: Record<string, unknown>, key: ConfigKey): boolean {
-  const parts = key.split('.');
-  let cursor: unknown = raw;
-  for (const part of parts) {
-    if (cursor == null || typeof cursor !== 'object' || !(part in (cursor as object))) {
-      return false;
-    }
-    cursor = (cursor as Record<string, unknown>)[part];
-  }
-  return true;
-}
-
-/**
- * Apply a front-end's own default to a config key, but ONLY if the user has
- * not explicitly set the key in EITHER their global OR project persisted
- * settings files. Reads the raw settings JSON from disk (bypasses the
- * in-memory merged config) so a user's explicit `false` in either file is
- * never silently overridden at startup.
- *
- * Each settings file is read independently: a parse failure on one file
- * contributes nothing but does NOT prevent the other file from being checked.
- * The default is applied only when the key is absent from every readable file
- * (e.g. new install, both files missing, or both unparseable).
- */
+/** Register a frontend default against the manager's last accepted persisted view. */
 export function applyRuntimeConfigDefault(configManager: ConfigManager, key: ConfigKey, defaultValue: unknown): void {
-  const { configPath, projectConfigPath } = getPersistedPaths(configManager);
-  // Check each settings file independently. A read/parse failure on one path
-  // contributes nothing but must not prevent the other path from being checked.
-  for (const filePath of [configPath, projectConfigPath]) {
-    if (typeof filePath !== 'string' || !existsSync(filePath)) continue;
-    try {
-      const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
-      if (isKeyPresentInRaw(raw, key)) {
-        // Key is explicitly set in this persisted config, respect the user's value.
-        return;
-      }
-    } catch {
-      // Unreadable or malformed JSON, this file contributes nothing; continue to next.
-    }
-  }
-  applyRuntimeConfigValue(configManager, key, defaultValue);
+  configManager.setRuntimeDefault(key, defaultValue as never);
 }
 
 /**
  * Every front-end-side config default applied at startup, in one place.
  * Currently: show token speed ON (the SDK schema default is false).
- * applyRuntimeConfigDefault reads the global + project settings files and
- * only applies the default in-memory when the key is absent from both (e.g.
- * a new install); an explicit user value is respected. No disk write.
+ * The manager applies it below accepted persisted settings and invocation
+ * overrides, independent of registration order. No disk read or write.
  */
 export function applyTerminalRuntimeConfigDefaults(configManager: ConfigManager): void {
   applyRuntimeConfigDefault(configManager, 'display.showTokenSpeed', true);
@@ -176,12 +67,7 @@ export function applyConfiguredHitlMode(
 }
 
 export function applyRuntimeConfigValue(configManager: ConfigManager, key: ConfigKey, value: unknown): void {
-  const setting = CONFIG_SCHEMA_BY_KEY.get(key);
-  if (!setting) {
-    throw new ConfigError(`Unknown config key: ${key}`);
-  }
-  validateConfigValue(setting, value);
-  setNestedConfigValue(getRuntimeConfig(configManager), key, value);
+  configManager.setRuntimeOverride(key, value as never);
 }
 
 export function applyRuntimeConfigOverrides(
@@ -192,7 +78,7 @@ export function applyRuntimeConfigOverrides(
   for (const override of overrides) {
     const index = override.indexOf('=');
     if (index <= 0) {
-      errors.push(`Invalid --config override "${override}". Expected key=value.`);
+      errors.push('Invalid --config override. Expected key=value.');
       continue;
     }
     const key = override.slice(0, index) as ConfigKey;
@@ -200,7 +86,7 @@ export function applyRuntimeConfigOverrides(
     try {
       applyRuntimeConfigValue(configManager, key, parseConfigValueText(rawValue));
     } catch (error) {
-      errors.push(error instanceof Error ? `Invalid --config ${override}: ${error.message}` : `Invalid --config ${override}`);
+      errors.push(error instanceof Error ? `Invalid --config override: ${error.message}` : 'Invalid --config override.');
     }
   }
   return errors;
@@ -221,7 +107,6 @@ export function applyRuntimeFeatureFlagOverrides(
   },
 ): readonly string[] {
   if (options.enableFeatures.length === 0 && options.disableFeatures.length === 0) return [];
-  const config = getRuntimeConfig(configManager);
   const errors: string[] = [];
   const apply = (feature: string, enabled: boolean, flagName: string): void => {
     const write = featureEnablementWrite(feature, enabled);
@@ -231,7 +116,8 @@ export function applyRuntimeFeatureFlagOverrides(
         : `${flagName} ${feature}: unknown feature id.`);
       return;
     }
-    setNestedConfigValue(config, write.key, write.value);
+    try { applyRuntimeConfigValue(configManager, write.key, write.value); }
+    catch (error) { errors.push(error instanceof Error ? `${flagName}: ${error.message}` : `Invalid ${flagName}.`); }
   };
   for (const feature of options.enableFeatures) apply(feature, true, '--enable-feature');
   for (const feature of options.disableFeatures) apply(feature, false, '--disable-feature');
@@ -252,8 +138,8 @@ export function applyRuntimeEndpointFlagOverrides(
       applyRuntimeConfigValue(configManager, keys.host, flags.hostname);
     } catch (error) {
       errors.push(error instanceof Error
-        ? `Invalid --hostname ${flags.hostname}: ${error.message}`
-        : `Invalid --hostname ${flags.hostname}`);
+        ? `Invalid --hostname: ${error.message}`
+        : 'Invalid --hostname.');
     }
   }
 
@@ -262,8 +148,8 @@ export function applyRuntimeEndpointFlagOverrides(
       applyRuntimeConfigValue(configManager, keys.port, flags.port);
     } catch (error) {
       errors.push(error instanceof Error
-        ? `Invalid --port ${flags.port}: ${error.message}`
-        : `Invalid --port ${flags.port}`);
+        ? `Invalid --port: ${error.message}`
+        : 'Invalid --port.');
     }
   }
 

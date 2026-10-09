@@ -2,14 +2,14 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import type { GoodVibesConfig, ConfigKey, ConfigValue, ConfigSetting } from './schema.js';
-import { DEFAULT_CONFIG, CONFIG_SCHEMA } from './schema.js';
+import { CONFIG_SCHEMA } from './schema.js';
 import { ConfigError } from '../types/errors.js';
 import { logger } from '../utils/logger.js';
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookEvent } from '../hooks/types.js';
 import { attachOwnedConfigHook } from './hook-attachment.js';
 import { getManagedSettingLock } from '../runtime/settings/control-plane.js';
-import { readHostManagedSettingLock } from '../runtime/settings/host-setting-policy-read.js';
+import { readHostManagedSettingLock, readStrictManagedSettingLock } from '../runtime/settings/host-setting-policy-read.js';
 import { requireSurfaceRoot, resolveSharedDirectory, resolveSurfaceDirectory, resolveSurfaceSharedFile } from '../runtime/surface-root.js';
 import { summarizeError } from '../utils/error-display.js';
 import { FeatureAnnouncementStore, featureAnnouncementsPath } from '../runtime/feature-announcements.js';
@@ -24,9 +24,7 @@ import {
 } from './shared-config-tier.js';
 import {
   deleteRawDotPath,
-  isFrozenDefaultDump,
   readRawSettingsFile,
-  stripFrozenDefaults,
   writeRawDotPath,
 } from './settings-io.js';
 import { watchConfigFiles, reloadAndNotifyChanges, type ConfigFileWatchHandle } from './config-file-watcher.js';
@@ -41,6 +39,7 @@ import { persistCategoryKeyRemoval, persistCategoryPatch, type CategoryIoDeps } 
 import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
 import { HostSettings, type HostBooleanSetting, type HostBooleanSettingHandle, type HostSettingValues } from './host-settings.js';
 import { HostSettingsReadError, hostSettingsFileExists, readHostSettingValues, readHostSettingsFile, recoverHostSettingsWriteFailure } from './manager-host-settings.js';
+import { ConfigRuntimeState, captureRuntimeValue } from './manager-runtime-state.js';
 import { announceIngestionNotice } from './settings-ingestion.js';
 import { freezePreparedData, normalizePreparedValue, preparedSchemaSignature, type PreparedMutationRecord,
   type PreparedConfigMutation, type PreparedConfigMutationTransition, type PreparedConfigMutationRequest,
@@ -62,7 +61,7 @@ export type DeepReadonly<T> = {
 interface ConfigCliOverrides {
   /** Per-instance surface-owned boolean leaves; their declared defaults must be restrictive. */
   hostSettings?: readonly HostBooleanSetting[] | undefined;
-  /** Read without creating files, persisting migrations or receipts; mutators refuse. */
+  /** Read without filesystem effects; persistent mutators refuse, runtime inputs are allowed. */
   readOnly?: boolean | undefined;
   /** Withhold borrowed parse-error text from unreadable-settings diagnostics; private errors retain it. */
   diagnosticMode?: 'default' | 'structural' | undefined;
@@ -127,7 +126,7 @@ export type ConfigUnsubscribe = () => void;
 /**
  * ConfigManager, Layered, mutable, persistent config system.
  *
- * Load order: defaults < global surface settings < project surface settings < CLI overrides
+ * Load order: shipped defaults < frontend defaults < global < project < shared < daemon < invocation overrides
  * API keys are never persisted, loaded from env vars only.
  */
 export class ConfigManager {
@@ -135,7 +134,11 @@ export class ConfigManager {
   private readonly diagnosticMode: 'default' | 'structural';
   private readonly hostSettings: HostSettings;
   private hostLoadValues: HostSettingValues | null = null;
+  private hostLoadSources: Map<string, Record<string, unknown>> | null = null;
+  /** Host defaults projected by malformed/unreadable input, independently of accepted underlay tiers. */
+  private hostDefaultOrigins = new Set<string>();
   private config: GoodVibesConfig;
+  private runtimeState: ConfigRuntimeState;
   private readonly configDir: string;
   private readonly configPath: string;
   private readonly projectConfigPath: string | null;
@@ -189,6 +192,7 @@ export class ConfigManager {
       : null;
     this.config = cloneDefaultConfig();
     this.hostSettings.apply(this.config, this.hostSettings.defaults());
+    this.runtimeState = new ConfigRuntimeState(structuredClone(this.config));
 
     const ownedSharedConfigPath = sharedConfigPath ?? (
       this.homeDirectory ? resolveSurfaceSharedFile(this.homeDirectory, surfaceRoot!) : null
@@ -220,13 +224,13 @@ export class ConfigManager {
 
     // Apply constructor overrides (CLI args, etc.) after load
     if (overrides.model !== undefined) {
-      this.config.provider.model = overrides.model;
+      this.setRuntimeOverride('provider.model', overrides.model);
     }
     if (overrides.autoApprove !== undefined) {
-      this.config.behavior.autoApprove = overrides.autoApprove;
+      this.setRuntimeOverride('behavior.autoApprove', overrides.autoApprove);
     }
     if (overrides.systemPromptFile !== undefined) {
-      this.config.provider.systemPromptFile = overrides.systemPromptFile;
+      this.setRuntimeOverride('provider.systemPromptFile', overrides.systemPromptFile);
     }
   }
 
@@ -271,9 +275,10 @@ export class ConfigManager {
 
   private resolvePath(
     key: DaemonOwnedConfigPath,
+    config: GoodVibesConfig = this.config,
   ): { parent: Record<string, unknown>; field: string } {
     const parts = key.split('.');
-    let cursor: unknown = this.config;
+    let cursor: unknown = config;
 
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i]!;
@@ -302,7 +307,7 @@ export class ConfigManager {
    */
   get<K extends ConfigKey>(key: K): ConfigValue<K> {
     const { parent, field } = this.resolvePath(key);
-    return resolveWithProfileFallback(key, parent[field], this.profileFallback) as ConfigValue<K>;
+    return detachedConfigValue(resolveWithProfileFallback(key, parent[field], this.profileFallback)) as ConfigValue<K>;
   }
 
   /** Validate registration and return an immutable, manager-bound boolean handle. */
@@ -448,6 +453,14 @@ export class ConfigManager {
     const { key, value, destinations } = record.facts;
     const previousValue = this.resolvePath(key).parent[this.resolvePath(key).field];
     const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
+    // Pure detached staging: never run validators, invalidation callbacks, or
+    // runtime admission in the sealed publication tail. Unknown/no-write
+    // receipts retain this owner's previous runtime authority.
+    const staged = this.runtimeState.fork();
+    writeRawDotPath(staged.nonRuntime as unknown as Record<string, unknown>, key, structuredClone(value));
+    staged.retire(key);
+    staged.mark(key, record.facts.operation === 'set' ? destinations[0]!.tier : undefined);
+    const effective = staged.compose();
     const completedPaths: string[] = [];
     let uncertainPath: string | undefined;
     for (const destination of destinations) {
@@ -486,14 +499,15 @@ export class ConfigManager {
         const values = this.hostSettings.defaults();
         this.hostSettings.overlay(values, stores.get(this.configPath)!);
         if (this.projectConfigPath) this.hostSettings.overlay(values, stores.get(this.projectConfigPath)!);
-        this.hostSettings.apply(this.config, values);
+        this.hostSettings.apply(staged.nonRuntime, values);
+        const hostDefaultOrigins = this.updateHostSources(staged, stores);
+        this.publishState(staged, staged.compose());
         // No callback may escape after persistence, including logging failures.
-        try { this.applyHostValues(values, previousHost, true); } catch { /* Receipt remains truthful. */ }
+        try { this.applyHostValues(values, previousHost, true, hostDefaultOrigins); } catch { /* Receipt remains truthful. */ }
       } else {
-        const live = this.resolvePath(key); live.parent[live.field] = structuredClone(value);
+        this.publishState(staged, effective);
         try {
-          this.notifyListeners(key, previousValue, value);
-          this.emitConfigHook(key, previousValue, value);
+          this.notifyPersistedChange(key, previousValue);
         } catch { /* Publication already completed; never report a false refusal. */ }
       }
     }
@@ -547,6 +561,59 @@ export class ConfigManager {
     if (this.permissionIncarnation !== incarnation) throw new ConfigError('Prepared setting owner changed.');
   }
 
+  /**
+   * Register an invocation-only value without filesystem effects, even on a
+   * read-only manager. Survives loads until an explicit mutation supersedes it.
+   * Managed policy is checked on admission; standalone lock changes do not
+   * reconcile existing invocation authority.
+   */
+  setRuntimeOverride<K extends ConfigKey>(key: K, value: ConfigValue<K>): void {
+    this.setRuntimeInput(key, value, false);
+  }
+
+  /** Register a frontend default below every accepted persisted value and invocation override. */
+  setRuntimeDefault<K extends ConfigKey>(key: K, value: ConfigValue<K>): void {
+    this.setRuntimeInput(key, value, true);
+  }
+
+  private setRuntimeInput(key: ConfigKey, value: unknown, isDefault: boolean): void {
+    this.invalidateLifetimes();
+    const owned = captureRuntimeValue(key, value);
+    if (readStrictManagedSettingLock(key, this.configDir)) {
+      throw new ConfigError(`Setting ${key} is managed and cannot be changed.`);
+    }
+    const previous = readDotPath(this.config, key).value;
+    const staged = this.runtimeState.fork();
+    (isDefault ? staged.defaults : staged.overrides).set(key, owned);
+    const effective = staged.compose();
+    this.runtimeState = staged;
+    this.config = effective;
+    const next = readDotPath(effective, key).value;
+    if (JSON.stringify(previous) !== JSON.stringify(next)) {
+      this.notifyListeners(key, previous, next);
+      this.emitConfigHook(key, previous, next);
+    }
+  }
+
+  /** Publish every part of a staged mutation before any observer can run. */
+  private publishState(staged: ConfigRuntimeState, effective: GoodVibesConfig): void {
+    this.runtimeState = staged;
+    this.config = effective;
+    this.sharedKeysPresent.clear();
+    this.daemonKeysPresent.clear();
+    for (const [key, tier] of staged.sources) {
+      if (tier === 'shared') this.sharedKeysPresent.add(key as ConfigKey);
+      if (tier === 'daemon') this.daemonKeysPresent.add(key as DaemonOwnedConfigPath);
+    }
+  }
+
+  private notifyPersistedChange(key: ConfigKey, previous: unknown): void {
+    const next = readDotPath(this.config, key).value;
+    // Preserve legacy explicit-write notifications, including same-value writes.
+    this.notifyListeners(key, previous, next);
+    this.emitConfigHook(key, previous, next);
+  }
+
   /** Set a config value by dot-path key and auto-save to disk. */
   set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
     this.requireWritable();
@@ -571,37 +638,27 @@ export class ConfigManager {
       }
     }
 
-    const { parent, field } = this.resolvePath(key);
-    const previousValue = parent[field]!;
+    const previousValue = readDotPath(this.config, key).value;
     const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
-    parent[field] = value;
-    // Ownership decides the store. A daemon-owned key persists to the daemon's
-    // own settings file, never the surface silo, so the runtime that acts on
-    // it reads the value that was just written. Shared keys persist to the
-    // surface-root-independent shared tier; everything else stays local.
+    const staged = this.runtimeState.fork();
+    const { parent, field } = this.resolvePath(key, staged.nonRuntime);
+    parent[field] = structuredClone(value);
     const useDaemonTier = this.daemonTierPath !== null && isDaemonOwnedConfigKey(key);
     const useSharedTier = !useDaemonTier && this.sharedTierPath !== null && isSharedConfigKey(key);
+    staged.retire(key);
+    staged.mark(key, useDaemonTier ? 'daemon' : useSharedTier ? 'shared' : 'global');
+    const effective = staged.compose();
     try {
-      if (useDaemonTier) {
-        persistDaemonKey(this.daemonTierPath!, key, value);
-      } else if (useSharedTier) {
-        persistSharedKey(this.sharedTierPath!, key, value);
-      } else {
-        this.persistGlobalKey(key, value);
-      }
+      if (useDaemonTier) persistDaemonKey(this.daemonTierPath!, key, parent[field]);
+      else if (useSharedTier) persistSharedKey(this.sharedTierPath!, key, parent[field]);
+      else this.persistGlobalKey(key, parent[field]);
     } catch (error) {
-      parent[field] = previousValue;
       if (previousHost) recoverHostSettingsWriteFailure(error, () => this.refreshHostSettings(previousHost, true));
       throw error;
     }
-    if (useDaemonTier) this.daemonKeysPresent.add(key);
-    if (useSharedTier) this.sharedKeysPresent.add(key);
-    if (previousHost) {
-      this.refreshHostSettings(previousHost, true);
-    } else {
-      this.notifyListeners(key, previousValue, value);
-      this.emitConfigHook(key, previousValue, value);
-    }
+    this.publishState(staged, effective);
+    if (previousHost) this.refreshHostSettings(previousHost, true);
+    else this.notifyPersistedChange(key, previousValue);
   }
 
   /**
@@ -635,10 +692,16 @@ export class ConfigManager {
       if (getManagedSettingLock(key, this.configDir)) {
         throw new ConfigError(`Setting ${key} is managed and cannot be changed.`);
       }
-      const { parent, field } = this.resolvePath(key);
-      return { key, next, parent, field, previous: parent[field] };
+      return { key, next, previous: readDotPath(this.config, key).value };
     });
     if (prepared.length === 0) return;
+    const staged = this.runtimeState.fork();
+    for (const { key, next } of prepared) {
+      writeRawDotPath(staged.nonRuntime as unknown as Record<string, unknown>, key, structuredClone(next));
+      staged.retire(key);
+      staged.mark(key, 'daemon');
+    }
+    const effective = staged.compose();
     try {
       const raw = readDaemonTierFile(this.daemonTierPath);
       for (const { key, next } of prepared) writeRawDotPath(raw, key, next);
@@ -646,14 +709,8 @@ export class ConfigManager {
     } catch {
       throw new ConfigError('Could not persist daemon settings; the update was not applied.');
     }
-    for (const { key, next, parent, field } of prepared) {
-      parent[field] = next;
-      this.daemonKeysPresent.add(key);
-    }
-    for (const { key, next, previous } of prepared) {
-      this.notifyListeners(key, previous, next);
-      this.emitConfigHook(key, previous, next);
-    }
+    this.publishState(staged, effective);
+    for (const { key, previous } of prepared) this.notifyPersistedChange(key, previous);
   }
 
   /**
@@ -684,35 +741,26 @@ export class ConfigManager {
         throw new ConfigError(`Setting ${key} is locked by ${lock.source}: ${lock.reason}`);
       }
     }
-    const { parent, field } = this.resolvePath(key);
-    const previousValue = parent[field];
+    const previousValue = readDotPath(this.config, key).value;
     const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
-    parent[field] = value;
-    // Read-merge-write: a file this cannot parse is quarantined (moved aside
-    // with a receipt) rather than silently discarded, because the write below
-    // would otherwise destroy the only copy of it.
-    const raw: Record<string, unknown> = readRawSettingsFile(this.projectConfigPath);
-    const segments = key.split('.');
-    let cursor: Record<string, unknown> = raw;
-    for (const segment of segments.slice(0, -1)) {
-      const next = cursor[segment];
-      if (next === null || typeof next !== 'object' || Array.isArray(next)) cursor[segment] = {};
-      cursor = cursor[segment] as Record<string, unknown>;
-    }
-    cursor[segments[segments.length - 1] as string] = value;
+    const staged = this.runtimeState.fork();
+    const { parent, field } = this.resolvePath(key, staged.nonRuntime);
+    parent[field] = structuredClone(value);
+    staged.retire(key);
+    staged.mark(key, 'project');
+    const effective = staged.compose();
+    // Raw-file preparation is inside the same refusal boundary as the write.
     try {
+      const raw = readRawSettingsFile(this.projectConfigPath);
+      writeRawDotPath(raw, key, parent[field]);
       writeJsonFileAtomic(this.projectConfigPath, raw);
     } catch (error) {
-      parent[field] = previousValue;
       if (previousHost) recoverHostSettingsWriteFailure(error, () => this.refreshHostSettings(previousHost, true));
       throw error;
     }
-    if (previousHost) {
-      this.refreshHostSettings(previousHost, true);
-    } else {
-      this.notifyListeners(key, previousValue, value);
-      this.emitConfigHook(key, previousValue, value);
-    }
+    this.publishState(staged, effective);
+    if (previousHost) this.refreshHostSettings(previousHost, true);
+    else this.notifyPersistedChange(key, previousValue);
   }
 
   /** Subscribe to changes on a config key; returns an unsubscribe function. */
@@ -769,7 +817,7 @@ export class ConfigManager {
     if (!set) return;
     for (const cb of set) {
       try {
-        cb(newValue, oldValue);
+        cb(detachedConfigValue(newValue), detachedConfigValue(oldValue));
       } catch (error) {
         logger.warn('Config listener failed during setting update', {
           key,
@@ -790,7 +838,7 @@ export class ConfigManager {
         specific: key,
         sessionId: '',
         timestamp: Date.now(),
-        payload: { key, value: newValue, previousValue },
+        payload: { key, value: detachedConfigValue(newValue), previousValue: detachedConfigValue(previousValue) },
       };
       this.hookDispatcher.fire(event).catch((error: unknown) => {
         logger.warn('[config] Change hook failed', {
@@ -852,16 +900,14 @@ export class ConfigManager {
   }
 
   /**
-   * Persist current config to the global settings file, writing only the keys
-   * that differ from the shipped defaults (plus unknown keys), no default is
-   * frozen onto disk; resolved config is unchanged on reload.
+   * Persist the non-runtime working view, excluding invocation inputs and
+   * frontend defaults. Preserve explicit values that suppress a registered
+   * frontend default; runtime authority is neither persisted nor retired.
    */
   save(): void {
     this.requireWritable();
     this.permissionIncarnation++;
-    const { config: minimal } = stripFrozenDefaults(
-      structuredClone(this.config) as unknown as Record<string, unknown>,
-    );
+    const minimal = this.runtimeState.bulkSnapshot();
     this.preserveHostSettingsForBulkSave(minimal, this.configPath);
     this.writeRawGlobal(this.withoutDaemonOwned(minimal));
   }
@@ -878,16 +924,14 @@ export class ConfigManager {
     return raw;
   }
 
-  /** Persist current config to the project-level surface settings file. */
+  /** Persist the non-runtime working view to project settings. Runtime maps survive. */
   saveProject(): void {
     this.requireWritable();
     this.permissionIncarnation++;
     if (!this.projectConfigPath) {
       throw new Error('ConfigManager.saveProject requires an explicit workingDir.');
     }
-    const { config: minimal } = stripFrozenDefaults(
-      structuredClone(this.config) as unknown as Record<string, unknown>,
-    );
+    const minimal = this.runtimeState.bulkSnapshot();
     this.preserveHostSettingsForBulkSave(minimal, this.projectConfigPath);
     writeJsonFileAtomic(this.projectConfigPath, this.withoutDaemonOwned(minimal));
   }
@@ -917,10 +961,12 @@ export class ConfigManager {
     // AFTER that same persisted-setting validation gate accepts the layer.
     const nextHost = this.hostLoadValues && (file === this.configPath || file === this.projectConfigPath)
       ? new Map(this.hostLoadValues) : null;
+    const hostSource = nextHost ? structuredClone(parsed) : null;
     const malformedHostKeys = nextHost ? this.hostSettings.overlay(nextHost, parsed) : [];
     const ingested = ingestManagerSettings(parsed, file, this.ingestionSink(), migrate, new Set(this.hostSettings.keys()));
     if (nextHost) {
       this.hostLoadValues = nextHost;
+      if (hostSource) this.hostLoadSources?.set(file, hostSource);
       for (const key of malformedHostKeys) {
         const notice: SettingsIngestionNotice = {
           file, key, action: 'skipped', reason: 'Host setting requires a literal boolean or object category',
@@ -936,95 +982,62 @@ export class ConfigManager {
     return toConfigLoadFailure(label, file, err, this.ingestionSink());
   }
 
-  /** Load config from disk: global then project (project wins). Deep-merges with defaults. */
+  /** Reconstruct accepted non-runtime layers from fresh defaults, then compose active runtime inputs. */
   load(): void {
     this.invalidateLifetimes();
     const previousHost = this.hostSettings.snapshot(this.config);
-    const previousConfig = this.config;
-    const previousSharedKeys = new Set(this.sharedKeysPresent);
-    const previousDaemonKeys = new Set(this.daemonKeysPresent);
-    // Stage overlays separately even when no global/project file is present.
-    this.config = structuredClone(previousConfig);
+    const staged = this.runtimeState.fork();
+    staged.nonRuntime = cloneDefaultConfig();
+    staged.sources.clear();
     this.hostLoadValues = this.hostSettings.active ? this.hostSettings.defaults() : null;
+    this.hostLoadSources = this.hostSettings.active ? new Map() : null;
     try {
       this.ingestionNotices = [];
-      // Load global settings
       if (this.hostSettings.active ? hostSettingsFileExists(this.configPath) : existsSync(this.configPath)) {
         try {
-          const raw = readFileSync(this.configPath, 'utf-8');
-          const migrated = this.ingest(
-            JSON.parse(raw) as Record<string, unknown>,
-            this.configPath,
-            (p) => this.applyLoadMigrations(p, this.configPath),
-          );
-
-          this.config = sanitizeConfigShape(deepMerge(cloneDefaultConfig(), migrated) as GoodVibesConfig);
-        } catch (err) {
-          throw this.loadFailure('Global', this.configPath, err);
-        }
+          const migrated = this.ingest(JSON.parse(readFileSync(this.configPath, 'utf-8')) as Record<string, unknown>,
+            this.configPath, parsed => this.applyLoadMigrations(parsed, this.configPath));
+          staged.nonRuntime = sanitizeConfigShape(deepMerge(staged.nonRuntime, migrated) as GoodVibesConfig);
+          staged.recordLayer(migrated, 'global');
+        } catch (error) { throw this.loadFailure('Global', this.configPath, error); }
       }
-
-      // Load project settings and deep-merge on top (project wins)
       if (this.projectConfigPath && (this.hostSettings.active ? hostSettingsFileExists(this.projectConfigPath) : existsSync(this.projectConfigPath))) {
         try {
-          const raw = readFileSync(this.projectConfigPath, 'utf-8');
-          const migrated = this.ingest(
-            JSON.parse(raw) as Record<string, unknown>,
-            this.projectConfigPath,
-            (p) => this.applyLoadMigrations(p, this.projectConfigPath!),
-          );
-          this.config = sanitizeConfigShape(deepMerge(this.config, migrated) as GoodVibesConfig);
-        } catch (err) {
-          throw this.loadFailure('Project', this.projectConfigPath, err);
-        }
+          const migrated = this.ingest(JSON.parse(readFileSync(this.projectConfigPath, 'utf-8')) as Record<string, unknown>,
+            this.projectConfigPath, parsed => this.applyLoadMigrations(parsed, this.projectConfigPath!));
+          staged.nonRuntime = sanitizeConfigShape(deepMerge(staged.nonRuntime, migrated) as GoodVibesConfig);
+          staged.recordLayer(migrated, 'project');
+        } catch (error) { throw this.loadFailure('Project', this.projectConfigPath, error); }
       }
-
-      // Overlay the shared tier (it wins over the surface silo) for the shared
-      // keys only; an absent shared key falls back to the local value.
-      this.loadSharedTier();
-      // Then the daemon tier, LAST of all: a daemon-owned key's value in the
-      // daemon store is the only one that describes what the daemon will do, so
-      // no surface-local leftover may shadow it.
-      this.loadDaemonTier();
-      if (this.hostLoadValues) this.applyHostValues(this.hostLoadValues, previousHost, true);
+      this.loadSharedTier(staged);
+      this.loadDaemonTier(staged);
+      if (this.hostLoadValues) this.hostSettings.apply(staged.nonRuntime, this.hostLoadValues);
+      const hostDefaultOrigins = this.hostLoadSources ? this.updateHostSources(staged, this.hostLoadSources) : new Set<string>();
+      const effective = staged.compose();
+      this.publishState(staged, effective);
+      if (this.hostLoadValues) this.applyHostValues(this.hostLoadValues, previousHost, true, hostDefaultOrigins);
     } catch (error) {
-      // A later tier can refuse after earlier tiers have loaded successfully.
-      // Retain the last complete configuration, but never undo invalidation.
-      this.config = previousConfig;
-      this.sharedKeysPresent.clear(); for (const key of previousSharedKeys) this.sharedKeysPresent.add(key);
-      this.daemonKeysPresent.clear(); for (const key of previousDaemonKeys) this.daemonKeysPresent.add(key);
-      this.applyHostValues(this.hostSettings.defaults(), previousHost, true);
+      // Candidate values, invocation maps, and accepted origins were never
+      // published. Keep diagnostic/incarnation changes; host permission leaves
+      // alone project restrictive defaults into both live and non-runtime state.
+      this.applyHostValues(this.hostSettings.defaults(), previousHost, true, new Set(this.hostSettings.keys()));
       throw error instanceof HostSettingsReadError ? this.loadFailure('Host', error.file, error) : error;
-    } finally {
-      this.hostLoadValues = null;
-    }
+    } finally { this.hostLoadValues = null; this.hostLoadSources = null; }
   }
 
-  /**
-   * Overlay the daemon store's daemon-owned keys onto the resolved config,
-   * recording which keys came from there so describeConfigKeySource is honest.
-   */
-  private loadDaemonTier(): void {
-    this.daemonKeysPresent.clear();
+  /** Overlay only daemon-owned keys into the local candidate. */
+  private loadDaemonTier(staged: ConfigRuntimeState): void {
     if (!this.daemonTierPath) return;
     try {
-      // Daemon-owned keys live ONLY here, so a rename or removal of one is
-      // applied here too. DAEMON-OWNED, CLIENT-READ: a non-owner migrates its
-      // parsed copy only. Order and ownership live with the passes.
-      const stored = this.ingest(
-        readDaemonTierFile(this.daemonTierPath),
-        this.daemonTierPath,
-        (raw) => runDaemonTierMigrationPasses(raw, this.daemonTierPath!,
-          (id, text) => this.migrationReceipt(id, text), { ownsFile: this.daemonTierOwner }),
-      );
+      const stored = this.ingest(readDaemonTierFile(this.daemonTierPath), this.daemonTierPath,
+        raw => runDaemonTierMigrationPasses(raw, this.daemonTierPath!,
+          (id, text) => this.migrationReceipt(id, text), { ownsFile: this.daemonTierOwner }));
       const applied = overlayDaemonTierFrom(stored, (key, value) => {
-        const { parent, field } = resolveOrCreateDaemonPath(this.config as unknown as Record<string, unknown>, key);
+        const { parent, field } = resolveOrCreateDaemonPath(staged.nonRuntime as unknown as Record<string, unknown>, key);
         parent[field] = value;
       });
-      for (const key of applied) this.daemonKeysPresent.add(key);
-    } catch (err) {
-      throw this.loadFailure('Daemon', this.daemonTierPath, err);
-    }
+      for (const key of applied) staged.sources.set(key, 'daemon');
+    } catch (error) { throw this.loadFailure('Daemon', this.daemonTierPath, error); }
   }
 
   /** The daemon store path, or null when no daemon tier is configured. */
@@ -1038,21 +1051,17 @@ export class ConfigManager {
    * which keys were sourced from the shared tier so describeConfigKeySource is
    * honest.
    */
-  private loadSharedTier(): void {
-    this.sharedKeysPresent.clear();
+  private loadSharedTier(staged: ConfigRuntimeState): void {
     if (!this.sharedTierPath) return;
     let shared: Record<string, unknown>;
-    try {
-      shared = this.ingest(readSharedTierFile(this.sharedTierPath), this.sharedTierPath);
-    } catch (err) {
-      throw this.loadFailure('Shared', this.sharedTierPath, err);
-    }
+    try { shared = this.ingest(readSharedTierFile(this.sharedTierPath), this.sharedTierPath); }
+    catch (error) { throw this.loadFailure('Shared', this.sharedTierPath, error); }
     for (const key of SHARED_CONFIG_KEYS) {
       const found = readDotPath(shared, key);
       if (!found.present) continue;
-      const { parent, field } = this.resolvePath(key);
+      const { parent, field } = this.resolvePath(key, staged.nonRuntime);
       parent[field] = found.value;
-      this.sharedKeysPresent.add(key);
+      staged.sources.set(key, 'shared');
     }
   }
 
@@ -1062,9 +1071,8 @@ export class ConfigManager {
   }
 
   /**
-   * Report which tier a key's live value resolves from (daemon / shared /
-   * project / global / default). Reads the on-disk layers on demand so the
-   * resolution order is inspectable, see manager-key-source.ts.
+   * Report the accepted/post-write underlay tier and the effective origin.
+   * Runtime provenance never rereads disk or reveals invocation history.
    */
   describeConfigKeySource(key: ConfigKey): ConfigKeySource {
     return describeKeySource({
@@ -1078,6 +1086,11 @@ export class ConfigManager {
       configPath: this.configPath,
       sharedKeysPresent: this.sharedKeysPresent,
       daemonKeysPresent: this.daemonKeysPresent,
+      acceptedTier: this.runtimeState.sources.get(key) ?? 'default',
+      effectiveOrigin: this.hostDefaultOrigins.has(key) ? 'default'
+        : this.runtimeState.overrides.has(key) ? 'runtime'
+        : this.runtimeState.defaults.has(key) && !this.runtimeState.sources.has(key) ? 'runtime-default'
+        : this.runtimeState.sources.get(key) ?? 'default',
     });
   }
 
@@ -1094,8 +1107,29 @@ export class ConfigManager {
     new FeatureAnnouncementStore(featureAnnouncementsPath(this)).record(id, text);
   }
 
-  private applyHostValues(values: HostSettingValues, previous: HostSettingValues, emitHooks = false): void {
+  /** Derive host provenance from the same accepted raw layers that produced its values. */
+  private updateHostSources(staged: ConfigRuntimeState, stores: ReadonlyMap<string, Record<string, unknown>>): Set<string> {
+    const defaultOrigins = new Set<string>();
+    for (const key of this.hostSettings.keys()) staged.mark(key);
+    for (const [path, tier] of [[this.configPath, 'global'], [this.projectConfigPath, 'project']] as const) {
+      const raw = path ? stores.get(path) : undefined;
+      if (!raw) continue;
+      for (const key of this.hostSettings.overlay(this.hostSettings.defaults(), raw)) defaultOrigins.add(key);
+      for (const key of this.hostSettings.keys()) {
+        const found = readDotPath(raw, key);
+        if (!found.present) continue;
+        staged.mark(key, tier);
+        if (typeof found.value === 'boolean') defaultOrigins.delete(key);
+      }
+    }
+    return defaultOrigins;
+  }
+
+  private applyHostValues(values: HostSettingValues, previous: HostSettingValues, emitHooks = false,
+    defaultOrigins: ReadonlySet<string> = new Set()): void {
+    this.hostDefaultOrigins = new Set(defaultOrigins);
     this.hostSettings.apply(this.config, values);
+    this.hostSettings.apply(this.runtimeState.nonRuntime, values);
     for (const [key, value] of values) {
       if (previous.get(key) === value) continue;
       this.notifyListeners(key as ConfigKey, previous.get(key), value);
@@ -1106,11 +1140,16 @@ export class ConfigManager {
   private refreshHostSettings(previous: HostSettingValues, emitHooks = false): void {
     this.ingestionNotices = this.ingestionNotices.filter((notice) => notice.file !== this.configPath && notice.file !== this.projectConfigPath);
     try {
+      const stores = new Map<string, Record<string, unknown>>();
       const values = readHostSettingValues(this.hostSettings, this.configPath, this.projectConfigPath,
-        (raw, path) => { this.ingest(raw, path); });
-      this.applyHostValues(values, previous, emitHooks);
+        (raw, path) => { const captured = structuredClone(raw); this.ingest(raw, path); stores.set(path, captured); });
+      const staged = this.runtimeState.fork();
+      this.hostSettings.apply(staged.nonRuntime, values);
+      const hostDefaultOrigins = this.updateHostSources(staged, stores);
+      this.publishState(staged, staged.compose());
+      this.applyHostValues(values, previous, emitHooks, hostDefaultOrigins);
     } catch (error) {
-      this.applyHostValues(this.hostSettings.defaults(), previous, true);
+      this.applyHostValues(this.hostSettings.defaults(), previous, true, new Set(this.hostSettings.keys()));
       throw error instanceof HostSettingsReadError ? this.loadFailure('Host', error.file, error) : error;
     }
   }
@@ -1120,7 +1159,7 @@ export class ConfigManager {
     try {
       this.hostSettings.preserveDestination(snapshot, readHostSettingsFile(path));
     } catch (error) {
-      this.applyHostValues(this.hostSettings.defaults(), this.hostSettings.snapshot(this.config), true);
+      this.applyHostValues(this.hostSettings.defaults(), this.hostSettings.snapshot(this.config), true, new Set(this.hostSettings.keys()));
       throw error;
     }
   }
@@ -1156,12 +1195,19 @@ export class ConfigManager {
     if (Object.keys(patch).some((key) => this.hostSettings.has(`${String(category)}.${key}`))) {
       throw new ConfigError('Registered host settings require the guarded scalar set API.');
     }
-    persistCategoryPatch(
-      String(category),
-      patch as Record<string, unknown>,
-      this.config[category]! as Record<string, unknown>,
-      this.categoryIoDeps(),
-    );
+    const ownedPatch = structuredClone(patch) as Record<string, unknown>;
+    const staged = this.runtimeState.fork();
+    const current = staged.nonRuntime[category] as Record<string, unknown>;
+    for (const [field, value] of Object.entries(ownedPatch)) {
+      if (value === undefined) continue;
+      const path = `${String(category)}.${field}`;
+      current[field] = value;
+      staged.retire(path);
+      staged.mark(path, this.daemonTierPath && isDaemonOwnedConfigKey(path) ? 'daemon' : 'global');
+    }
+    const effective = staged.compose();
+    persistCategoryPatch(String(category), ownedPatch, current, this.categoryIoDeps(staged));
+    this.publishState(staged, effective);
   }
 
   /**
@@ -1174,25 +1220,27 @@ export class ConfigManager {
     this.invalidateLifetimes();
     const hostKey = `${String(category)}.${key}`;
     if (this.hostSettings.has(hostKey)) { this.reset(hostKey as ConfigKey); return; }
-    const current = this.config[category]! as Record<string, unknown>;
-    if (!(key in current)) return;
+    const staged = this.runtimeState.fork();
+    const current = staged.nonRuntime[category] as Record<string, unknown>;
+    if (!(key in current) && ![...staged.overrides.keys()].some(entry => entry === hostKey || entry.startsWith(`${hostKey}.`))) return;
     delete current[key];
-    persistCategoryKeyRemoval(String(category), key, this.categoryIoDeps());
+    staged.retire(hostKey);
+    staged.mark(hostKey);
+    const effective = staged.compose();
+    persistCategoryKeyRemoval(String(category), key, this.categoryIoDeps(staged));
+    this.publishState(staged, effective);
   }
 
-  private categoryIoDeps(): CategoryIoDeps {
+  private categoryIoDeps(staged: ConfigRuntimeState): CategoryIoDeps {
     return {
       configPath: this.configPath,
       daemonTierPath: this.daemonTierPath,
       writeRawGlobal: (raw) => this.writeRawGlobal(raw),
-      markDaemonKey: (key, present) => {
-        if (present) this.daemonKeysPresent.add(key as ConfigKey);
-        else this.daemonKeysPresent.delete(key as ConfigKey);
-      },
+      markDaemonKey: (key, present) => { staged.mark(key, present ? 'daemon' : undefined); },
     };
   }
 
-  /** Reset one key (or all config) to defaults and persist the removal. */
+  /** Remove explicit preferences; full reset retains this frontend's defaults. Cross-tier disk writes are not transactional. */
   reset(key?: ConfigKey): void {
     this.requireWritable();
     this.invalidateLifetimes();
@@ -1201,37 +1249,37 @@ export class ConfigManager {
       this.resetHostSetting(definition.key as ConfigKey, definition.default);
       if (key !== undefined) return;
     }
+    const staged = this.runtimeState.fork();
+    staged.retire(key);
     if (key === undefined) {
-      this.config = cloneDefaultConfig();
-      this.hostSettings.apply(this.config, this.hostSettings.defaults());
-      // A full reset means no explicit keys remain, clear the file to defaults.
-      this.writeRawGlobal({});
+      staged.nonRuntime = cloneDefaultConfig();
+      this.hostSettings.apply(staged.nonRuntime, this.hostSettings.defaults());
+      staged.sources.clear();
+      for (const hostKey of this.hostSettings.keys()) {
+        if (this.runtimeState.sources.get(hostKey) === 'project') staged.sources.set(hostKey, 'project');
+      }
     } else {
-      const schema = this.hostSettings.schema(key) ?? CONFIG_SCHEMA.find(s => s.key === key);
+      const schema = CONFIG_SCHEMA.find(setting => setting.key === key);
       if (!schema) throw new ConfigError(`Unknown config key: ${key}`);
-      const livePath = this.resolvePath(key);
-      livePath.parent[livePath.field] = structuredClone(readDotPath(DEFAULT_CONFIG_SNAPSHOT, key).value);
-      // Remove the explicit on-disk value so the key falls back to its default.
+      const path = this.resolvePath(key, staged.nonRuntime);
+      path.parent[path.field] = structuredClone(readDotPath(DEFAULT_CONFIG_SNAPSHOT, key).value);
+      staged.mark(key);
+    }
+    const effective = staged.compose();
+    if (key === undefined) this.writeRawGlobal({});
+    else {
       const raw = readRawSettingsFile(this.configPath);
       deleteRawDotPath(raw, key);
       this.writeRawGlobal(raw);
     }
-    // Reset removes the daemon-store value too, else the daemon tier would
-    // re-overlay on the next load and defeat the reset.
-    if (this.daemonTierPath) {
-      for (const daemonKey of clearDaemonTierForReset(this.daemonTierPath, key)) {
-        this.daemonKeysPresent.delete(daemonKey);
-      }
-    }
-    // Reset removes the shared-tier OVERRIDE for any shared key, else a stale
-    // shared value would re-overlay on the next load and defeat the reset.
+    if (this.daemonTierPath) clearDaemonTierForReset(this.daemonTierPath, key);
     if (this.sharedTierPath) {
       const resetKeys = key === undefined ? SHARED_CONFIG_KEYS : (isSharedConfigKey(key) ? [key] : []);
-      for (const sharedKey of resetKeys) {
-        removeSharedKey(this.sharedTierPath, sharedKey);
-        this.sharedKeysPresent.delete(sharedKey);
-      }
+      for (const sharedKey of resetKeys) removeSharedKey(this.sharedTierPath, sharedKey);
     }
+    // Earlier files can have been replaced if a later write throws. Preserve
+    // the complete live state; the next accepted load reconciles those bytes.
+    this.publishState(staged, effective);
   }
 }
 
@@ -1258,4 +1306,9 @@ function deepMerge(target: unknown, source: unknown): unknown {
 
 function isObject(val: unknown): val is Record<string, unknown> {
   return val !== null && typeof val === 'object' && !Array.isArray(val);
+}
+
+/** Caller-owned values at every read/observer boundary, including individual listeners. */
+function detachedConfigValue(value: unknown): unknown {
+  return value !== null && typeof value === 'object' ? structuredClone(value) : value;
 }

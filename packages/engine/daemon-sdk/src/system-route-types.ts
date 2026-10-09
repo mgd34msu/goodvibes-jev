@@ -49,6 +49,7 @@ export interface ConfigManagerLike {
    */
   describeConfigKeySource?(key: string): {
     readonly tier: string;
+    readonly effectiveOrigin?: string;
     readonly daemonOwned: boolean;
     readonly daemonTierPath: string | null;
   };

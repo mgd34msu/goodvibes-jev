@@ -281,7 +281,8 @@ export function createDaemonSystemRouteHandlers(
         key,
         value: current,
         ...(persistedTo ? { persistedTo } : {}),
-        ...(source ? { tier: source.tier, daemonOwned: source.daemonOwned } : {}),
+        ...(source ? { tier: source.tier, daemonOwned: source.daemonOwned,
+          ...(source.effectiveOrigin ? { effectiveOrigin: source.effectiveOrigin } : {}) } : {}),
       });
     },
   };

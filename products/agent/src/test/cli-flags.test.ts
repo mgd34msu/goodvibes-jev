@@ -507,8 +507,10 @@ describe('parseCliFlags', () => {
     ]);
 
     expect(errors).toHaveLength(2);
-    expect(errors[0]).toContain('Invalid --config controlPlane.port=99999');
-    expect(errors[1]).toContain('Unknown config key: not.real');
+    expect(errors[0]).toContain('Invalid runtime value for controlPlane.port');
+    expect(errors.join('\n')).not.toContain('99999');
+    expect(errors[1]).toContain('Unknown config key');
+    expect(errors.join('\n')).not.toContain('not.real');
     expect(configManager.get('controlPlane.port')).toBe(3421);
   });
 });

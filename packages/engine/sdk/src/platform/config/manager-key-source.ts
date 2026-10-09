@@ -14,7 +14,7 @@ import { readDotPath } from './shared-config-tier.js';
 import type { ConfigKey } from './schema.js';
 import type { DaemonOwnedConfigPath } from './config-ownership.js';
 
-/** The tier a resolved config value came from. */
+/** The accepted/post-write persisted-underlay tier, excluding runtime inputs. */
 export type ConfigKeyTier = 'daemon' | 'shared' | 'project' | 'global' | 'default';
 
 /** Where a config key's live value resolves from, and which tiers can hold it. */
@@ -22,6 +22,8 @@ export interface ConfigKeySource {
   readonly key: ConfigKey;
   readonly value: unknown;
   readonly tier: ConfigKeyTier;
+  /** Effective origin; tier remains the persisted underlay for wire compatibility. */
+  readonly effectiveOrigin?: ConfigKeyTier | 'runtime' | 'runtime-default';
   /** True when this key resolves from/writes to the surface-root-independent shared tier. */
   readonly shareable: boolean;
   /** The shared-tier settings file path, or null when no shared tier is configured. */
@@ -33,6 +35,9 @@ export interface ConfigKeySource {
 }
 
 export interface ConfigKeySourceInput {
+  /** Accepted snapshot metadata from a runtime-aware manager; avoids disk rereads. */
+  readonly acceptedTier?: ConfigKeyTier;
+  readonly effectiveOrigin?: ConfigKeyTier | 'runtime' | 'runtime-default';
   readonly key: ConfigKey;
   readonly value: unknown;
   readonly shareable: boolean;
@@ -67,7 +72,9 @@ export function describeKeySource(input: ConfigKeySourceInput): ConfigKeySource 
     sharedTierPath: input.sharedTierPath,
     daemonOwned: input.daemonOwned,
     daemonTierPath: input.daemonTierPath,
+    ...(input.effectiveOrigin ? { effectiveOrigin: input.effectiveOrigin } : {}),
   };
+  if (input.acceptedTier) return { ...common, tier: input.acceptedTier };
   if (input.daemonOwned && input.daemonKeysPresent.has(input.key)) return { ...common, tier: 'daemon' };
   if (input.shareable && input.sharedKeysPresent.has(input.key)) return { ...common, tier: 'shared' };
   if (input.projectConfigPath && settingsFileHasKey(input.projectConfigPath, input.key)) {

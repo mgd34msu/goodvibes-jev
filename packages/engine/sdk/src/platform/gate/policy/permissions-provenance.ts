@@ -135,10 +135,23 @@ function buildRow(
   const tier = src.tier;
   const globalPath = configManager.getConfigPath();
   const projectPath = configManager.getProjectConfigPath();
-  const originPath = tier === 'shared' ? src.sharedTierPath
+  const originPath = tier === 'daemon' ? src.daemonTierPath
+    : tier === 'shared' ? src.sharedTierPath
     : tier === 'project' ? (projectPath ?? null)
     : tier === 'global' ? globalPath
     : null;
+
+  // Runtime-aware managers report accepted snapshot provenance, including a
+  // last-good value after refusal. Never mislabel an unaccepted disk edit as
+  // the live origin by rereading the file here.
+  if (src.effectiveOrigin) {
+    if (src.effectiveOrigin === 'runtime' || src.effectiveOrigin === 'runtime-default') {
+      return { ...base, origin: src.effectiveOrigin === 'runtime' ? 'runtime override (in-memory; origin not recorded on disk)' : 'frontend runtime default',
+        originPath: null, recorded: false, overridden: src.effectiveOrigin === 'runtime' };
+    }
+    return { ...base, origin: tier === 'default' ? 'built-in default' : `${tier} config file`,
+      originPath, recorded: true, overridden: false, recordedValue: live };
+  }
 
   // The value the recorded layer actually holds on disk (or the built-in default).
   let recordedValue: unknown;

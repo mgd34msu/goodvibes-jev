@@ -18,6 +18,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bundleBrowserEntrypoint } from './_helpers/browser-bundle.ts';
 import {
   DEFAULT_REFRESH_INTERVAL_MS,
   MIN_REFRESH_INTERVAL_MS,
@@ -437,9 +438,13 @@ describe('maskFeedUrl', () => {
 
 describe('purity', () => {
   test('the complete public calendar graph bundles for a browser without Node IO', async () => {
-    const built = await Bun.build({ entrypoints: [resolve(CALENDAR_DIR, 'index.ts')], target: 'browser' });
-    expect(built.success).toBe(true);
-    expect(built.logs).toHaveLength(0);
+    const bundle = await bundleBrowserEntrypoint(resolve(__dirname, 'fixtures/calendar-browser-entry.ts'), { conditions: ['bun'] });
+    expect(bundle).toContain('engine.calendar.missing-permission');
+    expect(bundle).not.toMatch(/(?:from|require\()\s*['"](?:node:|bun:)/);
+    const consumer: { calendarBundleProbe?: { CalendarConnector: unknown; CalendarScopeReadingError: unknown } } = {};
+    new Function('globalThis', bundle)(consumer);
+    expect(typeof consumer.calendarBundleProbe?.CalendarConnector).toBe('function');
+    expect(typeof consumer.calendarBundleProbe?.CalendarScopeReadingError).toBe('function');
   });
   test('calendar source stays IO-free with only the canonical runtime-neutral judgment entries', () => {
     const files = readdirSync(CALENDAR_DIR, { recursive: true }).filter((f): f is string => typeof f === 'string' && f.endsWith('.ts'));
