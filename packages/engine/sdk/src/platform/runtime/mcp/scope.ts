@@ -10,6 +10,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mapLimit, type YesNoReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import type { McpReadingOwner } from './permissions.js';
 import { mcpScopeArg } from '../../gate/batteries/mcp-scope-arg.js';
 
 /**
@@ -57,26 +58,31 @@ export async function readScopedValues(
   toolName: string,
   args: Record<string, unknown>,
   scopes: { readonly paths: boolean; readonly hosts: boolean },
-): Promise<{ readonly paths: readonly string[]; readonly hosts: readonly string[] }> {
+  owner: McpReadingOwner = {},
+): Promise<{ readonly paths: readonly string[]; readonly hosts: readonly string[]; readonly uncertain: boolean; readonly judgmentDecisionIds: readonly string[] }> {
   const only = [...(scopes.paths ? (['names_path'] as const) : []), ...(scopes.hosts ? (['names_host'] as const) : [])];
-  if (only.length === 0) return { paths: [], hosts: [] };
+  if (only.length === 0) return { paths: [], hosts: [], uncertain: false, judgmentDecisionIds: [] };
   const site = 'engine.mcp.scope';
-  const port = judgmentPort(site);
+  const port = owner.port ?? judgmentPort(site);
   const entries = stringArguments(args);
   const runs = await mapLimit(entries, SCOPE_READ_CONCURRENCY, (entry) =>
-    mcpScopeArg.run(port, { server: serverName, tool: toolName, argument: entry.argument, value: entry.value }, { site, only }));
+    mcpScopeArg.run(port, { server: serverName, tool: toolName, argument: entry.argument, value: entry.value }, { site, only, ...(owner.signal ? { signal: owner.signal } : {}) }));
+  let uncertain = false;
+  const judgmentDecisionIds: string[] = [];
   const paths: string[] = [];
   const hosts: string[] = [];
   runs.forEach((run, index) => {
     const { value } = entries[index]!;
     const readings = run.readings as Partial<Record<'names_path' | 'names_host', YesNoReading>>;
+    if (run.result.decisionId) judgmentDecisionIds.push(run.result.decisionId);
+    uncertain ||= Object.values(readings).some(reading => reading.verdict === 'uncertain');
     const isPath = readings.names_path !== undefined && readings.names_path.verdict !== 'no';
     const isHost = readings.names_host !== undefined && readings.names_host.verdict !== 'no';
     if (isPath) paths.push(value);
     if (isHost) hosts.push(value);
     run.recordAction(`${isPath ? 'path' : ''}${isPath && isHost ? '+' : ''}${isHost ? 'host' : ''}` || 'neither');
   });
-  return { paths, hosts };
+  return { paths, hosts, uncertain, judgmentDecisionIds };
 }
 
 /** A path value as a filesystem path: a `file:` URL is converted by the URL grammar. */

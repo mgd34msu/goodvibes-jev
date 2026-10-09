@@ -163,10 +163,8 @@ export function installAgentMcpCallRoute(registry: ToolRegistry, context: Comman
     const signal = options?.signal;
     if (signal?.aborted) return { success: false, error: `mcp call ${qualifiedName} was cancelled before it started.` };
     try {
-      // The platform's MCP callTool takes no abort signal, so a cancelled call
-      // cannot recall the request it already sent; it stops waiting for it and
-      // reports the cancellation instead of holding the turn open.
-      const result = await raceAbort(callTool(qualifiedName, readInput(input.input)), signal);
+      // Abort reaches the canonical owner before admission and every transport write.
+      const result = await raceAbort(callTool(qualifiedName, readInput(input.input), { signal }), signal);
       if (result === CANCELLED) return { success: false, error: `mcp call ${qualifiedName} was cancelled.` };
       return { success: true, output: stringifyResult(result) };
     } catch (error) {

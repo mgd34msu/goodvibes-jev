@@ -21,6 +21,7 @@ import {
   providerProfile,
   resolveClientConfig,
   type CalendarProviderId,
+  type CalendarRequestOptions,
   type ConnectedAccount,
   type ConnectionState,
   type DeviceCodeFlowStart,
@@ -305,17 +306,17 @@ export class CalendarOAuthService {
   }
 
   /** Events for one already-resolved provider config over a window (source-labeled). */
-  async listEventsForProvider(config: ResolvedClientConfig, window: EventWindow): Promise<MergedCalendarEvent[]> {
-    return this.connector.listEvents(config, window);
+  async listEventsForProvider(config: ResolvedClientConfig, window: EventWindow, options: CalendarRequestOptions = {}): Promise<MergedCalendarEvent[]> {
+    return this.connector.listEvents(config, window, options);
   }
 
   /** Merged, source-labeled events across every connected provider in a window. */
-  async listEvents(window: EventWindow): Promise<MergedCalendarEvent[]> {
+  async listEvents(window: EventWindow, options: CalendarRequestOptions = {}): Promise<MergedCalendarEvent[]> {
     const accounts = await this.connector.listAccounts();
     const out: MergedCalendarEvent[] = [];
     for (const account of accounts) {
       const config = await this.resolveConfig(account.provider);
-      const events = await this.connector.listEvents(config, window);
+      const events = await this.connector.listEvents(config, window, options);
       out.push(...events);
     }
     return out;

@@ -22,6 +22,7 @@ describe('McpRegistry pre-call hooks', () => {
     }).permissions.registerServer('server', 'trusted');
     (registry as unknown as { clients: Map<string, unknown> }).clients.set('server', {
       isConnected: true,
+      captureToolScope: () => ({ connectionId: 'test', destination: 'test', signal: new AbortController().signal, assertCurrent() {} }),
       callTool: async () => {
         called = true;
         return { ok: true };

@@ -128,7 +128,7 @@ for (const command of ['fork', 'save', 'resume'] as const) {
       await native.waiting; expect(native.orchestrator.isThinking).toBe(false);
       await handleSessionWorkflowCommand([command, 'destination'], ctx);
       expect(cancelled).toBe(1); expect(ctx.session.runtime.sessionId).not.toBe('current-session');
-      native.release(); expect(await result).toMatchObject({ name: 'AbortError' });
+      native.release(); expect(await result).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' }, signalAborted: true, messageCount: 0 });
       expect(native.conversation.getMessageCount()).toBe(0);
     } finally { native.dispose(); await result; }
   });

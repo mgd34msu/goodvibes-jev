@@ -118,10 +118,10 @@ export function mcpSchemaReader(context: CommandContext): ((qualifiedName: strin
   return (qualifiedName) => (api as { getToolSchema: (qualifiedName: string) => Promise<McpToolSchema | null> }).getToolSchema(qualifiedName);
 }
 
-export function mcpToolCaller(context: CommandContext): ((qualifiedName: string, input: Readonly<Record<string, unknown>>) => Promise<unknown>) | null {
+export function mcpToolCaller(context: CommandContext): ((qualifiedName: string, input: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }) => Promise<unknown>) | null {
   const api = context.clients?.mcpApi ?? context.extensions?.mcpRegistry;
   if (!api || typeof (api as { readonly callTool?: unknown }).callTool !== 'function') return null;
-  return (qualifiedName, input) => (api as { callTool: (qualifiedName: string, input: Readonly<Record<string, unknown>>) => Promise<unknown> }).callTool(qualifiedName, input);
+  return (qualifiedName, input, options) => (api as { callTool: (qualifiedName: string, input: Readonly<Record<string, unknown>>, options?: { readonly signal?: AbortSignal | undefined }) => Promise<unknown> }).callTool(qualifiedName, input, options);
 }
 
 export function qualifiedToolName(tool: McpToolRecord): string {
