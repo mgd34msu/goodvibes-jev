@@ -1,7 +1,7 @@
 /**
  * Tests for SettingsModal state class.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -363,6 +363,7 @@ describe('SettingsModal', () => {
     modal.editBuffer = 'ha-long-lived-token';
     expect(modal.commitEdit()).toBe(true);
 
+    expect(await modal.pendingSecretWrite).toBe(true);
     const secretKey = buildGoodVibesSecretKey('surfaces.homeassistant.accessToken');
     expect(cm.get('surfaces.homeassistant.accessToken')).toBe(buildGoodVibesSecretRef(secretKey));
     expect(await secrets.get(secretKey)).toBe('ha-long-lived-token');
@@ -390,6 +391,337 @@ describe('SettingsModal', () => {
     // keystrokes through the shared composer path cannot silently leak it.
     expect(history.getEntries()).toEqual([]);
     expect(history.getEntries().join('\n')).not.toContain(typed);
+    expect(await modal.pendingSecretWrite).toBe(true);
+  });
+
+  test('secret edits wait for storage, reject repeated commits, and publish only on completion', async () => {
+    let finish!: () => void;
+    const stored = new Promise<void>((resolve) => { finish = resolve; });
+    let writes = 0;
+    let deletes = 0;
+    const secrets = { set: () => { writes++; return stored; }, delete: async () => { deletes++; } };
+    const applied: unknown[] = [];
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: (change) => { applied.push(change); } });
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+    const previous = cm.get('surfaces.homeassistant.accessToken');
+    modal.activateSelected();
+    modal.editBuffer = 'deferred-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    expect(completion).not.toBeNull();
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(previous);
+    expect(applied).toEqual([]);
+    expect(modal.lastSettingEffectMessage).toBe('Saving credential…');
+    expect(modal.commitEdit()).toBe(false);
+    expect(writes).toBe(1);
+    expect(modal.resetSelected()).toBeNull();
+    expect(deletes).toBe(0);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(previous);
+    expect(modal.lastSettingEffectMessage).toBe('Saving credential…');
+    modal.initiateResetCategory();
+    modal.initiateResetAll();
+    expect(modal.resetCategoryConfirm).toBeNull();
+    expect(modal.resetAllConfirm).toBeNull();
+    // A gate armed before the write must not race its completion either.
+    modal.resetCategoryConfirm = { subject: 'surfaces' };
+    expect(modal.handleResetConfirmKey('enter')).toBe('absorbed');
+    modal.resetCategoryConfirm = null;
+    modal.resetAllConfirm = { subject: 'all' };
+    expect(modal.handleResetConfirmKey('y')).toBe('absorbed');
+    expect(modal.handleResetConfirmKey('escape')).toBe('cancelled');
+    expect(deletes).toBe(0);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(previous);
+    expect(modal.lastSettingEffectMessage).toBe('Saving credential…');
+
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken')));
+    expect(applied).toHaveLength(1);
+    expect(modal.pendingSecretWrite).toBeNull();
+    expect(modal.lastSettingEffectMessage).toBe('Credential saved.');
+  });
+
+  test('rejected secret storage preserves the reference and surfaces failure without a saved callback', async () => {
+    let fail!: (error: Error) => void;
+    const stored = new Promise<void>((_resolve, reject) => { fail = reject; });
+    const secrets = { set: () => stored, delete: async () => {} };
+    let applied = 0;
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: () => { applied++; } });
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+    const previous = cm.get('surfaces.homeassistant.accessToken');
+    modal.activateSelected();
+    modal.editBuffer = 'rejected-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    fail(new Error('storage unavailable'));
+    expect(await completion).toBe(false);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(previous);
+    expect(applied).toBe(0);
+    expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+    expect(modal.pendingSecretWrite).toBeNull();
+  });
+
+  test('a secret completion after reopen stays with its original config and callback', async () => {
+    let finish!: () => void;
+    const stored = new Promise<void>((resolve) => { finish = resolve; });
+    const secrets = { set: () => stored, delete: async () => {} };
+    let originalApplied = 0;
+    let replacementApplied = 0;
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: () => { originalApplied++; } });
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+    modal.activateSelected();
+    modal.editBuffer = 'original-owner-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    modal.close();
+    const replacementRoot = join(tmpDir, 'replacement-owner');
+    mkdirSync(replacementRoot, { recursive: true });
+    const replacement = createConfigManager(replacementRoot);
+    const previous = replacement.get('surfaces.homeassistant.accessToken');
+    modal.open(replacement, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: () => { replacementApplied++; } });
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken')));
+    expect(replacement.get('surfaces.homeassistant.accessToken')).toBe(previous);
+    expect(originalApplied).toBe(1);
+    expect(replacementApplied).toBe(0);
+    expect(modal.lastSettingEffectMessage).toBeNull();
+  });
+
+  test('clearing a secret keeps its reference until deletion completes', async () => {
+    let finish!: () => void;
+    const cleared = new Promise<void>((resolve) => { finish = resolve; });
+    const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken'));
+    cm.setDynamic('surfaces.homeassistant.accessToken', reference);
+    const secrets = { set: async () => {}, delete: () => cleared };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+    modal.activateSelected();
+    modal.editBuffer = '';
+    expect(modal.commitEdit()).toBe(true);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe(reference);
+    const completion = modal.pendingSecretWrite;
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe('');
+  });
+
+  test('secret completion rechecks policy instead of publishing after authority becomes unavailable', async () => {
+    let finish!: () => void;
+    const stored = new Promise<void>((resolve) => { finish = resolve; });
+    const secrets = { set: () => stored, delete: async () => {} };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+    const previous = cm.get('surfaces.homeassistant.accessToken');
+    modal.activateSelected();
+    modal.editBuffer = 'pending-policy-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    const policy = spyOn(cm, 'getHostSettingsSchema').mockImplementation(() => { throw new Error('policy metadata unavailable'); });
+    try {
+      finish();
+      expect(await completion).toBe(false);
+      expect(cm.get('surfaces.homeassistant.accessToken')).toBe(previous);
+      expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+    } finally { policy.mockRestore(); }
+  });
+
+  test('secret reference publication waits for its captured connected config owner', async () => {
+    let finishStorage!: () => void;
+    let finishRoute!: () => void;
+    let routeStarted!: () => void;
+    const stored = new Promise<void>((resolve) => { finishStorage = resolve; });
+    const routed = new Promise<void>((resolve) => { finishRoute = resolve; });
+    const started = new Promise<void>((resolve) => { routeStarted = resolve; });
+    const writes: unknown[] = [];
+    const owner = { ownsKey: () => true, set: async (key: string, value: unknown) => {
+      writes.push({ key, value }); routeStarted(); await routed;
+    } };
+    const secrets = { set: () => stored, delete: async () => {} };
+
+    try {
+      modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets, { daemonConfig: owner });
+      while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+      modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+      const previous = cm.get('surfaces.homeassistant.accessToken');
+      modal.activateSelected();
+      modal.editBuffer = 'routed-token';
+      expect(modal.commitEdit()).toBe(true);
+      const completion = modal.pendingSecretWrite;
+      modal.close();
+      modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+      expect(writes).toEqual([]);
+      finishStorage();
+      await started;
+      expect(writes).toEqual([{ key: 'surfaces.homeassistant.accessToken', value: buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken')) }]);
+      expect(cm.get('surfaces.homeassistant.accessToken')).toBe(previous);
+      finishRoute();
+      expect(await completion).toBe(true);
+      expect(cm.get('surfaces.homeassistant.accessToken')).toBe(buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken')));
+    } finally { finishStorage(); finishRoute(); }
+  });
+
+  for (const rejects of [false, true]) {
+    test(`selected secret reset waits for deletion and reports ${rejects ? 'failure' : 'completion'}`, async () => {
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const removed = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+      let deletes = 0;
+      let applied = 0;
+      const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken'));
+      cm.setDynamic('surfaces.homeassistant.accessToken', reference);
+      const secrets = { set: async () => { throw new Error('reset must delete'); }, delete: () => { deletes++; return removed; } };
+      modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+        { onSettingApplied: () => { applied++; } });
+      while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+      modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+      expect(modal.resetSelected()).toBeNull();
+      const completion = modal.pendingSecretWrite;
+      expect(completion).not.toBeNull();
+      expect(cm.get('surfaces.homeassistant.accessToken')).toBe(reference);
+      expect(applied).toBe(0);
+      expect(deletes).toBe(1);
+      expect(modal.resetSelected()).toBeNull();
+      expect(deletes).toBe(1);
+      if (rejects) fail(new Error('deletion failed with synthetic-hidden-token'));
+      else finish();
+      expect(await completion).toBe(!rejects);
+      expect(cm.get('surfaces.homeassistant.accessToken')).toBe(rejects ? reference : '');
+      expect(applied).toBe(rejects ? 0 : 1);
+      expect(modal.pendingSecretWrite).toBeNull();
+      expect(modal.lastSettingEffectMessage).not.toContain('synthetic-hidden-token');
+      if (rejects) expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+    });
+  }
+
+  test('a pending selected secret reset finishes against its original owner after reopen', async () => {
+    let finish!: () => void;
+    const removed = new Promise<void>((resolve) => { finish = resolve; });
+    const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken'));
+    cm.setDynamic('surfaces.homeassistant.accessToken', reference);
+    const secrets = { set: async () => {}, delete: () => removed };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+    expect(modal.resetSelected()).toBeNull();
+    const completion = modal.pendingSecretWrite;
+    modal.close();
+    const replacementRoot = join(tmpDir, 'reset-replacement-owner');
+    mkdirSync(replacementRoot, { recursive: true });
+    const replacement = createConfigManager(replacementRoot);
+    replacement.setDynamic('surfaces.homeassistant.accessToken', reference);
+    modal.open(replacement, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.homeassistant.accessToken')).toBe('');
+    expect(replacement.get('surfaces.homeassistant.accessToken')).toBe(reference);
+    expect(modal.lastSettingEffectMessage).toBeNull();
+  });
+
+  for (const mode of ['category', 'all'] as const) {
+    for (const rejects of [false, true]) {
+      test(`${mode} secret reset awaits its batch and reports ${rejects ? 'failure' : 'completion'}`, async () => {
+        let finish!: () => void;
+        let fail!: (error: Error) => void;
+        const removed = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+        const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken'));
+        cm.setDynamic('surfaces.homeassistant.accessToken', reference);
+        let deletes = 0;
+        const secrets = { set: async () => {}, delete: () => { deletes++; return removed; } };
+        modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+        while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+        const entry = modal.currentItems.find((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken')!;
+        // Only the relevant entries: duplicated cross-listing must not clear twice.
+        modal.groups = new Map([['surfaces', [entry, entry]]]);
+        if (mode === 'category') modal.initiateResetCategory();
+        else modal.initiateResetAll();
+        expect(modal.handleResetConfirmKey('enter')).toEqual({ result: 'confirmed', entries: [] });
+        const completion = modal.pendingSecretWrite;
+        expect(completion).not.toBeNull();
+        expect(deletes).toBe(1);
+        expect(cm.get('surfaces.homeassistant.accessToken')).toBe(reference);
+        if (rejects) fail(new Error('synthetic-batch-delete-error'));
+        else finish();
+        expect(await completion).toBe(!rejects);
+        expect(cm.get('surfaces.homeassistant.accessToken')).toBe(rejects ? reference : '');
+        if (rejects) expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+      });
+    }
+  }
+
+  for (const rejects of [false, true]) {
+    test(`selected secret reset routes clear to its daemon and waits for ${rejects ? 'refusal' : 'completion'}`, async () => {
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const removed = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+      let clears = 0;
+      const writer = { set: async () => { throw new Error('reset must clear'); },
+        clear: () => { clears++; return removed; } };
+      const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.homeassistant.accessToken'));
+      cm.setDynamic('surfaces.homeassistant.accessToken', reference);
+            try {
+        modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, undefined, { daemonCredentials: writer });
+        while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+        modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.homeassistant.accessToken');
+        expect(modal.resetSelected()).toBeNull();
+        const completion = modal.pendingSecretWrite;
+        expect(completion).not.toBeNull();
+        expect(clears).toBe(1);
+        expect(cm.get('surfaces.homeassistant.accessToken')).toBe(reference);
+        if (rejects) fail(new Error('synthetic-daemon-clear-refusal'));
+        else finish();
+        expect(await completion).toBe(!rejects);
+        // The remote owner commits its own config; no local fallback is fabricated.
+        expect(cm.get('surfaces.homeassistant.accessToken')).toBe(reference);
+        if (rejects) expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+      } finally { finish(); }
+    });
+  }
+
+  test('a batch captures its secret owner before an ordinary reset callback reopens the modal', async () => {
+    const key = 'surfaces.homeassistant.accessToken';
+    const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey(key));
+    cm.setDynamic(key, reference);
+    cm.setDynamic('display.stream', false);
+    const replacementRoot = join(tmpDir, 'batch-replacement-owner');
+    mkdirSync(replacementRoot, { recursive: true });
+    const replacement = createConfigManager(replacementRoot);
+    replacement.setDynamic(key, reference);
+    let finish!: () => void;
+    const removed = new Promise<void>((resolve) => { finish = resolve; });
+    let oldDeletes = 0;
+    let newDeletes = 0;
+    const secrets = { set: async () => {}, delete: () => { oldDeletes++; return removed; } };
+    const replacementSecrets = { set: async () => {}, delete: async () => { newDeletes++; } };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets, {
+      onSettingApplied: (change) => {
+        if (change.key === 'display.stream') modal.open(replacement, ffm, subscriptionManager, serviceRegistry, mcpRegistry, replacementSecrets);
+      },
+    });
+    const secretEntry = modal.groups.get('surfaces')!.find((entry) => entry.setting.key === key)!;
+    const ordinaryEntry = modal.groups.get('display')!.find((entry) => entry.setting.key === 'display.stream')!;
+    modal.groups = new Map([['surfaces', [secretEntry, ordinaryEntry]]]);
+    modal.initiateResetAll();
+    modal.handleResetConfirmKey('enter');
+    const completion = modal.pendingSecretWrite;
+    expect(completion).not.toBeNull();
+    expect(oldDeletes).toBe(1);
+    expect(newDeletes).toBe(0);
+    expect(modal.lastSettingEffectMessage).toBeNull();
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get(key)).toBe('');
+    expect(replacement.get(key)).toBe(reference);
+    expect(modal.lastSettingEffectMessage).toBeNull();
   });
 
   test('close() deactivates modal and clears editing state', () => {

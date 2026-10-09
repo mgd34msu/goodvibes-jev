@@ -614,16 +614,20 @@ export class ConfigManager {
     this.emitConfigHook(key, previous, next);
   }
 
-  /** Set a config value by dot-path key and auto-save to disk. */
-  set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
+  /**
+   * Non-mutating preflight using the ordinary dynamic setter's schema, path,
+   * managed-policy, and read-only checks. Does not grant future admission or
+   * promise persistence; callers must still commit through setDynamic().
+   * Policy reads are strict and never repair or quarantine a file.
+   */
+  validateDynamic(key: ConfigKey, value: unknown, options: ConfigSetOptions = {}): void {
     this.requireWritable();
-    this.invalidateLifetimes();
-    if (this.hostSettings.has(key) && this.hostSettingHasProjectValue(key)) {
-      (this.setProjectValue as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
-      return;
-    }
+    this.validateSetValue(key, value, options, true);
+  }
+
+  private validateSetValue(key: ConfigKey, value: unknown, options: ConfigSetOptions, purePolicyRead: boolean): unknown {
     const schema = this.hostSettings.schema(key) ?? CONFIG_SCHEMA.find(s => s.key === key);
-    value = coerceSchemaValue(key, schema, value) as ConfigValue<K>;
+    value = coerceSchemaValue(key, schema, value);
     if (schema?.validate && !schema.validate(value)) {
       const hint = schema.validationHint ? ` (${schema.validationHint})` : '';
       throw new ConfigError(`Invalid value for ${key}: ${String(value)}${hint}`);
@@ -632,11 +636,25 @@ export class ConfigManager {
       throw new ConfigError(`Invalid value for ${key}: "${String(value)}". Allowed: ${schema.enumValues.join(', ')}`);
     }
     if (!options.bypassManagedLock) {
-      const lock = getManagedSettingLock(key, this.configDir);
+      const lock = purePolicyRead ? readStrictManagedSettingLock(key, this.configDir) : getManagedSettingLock(key, this.configDir);
       if (lock) {
         throw new ConfigError(`Setting ${key} is locked by ${lock.source}: ${lock.reason}`);
       }
     }
+
+    this.resolvePath(key);
+    return value;
+  }
+
+  /** Set a config value by dot-path key and auto-save to disk. */
+  set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options: ConfigSetOptions = {}): void {
+    this.requireWritable();
+    this.invalidateLifetimes();
+    if (this.hostSettings.has(key) && this.hostSettingHasProjectValue(key)) {
+      (this.setProjectValue as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
+      return;
+    }
+    value = this.validateSetValue(key, value, options, false) as ConfigValue<K>;
 
     const previousValue = readDotPath(this.config, key).value;
     const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
@@ -726,21 +744,7 @@ export class ConfigManager {
       (this.set as (k: ConfigKey, v: unknown, o: ConfigSetOptions) => void)(key, value, options);
       return;
     }
-    const schema = this.hostSettings.schema(key) ?? CONFIG_SCHEMA.find(s => s.key === key);
-    value = coerceSchemaValue(key, schema, value) as ConfigValue<K>;
-    if (schema?.validate && !schema.validate(value)) {
-      const hint = schema.validationHint ? ` (${schema.validationHint})` : '';
-      throw new ConfigError(`Invalid value for ${key}: ${String(value)}${hint}`);
-    }
-    if (schema?.type === 'enum' && schema.enumValues && !schema.enumValues.includes(value as string)) {
-      throw new ConfigError(`Invalid value for ${key}: "${String(value)}". Allowed: ${schema.enumValues.join(', ')}`);
-    }
-    if (!options.bypassManagedLock) {
-      const lock = getManagedSettingLock(key, this.configDir);
-      if (lock) {
-        throw new ConfigError(`Setting ${key} is locked by ${lock.source}: ${lock.reason}`);
-      }
-    }
+    value = this.validateSetValue(key, value, options, false) as ConfigValue<K>;
     const previousValue = readDotPath(this.config, key).value;
     const previousHost = this.hostSettings.has(key) ? this.hostSettings.snapshot(this.config) : null;
     const staged = this.runtimeState.fork();

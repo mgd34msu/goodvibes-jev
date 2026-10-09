@@ -195,9 +195,9 @@ describe('payments CVV containment', () => {
       };
     }
 
-    test('a card secret field (the original bug report) writes at daemon scope, not user', () => {
+    test('a card secret field (the original bug report) writes at daemon scope, not user', async () => {
       const recorder = recordingSecretsManager();
-      setSecretBackedSettingValue({
+      await setSecretBackedSettingValue({
         key: PAYMENTS_CARD_CVV_CONFIG_KEY,
         value: FAKE_CVV,
         configManager: cm,
@@ -208,9 +208,9 @@ describe('payments CVV containment', () => {
       for (const call of recorder.calls) expect(call.scope).toBe('daemon');
     });
 
-    test('a messaging-surface secret field (same defect class; surfaces.slack.botToken) also writes at daemon scope', () => {
+    test('a messaging-surface secret field (same defect class; surfaces.slack.botToken) also writes at daemon scope', async () => {
       const recorder = recordingSecretsManager();
-      setSecretBackedSettingValue({
+      await setSecretBackedSettingValue({
         key: 'surfaces.slack.botToken',
         value: 'xoxb-fake-value-not-real',
         configManager: cm,
@@ -334,7 +334,7 @@ describe('payments CVV containment', () => {
         set: async () => { throw new Error('disk full'); },
         delete: async () => {},
       };
-      setSecretBackedSettingValue({
+      await setSecretBackedSettingValue({
         key: PAYMENTS_CARD_CVV_CONFIG_KEY,
         value: FAKE_CVV,
         // configManager is used only to read storage.secretPolicy (a real key);
@@ -343,9 +343,6 @@ describe('payments CVV containment', () => {
         secretsManager: failingSecretsManager,
         setConfigValue: (key, value) => cm.setDynamic(key, value),
       });
-      // setSecretBackedSettingValue fires the secret write and returns without
-      // awaiting it; give the rejected promise's .catch a turn to run.
-      await new Promise((resolve) => setTimeout(resolve, 10));
       expect(errorSpy).toHaveBeenCalled();
       for (const call of errorSpy.mock.calls) {
         const serialized = JSON.stringify(call);
@@ -379,25 +376,20 @@ describe('payments CVV containment', () => {
       'payments.cardholderName': FAKE_CARDHOLDER,
     };
 
-    // Drive the full chained flow by capturing each beginConcealedInput call
-    // and immediately "typing" the fake value for that field, exactly the way
-    // the real composer delivers a concealed submission (plaintext passed once
-    // to onSubmit, never read back from a rendered buffer).
+    // Advance each field by its real persistence completion, never a timer.
     let submissions = 0;
+    const offered: Array<{ onSubmit: (v: string) => void | Promise<void> }> = [];
     const ctxWithChain = {
       ...ctx,
-      beginConcealedInput: (request: { onSubmit: (v: string) => void }) => {
-        const field = CARD_SECRET_FIELDS[submissions];
-        submissions += 1;
-        expect(field).toBeDefined();
-        request.onSubmit(fakeValues[field!.key as string] ?? '');
-      },
+      beginConcealedInput: (request: { onSubmit: (v: string) => void | Promise<void> }) => offered.push(request),
     } as unknown as CommandContext;
-
     runPaymentsCommand(['card'], ctxWithChain);
-    // Every persistSecretBackedConfigValue call is fire-and-forget (async);
-    // give them a turn to settle before asserting on printed output.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (const field of CARD_SECRET_FIELDS) {
+      const request = offered.shift();
+      expect(request).toBeDefined();
+      await request!.onSubmit(fakeValues[field.key as string] ?? '');
+      submissions++;
+    }
 
     expect(submissions).toBe(CARD_SECRET_FIELDS.length);
     const transcript = printed.join('\n');

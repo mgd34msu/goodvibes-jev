@@ -255,6 +255,19 @@ export class SecretsManager {
   }
 
   private readonly ownedMutationPaths = new Set<string>();
+  // An owner must not admit the old credential while its replacement/revoke
+  // waits for filesystem ownership. Counts keep overlapping writes fenced.
+  private readonly pendingLocalMutations = new Map<string, number>();
+
+  private async withCredentialMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    this.pendingLocalMutations.set(key, (this.pendingLocalMutations.get(key) ?? 0) + 1);
+    try { return await operation(); }
+    finally {
+      const remaining = this.pendingLocalMutations.get(key)! - 1;
+      if (remaining === 0) this.pendingLocalMutations.delete(key);
+      else this.pendingLocalMutations.set(key, remaining);
+    }
+  }
   private encKey: Buffer | null = null;
   private readonly keyFilePath: string;
   private readonly options: SecretsManagerOptions;
@@ -342,6 +355,7 @@ export class SecretsManager {
         ? { state: 'unsupported' }
         : { state: 'resolved', value };
     if (process.env[key] !== undefined) return capture(process.env[key]);
+    if (this.pendingLocalMutations.has(key)) return { state: 'unsupported' };
     for (const path of this.getReadOrder()) {
       const result = path.secure ? this.readEncryptedStore(path.path) : this.readPlaintextStore(path.path);
       if (result.status === 'unreadable') return { state: 'unsupported' };
@@ -429,10 +443,10 @@ export class SecretsManager {
     const medium = options.medium ?? this.getDefaultWriteMedium(policy);
     if (policy === 'require_secure' && medium === 'plaintext') throw new Error('Secret policy require_secure forbids plaintext persistence');
     const paths = this.writeStorePaths(scope, medium, policy);
-    await this.withStoreMutations(paths, () => {
+    await this.withCredentialMutation(key, () => this.withStoreMutations(paths, () => {
       if (this.getPolicy() !== policy) throw new Error('Secret storage policy changed during acquisition');
       this.setOwned(key, value, { ...options, medium });
-    }, paths.slice(1));
+    }, paths.slice(1)));
   }
 
   /** A legacy read rewrites a whole file too. Re-read after acquiring its
@@ -663,7 +677,7 @@ export class SecretsManager {
       if (options.medium && (options.medium === 'secure') !== store.secure) return false;
       return existsSync(store.path) && this.storeContainsKey(store, key);
     });
-    await this.withStoreMutations(stores.map(store => store.path), () => this.deleteOwned(key, stores));
+    await this.withCredentialMutation(key, () => this.withStoreMutations(stores.map(store => store.path), () => this.deleteOwned(key, stores)));
   }
 
   private storeContainsKey(store: SecretStorePath, key: string): boolean {
@@ -701,7 +715,7 @@ export class SecretsManager {
     const stores = this.getMigratableStores().filter(store =>
       (storePath !== undefined ? store.path === storePath : store.scope === scope)
       && existsSync(store.path) && this.storeContainsKey(store, key));
-    await this.withStoreMutations(stores.map(store => store.path), () => this.deleteFromScopeOwned(key, stores));
+    await this.withCredentialMutation(key, () => this.withStoreMutations(stores.map(store => store.path), () => this.deleteFromScopeOwned(key, stores)));
   }
 
   private deleteFromScopeOwned(key: string, stores: readonly SecretStorePath[]): void {

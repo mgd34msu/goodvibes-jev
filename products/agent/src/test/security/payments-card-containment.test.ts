@@ -1,3 +1,4 @@
+import { waitForConcealedSubmission } from '../../input/concealed-input.ts';
 import { withOfflineProviderMetadata } from '../helpers/offline-provider-metadata.ts';
 import { useSecurityReadings } from '../helpers/security-readings.ts';
 /**
@@ -200,13 +201,13 @@ describe('payments card containment (agent terminal)', () => {
     expect(defaultSecretBackedScope('provider.model' as never)).toBe('user' satisfies SecretScope);
   });
 
-  test('the settings-modal secret edit path also writes at daemon scope: not just the /payments card path', () => {
+  test('the settings-modal secret edit path also writes at daemon scope: not just the /payments card path', async () => {
     const scopes: (string | undefined)[] = [];
     const fakeSecrets = {
       set: mock(async (_k: string, _v: string, opts?: { scope?: string }) => { scopes.push(opts?.scope); }),
       delete: mock(async (_k: string, opts?: { scope?: string }) => { scopes.push(opts?.scope); }),
     };
-    setSecretBackedSettingValue({
+    await setSecretBackedSettingValue({
       key: PAYMENTS_CARD_CVV_CONFIG_KEY,
       value: FAKE_CVV,
       configManager: cm,
@@ -425,7 +426,7 @@ describe('payments card containment (agent terminal)', () => {
     // Enter is diverted to the card request, never to input history
     const historySpy = new InputHistory({ historyPath: join(tmpDir, 'ih.json'), persist: false });
     const addSpy = spyOn(historySpy, 'add');
-    const route = handlePromptKeyToken({
+    const routeState = {
       prompt: input.prompt,
       cursorPos: input.cursorPos,
       inputScrollTop: 0,
@@ -453,8 +454,26 @@ describe('payments card containment (agent terminal)', () => {
       scroll: () => {},
       exitApp: () => {},
       requestRender: () => {},
-    } as unknown as KeyRouteState, { type: 'key', logicalName: 'enter' } as never);
-    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    } as unknown as KeyRouteState;
+    const originalSet = secrets.set.bind(secrets);
+    let releaseStore!: () => void;
+    const storeReady = new Promise<void>(resolve => { releaseStore = resolve; });
+    const delayedStore = spyOn(secrets, 'set').mockImplementation(async (...args) => {
+      await storeReady;
+      return originalSet(...args);
+    });
+    const route = handlePromptKeyToken(routeState, { type: 'key', logicalName: 'enter' } as never);
+    try {
+      expect(input.concealedInput?.label).toBe('Saving concealed input');
+      input.prompt = FAKE_CVV;
+      expect(input.getWrappedPromptInfo(80).visibleLines.join('\n')).not.toContain(FAKE_CVV);
+      const repeated = handlePromptKeyToken({ ...routeState, prompt: FAKE_CVV }, { type: 'key', logicalName: 'enter' } as never);
+      expect(repeated.handled).toBe(true);
+      expect(delayedStore).toHaveBeenCalledTimes(1);
+      expect(addSpy).not.toHaveBeenCalled();
+    } finally { releaseStore(); }
+    await waitForConcealedSubmission(input);
+    delayedStore.mockRestore();
 
     expect(route.handled).toBe(true);
     expect(route.prompt).toBe('');
@@ -556,15 +575,13 @@ describe('payments card containment (agent terminal)', () => {
         set: async () => { throw new Error('secret store unavailable'); },
         delete: async () => {},
       };
-      setSecretBackedSettingValue({
+      await setSecretBackedSettingValue({
         key: PAYMENTS_CARD_CVV_CONFIG_KEY,
         value: FAKE_CVV,
         configManager: cm,
         secretsManager: throwingSecrets as never,
         setConfigValue: (k, v) => cm.setDynamic(k, v),
       });
-      await Promise.resolve();
-      await Promise.resolve();
 
       const serialized = JSON.stringify(errorSpy.mock.calls);
       expect(leakedDigits(serialized, FAKE_CVV)).toBe(false);
@@ -585,16 +602,16 @@ describe('payments card containment (agent terminal)', () => {
   } {
     const printed: string[] = [];
     const concealedOffers: string[] = [];
-    let pendingSubmit: ((value: string) => void) | null = null;
+    let pendingSubmit: ((value: string) => void | Promise<void>) | null = null;
 
     const ctx = {
       print: (text: string) => { printed.push(text); },
       renderRequest: () => {},
-      beginConcealedInput: (request: { label?: string; onSubmit: (v: string) => void }) => {
+      beginConcealedInput: (request: { label?: string; onSubmit: (v: string) => void | Promise<void> }) => {
         concealedOffers.push(request.label ?? '');
         pendingSubmit = request.onSubmit;
       },
-      beginPlainInput: (request: { label?: string; onSubmit: (v: string) => void }) => {
+      beginPlainInput: (request: { label?: string; onSubmit: (v: string) => void | Promise<void> }) => {
         pendingSubmit = request.onSubmit;
       },
       platform: { configManager: cm, secretsManager: secrets },
@@ -604,9 +621,8 @@ describe('payments card containment (agent terminal)', () => {
     const submitField = async (value: string): Promise<void> => {
       const fn = pendingSubmit;
       pendingSubmit = null;
-      fn?.(value);
-      // let the persist promise chain settle before the next assertion
-      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+      expect(fn).not.toBeNull();
+      await fn?.(value);
     };
 
     return { ctx, printed, concealedOffers, submitField };

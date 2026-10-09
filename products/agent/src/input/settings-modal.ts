@@ -1,13 +1,14 @@
 /** SettingsModal state for the /settings and /config fullscreen workspace. */
 
 import type { ModelPickerTarget } from './model-picker.ts';
-import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigManager, ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
 import { getAgentSettingsSchema, type AgentSettingKey } from '../config/settings-catalog.ts';
 import { getResolvedSettingLookup } from '@/runtime/index.ts';
 import type { ServiceInspectionQuery } from '@/runtime/index.ts';
-import { buildGoodVibesSecretKey, defaultSecretBackedScope, isSecretConfigKey } from '../config/secret-config.ts';
+import { isSecretConfigKey } from '../config/secret-config.ts';
+import { agentDaemonConfigClient } from '../config/daemon-config-routing.ts';
 import { routeSettingWriteToConnectedHost } from './settings-modal-daemon-writes.ts';
 import {
   getNumericAdjustmentMeta,
@@ -111,6 +112,9 @@ export class SettingsModal {
   public subscriptionEntries: SubscriptionEntry[] = [];
 
   public lastSettingEffectMessage: string | null = null;
+  /** Accepted secret edits finish here; commitEdit remains a synchronous keystroke API. */
+  public pendingSecretWrite: Promise<boolean> | null = null;
+  private secretWriteSession = 0;
   /** The always-live search row: a non-empty query lists ranked matches from every category. */
   public searchQuery = '';
   public searchResults: SettingEntry[] = [];
@@ -144,6 +148,7 @@ export class SettingsModal {
     secretsManager?: SettingsSecretsManager,
     options?: SettingsModalOpenOptions,
   ): void {
+    this.secretWriteSession++;
     this.unsubscribeHostSetting?.();
     this.unsubscribeHostSetting = null;
     this.requestHostSettingRender = options?.requestRender ?? null;
@@ -197,6 +202,7 @@ export class SettingsModal {
 
   close(): void {
     this.active = false;
+    this.secretWriteSession++;
     this.unsubscribeHostSetting?.();
     this.unsubscribeHostSetting = null;
     this.requestHostSettingRender = null;
@@ -544,9 +550,10 @@ export class SettingsModal {
 
   /**
    * Commit the current editBuffer to the config.
-   * Returns true on success, false if validation failed.
+   * Returns true when accepted, false if validation failed or a secret write is pending.
    */
   commitEdit(): boolean {
+    if (this.pendingSecretWrite) return false;
     if (!this.editingMode) return false;
 
     if (this.currentCategory === 'mcp') {
@@ -609,22 +616,48 @@ export class SettingsModal {
     }
 
     if (setting.type === 'string' && isSecretConfigKey(setting.key)) {
-      setSecretBackedSettingValue({
-        key: setting.key,
-        value: String(parsed ?? ''),
-        configManager: this.configManager,
-        secretsManager: this.secretsManager,
-        setConfigValue: (key, value) => this._setValue(key, value),
-        onWriteReported: (report) => {
-          this.lastSettingEffectMessage = report.message;
-        },
-      });
+      this._writeSecretSetting(setting.key, String(parsed ?? ''));
     } else {
       this._setValue(setting.key, parsed);
     }
     this.editingMode = false;
     this.editBuffer = '';
     return true;
+  }
+
+  /** Capture the owner once for edits and resets; publication follows storage completion. */
+  private _writeSecretSetting(key: ConfigKey, value: string): void {
+    const configManager = this.configManager;
+    if (!configManager) return;
+    const onApplied = this.onSettingApplied;
+    const configClient = agentDaemonConfigClient();
+    let effectMessage: string | null = null;
+    const session = this.secretWriteSession;
+    this.lastSettingEffectMessage = 'Saving credential…';
+    this.pendingSecretWrite = setSecretBackedSettingValue({
+      key, value, configManager,
+      secretsManager: this.secretsManager,
+      setConfigValue: async (key, value) => {
+        if (configClient?.ownsKey(key)) {
+          await configClient.set(key, value);
+          effectMessage = 'Applied by the connected host; it takes effect for every client.';
+          return;
+        }
+        const previousValue = configManager.get(key);
+        configManager.setDynamic(key, value);
+        if (previousValue !== value) effectMessage = onApplied?.({ key, previousValue, value })?.message ?? null;
+      },
+      onWriteReported: (report) => {
+        if (report.ok) effectMessage = report.message;
+        if (session === this.secretWriteSession) this.lastSettingEffectMessage = report.message;
+      },
+    }).then((ok) => {
+      if (session === this.secretWriteSession) {
+        if (ok) { this.lastSettingEffectMessage = effectMessage ?? 'Credential saved.'; this._refreshAllEntries(); }
+        this.requestHostSettingRender?.();
+      }
+      return ok;
+    }).finally(() => { this.pendingSecretWrite = null; });
   }
 
   /** Cancel inline edit without saving. */
@@ -635,22 +668,17 @@ export class SettingsModal {
   }
 
   resetSelected(): { key: AgentSettingKey; value: unknown } | null {
-    if (this.editingMode || !this.configManager) return null;
+    if (this.pendingSecretWrite || this.editingMode || !this.configManager) return null;
     if (!this._canEditSettings()) return null;
     const entry = this.getSelected();
     if (!entry) return null;
     const key = entry.setting.key;
+    if (isSecretConfigKey(key)) {
+      this._writeSecretSetting(key, String(entry.setting.default ?? ''));
+      return null; // Accepted asynchronously, not yet a completed reset.
+    }
     const applied = this._setValue(key, entry.setting.default);
     if (key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY) return applied ? { key, value: entry.setting.default } : null;
-    if (isSecretConfigKey(key) && this.secretsManager) {
-      // Same scope the value was WRITTEN at (defaultSecretBackedScope), or the
-      // reset clears nothing: an email.* / calendar.* / surfaces.* / payments.*
-      // secret lives in the daemon tier, and deleting the user-tier copy would
-      // leave the real one in place while the UI reported the setting reset.
-      void this.secretsManager.delete(buildGoodVibesSecretKey(key), { scope: defaultSecretBackedScope(key) }).catch((error) => {
-        logger.error('SettingsModal: failed to clear secret while resetting setting', { key, error: summarizeError(error) });
-      });
-    }
     return { key, value: entry.setting.default };
   }
 

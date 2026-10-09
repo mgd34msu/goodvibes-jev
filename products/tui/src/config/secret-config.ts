@@ -64,6 +64,7 @@ export interface SecretBackedConfigUpdate {
 export interface SecretBackedConfigManager {
   readonly get: (key: ConfigKey) => unknown;
   readonly setDynamic: (key: ConfigKey, value: unknown) => void;
+  readonly validateDynamic?: (key: ConfigKey, value: unknown) => void;
 }
 
 export interface SecretBackedSecretStore {
@@ -175,33 +176,35 @@ export async function persistSecretBackedConfigValue(
   // the whole reference-and-value sequence atomically. This surface neither
   // writes the config key nor the secret in that case, it would be writing
   // both into a tree the daemon never reads.
-  if (scope === 'daemon' && options.daemonWriter) {
+  if ((update.secretKey || update.clearSecretKey) && scope === 'daemon' && options.daemonWriter) {
     const trimmed = rawValue.trim();
     if (trimmed.length === 0) {
       await options.daemonWriter.clear(configKey);
       return '';
     }
-    // Already a reference: the caller pasted one rather than a secret, so there
-    // is nothing to store, the config value is the whole write.
-    if (isSecretReferenceValue(trimmed)) return trimmed;
     await options.daemonWriter.set(configKey, rawValue);
     return update.configValue;
   }
 
+  if (update.secretKey && !secretsManager) throw new Error('Credential storage is unavailable.');
+  if (update.clearSecretKey && !secretsManager?.delete) throw new Error('Credential deletion is unavailable.');
   const medium = getSecretWriteMedium(configManager.get('storage.secretPolicy'));
 
-  // 1. Validate config write first. If setDynamic throws, no secret is written (avoids orphans).
-  configManager.setDynamic(configKey, update.configValue);
-
-  // 2. Write new secret only after config accepted it.
+  // Preflight without publishing a reference or modifying config. The final
+  // setter rechecks admission after the wait; later I/O failure may leave a
+  // stored value, but must never be reported as a completed config commit.
+  configManager.validateDynamic?.(configKey, update.configValue);
+  // Finish storage before publishing a reference that readers can resolve.
   if (update.secretKey && update.secretValue !== undefined && secretsManager) {
     await secretsManager.set(update.secretKey, update.secretValue, { scope, medium });
   }
 
-  // 3. Clear old secret, pass the same medium so plaintext-medium secrets are found for deletion.
+  // Revocation includes material written under earlier storage policies.
   if (update.clearSecretKey && secretsManager?.delete) {
-    await secretsManager.delete(update.clearSecretKey, { scope, medium });
+    await secretsManager.delete(update.clearSecretKey, { scope });
   }
 
+  configManager.validateDynamic?.(configKey, update.configValue);
+  configManager.setDynamic(configKey, update.configValue);
   return update.configValue;
 }

@@ -120,32 +120,45 @@ function promptCardFields(ctx: CommandContext, fields: readonly CardField[], ind
     return;
   }
   ctx.print(`[payments] Enter ${field.label} (e.g. ${field.placeholder}): masked; Enter to store, Esc to stop.`);
+  let cancelled = false;
+  let finished = false;
+  let submitted = false;
   ctx.beginConcealedInput({
     label: field.label,
-    onSubmit: (value) => {
+    onSubmit: async (value) => {
+      if (submitted || cancelled) return;
+      submitted = true;
       if (value.length === 0) {
+        finished = true;
         ctx.print(`[payments] ${field.label} left unset.`);
         promptCardFields(ctx, fields, index + 1);
         return;
       }
-      void persistSecretBackedConfigValue(
-        ctx.platform.configManager,
-        ctx.platform.secretsManager,
-        field.key,
-        value,
-        { scope: 'daemon' },
-      )
-        .then(() => {
-          ctx.print(`[payments] ${field.label} stored securely (hidden).`);
-          promptCardFields(ctx, fields, index + 1);
-        })
-        .catch((error: unknown) => {
-          ctx.print(`[payments] Failed to store ${field.label}: ${error instanceof Error ? error.message : String(error)}`);
-          promptCardFields(ctx, fields, index + 1);
-        });
+      try {
+        await persistSecretBackedConfigValue(
+          ctx.platform.configManager,
+          ctx.platform.secretsManager,
+          field.key,
+          value,
+          { scope: 'daemon' },
+        );
+        if (cancelled) return;
+        ctx.print(`[payments] ${field.label} stored securely (hidden).`);
+      } catch {
+        if (cancelled) return;
+        // Store failures may quote the input. Only the field label is safe.
+        ctx.print(`[payments] Failed to store ${field.label}. Try again.`);
+        finished = true;
+        promptCardFields(ctx, fields, index);
+        return;
+      }
+      finished = true;
+      promptCardFields(ctx, fields, index + 1);
     },
     onCancel: () => {
-      ctx.print(`[payments] Stopped. Re-run /payments card to finish the remaining fields.`);
+      if (finished || cancelled) return;
+      cancelled = true;
+      ctx.print('[payments] Stopped. Re-run /payments card to finish the remaining fields.');
     },
   });
 }

@@ -13,7 +13,7 @@ const REFERENCE = 'goodvibes://secrets/goodvibes/SYNTHETIC_ALREADY_STORED';
 const RAW = '  synthetic raw credential  ';
 
 function fixture(policy: unknown = 'secure_required') {
-  const localConfig = { get: mock(() => policy), setDynamic: mock((_key: ConfigKey, _value: unknown) => {}) };
+  const localConfig = { get: mock(() => policy), validateDynamic: mock((_key: ConfigKey, _value: unknown) => {}), setDynamic: mock((_key: ConfigKey, _value: unknown) => {}) };
   const secrets = {
     set: mock(async (_key: string, _value: string, _options?: { scope?: string; medium?: string }) => {}),
     delete: mock(async (_key: string, _options?: { scope?: string; medium?: string }) => {}),
@@ -171,12 +171,12 @@ describe('an existing secret reference is a configuration write', () => {
     expect(secrets.set).toHaveBeenCalledWith(buildGoodVibesSecretKey(KEY), RAW, { scope: 'project', medium: 'plaintext' });
     expect(await persistSecretBackedConfigValue(localConfig, secrets, KEY, '', { scope: 'project' })).toBe('');
     expect(localConfig.setDynamic).toHaveBeenCalledWith(KEY, '');
-    expect(secrets.delete).toHaveBeenCalledWith(buildGoodVibesSecretKey(KEY), { scope: 'project', medium: 'plaintext' });
+    expect(secrets.delete).toHaveBeenCalledWith(buildGoodVibesSecretKey(KEY), { scope: 'project' });
 
     secrets.set.mockClear();
     secrets.delete.mockClear();
     const refusal = new Error('synthetic invalid configuration');
-    localConfig.setDynamic.mockImplementation(() => { throw refusal; });
+    localConfig.validateDynamic.mockImplementation(() => { throw refusal; });
     await expect(persistSecretBackedConfigValue(localConfig, secrets, KEY, RAW, { scope: 'project' })).rejects.toBe(refusal);
     await expect(persistSecretBackedConfigValue(localConfig, secrets, KEY, '', { scope: 'project' })).rejects.toBe(refusal);
     expect(secrets.set).not.toHaveBeenCalled();

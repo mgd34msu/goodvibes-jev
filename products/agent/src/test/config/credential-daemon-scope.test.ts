@@ -223,15 +223,13 @@ describe('a credential captured in the agent survives the agent closing', () => 
     const configManager = new ConfigManager({ surfaceRoot: 'agent', homeDir: machineHome, workingDir: agentProjectRoot });
     const applied: Array<[string, unknown]> = [];
     const edit = (value: string) => {
-      setSecretBackedSettingValue({
+      return setSecretBackedSettingValue({
         key: 'surfaces.slack.botToken' as never,
         value,
         configManager,
         secretsManager: agentSecrets,
         setConfigValue: (key, applied_value) => { applied.push([key as unknown as string, applied_value]); },
       });
-      // The modal's secret write is fire-and-forget; let it settle.
-      return new Promise((done) => setTimeout(done, 50));
     };
 
     await edit('the-slack-token');
@@ -322,15 +320,13 @@ describe('the scope each credential path asks for', () => {
   test('the settings modal asks for the daemon tier', async () => {
     const store = recorder();
 
-    setSecretBackedSettingValue({
+    await setSecretBackedSettingValue({
       key: 'surfaces.slack.botToken' as never,
       value: 'a-token',
       configManager: { get: () => undefined } as never,
       secretsManager: store as never,
       setConfigValue: () => {},
     });
-    await new Promise((done) => setTimeout(done, 20));
-
     expect(store.sets).toEqual([['GOODVIBES_SURFACES_SLACK_BOT_TOKEN', 'daemon']]);
   });
 
