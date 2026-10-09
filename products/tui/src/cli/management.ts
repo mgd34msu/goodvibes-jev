@@ -123,12 +123,7 @@ async function renderProviders(runtime: CliCommandRuntime): Promise<string> {
       if (!provider) return 'Usage: goodvibes providers inspect <provider>';
       const snapshot = snapshots.find((candidate) => candidate.providerId === provider);
       if (!snapshot) return `No provider found: ${provider}`;
-      const setup = classifyProviderSetup({
-        providerId: snapshot.providerId,
-        authMode: snapshot.runtime.auth?.mode,
-        configured: snapshot.runtime.auth?.configured ?? true,
-        modelCount: snapshot.modelCount,
-      });
+      const setup = await classifyProviderSetup(snapshot, { site: 'tui.providers.inspect.setup' });
       const authRoutes = snapshot.runtime.auth?.routes ?? [];
       return formatJsonOrText(runtime.cli)({
         ...snapshot,
@@ -148,13 +143,8 @@ async function renderProviders(runtime: CliCommandRuntime): Promise<string> {
       ].join('\n'));
     }
     if (sub !== 'list') return 'Usage: goodvibes providers [list|current|inspect <provider>|use <provider> [modelRegistryKey]]';
-    const value = snapshots.map((snapshot) => ({
-      ...classifyProviderSetup({
-        providerId: snapshot.providerId,
-        authMode: snapshot.runtime.auth?.mode,
-        configured: snapshot.runtime.auth?.configured ?? true,
-        modelCount: snapshot.modelCount,
-      }),
+    const value = await Promise.all(snapshots.map(async (snapshot) => ({
+      ...await classifyProviderSetup(snapshot, { site: 'tui.providers.list.setup' }),
       provider: snapshot.providerId,
       active: snapshot.active,
       configured: snapshot.runtime.auth?.configured ?? true,
@@ -164,7 +154,7 @@ async function renderProviders(runtime: CliCommandRuntime): Promise<string> {
       detail: snapshot.runtime.auth?.detail ?? snapshot.runtime.notes?.join('; ') ?? '',
       authRoutes: snapshot.runtime.auth?.routes ?? [],
       authRouteSummary: summarizeProviderAuthRoutes(snapshot.runtime.auth?.routes),
-    }));
+    })));
     return formatJsonOrText(runtime.cli)(value, [
       'GoodVibes providers',
       ...value.map((provider) =>
@@ -213,18 +203,19 @@ async function renderModels(runtime: CliCommandRuntime): Promise<string> {
     const [subOrFilter, ...rest] = runtime.cli.commandArgs;
     const current = services.providerRegistry.getCurrentModel().registryKey;
     const providerSnapshots = await listProviderRuntimeSnapshots(services.providerRegistry);
+    const setupReads = new Map<string, ReturnType<typeof classifyProviderSetup>>();
     const classifyModelProvider = (providerId: string) => {
-      const snapshot = providerSnapshots.find((candidate) => candidate.providerId === providerId);
-      return classifyProviderSetup({
-        providerId,
-        authMode: snapshot?.runtime.auth?.mode,
-        configured: snapshot?.runtime.auth?.configured,
-        modelCount: snapshot?.modelCount,
-      });
+      let reading = setupReads.get(providerId);
+      if (!reading) {
+        const snapshot = providerSnapshots.find((candidate) => candidate.providerId === providerId);
+        reading = classifyProviderSetup(snapshot ?? { providerId }, { site: 'tui.models.setup' });
+        setupReads.set(providerId, reading);
+      }
+      return reading;
     };
     if (subOrFilter === 'current') {
       const model = services.providerRegistry.getCurrentModel();
-      const setup = classifyModelProvider(model.provider);
+      const setup = await classifyModelProvider(model.provider);
       const providerSnapshot = providerSnapshots.find((candidate) => candidate.providerId === model.provider);
       const value = {
         registryKey: model.registryKey,
@@ -307,14 +298,14 @@ async function renderModels(runtime: CliCommandRuntime): Promise<string> {
       .getSelectableModels()
       .filter((model) => !filter || model.provider.toLowerCase() === filter || model.registryKey.toLowerCase().includes(filter))
       .slice(0, 200);
-    const value = models.map((model) => {
+    const value = await Promise.all(models.map(async (model) => {
       const synthInfo = model.provider === 'synthetic'
         ? services.providerRegistry.getSyntheticModelInfoFromCatalog(model.id)
         : null;
       return {
         registryKey: model.registryKey,
         provider: model.provider,
-        ...classifyModelProvider(model.provider),
+        ...await classifyModelProvider(model.provider),
         id: model.id,
         displayName: model.displayName,
         contextWindow: services.providerRegistry.getContextWindowForModel(model),
@@ -327,7 +318,7 @@ async function renderModels(runtime: CliCommandRuntime): Promise<string> {
           syntheticConfiguredBackends: synthInfo.keyedBackendCount,
         } : {}),
       };
-    });
+    }));
     return formatJsonOrText(runtime.cli)(value, [
       `GoodVibes models${filter ? ` (${filter})` : ''}`,
       ...value.map((model) => {

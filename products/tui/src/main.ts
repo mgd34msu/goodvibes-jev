@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { ScheduleReadingLifetime } from './input/commands/schedule-reading-lifetime.ts';
 import { wireHostPairingShell } from './shell/host-pairing-shell.ts';
 import type { HostPairingController } from './shell/host-pairing-controller.ts';
 import { isConversationUsageAvailable, isConversationContextAvailable } from './core/conversation-usage.ts';
@@ -270,6 +271,9 @@ async function main() {
   });
   const { exitApp, resizeHandler, sigintHandler, unhandledRejectionHandler, uncaughtExceptionHandler, terminationSignalHandler, exitListener } = lifecycle;
   commandContext.exit = exitApp;
+  const scheduleReading = new ScheduleReadingLifetime(() => runtime.sessionId, () => !lifecycle.isTerminalRestored());
+  commandContext.scheduleReading = scheduleReading;
+  unsubs.push(() => scheduleReading.dispose());
 
   // In-terminal (OSC 9) notifier (approval-wait/turn-end/agent-blocked); writes
   // are restore-gated so no escape sequence lands after the shell resumes.
@@ -282,6 +286,7 @@ async function main() {
   const ambience = wireSessionAmbience({
     voiceService: ctx.services.voiceService, configManager, events: uiServices.events,
     conversation, toolLLM: ctx.services.toolLLM, orchestrator, providerRegistry, workingDir,
+    getSessionId: () => runtime.sessionId, isActive: () => !lifecycle.isTerminalRestored(),
     notify: (message) => systemMessageRouter.high(message), render,
   });
   stopSpokenOutputForExit = ambience.stopSpokenOutputForExit;
@@ -304,6 +309,7 @@ async function main() {
   commandContext.dispatchNativeIntakeTurn = state => dispatchNativeTurn(state);
 
   const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
+    scheduleReading.cancel();
     hostPairing?.cancelForTakeover();
     const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
@@ -335,7 +341,9 @@ async function main() {
     }
   };
 
-  const cancelGeneration = createCancelGeneration(orchestrator, spokenTurns, () => streamResult.cancelPendingRecovery());
+  const cancelGeneration = scheduleReading.withCancellation(
+    createCancelGeneration(orchestrator, spokenTurns, () => streamResult.cancelPendingRecovery()),
+  );
 
   const jumpToBookmark = (key: string) => {
     conversation.getDisplayBlocks();
@@ -366,7 +374,7 @@ async function main() {
   // Late-patched: bootstrap.ts populates uiServices.platform.externalServices AFTER commandContext is built.
   commandContext.platform.externalServices = uiServices.platform.externalServices;
   commandContext.cancelGeneration = cancelGeneration;
-  commandContext.cancelPendingRecovery = () => streamResult.cancelPendingRecovery();
+  commandContext.cancelPendingRecovery = () => { scheduleReading.cancel(); return streamResult.cancelPendingRecovery(); };
   wireInteractionSeams(commandContext, {
     orchestrator, powerManager: ctx.services.powerManager, readPowerSurface: () => powerChipSource.get(), render: () => render(), notify: (m) => systemMessageRouter.high(m),
     getActiveToolCallId: () => streamMetrics.activeToolCallId, toggleMemoryProvenance: () => memoryProvenanceUi.toggle(),

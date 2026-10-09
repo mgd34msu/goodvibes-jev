@@ -1,3 +1,4 @@
+import { scheduleCommandArguments } from './commands/schedule-arguments.ts';
 import { activeTokens } from '../renderer/theme.ts';
 import { loadSkillByTrigger } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -91,7 +92,8 @@ export function handleCommandModeToken(state: CommandModeRouteState, token: Inpu
       state.conversationManager?.dismissSplash();
       const parts = raw.slice(1).trim().split(/\s+/);
       const name = parts[0];
-      const args = parts.slice(1);
+      const args = name === 'schedule' || name === 'sched' ? scheduleCommandArguments(raw.slice(1)) : parts.slice(1);
+      if (!args) { state.commandContext.scheduleReading?.cancel(); state.commandContext.print('Invalid schedule command quoting.'); state.requestRender(); return true; }
       const ctx = withComposerBindings(state.commandContext, state);
       const commandPromise = state.commandRegistry.get(name)
         ? state.commandRegistry.executeFromOwner(name, args, ctx, originalCommand)

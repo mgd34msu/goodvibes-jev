@@ -51,6 +51,13 @@ export interface ProviderUsageCostMetadata {
 }
 
 export interface ProviderRuntimeMetadata {
+  /** Declared instance setup evidence for presentation. Never routing or payment authority. */
+  readonly setup?: {
+    /** Provider/operator declaration of hosting and access; no credentials. */
+    readonly description?: string | undefined;
+    /** HTTP(S) origin only, without userinfo, path, query or fragment. */
+    readonly endpointOrigin?: string | undefined;
+  };
   readonly auth?: {
     readonly mode: 'api-key' | 'oauth' | 'anonymous' | 'none';
     readonly configured: boolean;

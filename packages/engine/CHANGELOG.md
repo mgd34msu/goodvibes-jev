@@ -4,6 +4,22 @@
 
 ### Fixed
 
+- Replace knowledge repair failure keyword guessing with structural causes and a
+  bounded typed judgment reading. Preserve confirmed timeout deferral, distinguish
+  request timeouts from run-budget exhaustion, and keep unknown/unavailable
+  readings from inventing a budget cause. Fence both disposition commits against
+  concurrent task/gap/review changes and cancellation. Existing failed-gap cooldown
+  is unchanged.
+
+- Track invocation overrides and frontend defaults explicitly across reloads.
+  Reconstruct deleted persisted keys from the remaining accepted layers, keep
+  runtime inputs out of bulk saves, and retire invocation authority only when
+  the corresponding explicit mutation publishes. Failed ordinary mutations
+  preserve complete in-memory state; prepared writes retain truthful known
+  partial/unknown receipts rather than claiming cross-tier disk rollback.
+  Runtime inputs support read-only managers with strict no-write managed-lock
+  admission. Provenance adds effectiveOrigin without changing persisted tiers.
+
 - Retain the last complete configuration and tier ownership if any reload
   layer refuses, while preserving lifetime invalidation, permission-incarnation
   advancement, restrictive host-setting defaults, and successful-load behavior.

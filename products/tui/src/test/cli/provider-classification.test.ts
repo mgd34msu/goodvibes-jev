@@ -1,20 +1,27 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { classifyProviderSetup } from '../../providers/provider-classification.ts';
 
-describe('provider setup classification', () => {
-  test('classifies subscription providers separately from API-key OpenAI', () => {
-    expect(classifyProviderSetup({ providerId: 'openai', authMode: 'api-key', modelCount: 50 }).setupClass).toBe('api-key');
-    expect(classifyProviderSetup({ providerId: 'openai-subscriber', authMode: 'oauth', modelCount: 0 }).setupClass).toBe('subscription');
-  });
+const previous = installJudgmentPort(undefined);
+afterEach(() => installJudgmentPort(previous));
 
-  test('classifies self-hosted and no-key/free providers', () => {
-    expect(classifyProviderSetup({ providerId: 'sglang', authMode: 'anonymous', configured: true }).setupClass).toBe('self-hosted');
-    expect(classifyProviderSetup({ providerId: 'synthetic', authMode: 'none', modelCount: 10 }).setupClass).toBe('local');
-    expect(classifyProviderSetup({ providerId: 'example-free', authMode: 'anonymous', modelCount: 3 }).setupClass).toBe('no-key-free');
-  });
-
-  test('classifies cloud account providers separately from simple API keys', () => {
-    expect(classifyProviderSetup({ providerId: 'amazon-bedrock', authMode: 'anonymous', modelCount: 90 }).setupClass).toBe('cloud-account');
-    expect(classifyProviderSetup({ providerId: 'unknown-provider', authMode: 'none', configured: false, modelCount: 0 }).setupClass).toBe('unknown');
+describe('provider setup classification shared owner', () => {
+  for (const [answer, setupClass] of [
+    ['api_key', 'api-key'], ['cloud_account', 'cloud-account'], ['local_runtime', 'local'],
+    ['no_key_free', 'no-key-free'], ['self_hosted', 'self-hosted'], ['subscription', 'subscription'],
+  ] as const) {
+    test(`retains ${setupClass} through the public reading rather than provider-id membership`, async () => {
+      const { port, requests } = fakePort((name) => noulAnswer(name === answer ? 0.99 : 0.01));
+      installJudgmentPort(port);
+      const result = await classifyProviderSetup({ providerId: 'not-in-any-provider-list', runtime: { setup: { description: `Declared fixture for ${setupClass}.` } } });
+      expect(result.setupClass).toBe(setupClass);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.context?.battery).toBe('providers.setup-presentation');
+    });
+  }
+  test('id alone never makes a legacy local or subscription promise', async () => {
+    expect((await classifyProviderSetup({ providerId: 'synthetic' })).setupClass).toBe('unknown');
+    expect((await classifyProviderSetup({ providerId: 'openai-subscriber' })).setupClass).toBe('unknown');
   });
 });

@@ -5,3 +5,6 @@ export const registry = new BatteryRegistry();
 registry.register(consolidationReading);
 registry.register(planningAnswerTopic);
 registry.register(planningRecommendationSpecific);
+
+import { repairFailureCause } from './semantic/self-improvement-failure-battery.js';
+registry.register(repairFailureCause);

@@ -2,8 +2,7 @@
  * Tests for cli-config-overrides.ts, applyRuntimeConfigDefault regression +
  * core behaviour.
  *
- * applyRuntimeConfigDefault reads BOTH global (configPath) and project
- * (projectConfigPath) persisted files. This suite proves it with a regression
+ * applyRuntimeConfigDefault respects accepted global and project settings. This suite proves it with a regression
  * that would fail under a single-file read: a project-scoped explicit `false`
  * must survive a front-end default flip.
  */
@@ -79,92 +78,42 @@ describe('applyRuntimeConfigDefault', () => {
     expect(cm.get('display.stream')).toBe(true);
   });
 
-  test('does NOT override when global settings file contains the key (explicit false)', () => {
-    // Access the global config path via the same private accessor pattern used in production
-    const manager = cm as unknown as { configPath?: string };
-    const configPath = manager.configPath;
-    expect(typeof configPath).toBe('string'); // loud failure if SDK renamed the accessor
-    if (typeof configPath !== 'string') throw new Error('configPath accessor missing from ConfigManager, SDK may have renamed it');
-    // Write explicit false to the global settings file
-    writeSettingsFile(configPath, { display: { stream: false } });
-    // Default wants to set it to true, must be blocked
-    applyRuntimeConfigDefault(cm, 'display.stream', true);
-    // The in-memory config was loaded at construction time with the default
-    // (true). After applyRuntimeConfigDefault the key should NOT have been
-    // overridden because the file says false explicitly.
-    // NOTE: The function does NOT update the in-memory config when it
-    // short-circuits, so the config stays at its loaded value, not at the
-    // defaultValue argument. The key test is that applyRuntimeConfigValue
-    // is NOT called, meaning the in-memory value is whatever the CM loaded.
-    // Since the file existed when CM was created, CM may or may not have read
-    // it; what we can guarantee is that applyRuntimeConfigDefault did NOT
-    // overwrite it to `true` blindly.
-    //
-    // To make this deterministic: set the in-memory value to false first,
-    // then call applyRuntimeConfigDefault, it must NOT change it to true.
-    applyRuntimeConfigValue(cm, 'display.stream', false);
-    applyRuntimeConfigDefault(cm, 'display.stream', true);
-    // Must still be false, global file has the key, so default is skipped.
-    expect(cm.get('display.stream')).toBe(false);
+  test('respects accepted global explicit false', () => {
+    writeSettingsFile(cm.getConfigPath(), { display: { showTokenSpeed: false } });
+    cm.load();
+    applyRuntimeConfigDefault(cm, 'display.showTokenSpeed', true);
+    expect(cm.get('display.showTokenSpeed')).toBe(false);
   });
 
-  /**
-   * REGRESSION TEST:
-   * A single-file read (global only) would ignore a project-scoped explicit
-   * `false` in projectConfigPath, and a front-end default (true) would be
-   * blindly applied, silently overriding the user.
-   *
-   * This test proves the fixed behaviour: project-scoped explicit `false`
-   * survives a default flip.
-   */
-  test('project-scoped explicit false survives default flip', () => {
-    const manager = cm as unknown as { projectConfigPath?: string; configPath?: string };
-    const projectConfigPath = manager.projectConfigPath;
-    expect(typeof projectConfigPath).toBe('string'); // loud failure if SDK renamed the accessor
-    if (typeof projectConfigPath !== 'string') throw new Error('projectConfigPath accessor missing from ConfigManager, SDK may have renamed it');
-    // Ensure global settings file does NOT contain the key
-    const globalPath = manager.configPath;
-    if (typeof globalPath === 'string') {
-      writeSettingsFile(globalPath, {}); // empty, key absent globally
-    }
-    // Write explicit false to the PROJECT settings file
-    writeSettingsFile(projectConfigPath, { display: { stream: false } });
-
-    // Pre-set in-memory value to false (simulates the CM having loaded it)
-    applyRuntimeConfigValue(cm, 'display.stream', false);
-
-    // A front-end startup wants to flip the default to true, must be blocked
-    // because the project file explicitly has stream: false.
-    applyRuntimeConfigDefault(cm, 'display.stream', true);
-
-    // The project-scoped explicit value must have been respected.
-    expect(cm.get('display.stream')).toBe(false);
+  test('respects accepted project explicit false', () => {
+    writeSettingsFile(cm.getProjectConfigPath()!, { display: { showTokenSpeed: false } });
+    cm.load();
+    applyRuntimeConfigDefault(cm, 'display.showTokenSpeed', true);
+    expect(cm.get('display.showTokenSpeed')).toBe(false);
   });
 
-  test('applies default when project file is present but key is absent from it', () => {
-    const manager = cm as unknown as { projectConfigPath?: string };
-    const projectConfigPath = manager.projectConfigPath;
-    expect(typeof projectConfigPath).toBe('string'); // loud failure if SDK renamed the accessor
-    if (typeof projectConfigPath !== 'string') throw new Error('projectConfigPath accessor missing from ConfigManager, SDK may have renamed it');
-    // Project file exists but does not contain display.stream
-    writeSettingsFile(projectConfigPath, { display: { theme: 'dark' } });
-
-    applyRuntimeConfigDefault(cm, 'display.stream', true);
-    expect(cm.get('display.stream')).toBe(true);
+  test('applies a default when an accepted project file omits the key', () => {
+    writeSettingsFile(cm.getProjectConfigPath()!, { display: { theme: 'dark' } });
+    cm.load();
+    applyRuntimeConfigDefault(cm, 'display.showTokenSpeed', true);
+    expect(cm.get('display.showTokenSpeed')).toBe(true);
   });
 
-  test('applies default when project file is malformed JSON', () => {
-    const manager = cm as unknown as { projectConfigPath?: string };
-    const projectConfigPath = manager.projectConfigPath;
-    expect(typeof projectConfigPath).toBe('string'); // loud failure if SDK renamed the accessor
-    if (typeof projectConfigPath !== 'string') throw new Error('projectConfigPath accessor missing from ConfigManager, SDK may have renamed it');
-    const dir = projectConfigPath.substring(0, projectConfigPath.lastIndexOf('/'));
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(projectConfigPath, '{ INVALID JSON', 'utf-8');
-
-    applyRuntimeConfigDefault(cm, 'display.stream', true);
-    expect(cm.get('display.stream')).toBe(true);
+  test('uses the last accepted view after corrupt disk contents refuse a load', () => {
+    writeSettingsFile(cm.getProjectConfigPath()!, { display: { showTokenSpeed: false } });
+    cm.load();
+    writeFileSync(cm.getProjectConfigPath()!, '{ INVALID JSON', 'utf-8');
+    expect(() => cm.load()).toThrow();
+    applyRuntimeConfigDefault(cm, 'display.showTokenSpeed', true);
+    expect(cm.get('display.showTokenSpeed')).toBe(false);
   });
+
+  test('a default registered after a CLI override never supersedes it', () => {
+    applyRuntimeConfigValue(cm, 'display.showTokenSpeed', false);
+    applyRuntimeConfigDefault(cm, 'display.showTokenSpeed', true);
+    expect(cm.get('display.showTokenSpeed')).toBe(false);
+  });
+
 });
 
 describe('applyRuntimeConfigValue', () => {

@@ -286,3 +286,6 @@ export type {
   PricingResult,
   PricingSourceKind,
 } from './session-cost.js';
+
+export { ProviderSetupReadings, classifyProviderSetup, describeProviderSetup, providerSetupFrom, providerSetupState } from './provider-setup.js';
+export type { ProviderSetupClass, ProviderSetupClassification, ProviderSetupFacts, ProviderSetupReadOptions } from './provider-setup.js';

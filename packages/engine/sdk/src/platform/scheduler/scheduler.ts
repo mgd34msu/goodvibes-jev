@@ -351,9 +351,9 @@ function computeNextRun(expr: string, from: Date, timezone?: string): Date {
   const fields = parseCron(expr);
 
   // Start from the next minute after `from`
-  const base = new Date(from.getTime());
-  base.setSeconds(0, 0);
-  base.setMinutes(base.getMinutes() + 1);
+  // Local setters can reselect the first occurrence of a repeated DST hour,
+  // moving backward from the source instant. Round in epoch time instead.
+  const base = new Date(Math.floor(from.getTime() / 60_000) * 60_000 + 60_000);
 
   const limit = new Date(base.getTime() + 366 * 24 * 60 * 60 * 1000);
 
@@ -363,6 +363,9 @@ function computeNextRun(expr: string, from: Date, timezone?: string): Date {
     const { month, dom, dow, hour, minute } = getCalendarParts(cur.getTime(), timezone);
 
     if (!fieldMatches(fields.month, month)) {
+      // Process-local month boundaries are not boundaries in the requested
+      // timezone. Step to its next hour and re-read calendar parts instead.
+      if (timezone) { cur = new Date(cur.getTime() + (60 - minute) * 60_000); continue; }
       // Advance to start of next month, always advance by wall-clock ms to
       // respect DST; add 32 days and floor to day 1 of the resulting month.
       cur = new Date(cur.getTime() + 32 * 24 * 60 * 60 * 1000);
@@ -383,6 +386,7 @@ function computeNextRun(expr: string, from: Date, timezone?: string): Date {
           ? domMatch
           : domMatch || dowMatch;
     if (!dayMatch) {
+      if (timezone) { cur = new Date(cur.getTime() + (60 - minute) * 60_000); continue; }
       // Advance to next day
       cur = new Date(cur.getTime() + 24 * 60 * 60 * 1000);
       cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), 0, 0, 0, 0);
@@ -390,6 +394,8 @@ function computeNextRun(expr: string, from: Date, timezone?: string): Date {
     }
 
     if (!fieldMatches(fields.hour, hour)) {
+      // Respect fractional-hour timezone offsets and DST, not process hours.
+      if (timezone) { cur = new Date(cur.getTime() + (60 - minute) * 60_000); continue; }
       // Advance to next hour
       cur = new Date(cur.getTime() + 60 * 60 * 1000);
       cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), cur.getHours(), 0, 0, 0);
@@ -398,8 +404,8 @@ function computeNextRun(expr: string, from: Date, timezone?: string): Date {
 
     if (!fieldMatches(fields.minute, minute)) {
       // Advance to next minute
-      cur = new Date(cur.getTime() + 60 * 1000);
-      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), cur.getHours(), cur.getMinutes(), 0, 0);
+      // Keep the absolute-time advance across a repeated process-local hour.
+      cur = new Date(cur.getTime() + 60_000);
       continue;
     }
 

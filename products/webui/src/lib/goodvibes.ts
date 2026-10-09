@@ -1701,6 +1701,8 @@ export interface ConfigSetOutcome {
   readonly persistedTo?: string;
   /** Mirrors the SDK's ConfigKeyTier (platform/config/manager-key-source.ts). */
   readonly tier?: 'daemon' | 'shared' | 'project' | 'global' | 'default';
+  /** Effective origin can be runtime-only while tier describes its persisted underlay. */
+  readonly effectiveOrigin?: 'daemon' | 'shared' | 'project' | 'global' | 'default' | 'runtime' | 'runtime-default';
   /** True when the daemon, not this client, is the writer/reader-of-record for this key. */
   readonly daemonOwned?: boolean;
 }

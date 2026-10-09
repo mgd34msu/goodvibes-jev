@@ -293,14 +293,15 @@ async function resolveProviderConfiguredStatus(
 }
 
 /**
- * The reasoning level `models.current.set` persisted, or null when the key
- * still resolves from its schema default. The default is a real level
+ * The effective configured reasoning level, or null when the key still
+ * resolves from its schema default (including explicit invocation authority). The default is a real level
  * ('medium'), so the tier report is the only honest way to tell "the operator
  * chose this" from "nothing was ever set".
  */
 function readPersistedEffort(configManager: ConfigManager): string | null {
   try {
-    if (configManager.describeConfigKeySource('provider.reasoningEffort').tier === 'default') return null;
+    const source = configManager.describeConfigKeySource('provider.reasoningEffort');
+    if ((source.effectiveOrigin ?? source.tier) === 'default') return null;
     const value = configManager.get('provider.reasoningEffort');
     return typeof value === 'string' && value.length > 0 ? value : null;
   } catch {

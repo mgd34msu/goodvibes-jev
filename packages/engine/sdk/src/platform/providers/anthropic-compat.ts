@@ -1,3 +1,4 @@
+import { safeEndpointOrigin } from './provider-setup.js';
 import { revalidateProviderAttempt } from './attempt-guard.js';
 import type {
   LLMProvider,
@@ -62,6 +63,8 @@ export interface AnthropicCompatOptions {
   allowAnonymous?: boolean | undefined;
   anonymousConfigured?: boolean | undefined;
   anonymousDetail?: string | undefined;
+  /** Operator/provider declaration, independent of the currently configured auth route. */
+  setupDescription?: string | undefined;
   /**
    * Optional overrides for the transport-level retry backoff (maxRetries /
    * initialDelayMs / maxDelayMs). Defaults to withRetry's DEFAULT_CONFIG when
@@ -126,6 +129,7 @@ export class AnthropicCompatProvider implements LLMProvider {
   private readonly allowAnonymous: boolean;
   private readonly anonymousConfigured: boolean;
   private readonly anonymousDetail?: string | undefined;
+  private readonly setupDescription?: string | undefined;
   private readonly retryConfig?: Partial<RetryConfig> | undefined;
   private readonly modelListing: 'anthropic-endpoint' | 'none';
   private readonly modelListingUrl: string | undefined;
@@ -157,6 +161,7 @@ export class AnthropicCompatProvider implements LLMProvider {
     this.allowAnonymous = opts.allowAnonymous ?? false;
     this.anonymousConfigured = opts.anonymousConfigured ?? false;
     this.anonymousDetail = opts.anonymousDetail;
+    this.setupDescription = opts.setupDescription;
     this.retryConfig = opts.retryConfig;
   }
 
@@ -359,6 +364,10 @@ export class AnthropicCompatProvider implements LLMProvider {
           : `API key for ${this.name} is not configured`,
     }, authRoutes);
     return {
+      setup: {
+        ...(this.setupDescription ?? this.anonymousDetail ? { description: this.setupDescription ?? this.anonymousDetail } : {}),
+        ...(safeEndpointOrigin(this.baseURL) ? { endpointOrigin: safeEndpointOrigin(this.baseURL)! } : {}),
+      },
       auth: {
         mode: this.allowAnonymous && !this.apiKey ? 'anonymous' : 'api-key',
         configured: auth.configured,

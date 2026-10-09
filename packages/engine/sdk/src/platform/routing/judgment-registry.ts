@@ -53,3 +53,7 @@ registry.register(chatModel);
 import { cacheMinimum, copilotClaudeModel } from './batteries/provider-cache.js';
 registry.register(copilotClaudeModel);
 registry.register(cacheMinimum);
+
+// Provider setup presentation is separate from routing/catalog access semantics.
+import { providerSetupReading } from '../providers/setup-reading.js';
+registry.register(providerSetupReading);

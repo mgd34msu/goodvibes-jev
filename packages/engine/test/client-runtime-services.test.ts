@@ -278,3 +278,37 @@ test('the remembered-approval store lands at the one control-plane path', async 
   // The client composition's own store is the same one, at the same path.
   expect(client.userPermissionRuleStore.rules().length).toBeGreaterThanOrEqual(0);
 });
+
+// These adapters must be installed by the real compositions, not just pass in
+// isolation. Replacing only the provider ask keeps each actual recorded owner.
+import { withDecisionLog } from '@goodvibes-jev/judgment';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { gateReadingsPort } from './_helpers/gate-readings.ts';
+import type { McpElicitationHandler } from '../sdk/src/platform/mcp/elicitation.ts';
+import { commitMcpElicitation, discardMcpElicitation } from '../sdk/src/platform/mcp/elicitation-autonomous.ts';
+
+test('both real runtime compositions install autonomous MCP input resolution without using their human ask seam', async () => {
+  const gate = gateReadingsPort();
+  const semantic = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
+  const startAsks = asks.length;
+  for (const services of [client, daemon]) {
+    const original = services.judgment.port.ask;
+    const intercepted = withDecisionLog({ model: gate.port.model, ask(request) {
+      request.signal?.throwIfAborted(); request.beforeAttempt?.();
+      return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
+    } }, services.judgment.decisionLog);
+    services.judgment.port.ask = intercepted.ask;
+    try {
+      const handler = (services.mcpRegistry as unknown as { elicitationHandler: McpElicitationHandler }).elicitationHandler;
+      expect(typeof handler).toBe('function');
+      const outcome = await handler({ requestId: 'composition-form', serverName: 'synthetic', message: 'Name to register',
+        requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } }, {
+        scope: { connectionId: 'composition-connection', destination: 'synthetic', signal: new AbortController().signal, assertCurrent() {} },
+        operation: { sourceOf: () => ({ goal: 'Register using the supplied name Alice', criteria: [] }), inputFacts: [{ name: 'Alice' }], assertCurrent() {} },
+      });
+      expect(outcome).toEqual({ action: 'accept', content: { name: 'Alice' } });
+      commitMcpElicitation(outcome); discardMcpElicitation(outcome);
+    } finally { services.judgment.port.ask = original; }
+  }
+  expect(asks.length).toBe(startAsks);
+});
