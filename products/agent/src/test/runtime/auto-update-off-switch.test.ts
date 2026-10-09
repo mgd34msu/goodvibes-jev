@@ -64,10 +64,12 @@ function writeSettings(base: string, update: Record<string, unknown>): void {
 /** A release feed that always reports a newer version, so nothing but the switch can stop an update. */
 const NEWER_RELEASE_AVAILABLE = (async (url: string) => {
   if (String(url).endsWith('/releases/latest')) {
-    return new Response(null, {
+    const response = new Response(null, {
       status: 302,
       headers: { location: 'https://github.com/mgd34msu/goodvibes-agent/releases/tag/v1.19.0' },
     });
+    Object.defineProperty(response, 'url', { value: url });
+    return response;
   }
   return new Response(null, { status: 404 });
 }) as never;

@@ -94,7 +94,7 @@ export async function handleDiscordInteractionPayload(
       return deferredResponse;
     }
 
-    const controlCommand = context.parseSurfaceControlCommand(task);
+    const controlCommand = await context.parseSurfaceControlCommand(task, { signal: req.signal });
     if (controlCommand) {
       const message = await context.performSurfaceControlCommand(controlCommand);
       return Response.json({

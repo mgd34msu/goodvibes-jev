@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runHostedSessionProof } from './hosted-session-proof.mjs';
 import { runPostBuildSmoke } from '@goodvibes-jev/engine/toolchain';
 
 // Explicit local Linux artifact proof. This consumes the production binary;
 // it never builds a fixture launcher or supplies an inbox composition module.
 assert(!process.versions.bun, 'Run verify:binary with ordinary Node, not Bun.');
 assert.equal(process.platform, 'linux', 'Isolated native verification currently requires Linux and bubblewrap.');
+const verificationStartedAt = Date.now();
 const product = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const config = JSON.parse(readFileSync(join(product, 'toolchain.config.json'), 'utf8'));
 const manifest = JSON.parse(readFileSync(join(product, 'package.json'), 'utf8'));
@@ -28,6 +31,11 @@ const tree = join(root, 'tree');
 const daemon = join(root, 'selected-daemon');
 const binary = join(artifacts, target.appArtifact);
 let server;
+async function payloadDigest(path) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest('hex');
+}
 const writeJson = (path, value) => writeFileSync(path, JSON.stringify(value));
 
 try {
@@ -40,6 +48,11 @@ try {
   const addon = join('lib', target.nativeAddonPackage, target.nativeAddonFile);
   mkdirSync(dirname(join(artifacts, addon)), { recursive: true });
   copyFileSync(join(dirname(original), addon), join(artifacts, addon));
+  // CI has already verified ci-artifact.json against the exact checkout/head.
+  // Bind this behavioral receipt to all unchanged relocated payload bytes too.
+  const payloadPaths = [target.appArtifact, ...['.bun', '.bun.json', '.bun.LICENSE.md'].map(suffix => target.appArtifact + suffix), addon];
+  const payloads = await Promise.all(payloadPaths.map(async path => ({ path, sha256: await payloadDigest(join(artifacts, path)) })));
+  for (const payload of payloads) assert.equal(await payloadDigest(join(dirname(original), payload.path)), payload.sha256, `Relocation changed ${payload.path}`);
   writeJson(join(work, 'package.json'), { name: '@fixture/foreign-package', version: '99.8.7', type: 'module' });
   // Only OS libraries and this owned fixture are mounted. The checkout and
   // its source/node_modules do not exist in the child filesystem namespace.
@@ -195,7 +208,10 @@ try {
     clearTimeout(timer); if (!exited) host.kill('SIGKILL');
     await stopped; host.stdout.destroy(); host.stderr.destroy(); host.stdio[3].destroy();
   }
-  console.log(`Native daemon ${manifest.version}: relocated shared smoke, exact identity, help, service refusal, config, argv/stdin send and production inbox startup/shutdown passed without checkout or node_modules.`);
+  const hosted = await runHostedSessionProof({ binary, boundary, env, root });
+  for (const payload of payloads) assert.equal(await payloadDigest(join(artifacts, payload.path)), payload.sha256, `Execution changed ${payload.path}`);
+  console.log(JSON.stringify({ proof: 'compiled-daemon-hosted-session', verificationElapsedMs: Date.now() - verificationStartedAt, payloads, ...hosted }));
+  console.log(`Native daemon ${manifest.version}: relocated shared smoke, exact identity, help, service refusal, config, argv/stdin send and production inbox and hosted streaming/lifecycle passed without checkout or node_modules.`);
 } finally {
   if (server?.listening) { server.closeAllConnections(); await new Promise((yes, no) => server.close(error => error ? no(error) : yes())); }
   rmSync(root, { recursive: true, force: true });

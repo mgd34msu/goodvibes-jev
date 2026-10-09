@@ -1,3 +1,4 @@
+import { isProxy } from 'node:util/types';
 /**
  * AcpConnection, Per-subagent ACP connection.
  *
@@ -19,11 +20,11 @@ import type {
   RequestPermissionResponse,
 } from './protocol.js';
 import type { SubagentInfo, SubagentResult, SubagentTask } from './protocol.js';
-import { permissionOutcomeFor } from './protocol.js';
-import type { PermissionCategory } from '../permissions/manager.js';
+import { permissionOutcomeFor, type AcpPermissionOptionLike } from './protocol.js';
+import { admitExternalRequest, type ExternalPermissionHost, type ExternalOperationSource } from '../permissions/external-request.js';
+import { AcpPermissionWire } from './permission-wire.js';
 import type { PermissionRequestHandler } from '../permissions/prompt.js';
 import { logger } from '../utils/logger.js';
-import { analyzePermissionRequest } from '../permissions/analysis.js';
 import { AcpError } from '../types/errors.js';
 import { VERSION } from '../version.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -95,7 +96,8 @@ export class AcpConnection {
   public readonly id: string;
   private info: SubagentInfo;
   private spawnCmd: string[];
-  private requestPermission: PermissionRequestHandler;
+  private readonly lifetime = new AbortController();
+  private permissionWire: AcpPermissionWire | undefined;
   private runtimeBus: RuntimeEventBus | null;
   private conn: ClientSideConnection | null = null;
   private sessionId: string | null = null;
@@ -109,13 +111,15 @@ export class AcpConnection {
     id: string,
     private task: SubagentTask,
     spawnCmd: string[],
-    requestPermission: PermissionRequestHandler = async () => ({ approved: false, remember: false }),
+    _requestPermission: PermissionRequestHandler = async () => ({ approved: false, remember: false }),
     runtimeBus: RuntimeEventBus | null = null,
     hookDispatcher: Pick<HookDispatcher, 'fire'> | null = null,
+    private readonly permissionHost?: ExternalPermissionHost,
+    private readonly operation?: ExternalOperationSource,
   ) {
     this.id = id;
-    this.spawnCmd = spawnCmd;
-    this.requestPermission = requestPermission;
+    this.task = { ...task, tools: [...task.tools] };
+    this.spawnCmd = [...spawnCmd];
     this.runtimeBus = runtimeBus;
     this.hookDispatcher = hookDispatcher;
     this.info = {
@@ -139,6 +143,7 @@ export class AcpConnection {
     const startedAt = this.info.startedAt;
 
     try {
+      this.lifetime.signal.throwIfAborted();
       this.transportClosed = false;
       this.emitTransportInitializing();
 
@@ -146,6 +151,7 @@ export class AcpConnection {
       //    optional package fails this subagent run with a message naming it
       //    rather than preventing the process from starting.
       const { ClientSideConnection, ndJsonStream } = await loadAcpSdk();
+      this.lifetime.signal.throwIfAborted();
 
       // 1. Spawn child process with piped stdio
       this.childProcess = Bun.spawn(this.spawnCmd, {
@@ -183,11 +189,33 @@ export class AcpConnection {
         this.childProcess.stdout as unknown as ReadableStream<Uint8Array>,
       );
 
+      const ownedChild = this.childProcess;
+      this.permissionWire = new AcpPermissionWire(() => {
+        const sessionId = this.sessionId;
+        const invalidation = new AbortController();
+        const unsubscribe = this.permissionHost?.config.onDidInvalidate(() => invalidation.abort()) ?? (() => {});
+        return { assertCurrent: () => {
+          this.lifetime.signal.throwIfAborted(); invalidation.signal.throwIfAborted();
+          this.permissionHost?.signal.throwIfAborted(); this.operation?.signal?.throwIfAborted();
+          this.operation?.assertCurrent();
+          if (!sessionId || this.sessionId !== sessionId || this.childProcess !== ownedChild) throw new Error('ACP permission owner changed');
+        }, close: unsubscribe };
+      });
+      const wire = this.permissionWire;
+      type WireMessage = typeof stream.readable extends ReadableStream<infer Message> ? Message : never;
+      const readable = stream.readable.pipeThrough(new TransformStream<WireMessage, WireMessage>({ transform(message, controller) {
+        wire.observe(message); controller.enqueue(message);
+      } }));
+      const writable = new WritableStream<WireMessage>({
+        write(message) { wire.write(message, bytes => { bunStdin.write(bytes); }); },
+        close() { bunStdin.end(); }, abort() { bunStdin.end(); },
+      });
+
       // 3. Build the Client implementation that handles agent callbacks
       const clientImpl: Client = this.buildClientImpl();
 
       // 4. Create the ClientSideConnection (TUI = ACP client, child = ACP agent)
-      this.conn = new ClientSideConnection((_agent: Agent) => clientImpl, stream);
+      this.conn = new ClientSideConnection((_agent: Agent) => clientImpl, { readable, writable });
 
       // 5. ACP handshake: initialize (protocolVersion is a number)
       this.emitTransportAuthenticating();
@@ -197,11 +225,14 @@ export class AcpConnection {
         clientCapabilities: {},
       });
 
+      this.lifetime.signal.throwIfAborted();
+
       // 6. Create a session (cwd is required, mcpServers is required)
       const sessionResp = await this.conn.newSession({
         cwd: this.task.workingDirectory,
         mcpServers: [],
       });
+      this.lifetime.signal.throwIfAborted();
       this.sessionId = sessionResp.sessionId;
       this.emitTransportConnected();
       this.emitTransportSyncing();
@@ -217,6 +248,7 @@ export class AcpConnection {
         ],
       });
 
+      this.lifetime.signal.throwIfAborted();
       const output = this.lastProgressText || `Completed with stop reason: ${promptResp.stopReason}`;
       const result: SubagentResult = {
         id: this.id,
@@ -263,6 +295,8 @@ export class AcpConnection {
 
   /** Cancel the running subagent. */
   async cancel(): Promise<void> {
+    this.lifetime.abort();
+    this.permissionWire?.close();
     if (this.conn && this.sessionId) {
       try {
         await this.conn.cancel({ sessionId: this.sessionId });
@@ -392,6 +426,8 @@ export class AcpConnection {
   }
 
   private cleanup(): void {
+    this.lifetime.abort();
+    this.permissionWire?.close();
     try {
       this.childProcess?.kill();
     } catch (err) {
@@ -404,22 +440,47 @@ export class AcpConnection {
 
   private buildClientImpl(): Client {
     return {
-      /** Forward permission requests through the shell-owned permission controller. */
-      requestPermission: (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-        const category: PermissionCategory = 'delegate';
-        const callId = `acp-${this.id}-${Date.now()}`;
-        const toolTitle = params.toolCall?.title ?? 'unknown';
-        return this.requestPermission({
-          callId,
-          tool: toolTitle,
-          args: (params.toolCall?.rawInput as Record<string, unknown>) ?? {},
-          category,
-          analysis: analyzePermissionRequest(
-            toolTitle,
-            (params.toolCall?.rawInput as Record<string, unknown>) ?? {},
-            category,
-          ),
-        }).then((decision) => permissionOutcomeFor(params.options, decision));
+      /** A-F1072: same recorded autonomous owner and final wire fence as host ACP. */
+      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+        const cancelled: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
+        let binding: ReturnType<AcpPermissionWire['binding']>;
+        let admission: Awaited<ReturnType<typeof admitExternalRequest>> | undefined;
+        let deferred = false;
+        try {
+          if (isProxy(params)) return cancelled;
+          const call = Object.getOwnPropertyDescriptor(params, 'toolCall')?.value as unknown;
+          if (isProxy(call)) return cancelled;
+          const id = call && typeof call === 'object' ? Object.getOwnPropertyDescriptor(call, 'toolCallId')?.value as unknown : undefined;
+          if (typeof id !== 'string') return cancelled;
+          binding = this.permissionWire?.binding(id);
+          binding?.bindTerminal(cancelled);
+          const owned = binding?.request;
+          const protocolSubject = binding?.protocolSubject;
+          const host = this.permissionHost, operation = this.operation;
+          if (!binding || !owned || !protocolSubject || !host || !operation || !this.sessionId || owned.sessionId !== this.sessionId
+            || !owned.toolCall.toolCallId || !Array.isArray(owned.options)
+            || owned.options.some((option: AcpPermissionOptionLike) => !option || typeof option.optionId !== 'string' || !option.optionId
+              || !['allow_once', 'allow_always', 'reject_once', 'reject_always'].includes(option.kind))
+            || new Set(owned.options.map((option: AcpPermissionOptionLike) => option.optionId)).size !== owned.options.length) return cancelled;
+          const signal = AbortSignal.any([this.lifetime.signal, binding.signal, AbortSignal.timeout(60_000)]);
+          const assertCurrent = () => { signal.throwIfAborted(); binding!.assertCurrent(); operation.assertCurrent(); };
+          assertCurrent();
+          // Capture the actual originating goal, never the child tool title or generated task prose.
+          admission = await admitExternalRequest(host, { connectionId: this.id, destination: this.spawnCmd[0] ?? '', signal, assertCurrent },
+            { ...operation, sourceOf: () => { assertCurrent(); return operation.sourceOf(); } }, {
+              tool: owned.toolCall.title ?? 'ACP action', protocolSubject,
+              args: { ...(owned.toolCall.rawInput && typeof owned.toolCall.rawInput === 'object' && !Array.isArray(owned.toolCall.rawInput)
+                ? owned.toolCall.rawInput as Record<string, unknown> : {}), destination: { command: this.spawnCmd, cwd: this.task.workingDirectory } },
+            });
+          assertCurrent();
+          const decision = admission.result.autonomousDecision;
+          if (!decision || decision.outcome === 'defer' || decision.outcome === 'revise') return cancelled;
+          const response = permissionOutcomeFor(owned.options, { approved: decision.outcome === 'act', remember: false });
+          binding.defer(response, admission, decision.outcome === 'act' && response.outcome.outcome === 'selected', () => {});
+          deferred = true;
+          return response;
+        } catch { return cancelled; }
+        finally { if (!deferred) admission?.close(); }
       },
 
       /** Handle session update notifications from the subagent. */

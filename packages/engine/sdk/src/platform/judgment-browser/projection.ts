@@ -1,7 +1,7 @@
 import type { Reading } from '@goodvibes-jev/judgment/decisions';
 import { checkAnswers } from '@goodvibes-jev/judgment';
 import {
-  BrowserJudgmentError, judgmentRecord, type BrowserJudgmentRequest,
+  BrowserJudgmentError, judgmentRecord, WEBUI_CODE_LANGUAGES, type BrowserJudgmentRequest,
 } from '@goodvibes-jev/engine/daemon-sdk';
 import type { BrowserJudgmentProjection } from './types.js';
 
@@ -53,6 +53,19 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
     } else if (request.battery === 'webui.mail.reply-subject') {
       judgmentRecord(result.readings, ['already_reply']);
       if (readings[0]?.kind !== 'yes-no') return invalid();
+    } else if (request.battery === 'webui.code.language') {
+      judgmentRecord(result.readings, ['language']);
+      const reading = result.readings.language;
+      if (reading?.kind !== 'choice' || !(WEBUI_CODE_LANGUAGES as readonly string[]).includes(reading.choice)) return invalid();
+      judgmentRecord(reading.probabilities, WEBUI_CODE_LANGUAGES);
+    } else if ((request.battery === 'webui.credentials.provider-key' || request.battery === 'webui.config.credential-key')) {
+      judgmentRecord(result.readings, request.input.keys.map((_, index) => `key_${index}`));
+      if (readings.some(reading => reading.kind !== 'yes-no')) return invalid();
+    } else if (request.battery === 'webui.pwa.install-platform') {
+      judgmentRecord(result.readings, ['platform']);
+      const reading = result.readings.platform;
+      if (reading?.kind !== 'choice' || !['ios-share-menu', 'other'].includes(reading.choice)) return invalid();
+      judgmentRecord(reading.probabilities, ['ios-share-menu', 'other']);
     } else if (request.battery === 'webui.status.badge-tone') {
       const name = request.input.vocabulary === 'badge' ? 'badge' : 'library_dot';
       judgmentRecord(result.readings, [name]);
@@ -86,6 +99,19 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
       const value = judgmentRecord(result.value, ['alreadyReply']);
       if (typeof value.alreadyReply !== 'boolean' || readings[0]?.kind !== 'yes-no'
         || value.alreadyReply !== (readings[0].verdict === 'yes')) return invalid();
+    } else if (request.battery === 'webui.code.language') {
+      const value = judgmentRecord(result.value, ['language']);
+      if (readings[0]?.kind !== 'choice' || value.language !== readings[0].choice) return invalid();
+    } else if ((request.battery === 'webui.credentials.provider-key' || request.battery === 'webui.config.credential-key')) {
+      const value = judgmentRecord(result.value, ['matches']);
+      if (!Array.isArray(value.matches) || value.matches.length !== request.input.keys.length) return invalid();
+      value.matches.forEach((match, index) => {
+        const reading = result.readings[`key_${index}`];
+        if (typeof match !== 'boolean' || reading?.kind !== 'yes-no' || match !== (reading.verdict === 'yes')) return invalid();
+      });
+    } else if (request.battery === 'webui.pwa.install-platform') {
+      const value = judgmentRecord(result.value, ['platform']);
+      if (readings[0]?.kind !== 'choice' || readings[0].choice !== value.platform) return invalid();
     } else if (request.battery === 'webui.status.badge-tone') {
       const value = judgmentRecord(result.value, ['vocabulary', 'tone']);
       if (value.vocabulary !== request.input.vocabulary) return invalid();

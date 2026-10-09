@@ -12,6 +12,7 @@ const searches: unknown[] = [];
 let memoryServed = true;
 
 mock.module('../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   VIBE_PERSONA_TAG: 'vibe',
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: (method: string) => Promise.resolve(

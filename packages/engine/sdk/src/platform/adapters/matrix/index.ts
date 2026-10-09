@@ -82,7 +82,7 @@ export async function handleMatrixSurfaceWebhook(req: Request, context: SurfaceA
     });
   }
 
-  const controlCommand = context.parseSurfaceControlCommand(text);
+  const controlCommand = await context.parseSurfaceControlCommand(text, { signal: req.signal });
   if (controlCommand) {
     const message = await context.performSurfaceControlCommand(controlCommand);
     return Response.json({ ok: true, acknowledged: true, message });

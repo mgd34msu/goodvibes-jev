@@ -25,16 +25,22 @@ export function createDaemonCliConfiguration(
   flags: Pick<DaemonCliFlags, 'daemonHome' | 'workingDir'>,
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
-  options: { readonly diagnosticMode?: 'default' | 'structural' | undefined } = {},
+  options: {
+    readonly diagnosticMode?: 'default' | 'structural' | undefined;
+    readonly readOnly?: boolean;
+  } = {},
 ) {
   const homes = resolveDaemonCliOwnership(flags, env, cwd);
   const { workingDirectory } = homes;
-  runDaemonConfigMigration(homes.homeDirectory, daemonConfigPathForHome(homes.daemonHomeDirectory), options);
+  if (!options.readOnly) {
+    runDaemonConfigMigration(homes.homeDirectory, daemonConfigPathForHome(homes.daemonHomeDirectory), options);
+  }
   const config = new ConfigManager({
     workingDir: workingDirectory, homeDir: homes.homeDirectory,
     surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT,
     daemonTierPath: daemonConfigPathForHome(homes.daemonHomeDirectory),
     diagnosticMode: options.diagnosticMode,
+    readOnly: options.readOnly,
   });
   return { ...homes, workingDirectory, config };
 }

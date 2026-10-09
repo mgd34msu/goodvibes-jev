@@ -1,3 +1,7 @@
+import { useEffect, useState } from 'react';
+import { readCredentialProvider, type CredentialProviderResult } from '../lib/credential-provider-judgment';
+import { subscribeClientLifetime } from '../lib/client-lifetime';
+import { readDeclaredProviderCredential } from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
 /**
  * CredentialStatusPanel, the display-site adoption of the cross-surface
  * credential-status facade (src/lib/provider-status.ts: deriveCredentialAvailability
@@ -69,9 +73,8 @@ function credentialLabel(entry: CredentialStatusEntry): string {
 export interface CredentialStatusPanelProps {
   /**
    * The currently selected provider id, if any, used only for a soft,
-   * best-effort enrichment: a credential key containing the provider id
-   * (case-insensitive) is highlighted as "for this provider". No match means
-   * no highlight; this never fabricates a link the wire didn't report.
+   * declared-catalog enrichment. Exact provider-owned key names are highlighted.
+   * Undeclared/custom names use source-owned readings and remain unclassified when held.
    */
   selectedProviderId?: string;
 }
@@ -95,6 +98,22 @@ export function CredentialStatusPanel({ selectedProviderId }: CredentialStatusPa
   // optional-chain lint rule has nothing to flag.
   const degradedReason = availability?.available === false ? availability.reason : null;
   const credentials = availability?.available === true ? availability.credentials : null;
+  const unknownNames = (credentials?.map(entry => entry.key) ?? []).filter(key => selectedProviderId && readDeclaredProviderCredential(selectedProviderId, key) === undefined);
+  const nameSnapshot = JSON.stringify(unknownNames);
+  const [alignment, setAlignment] = useState<{ providerId: string; names: string; result: CredentialProviderResult }>();
+  const [identityRevision, setIdentityRevision] = useState(0);
+  useEffect(() => subscribeClientLifetime(() => { setAlignment(undefined); setIdentityRevision(value => value + 1); }), []);
+  useEffect(() => {
+    const names = JSON.parse(nameSnapshot) as string[];
+    if (!selectedProviderId || !names.length) return;
+    const abort = new AbortController();
+    void readCredentialProvider(selectedProviderId, names, abort.signal).then(result => {
+      if (!abort.signal.aborted) setAlignment({ providerId: selectedProviderId, names: nameSnapshot, result });
+    });
+    return () => abort.abort();
+  }, [selectedProviderId, nameSnapshot, identityRevision]);
+  const semanticMatches = alignment && alignment.providerId === selectedProviderId && alignment.names === nameSnapshot
+    && alignment.result.status === 'ready' && alignment.result.isCurrent() ? alignment.result.matches : undefined;
 
   return (
     <SettingsBlock className="credential-status" title="Credential status">
@@ -124,7 +143,8 @@ export function CredentialStatusPanel({ selectedProviderId }: CredentialStatusPa
         <RowList aria-label="Credentials">
           {credentials.map((entry) => {
             const matched = Boolean(
-              selectedProviderId && entry.key.toLowerCase().includes(selectedProviderId.toLowerCase()),
+              selectedProviderId && (readDeclaredProviderCredential(selectedProviderId, entry.key) === true
+                || semanticMatches?.[unknownNames.indexOf(entry.key)] === true),
             );
             return (
               <Row

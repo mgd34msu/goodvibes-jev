@@ -11,7 +11,10 @@
  * never offer to install an app that is already installed.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { readInstallPlatform, type InstallPlatform, type PlatformResult } from './platform-judgment';
+import { subscribeClientLifetime } from '../client-lifetime';
 
 /** The Chromium beforeinstallprompt event (not in the DOM lib types). */
 export interface BeforeInstallPromptEvent extends Event {
@@ -22,25 +25,16 @@ export interface BeforeInstallPromptEvent extends Event {
 export type InstallAffordance = 'prompt' | 'ios-instructions' | 'installed' | 'none';
 
 export interface InstallPlatformEnv {
-  readonly userAgent: string;
+  readonly platform?: InstallPlatform;
   readonly standalone: boolean;
   readonly hasPromptEvent: boolean;
-}
-
-/**
- * True for iOS devices (iPhone/iPad/iPod). Every iOS browser is WebKit and none
- * fires `beforeinstallprompt`, so the add-to-home-screen path is always the
- * Share-menu one there, the specific browser does not matter.
- */
-export function isIos(userAgent: string): boolean {
-  return /iPad|iPhone|iPod/.test(userAgent);
 }
 
 /** Which install affordance to show, from the platform + captured-event state. */
 export function resolveInstallAffordance(env: InstallPlatformEnv): InstallAffordance {
   if (env.standalone) return 'installed';
   if (env.hasPromptEvent) return 'prompt';
-  if (isIos(env.userAgent)) return 'ios-instructions';
+  if (env.platform === 'ios-share-menu') return 'ios-instructions';
   return 'none';
 }
 
@@ -62,12 +56,27 @@ export function useInstallPrompt(): UseInstallPrompt {
   const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [standalone, setStandalone] = useState<boolean>(() => readStandalone());
 
+  const [platform, setPlatform] = useState<PlatformResult>({ status: 'held' });
+  const [identityRevision, setIdentityRevision] = useState(0);
+  const currentPrompt = useRef<BeforeInstallPromptEvent | null>(null);
+  const prompting = useRef(false);
+  useEffect(() => subscribeClientLifetime(() => { setPlatform({ status: 'held' }); setIdentityRevision(value => value + 1); }), []);
+  useEffect(() => {
+    if (standalone || promptEvent) return;
+    const abort = new AbortController();
+    void readInstallPlatform({ userAgent: navigator.userAgent, platform: navigator.platform, maxTouchPoints: navigator.maxTouchPoints ?? 0 }, abort.signal)
+      .then(result => { if (!abort.signal.aborted) setPlatform(result); });
+    return () => abort.abort();
+  }, [standalone, promptEvent, identityRevision]);
+
   useEffect(() => {
     const onBeforeInstall = (event: Event) => {
       event.preventDefault();
-      setPromptEvent(event as BeforeInstallPromptEvent);
+      currentPrompt.current = event as BeforeInstallPromptEvent;
+      setPromptEvent(currentPrompt.current);
     };
     const onInstalled = () => {
+      currentPrompt.current = null;
       setPromptEvent(null);
       setStandalone(true);
     };
@@ -80,15 +89,22 @@ export function useInstallPrompt(): UseInstallPrompt {
   }, []);
 
   const promptInstall = useCallback(async () => {
-    if (!promptEvent) return 'unavailable' as const;
-    await promptEvent.prompt();
-    const choice = await promptEvent.userChoice;
-    setPromptEvent(null);
-    return choice.outcome;
-  }, [promptEvent]);
+    const event = currentPrompt.current;
+    if (!event || prompting.current) return 'unavailable' as const;
+    prompting.current = true;
+    try {
+      await event.prompt();
+      const choice = await event.userChoice;
+      return choice.outcome;
+    } catch { return 'unavailable' as const; }
+    finally {
+      prompting.current = false;
+      if (currentPrompt.current === event) { currentPrompt.current = null; setPromptEvent(null); }
+    }
+  }, []);
 
   const affordance = resolveInstallAffordance({
-    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+    platform: platform.status === 'ready' && platform.isCurrent() ? platform.platform : undefined,
     standalone,
     hasPromptEvent: promptEvent !== null,
   });

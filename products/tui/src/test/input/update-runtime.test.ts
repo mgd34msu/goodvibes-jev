@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll } from 'bun:test';
 import {
@@ -63,6 +63,7 @@ function buildStubFetch(options: {
     if (url === RELEASES_LATEST_URL) {
       return fakeResponse({
         status: 302,
+        url,
         location: `https://github.com/mgd34msu/goodvibes-jev/releases/tag/${options.latestTag}`,
       });
     }
@@ -97,6 +98,11 @@ function memoryIo(initialFiles: Record<string, string> = {}) {
   );
   const mutations: string[] = [];
   const io: UpdateFileIo = {
+    writeExclusive: (path, data) => {
+      if (files.has(path)) throw new Error(`exclusive file exists: ${path}`);
+      files.set(path, data);
+    },
+    remove: (path) => { files.delete(path); },
     writeFile: (path, data) => {
       files.set(path, Buffer.from(data));
       mutations.push(`write ${path}`);
@@ -357,16 +363,54 @@ describe('applyUpdate: cancellation, honoured only up to the moment before the s
           progress,
         }),
       ),
-    ).rejects.toThrow(UPDATE_ABORTED_MESSAGE);
+    ).rejects.toThrow(/abort/i);
 
     expect(calls).toEqual([`HEAD ${RELEASES_LATEST_URL}`]);
     expect(fs.mutations).toEqual([]);
     expect(fs.read(APP_PATH)).toBe('old-app');
-    // The target is already named, so a caller that gave up can still say
-    // which version was on the way, but nothing was begun or committed.
-    expect(progress.targetTag).toBe('v1.1.0');
+    // A cancelled lookup never establishes a release target or begins a swap.
+    expect(progress.targetTag).toBeNull();
     expect(progress.begun).toBe(false);
     expect(progress.committed).toBe(false);
+  });
+
+  test('caller mutation during discovery cannot redirect the install target', async () => {
+    const state = memoryIo({ [APP_PATH]: 'old-app', '/fixture/redirected': 'unowned' });
+    const bytes = Buffer.from('new-app');
+    const original = buildStubFetch({ latestTag: 'v1.1.0', appBuffer: bytes, checksumText: `${sha256Hex(bytes)}  goodvibes-linux-x64\n` });
+    const options = { ...baseApplyOptions({ execPath: APP_PATH, currentVersion: '1.0.0', io: state.io }), fetchImpl: original };
+    options.fetchImpl = async (url, init) => {
+      options.execPath = '/fixture/redirected';
+      return original(url, init);
+    };
+    await applyUpdate(options);
+    expect(state.read(APP_PATH)).toBe('new-app');
+    expect(state.read('/fixture/redirected')).toBe('unowned');
+  });
+
+  test('late final body after cancellation cannot install a binary', async () => {
+    const state = memoryIo({ [APP_PATH]: 'old-app' });
+    const abort = new AbortController();
+    const bytes = Buffer.from('new-app');
+    const inner = buildStubFetch({ latestTag: 'v1.1.0', appBuffer: bytes, checksumText: `${sha256Hex(bytes)}  goodvibes-linux-x64\n` });
+    let release: (() => void) | undefined;
+    let reached: (() => void) | undefined;
+    const bodyReady = new Promise<void>((resolve) => { reached = resolve; });
+    const bodyGate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchImpl: UpdateFetchLike = async (url, init) => {
+      const original = await inner(url, init);
+      return url.endsWith('/goodvibes-linux-x64') ? { ...original, arrayBuffer: async () => {
+        reached!(); await bodyGate; return original.arrayBuffer();
+      } } : original;
+    };
+    const running = applyUpdate(baseApplyOptions({ execPath: APP_PATH, currentVersion: '1.0.0', fetchImpl, io: state.io, signal: abort.signal }));
+    await bodyReady;
+    abort.abort(new Error('test cancellation'));
+    await expect(running).rejects.toThrow('test cancellation');
+    release!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.read(APP_PATH)).toBe('old-app');
+    expect(state.mutations).toEqual([]);
   });
 
   test('the signal rides on every request, so the download itself is cancellable rather than merely abandoned', async () => {
@@ -391,9 +435,12 @@ describe('applyUpdate: cancellation, honoured only up to the moment before the s
     );
 
     // Tag lookup, manifest pre-read, manifest again inside the verified apply,
-    // and the app artifact, every one of them carrying the caller's signal.
+    // and app artifact carry a signal. Core requests retain their own bounded
+    // scope signal linked to the caller, rather than losing deadline cancellation.
     expect(seenSignals.length).toBeGreaterThanOrEqual(4);
-    expect(seenSignals.every((signal) => signal === controller.signal)).toBe(true);
+    expect(seenSignals.every((signal) => signal !== undefined)).toBe(true);
+    expect(seenSignals.some((signal) => signal !== controller.signal)).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
   });
 });
 
@@ -486,7 +533,7 @@ describe('applyUpdate: the real swap keeps the outgoing binary at .previous', ()
     expect(printed.join('\n')).toContain('Updated to v1.1.0.');
   });
 
-  test('an abort raised the instant the swap starts writing never interrupts it: the new bytes land and .previous still holds the old ones', async () => {
+  test('an abort during staging restores the prior state before any live rename', async () => {
     const dir = scratchDir();
     const execPath = join(dir, 'goodvibes');
     writeFileSync(execPath, 'old-app-bytes');
@@ -495,9 +542,8 @@ describe('applyUpdate: the real swap keeps the outgoing binary at .previous', ()
     const checksumText = `${sha256Hex(appBuffer)}  goodvibes-linux-x64\n`;
     const controller = new AbortController();
     const progress = createUpdateSwapProgress();
-    // Fires on the first byte the swap writes, the exact boundary past which
-    // cancellation must have no effect at all. Everything else is the REAL
-    // filesystem swap, in a scratch directory.
+    // Staging is still cancellable; only the later live commit is synchronous.
+    // Everything else uses the real filesystem inside a temporary fixture.
     const io: UpdateFileIo = {
       ...realUpdateFileIo,
       writeFile: (path, data) => {
@@ -506,7 +552,7 @@ describe('applyUpdate: the real swap keeps the outgoing binary at .previous', ()
       },
     };
 
-    await applyUpdate({
+    await expect(applyUpdate({
       fetchImpl: buildStubFetch({ latestTag: 'v1.1.0', checksumText, appBuffer }),
       execPath,
       platform: 'linux',
@@ -518,12 +564,12 @@ describe('applyUpdate: the real swap keeps the outgoing binary at .previous', ()
       io,
       signal: controller.signal,
       progress,
-    });
+    })).rejects.toThrow();
 
-    expect(readFileSync(execPath, 'utf-8')).toBe('new-app-bytes');
-    expect(readFileSync(`${execPath}${PREVIOUS_FILE_SUFFIX}`, 'utf-8')).toBe('old-app-bytes');
-    expect(progress.begun).toBe(true);
-    expect(progress.committed).toBe(true);
+    expect(readFileSync(execPath, 'utf-8')).toBe('old-app-bytes');
+    expect(existsSync(`${execPath}${PREVIOUS_FILE_SUFFIX}`)).toBe(false);
+    expect(progress.begun).toBe(false);
+    expect(progress.committed).toBe(false);
   });
 });
 

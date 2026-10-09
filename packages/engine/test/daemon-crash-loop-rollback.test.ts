@@ -60,6 +60,11 @@ function memoryUpdateIo(initial: Record<string, string>): { io: UpdateFileIo; fi
   return {
     files,
     io: {
+      writeExclusive: (path, data) => {
+        if (files.has(path)) throw new Error(`exclusive file exists: ${path}`);
+        files.set(path, data.toString('utf-8'));
+      },
+      remove: (path) => { files.delete(path); },
       writeFile: (path, data) => void files.set(path, data.toString('utf-8')),
       rename: (from, to) => {
         const data = files.get(from);
@@ -195,6 +200,7 @@ describe('crash-loop decision', () => {
 interface RollbackHarness {
   readonly runtime: DaemonLifecycleRuntime;
   readonly files: Map<string, string>;
+  readonly rollbackIo: UpdateFileIo;
   readonly exits: number[];
   readonly stops: number[];
   readonly stderr: string[];
@@ -213,6 +219,7 @@ function rollbackHarness(overrides: {
   readonly artifact?: DaemonLifecycleRuntimeOptions['updateArtifact'];
   readonly installed?: Record<string, string>;
   readonly threshold?: number;
+  readonly configOverrides?: Record<string, unknown>;
   readonly install?: (() => object) | undefined;
   readonly runner?: DaemonLifecycleRuntimeOptions['serviceCommandRunner'];
   readonly supervised?: boolean;
@@ -234,6 +241,7 @@ function rollbackHarness(overrides: {
     ['service.serviceName', 'goodvibes-crash-loop-test'],
     ['service.restartOnFailure', overrides.restartOnFailure ?? true],
     ['update.rollbackAfterFailedStarts', overrides.threshold ?? 3],
+    ...Object.entries(overrides.configOverrides ?? {}),
   ]);
   const configManager = {
     get: (key: string) => config.get(key),
@@ -272,6 +280,7 @@ function rollbackHarness(overrides: {
   return {
     runtime,
     files,
+    rollbackIo,
     exits,
     stops,
     stderr,
@@ -677,3 +686,107 @@ for (const restartOnFailure of [false, true]) {
     });
   }
 }
+
+for (const committed of [false, true]) {
+  test(`rollback ${committed ? 'committed cleanup failure' : 'incomplete compensation'} aborts boot and retains exact recovery across lifecycle calls`, async () => {
+    let commands = 0;
+    let installs = 0;
+    const h = rollbackHarness({ artifact: ARTIFACT,
+      configOverrides: { 'update.auto': true, 'update.releasesUrl': 'https://example.test/releases/latest', 'service.enabled': true },
+      install: () => { installs++; return {}; },
+      runner: async () => { commands++; return { status: 'accepted' }; },
+    });
+    const rename = h.rollbackIo.rename;
+    const remove = h.rollbackIo.remove!;
+    if (committed) h.rollbackIo.remove = (path) => {
+      if (path.endsWith('.update-transaction')) throw new Error('synthetic rollback cleanup failure');
+      remove(path);
+    };
+    else h.rollbackIo.rename = (from, to) => {
+      if (from === PREVIOUS_PATH || from.endsWith('.rollback-exchange')) throw new Error('synthetic rollback and compensation failure');
+      rename(from, to);
+    };
+    for (let i = 0; i < 3; i++) expect(h.runtime.onStarting()).toBe(false);
+    expect(h.runtime.onStarting()).toBe(true);
+    expect(h.files.get(EXEC_PATH)).toBe(committed ? 'good-build' : undefined);
+    expect(h.files.has(`${EXEC_PATH}.update-transaction`)).toBe(true);
+    const initial = h.runtime.updateStatus();
+    expect(initial.armed).toBe(false);
+    expect(initial.offReason).toContain('rollback requires filesystem recovery');
+    expect(initial.offReason).not.toContain('continuing');
+    expect(initial.transactionRecovery?.operation).toBe('rollback');
+    expect(initial.transactionRecovery?.committed).toBe(committed);
+    expect(initial.transactionRecovery?.phase).toBe(committed ? 'cleanup' : 'commit');
+    expect(initial.transactionRecovery?.recoveryRequired).toBe(true);
+    expect(initial.transactionRecovery?.targets).toEqual([EXEC_PATH]);
+    expect(initial.transactionRecovery?.recoveryPaths).toContain(`${EXEC_PATH}.update-transaction`);
+    const marker = [...h.markerFs.files.entries()];
+    const files = [...h.files.entries()];
+    for (let i = 0; i < 2; i++) {
+      h.runtime.onStarted();
+      await h.runtime.onStopping(i === 0);
+      expect(h.runtime.onStarting()).toBe(true);
+      expect((await h.runtime.checkForUpdatesNow()).transactionRecovery).toEqual(initial.transactionRecovery);
+    }
+    expect([...h.files.entries()]).toEqual(files);
+    expect([...h.markerFs.files.entries()]).toEqual(marker);
+    expect(h.marker()?.rejectedVersion).toBeUndefined();
+    expect(h.stops).toEqual([]);
+    expect(h.exits).toEqual([]);
+    expect(installs).toBe(0);
+    expect(commands).toBe(0);
+    expect(h.alerts).toHaveLength(1);
+    expect(h.alerts[0]).toContain(committed ? 'complete rollback is installed' : 'complete rollback was not installed');
+    expect(h.receipts()).toHaveLength(1);
+    expect(h.stderr.join('')).toContain('This boot is paused');
+    // Status returns detached recovery evidence, never a way to erase the latch.
+    (h.runtime.updateStatus().transactionRecovery!.recoveryPaths as string[]).length = 0;
+    expect(h.runtime.updateStatus().transactionRecovery?.recoveryPaths).toEqual(initial.transactionRecovery!.recoveryPaths);
+  });
+}
+
+test('a fully compensated rollback failure continues the unchanged build without claiming success', async () => {
+  const h = rollbackHarness({ artifact: ARTIFACT });
+  const rename = h.rollbackIo.rename;
+  h.rollbackIo.rename = (from, to) => {
+    if (from === PREVIOUS_PATH) throw new Error('synthetic rollback commit failure');
+    rename(from, to);
+  };
+  for (let i = 0; i < 4; i++) expect(h.runtime.onStarting()).toBe(false);
+  expect([...h.files.entries()]).toEqual([[PREVIOUS_PATH, 'good-build'], [EXEC_PATH, 'bad-build']]);
+  expect(h.runtime.updateStatus().recoveryRequired).not.toBe(true);
+  expect(h.runtime.updateStatus().transactionRecovery).toBeUndefined();
+  expect(h.marker()?.rejectedVersion).toBeUndefined();
+  expect(h.receipts()).toEqual([]);
+  expect(h.alerts).toEqual([]);
+  expect(h.stops).toEqual([]);
+  expect(h.exits).toEqual([]);
+  h.runtime.onStarted();
+  expect(h.marker()?.state).toBe('running');
+  await h.runtime.onStopping(false);
+});
+
+test('rollback recovery evidence survives receipt persistence failure without further lifecycle effects', async () => {
+  const h = rollbackHarness({ artifact: ARTIFACT });
+  const remove = h.rollbackIo.remove!;
+  h.rollbackIo.remove = path => {
+    if (path.endsWith('.update-transaction')) throw new Error('synthetic cleanup failure');
+    remove(path);
+  };
+  const record = spyOn(h.runtime.receiptStore(), 'record').mockImplementation(() => { throw new Error('synthetic receipt failure'); });
+  try {
+    for (let i = 0; i < 3; i++) expect(h.runtime.onStarting()).toBe(false);
+    expect(h.runtime.onStarting()).toBe(true);
+    const evidence = h.runtime.updateStatus().transactionRecovery;
+    expect(evidence?.committed).toBe(true);
+    expect(evidence?.recoveryRequired).toBe(true);
+    await h.runtime.onStopping(false);
+    h.runtime.onStarted();
+    expect(h.runtime.onStarting()).toBe(true);
+    expect(h.runtime.updateStatus().transactionRecovery).toEqual(evidence);
+    expect(h.files.get(EXEC_PATH)).toBe('good-build');
+    expect(h.stops).toEqual([]);
+    expect(h.exits).toEqual([]);
+    expect(h.alerts).toHaveLength(1);
+  } finally { record.mockRestore(); }
+});

@@ -313,3 +313,30 @@ test('default configured browser policy admits only the issued mail-subject purp
     expect(calls).toHaveLength(1);
   } finally { for (const dispose of cleanup.reverse()) await dispose(); }
 });
+
+test('canonical config names use the product config incarnation and never its values', async () => {
+  using log = new SqliteDecisionLog(':memory:');
+  const entered = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  const calls: unknown[] = []; const cleanup: (() => void | Promise<void>)[] = [];
+  const config = configuration().configManager;
+  const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
+    calls.push(input.state); entered.resolve(); await release.promise;
+    return { requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', requestId: undefined, usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
+      answers: { credential: { type: 'noul', noul: 0.001 } } as never };
+  } };
+  const service = composeBrowserJudgment({ judgment: { port: withDecisionLog(inner, log), decisionLog: log }, env: {},
+    methods: new GatewayMethodCatalog(), config, secrets: { onDidChange: () => () => {} },
+    disposal: { add(_label, dispose) { cleanup.push(dispose); } },
+  });
+  const request = () => ({ protocolVersion: 1, batteryVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.config.credential-key', input: { keys: ['display.stream'] } });
+  try {
+    const pending = service.execute(request(), principal, new AbortController().signal, () => principal);
+    const observed = pending.then(() => 'unexpected-settled', () => 'held');
+    await entered.promise;
+    config.set('display.stream', !config.get('display.stream'));
+    release.resolve(); expect(await observed).toBe('held'); expect(log.query()).toEqual([]);
+    expect(await service.execute(request(), principal, new AbortController().signal, () => principal)).toMatchObject({ status: 'settled', value: { matches: [false] } });
+    expect(calls).toEqual([{ key: 'display.stream', description: 'Stream LLM tokens as they arrive' }, { key: 'display.stream', description: 'Stream LLM tokens as they arrive' }]);
+    expect(log.query()).toHaveLength(1);
+  } finally { release.resolve(); for (const dispose of cleanup.reverse()) await dispose(); }
+});

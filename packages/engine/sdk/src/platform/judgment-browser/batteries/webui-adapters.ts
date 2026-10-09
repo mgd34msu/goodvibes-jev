@@ -1,9 +1,10 @@
+import { credentialKey } from '../../config/batteries/credential-key.js';
 import type { BatteryRun, Outcome, Reading, YesNoReading } from '@goodvibes-jev/judgment/decisions';
 import { BrowserJudgmentError, type BrowserJudgmentInputMap } from '@goodvibes-jev/engine/daemon-sdk';
 import { requireSynchronousAssertion } from '../guards.js';
 import type { BrowserJudgmentBattery, BrowserJudgmentProjection, BrowserJudgmentResolveContext, BrowserJudgmentResolvedInput } from '../types.js';
-import { daemonRefusalBattery, statusToneBattery, commandRankBattery, mailReplySubjectBattery, WEBUI_BATTERY_QUESTIONS } from './webui-specs.js';
-import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiStatus, snapshotWebuiMailSubject } from './webui-readers.js';
+import { daemonRefusalBattery, statusToneBattery, commandRankBattery, mailReplySubjectBattery, installPlatformBattery, credentialProviderBattery, codeLanguageBattery, WEBUI_BATTERY_QUESTIONS } from './webui-specs.js';
+import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiStatus, snapshotWebuiMailSubject, snapshotWebuiInstallPlatform, snapshotWebuiCredentialNames, snapshotWebuiCode, snapshotWebuiConfigKeys } from './webui-readers.js';
 import { REFUSAL_ITEMS, WEBUI_READER_LIMITS, type CommandRankValue, type DaemonRefusalValue, type ResolvedCommandRank, type ResolvedDaemonRefusal, type ResolvedStatus, type StatusValue } from './webui-types.js';
 
 const ERRORS = 'webui.errors.daemon-refusal';
@@ -22,6 +23,94 @@ function held(readings: Readonly<Record<string, Reading>>, compoundOutcome?: Exc
 }
 const unsettled = (readings: Readonly<Record<string, Reading>>): boolean => Object.values(readings).some((reading) => reading.outcome !== 'act');
 const hasHttpStatus = (source: ResolvedDaemonRefusal): source is ResolvedDaemonRefusal & { readonly status: number } => source.status !== undefined && Number.isInteger(source.status) && source.status >= 100 && source.status <= 599;
+
+export function createWebuiCodeLanguageAdapter(resolve: BrowserJudgmentBattery<'webui.code.language', { readonly code: string; readonly tag: string }, BatteryRun<typeof codeLanguageBattery.items>>['resolve']): BrowserJudgmentBattery<'webui.code.language', { readonly code: string; readonly tag: string }, BatteryRun<typeof codeLanguageBattery.items>> {
+  return {
+    id: 'webui.code.language', version: 1, maxCalls: 1, questions: WEBUI_BATTERY_QUESTIONS['webui.code.language']!, resolve,
+    async run(port, input, { signal }) {
+      checkAbort(signal); const state = preflight(() => snapshotWebuiCode(input));
+      const run = await codeLanguageBattery.run(port, state, { signal, site: 'webui.code.language' });
+      checkAbort(signal); return run;
+    },
+    project(run) {
+      const readings = { language: run.readings.language };
+      if (unsettled(readings)) { run.recordAction('unsettled'); return held(readings); }
+      run.recordAction('ready'); return { status: 'settled', value: { language: readings.language.choice }, readings };
+    },
+  };
+}
+
+type ConfigKeyRun = readonly BatteryRun<typeof credentialKey.items>[];
+export function createWebuiConfigKeyAdapter(resolve: BrowserJudgmentBattery<'webui.config.credential-key', { readonly keys: readonly { readonly key: string; readonly description: string }[] }, ConfigKeyRun>['resolve']): BrowserJudgmentBattery<'webui.config.credential-key', { readonly keys: readonly { readonly key: string; readonly description: string }[] }, ConfigKeyRun> {
+  return {
+    id: 'webui.config.credential-key', version: 1, maxCalls: 64, questions: Object.fromEntries(Object.entries(credentialKey.items).map(([name, item]) => [name, item.question])), resolve,
+    async run(port, input, { signal }) {
+      checkAbort(signal); const source = preflight(() => snapshotWebuiConfigKeys(input));
+      const runs: BatteryRun<typeof credentialKey.items>[] = [];
+      // One browser request, bounded server fan-out. The service owns shared budgets and retries.
+      let next = 0; let failure: unknown;
+      await Promise.all(Array.from({ length: Math.min(4, source.keys.length) }, async () => {
+        while (next < source.keys.length && !signal.aborted && failure === undefined) {
+          const index = next++;
+          try { runs[index] = await credentialKey.run(port, { ...source.keys[index]! }, { signal, site: 'webui.config.credential-key' }); }
+          catch (error) { failure = error; }
+        }
+      }));
+      checkAbort(signal); if (failure !== undefined) throw failure; return runs;
+    },
+    project(runs) {
+      const readings = Object.fromEntries(runs.map((run, index) => [`key_${index}`, run.readings.credential]));
+      if (unsettled(readings)) { runs.forEach(run => run.recordAction('unsettled')); return held(readings); }
+      runs.forEach(run => run.recordAction('ready'));
+      return { status: 'settled', value: { matches: runs.map(run => run.readings.credential.verdict === 'yes') }, readings };
+    },
+  };
+}
+
+type CredentialRun = readonly BatteryRun<typeof credentialProviderBattery.items>[];
+export function createWebuiCredentialProviderAdapter(resolve: BrowserJudgmentBattery<'webui.credentials.provider-key', BrowserJudgmentInputMap['webui.credentials.provider-key'], CredentialRun>['resolve']): BrowserJudgmentBattery<'webui.credentials.provider-key', BrowserJudgmentInputMap['webui.credentials.provider-key'], CredentialRun> {
+  return {
+    id: 'webui.credentials.provider-key', version: 1, maxCalls: 64, questions: WEBUI_BATTERY_QUESTIONS['webui.credentials.provider-key']!, resolve,
+    async run(port, input, { signal }) {
+      checkAbort(signal); const source = preflight(() => snapshotWebuiCredentialNames(input));
+      const runs: BatteryRun<typeof credentialProviderBattery.items>[] = [];
+      // One browser request, bounded server fan-out. The service owns shared budgets and retries.
+      let next = 0; let failure: unknown;
+      await Promise.all(Array.from({ length: Math.min(4, source.keys.length) }, async () => {
+        while (next < source.keys.length && !signal.aborted && failure === undefined) {
+          const index = next++;
+          try { runs[index] = await credentialProviderBattery.run(port, { providerId: source.providerId, key: source.keys[index]! }, { signal, site: 'webui.credentials.provider-key' }); }
+          catch (error) { failure = error; }
+        }
+      }));
+      checkAbort(signal); if (failure !== undefined) throw failure; return runs;
+    },
+    project(runs) {
+      const readings = Object.fromEntries(runs.map((run, index) => [`key_${index}`, run.readings.matches]));
+      if (unsettled(readings)) { runs.forEach(run => run.recordAction('unsettled')); return held(readings); }
+      runs.forEach(run => run.recordAction('ready'));
+      return { status: 'settled', value: { matches: runs.map(run => run.readings.matches.verdict === 'yes') }, readings };
+    },
+  };
+}
+
+export function createWebuiInstallPlatformAdapter(resolve: BrowserJudgmentBattery<'webui.pwa.install-platform', BrowserJudgmentInputMap['webui.pwa.install-platform'], BatteryRun<typeof installPlatformBattery.items>>['resolve']): BrowserJudgmentBattery<'webui.pwa.install-platform', BrowserJudgmentInputMap['webui.pwa.install-platform'], BatteryRun<typeof installPlatformBattery.items>> {
+  return {
+    id: 'webui.pwa.install-platform', version: 1, maxCalls: 1, questions: WEBUI_BATTERY_QUESTIONS['webui.pwa.install-platform']!, resolve,
+    async run(port, input, { signal }) {
+      checkAbort(signal);
+      const source = preflight(() => snapshotWebuiInstallPlatform(input));
+      const run = await installPlatformBattery.run(port, source, { signal, site: 'webui.pwa.install-platform' });
+      checkAbort(signal); return run;
+    },
+    project(run) {
+      const readings = { platform: run.readings.platform };
+      if (unsettled(readings)) { run.recordAction('unsettled'); return held(readings); }
+      run.recordAction('ready');
+      return { status: 'settled', value: { platform: readings.platform.choice }, readings };
+    },
+  };
+}
 
 /** Only an authenticated canonical read can issue the referenced subject. */
 export const webuiMailReplySubjectAdapter: BrowserJudgmentBattery<typeof MAIL, { readonly subject: string }, BatteryRun<typeof mailReplySubjectBattery.items>> = {

@@ -183,6 +183,7 @@ function buildHarness(options: HarnessOptions = {}) {
       getSession: (id: string) => (id === session.id ? session : undefined),
     },
     channelPolicy: {
+      preflightIngress: async () => ({ allowed: true }),
       // Faithful to the real evaluateIngress in two respects that matter here:
       // it records the message text into a durable audit trail, and it is the
       // stage the gate must precede.

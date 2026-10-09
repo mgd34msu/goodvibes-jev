@@ -7,31 +7,70 @@
   ],
   "mappings": [
     {
-      "source": "src/main.tsx",
+      "source": ".github/workflows/ci.yml",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Owner-authorized standalone CI/release infrastructure cleanup. The repository-level .github/workflows/ci.yml, package.json products:{check,build,test,typecheck}, and packages/engine/scripts/product-workspaces.ts own workspace verification. Preserve the product behavior tests and wire their required execution into that authority; do not carry an independently releasing nested workflow. No claim that the full WebUI browser matrix has run."
+    },
+    {
+      "source": ".github/workflows/release-gates.yml",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Owner-authorized removal of the standalone nightly/reusable desktop and LAN workflow. Repository-level .github/workflows/release.yml and reusable-release-verify.yml own releases; the actual WebUI Playwright suites/config remain PORT and must still be exercised by the integrated verification path. Retiring a duplicate workflow is not retirement of its runtime proofs."
+    },
+    {
+      "source": ".gitignore",
       "disposition": "PORT",
       "targets": [
-        "products/webui/src/main.tsx"
+        "products/webui/.gitignore"
       ]
     },
     {
-      "source": "src/App.tsx",
+      "source": ".prettierignore",
       "disposition": "PORT",
       "targets": [
-        "products/webui/src/App.tsx"
+        "products/webui/.prettierignore"
       ]
     },
     {
-      "source": "src/lib/router.ts",
+      "source": ".prettierrc.json",
       "disposition": "PORT",
       "targets": [
-        "products/webui/src/lib/router.ts"
+        "products/webui/.prettierrc.json"
       ]
     },
     {
-      "source": "src/lib/router.test.ts",
+      "source": "CHANGELOG.md",
       "disposition": "PORT",
       "targets": [
-        "products/webui/src/lib/router.test.ts"
+        "products/webui/CHANGELOG.md"
+      ]
+    },
+    {
+      "source": "LICENSE",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/LICENSE"
+      ]
+    },
+    {
+      "source": "bun.lock",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Owner-authorized retirement of the standalone dependency lock authority. Root bun.lock and root package.json workspaces resolve products/webui dependencies, including Geist fonts and workspace engine imports; no independently installable product lock is restored."
+    },
+    {
+      "source": "bunfig.toml",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/bunfig.toml"
+      ]
+    },
+    {
+      "source": "eslint.config.js",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/eslint.config.js"
       ]
     },
     {
@@ -42,59 +81,17 @@
       ]
     },
     {
-      "source": "bunfig.toml",
+      "source": "playwright.config.ts",
       "disposition": "PORT",
       "targets": [
-        "products/webui/bunfig.toml"
+        "products/webui/playwright.config.ts"
       ]
     },
     {
-      "source": "scripts/generate-config-schema.ts",
+      "source": "toolchain.config.json",
       "disposition": "PORT",
       "targets": [
-        "products/webui/scripts/generate-config-schema.ts"
-      ]
-    },
-    {
-      "source": "scripts/generate-config-ownership.ts",
-      "disposition": "PORT",
-      "targets": [
-        "products/webui/scripts/generate-config-ownership.ts"
-      ]
-    },
-    {
-      "source": "scripts/generate-presentation-tokens.ts",
-      "disposition": "PORT",
-      "targets": [
-        "products/webui/scripts/generate-presentation-tokens.ts"
-      ]
-    },
-    {
-      "source": "scripts/release-gate.ts",
-      "disposition": "PORT",
-      "targets": [
-        "products/webui/scripts/release-gate.ts"
-      ]
-    },
-    {
-      "source": "scripts/release-prepare.ts",
-      "disposition": "PORT",
-      "targets": [
-        "products/webui/scripts/release-prepare.ts"
-      ]
-    },
-    {
-      "source": "scripts/release-prepare.test.ts",
-      "disposition": "PORT",
-      "targets": [
-        "products/webui/scripts/release-prepare.test.ts"
-      ]
-    },
-    {
-      "source": "tsconfig.json",
-      "disposition": "PORT",
-      "targets": [
-        "products/webui/tsconfig.json"
+        "products/webui/toolchain.config.json"
       ]
     },
     {
@@ -105,6 +102,455 @@
       ]
     },
     {
+      "source": "tsconfig.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/tsconfig.json"
+      ]
+    },
+    {
+      "source": "vite.config.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/vite.config.ts"
+      ]
+    },
+    {
+      "source": "README.md",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/README.md",
+        "packages/engine/sdk/src/platform/gate/presets.ts",
+        "packages/engine/sdk/src/platform/contract/index.ts"
+      ]
+    },
+    {
+      "source": "docs/architecture.md",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/docs/architecture.md",
+        "packages/engine/sdk/src/platform/gate/presets.ts",
+        "packages/engine/sdk/src/platform/contract/index.ts"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/account-menu.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/account-menu.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/conversation.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/conversation.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/library-memory.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/library-memory.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/new-chat.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/new-chat.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/personal-calendar.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/personal-calendar.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/phone-conversation.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/phone-conversation.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/phone-drawer.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/phone-drawer.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/settings-models.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/settings-models.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/theme-neon.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/theme-neon.png"
+      ]
+    },
+    {
+      "source": "docs/assets/screenshots/work-needs-you.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/assets/screenshots/work-needs-you.png"
+      ]
+    },
+    {
+      "source": "docs/decisions/2026-07-07-e2e-ci-in-ci.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/decisions/2026-07-07-e2e-ci-in-ci.md"
+      ]
+    },
+    {
+      "source": "docs/deployment.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/deployment.md"
+      ]
+    },
+    {
+      "source": "docs/development.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/development.md"
+      ]
+    },
+    {
+      "source": "docs/known-limitations.md",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/docs/known-limitations.md",
+        "packages/engine/sdk/src/platform/gate/presets.ts",
+        "packages/engine/sdk/src/platform/contract/index.ts"
+      ]
+    },
+    {
+      "source": "docs/operator-guide.md",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/docs/operator-guide.md",
+        "packages/engine/sdk/src/platform/gate/presets.ts",
+        "packages/engine/sdk/src/platform/contract/index.ts"
+      ]
+    },
+    {
+      "source": "docs/push-approval-actions.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/push-approval-actions.md"
+      ]
+    },
+    {
+      "source": "docs/screenshot-tour.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/screenshot-tour.md"
+      ]
+    },
+    {
+      "source": "docs/sdk-surface-matrix.md",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/docs/sdk-surface-matrix.md",
+        "packages/engine/sdk/src/platform/gate/presets.ts",
+        "packages/engine/sdk/src/platform/contract/index.ts"
+      ]
+    },
+    {
+      "source": "docs/sdk-update-checklist.md",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/docs/sdk-update-checklist.md",
+        "packages/engine/sdk/src/platform/gate/presets.ts",
+        "packages/engine/sdk/src/platform/contract/index.ts"
+      ]
+    },
+    {
+      "source": "docs/security.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/security.md"
+      ]
+    },
+    {
+      "source": "docs/testing-and-validation.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/testing-and-validation.md"
+      ]
+    },
+    {
+      "source": "docs/troubleshooting.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/troubleshooting.md"
+      ]
+    },
+    {
+      "source": "docs/ux-overhaul/EXECUTION-15.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/ux-overhaul/EXECUTION-15.md"
+      ]
+    },
+    {
+      "source": "docs/ux-overhaul/PLAN.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/ux-overhaul/PLAN.md"
+      ]
+    },
+    {
+      "source": "docs/ux-overhaul/TOKEN-CONTRACT.md",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/docs/ux-overhaul/TOKEN-CONTRACT.md"
+      ]
+    },
+    {
+      "source": "index.html",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/index.html"
+      ]
+    },
+    {
+      "source": "public/favicon-16x16.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/favicon-16x16.png"
+      ]
+    },
+    {
+      "source": "public/favicon-32x32.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/favicon-32x32.png"
+      ]
+    },
+    {
+      "source": "public/favicon.ico",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/favicon.ico"
+      ]
+    },
+    {
+      "source": "public/favicon.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/favicon.png"
+      ]
+    },
+    {
+      "source": "public/goodvibes-icon.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/goodvibes-icon.png"
+      ]
+    },
+    {
+      "source": "public/icons/apple-touch-icon-180.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/icons/apple-touch-icon-180.png"
+      ]
+    },
+    {
+      "source": "public/icons/icon-192.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/icons/icon-192.png"
+      ]
+    },
+    {
+      "source": "public/icons/icon-512.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/icons/icon-512.png"
+      ]
+    },
+    {
+      "source": "public/icons/icon-maskable-512.png",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/icons/icon-maskable-512.png"
+      ]
+    },
+    {
+      "source": "public/manifest.webmanifest",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/manifest.webmanifest"
+      ]
+    },
+    {
+      "source": "public/sw.js",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/public/sw.js"
+      ]
+    },
+    {
+      "source": "scripts/check-workflows.test.ts",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Removed with the standalone check-workflows policy and its fixture workflows. No runtime product behavior is lost; required workspace CI and the retained type/build/browser behavior proofs remain authoritative."
+    },
+    {
+      "source": "scripts/check-workflows.ts",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Owner-authorized removal of standalone repository workflow policy: YAML shape/needs checks and the ci.yml auto-release job-name rule inspect workflows this monorepo does not adopt. Repository .github/workflows and its existing required CI own the workflow; no fake product target or new editorial gate."
+    },
+    {
+      "source": "scripts/e2e-daemon-stub.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/e2e-daemon-stub.ts"
+      ]
+    },
+    {
+      "source": "scripts/generate-config-ownership.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/generate-config-ownership.test.ts"
+      ]
+    },
+    {
+      "source": "scripts/generate-config-ownership.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/generate-config-ownership.ts"
+      ]
+    },
+    {
+      "source": "scripts/generate-config-schema.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/generate-config-schema.ts"
+      ]
+    },
+    {
+      "source": "scripts/generate-presentation-tokens.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/generate-presentation-tokens.test.ts"
+      ]
+    },
+    {
+      "source": "scripts/generate-presentation-tokens.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/generate-presentation-tokens.ts"
+      ]
+    },
+    {
+      "source": "scripts/helpers/project-temp.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/helpers/project-temp.ts"
+      ]
+    },
+    {
+      "source": "scripts/live-daemon-smoke-runner.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/live-daemon-smoke-runner.ts"
+      ]
+    },
+    {
+      "source": "scripts/live-daemon-smoke.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/live-daemon-smoke.ts"
+      ]
+    },
+    {
+      "source": "scripts/pack-bundle.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/pack-bundle.test.ts"
+      ]
+    },
+    {
+      "source": "scripts/pack-bundle.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/pack-bundle.ts"
+      ]
+    },
+    {
+      "source": "scripts/release-gate.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/release-gate.ts"
+      ]
+    },
+    {
+      "source": "scripts/release-prepare.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/release-prepare.test.ts"
+      ]
+    },
+    {
+      "source": "scripts/release-prepare.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/release-prepare.ts"
+      ]
+    },
+    {
+      "source": "scripts/sdk-dev.test.ts",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Removed with the obsolete sibling-checkout overlay launcher. Missing-checkout/argv-forwarding fixtures have no runtime consumer in the workspace engine topology; actual engine export resolution is checked by product-workspace-contract.ts and production bundling."
+    },
+    {
+      "source": "scripts/sdk-dev.ts",
+      "disposition": "DROP",
+      "targets": [],
+      "reason": "Retired standalone sibling-SDK overlay launcher. Root workspaces and @goodvibes-jev/engine: workspace:* supply the actual engine dependency directly, with the product import/export contract validating its public seams. Do not retain a sibling checkout or overlay escape hatch."
+    },
+    {
+      "source": "scripts/sweep-stale-temp.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/sweep-stale-temp.ts"
+      ]
+    },
+    {
+      "source": "scripts/test-temp-preload.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/test-temp-preload.ts"
+      ]
+    },
+    {
+      "source": "scripts/test-temp-root.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/test-temp-root.test.ts"
+      ]
+    },
+    {
+      "source": "scripts/test-temp-root.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/scripts/test-temp-root.ts"
+      ]
+    },
+    {
       "source": "scripts/tsconfig.json",
       "disposition": "PORT",
       "targets": [
@@ -112,17 +558,223 @@
       ]
     },
     {
-      "source": "e2e/tsconfig.json",
+      "source": "scripts/typecheck-coverage.test.ts",
       "disposition": "PORT",
       "targets": [
-        "products/webui/e2e/tsconfig.json"
+        "products/webui/scripts/typecheck-coverage.test.ts"
       ]
     },
     {
-      "source": "playwright.config.ts",
+      "source": "scripts/typecheck-coverage.ts",
       "disposition": "PORT",
       "targets": [
-        "products/webui/playwright.config.ts"
+        "products/webui/scripts/typecheck-coverage.ts"
+      ]
+    },
+    {
+      "source": "src/App.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/App.test.tsx",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts",
+        "packages/engine/sdk/src/platform/daemon/http/browser-judgment-error.ts"
+      ]
+    },
+    {
+      "source": "src/App.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/App.tsx"
+      ]
+    },
+    {
+      "source": "src/bootstrap.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/bootstrap.test.ts"
+      ]
+    },
+    {
+      "source": "src/bootstrap.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/bootstrap.ts"
+      ]
+    },
+    {
+      "source": "src/main.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/main.tsx"
+      ]
+    },
+    {
+      "source": "src/mount-app.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/mount-app.tsx"
+      ]
+    },
+    {
+      "source": "src/test-setup.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/test-setup.ts"
+      ]
+    },
+    {
+      "source": "src/components/AccountsPanel.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/AccountsPanel.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/AccountsPanel.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/AccountsPanel.tsx"
+      ]
+    },
+    {
+      "source": "src/components/CredentialStatusPanel.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/components/CredentialStatusPanel.test.tsx",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts",
+        "packages/engine/sdk/src/platform/providers/builtin-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/components/CredentialStatusPanel.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/components/CredentialStatusPanel.tsx",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts",
+        "packages/engine/sdk/src/platform/providers/builtin-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/components/DataBlock.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/DataBlock.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/DataBlock.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/DataBlock.tsx"
+      ]
+    },
+    {
+      "source": "src/components/MarkdownMessage.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/MarkdownMessage.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/MarkdownMessage.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/MarkdownMessage.tsx"
+      ]
+    },
+    {
+      "source": "src/components/RecordList.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/RecordList.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/RecordList.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/RecordList.tsx"
+      ]
+    },
+    {
+      "source": "src/components/StatusBadge.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/components/StatusBadge.test.tsx",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-status-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/components/StatusBadge.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/StatusBadge.tsx"
+      ]
+    },
+    {
+      "source": "src/components/auth/DaemonUnreachableGate.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/auth/DaemonUnreachableGate.tsx"
+      ]
+    },
+    {
+      "source": "src/components/auth/SignedOutGate.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/auth/SignedOutGate.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/auth/SignedOutGate.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/auth/SignedOutGate.tsx"
+      ]
+    },
+    {
+      "source": "src/components/auth/StepUpHost.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/auth/StepUpHost.tsx"
+      ]
+    },
+    {
+      "source": "src/components/command/CommandPalette.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/components/command/CommandPalette.test.tsx",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts"
+      ]
+    },
+    {
+      "source": "src/components/command/CommandPalette.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/command/CommandPalette.tsx"
+      ]
+    },
+    {
+      "source": "src/components/command/CommandProvider.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/command/CommandProvider.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/command/CommandProvider.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/command/CommandProvider.tsx"
+      ]
+    },
+    {
+      "source": "src/components/command/ShortcutCheatsheet.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/command/ShortcutCheatsheet.tsx"
       ]
     },
     {
@@ -134,10 +786,1742 @@
       ]
     },
     {
-      "source": "src/lib/permission-mode.ts",
+      "source": "src/components/data-view/DataView.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/data-view/DataView.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/data-view/DataView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/data-view/DataView.tsx"
+      ]
+    },
+    {
+      "source": "src/components/diff/DiffMultibuffer.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/diff/DiffMultibuffer.tsx"
+      ]
+    },
+    {
+      "source": "src/components/feedback/EmptyState.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/feedback/EmptyState.tsx"
+      ]
+    },
+    {
+      "source": "src/components/feedback/ErrorBoundary.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/feedback/ErrorBoundary.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/feedback/ErrorBoundary.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/feedback/ErrorBoundary.tsx"
+      ]
+    },
+    {
+      "source": "src/components/feedback/ErrorState.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/feedback/ErrorState.tsx"
+      ]
+    },
+    {
+      "source": "src/components/feedback/SkeletonBlock.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/feedback/SkeletonBlock.tsx"
+      ]
+    },
+    {
+      "source": "src/components/fleet/NodeTells.tsx",
       "disposition": "JEV",
       "targets": [
-        "packages/engine/sdk/src/platform/gate/presets.ts"
+        "products/webui/src/components/fleet/NodeTells.tsx",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/components/fleet/TaskGraphPanel.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/components/fleet/TaskGraphPanel.test.tsx",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/components/fleet/TaskGraphPanel.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/components/fleet/TaskGraphPanel.tsx",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/components/model-workspace/ModelWorkspaceModal.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/model-workspace/ModelWorkspaceModal.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/model-workspace/ModelWorkspaceModal.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/model-workspace/ModelWorkspaceModal.tsx"
+      ]
+    },
+    {
+      "source": "src/components/motion/Presence.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/motion/Presence.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/motion/Presence.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/motion/Presence.tsx"
+      ]
+    },
+    {
+      "source": "src/components/motion/Skeleton.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/motion/Skeleton.tsx"
+      ]
+    },
+    {
+      "source": "src/components/motion/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/motion/index.ts"
+      ]
+    },
+    {
+      "source": "src/components/motion/useReducedMotion.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/motion/useReducedMotion.ts"
+      ]
+    },
+    {
+      "source": "src/components/pairing/PairingHandoffOffers.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pairing/PairingHandoffOffers.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pairing/PairingHandoffOffers.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pairing/PairingHandoffOffers.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pairing/PairingPostureNotice.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pairing/PairingPostureNotice.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pairing/PairingPostureNotice.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pairing/PairingPostureNotice.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pairing/PairingQrScanner.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pairing/PairingQrScanner.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pairing/PairingQrScanner.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pairing/PairingQrScanner.tsx"
+      ]
+    },
+    {
+      "source": "src/components/peek/PeekPanel.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/peek/PeekPanel.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/peek/PeekPanel.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/peek/PeekPanel.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pricing/ModelPricesModal.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pricing/ModelPricesModal.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pricing/PriceSourceNote.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pricing/PriceSourceNote.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/pricing/PriceSourceNote.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/pricing/PriceSourceNote.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/CvvHandlingField.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/CvvHandlingField.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/CvvHandlingField.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/CvvHandlingField.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/DeviceGrants.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/DeviceGrants.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/FeatureUnitCard.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/FeatureUnitCard.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/MailAccountSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/MailAccountSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/MailAccountSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/MailAccountSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/MemoryDiagnostics.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/MemoryDiagnostics.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/MemoryDiagnostics.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/MemoryDiagnostics.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/ModelPricesEditor.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/ModelPricesEditor.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/ModelPricesEditor.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/ModelPricesEditor.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/MoneyField.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/MoneyField.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/MoneyField.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/MoneyField.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/NotificationSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/NotificationSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/NotificationSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/NotificationSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/OwnerProfileSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/OwnerProfileSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/OwnerProfileSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/OwnerProfileSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PairingTokensSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PairingTokensSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PairingTokensSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PairingTokensSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PaymentCardEntry.containment.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PaymentCardEntry.containment.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PaymentCardEntry.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PaymentCardEntry.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PaymentCardEntry.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PaymentCardEntry.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PermissionRules.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PermissionRules.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PowerSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PowerSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/PowerSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/PowerSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/SettingsField.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/SettingsField.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/StepUpSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/StepUpSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/TailscaleSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/TailscaleSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/TailscaleSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/TailscaleSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/TimezonePicker.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/TimezonePicker.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/TimezonePicker.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/TimezonePicker.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/ConfigSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/ConfigSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/ConfigSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/ConfigSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/SettingsDialog.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/SettingsDialog.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/parts.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/parts.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections.test.ts"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections.ts"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections/AccountSection.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections/AccountSection.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections/GeneralSection.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections/GeneralSection.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections/ModelsSection.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections/ModelsSection.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections/ModelsSection.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections/ModelsSection.tsx"
+      ]
+    },
+    {
+      "source": "src/components/settings/dialog/sections/MoreSections.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/settings/dialog/sections/MoreSections.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/AccountMenu.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/AccountMenu.test.ts"
+      ]
+    },
+    {
+      "source": "src/components/shell/AccountMenu.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/AccountMenu.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/AppShell.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/AppShell.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/HeaderSlots.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/HeaderSlots.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/ShellContext.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/ShellContext.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/ShellContext.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/ShellContext.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/ShellHeader.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/ShellHeader.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/ShellLayout.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/ShellLayout.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/Sidebar.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/Sidebar.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/Spark.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/Spark.tsx"
+      ]
+    },
+    {
+      "source": "src/components/shell/nav.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/nav.test.ts"
+      ]
+    },
+    {
+      "source": "src/components/shell/nav.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/shell/nav.ts"
+      ]
+    },
+    {
+      "source": "src/components/status/DaemonReceipts.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/status/DaemonReceipts.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/status/DaemonReceipts.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/status/DaemonReceipts.tsx"
+      ]
+    },
+    {
+      "source": "src/components/status/PowerChip.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/status/PowerChip.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/status/PowerChip.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/status/PowerChip.tsx"
+      ]
+    },
+    {
+      "source": "src/components/status/RelayOverflowBanner.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/status/RelayOverflowBanner.tsx"
+      ]
+    },
+    {
+      "source": "src/components/toast/Toast.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/toast/Toast.tsx"
+      ]
+    },
+    {
+      "source": "src/components/toast/ToastViewport.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/toast/ToastViewport.tsx"
+      ]
+    },
+    {
+      "source": "src/components/toast/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/toast/index.ts"
+      ]
+    },
+    {
+      "source": "src/components/ui/Button.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Button.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Checkbox.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Checkbox.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Chip.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Chip.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/ConfirmDialog.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/ConfirmDialog.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/ConfirmDialog.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/ConfirmDialog.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/DateField.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/DateField.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Dialog.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Dialog.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Dialog.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Dialog.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Drawer.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Drawer.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Field.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Field.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/IconButton.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/IconButton.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Menu.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Menu.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Menu.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Menu.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Radio.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Radio.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Row.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Row.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Segmented.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Segmented.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Select.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Select.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Select.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Select.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Sheet.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Sheet.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/StatusDot.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/StatusDot.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Toast.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Toast.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Toggle.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Toggle.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/Tooltip.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/Tooltip.tsx"
+      ]
+    },
+    {
+      "source": "src/components/ui/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/index.ts"
+      ]
+    },
+    {
+      "source": "src/components/ui/overlay.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/overlay.test.ts"
+      ]
+    },
+    {
+      "source": "src/components/ui/overlay.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/ui/overlay.ts"
+      ]
+    },
+    {
+      "source": "src/components/voice/MicButton.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/MicButton.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/MicButton.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/MicButton.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/SpeakButton.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/SpeakButton.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/VoiceSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/VoiceSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/VoiceSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/VoiceSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/WakeBanner.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/WakeBanner.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/WakeChip.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/WakeChip.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/WakeChip.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/WakeChip.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/WakeWordSettings.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/WakeWordSettings.test.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/WakeWordSettings.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/WakeWordSettings.tsx"
+      ]
+    },
+    {
+      "source": "src/components/voice/wake-indicator.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/components/voice/wake-indicator.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useAnnouncer.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useAnnouncer.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useAnnouncer.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useAnnouncer.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useApprovalUpdates.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useApprovalUpdates.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useApprovalUpdates.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useApprovalUpdates.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useCompactionReceipts.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useCompactionReceipts.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useCompactionReceipts.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useCompactionReceipts.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useDaemonHealth.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useDaemonHealth.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useDaemonReceipts.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useDaemonReceipts.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useHostedSessionRealtime.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useHostedSessionRealtime.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useHostedSessionRealtime.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useHostedSessionRealtime.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useHotkeys.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useHotkeys.test.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useHotkeys.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useHotkeys.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useIsPhoneViewport.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useIsPhoneViewport.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useMemoryDiagnostics.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useMemoryDiagnostics.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useOriginPosture.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useOriginPosture.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useOwnerProfile.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useOwnerProfile.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useOwnerProfile.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useOwnerProfile.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/usePairingHandoff.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/usePairingHandoff.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/usePairingHandoff.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/usePairingHandoff.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/usePowerStatus.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/usePowerStatus.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/usePushSubscriptionReconcile.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/usePushSubscriptionReconcile.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/usePushSubscriptionReconcile.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/usePushSubscriptionReconcile.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useRealtimeInvalidation.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useRealtimeInvalidation.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useRealtimeInvalidation.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useRealtimeInvalidation.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useRelayOverflow.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useRelayOverflow.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useRelayPairingHandoff.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useRelayPairingHandoff.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useSessionRealtime.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useSessionRealtime.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useSessionRealtime.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useSessionRealtime.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useTheme.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useTheme.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useTheme.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useTheme.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useUrlState.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useUrlState.test.tsx"
+      ]
+    },
+    {
+      "source": "src/hooks/useUrlState.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useUrlState.ts"
+      ]
+    },
+    {
+      "source": "src/hooks/useVoiceLocalSetup.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/hooks/useVoiceLocalSetup.ts"
+      ]
+    },
+    {
+      "source": "src/lib/a11y.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/a11y.ts"
+      ]
+    },
+    {
+      "source": "src/lib/approval-refresh.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/approval-refresh.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/approval-refresh.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/approval-refresh.ts"
+      ]
+    },
+    {
+      "source": "src/lib/approvals.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/approvals.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/approvals.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/approvals.ts"
+      ]
+    },
+    {
+      "source": "src/lib/auth-token.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/auth-token.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/card-material.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/card-material.test.ts",
+        "packages/engine/sdk/src/platform/config/schema-domain-payments.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/card-material.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/card-material.ts",
+        "packages/engine/sdk/src/platform/config/schema-domain-payments.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/checkpoints.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/checkpoints.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/checkpoints.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/checkpoints.ts"
+      ]
+    },
+    {
+      "source": "src/lib/client-compatibility.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/client-compatibility.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/client-compatibility.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/client-compatibility.ts"
+      ]
+    },
+    {
+      "source": "src/lib/command-groups.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/command-groups.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/command-groups.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/command-groups.ts"
+      ]
+    },
+    {
+      "source": "src/lib/commands.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/commands.test.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts"
+      ]
+    },
+    {
+      "source": "src/lib/commands.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/commands.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts"
+      ]
+    },
+    {
+      "source": "src/lib/compaction-handoff-contract.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/compaction-handoff-contract.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/compaction.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/compaction.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/compaction.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/compaction.ts"
+      ]
+    },
+    {
+      "source": "src/lib/companion-chat.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/companion-chat.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/companion-chat.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/companion-chat.ts"
+      ]
+    },
+    {
+      "source": "src/lib/companion-sessions-state.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/companion-sessions-state.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/companion-sessions-state.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/companion-sessions-state.ts"
+      ]
+    },
+    {
+      "source": "src/lib/composer-keys.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/composer-keys.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/composer-keys.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/composer-keys.ts"
+      ]
+    },
+    {
+      "source": "src/lib/config-ownership.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/config-ownership.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/config-ownership.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/config-ownership.ts"
+      ]
+    },
+    {
+      "source": "src/lib/config-redaction.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/config-redaction.test.ts",
+        "packages/engine/sdk/src/platform/config/schema-domain-payments.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/config-redaction.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/config-redaction.ts",
+        "packages/engine/sdk/src/platform/config/schema-domain-payments.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/contract-bridge-types.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/contract-bridge-types.ts"
+      ]
+    },
+    {
+      "source": "src/lib/cost-source.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/cost-source.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/cost-source.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/cost-source.ts"
+      ]
+    },
+    {
+      "source": "src/lib/daemon-health.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/daemon-health.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/daemon-health.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/daemon-health.ts"
+      ]
+    },
+    {
+      "source": "src/lib/device-node/capability-bindings.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/device-node/capability-bindings.ts"
+      ]
+    },
+    {
+      "source": "src/lib/device-node/phone-node-client.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/device-node/phone-node-client.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/device-node/phone-node-client.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/device-node/phone-node-client.ts"
+      ]
+    },
+    {
+      "source": "src/lib/device-settings-reachable.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/device-settings-reachable.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/errors.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/errors.test.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts",
+        "packages/engine/sdk/src/platform/daemon/http/browser-judgment-error.ts"
+      ]
+    },
+    {
+      "source": "src/lib/errors.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/errors.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts",
+        "packages/engine/sdk/src/platform/daemon/http/browser-judgment-error.ts"
+      ]
+    },
+    {
+      "source": "src/lib/fleet-graph.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/fleet-graph.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/lib/fleet.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/fleet.test.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/lib/fleet.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/fleet.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/lib/generated/config-ownership.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/generated/config-ownership.ts"
+      ]
+    },
+    {
+      "source": "src/lib/generated/config-schema.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/generated/config-schema.ts"
+      ]
+    },
+    {
+      "source": "src/lib/generated/presentation-tokens.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/generated/presentation-tokens.ts"
+      ]
+    },
+    {
+      "source": "src/lib/goodvibes.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/goodvibes.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/goodvibes.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/goodvibes.ts"
+      ]
+    },
+    {
+      "source": "src/lib/highlight.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/highlight.ts"
+      ]
+    },
+    {
+      "source": "src/lib/hosted-session-stream.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/hosted-session-stream.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/hosted-session-stream.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/hosted-session-stream.ts"
+      ]
+    },
+    {
+      "source": "src/lib/hosted-sessions.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/hosted-sessions.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/hosted-sessions.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/hosted-sessions.ts"
+      ]
+    },
+    {
+      "source": "src/lib/insecure-origin.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/insecure-origin.ts"
+      ]
+    },
+    {
+      "source": "src/lib/knowledge-projection.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/knowledge-projection.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/knowledge-projection.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/knowledge-projection.ts"
+      ]
+    },
+    {
+      "source": "src/lib/mail-order.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/mail-order.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/mail-order.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/mail-order.ts"
+      ]
+    },
+    {
+      "source": "src/lib/mail-refusal.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/mail-refusal.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/mail-refusal.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/mail-refusal.ts"
+      ]
+    },
+    {
+      "source": "src/lib/memory-governance.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/memory-governance.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/memory-governance.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/memory-governance.ts"
+      ]
+    },
+    {
+      "source": "src/lib/memory-provenance.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/memory-provenance.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/memory-provenance.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/memory-provenance.ts"
+      ]
+    },
+    {
+      "source": "src/lib/model-catalog.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/model-catalog.test.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/model-catalog.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/model-catalog.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/model-prices.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/model-prices.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/model-prices.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/model-prices.ts"
+      ]
+    },
+    {
+      "source": "src/lib/money.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/money.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/money.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/money.ts"
+      ]
+    },
+    {
+      "source": "src/lib/non-empty.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/non-empty.ts"
+      ]
+    },
+    {
+      "source": "src/lib/object.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/object.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/object.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/object.ts"
+      ]
+    },
+    {
+      "source": "src/lib/owner-profile.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/owner-profile.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/owner-profile.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/owner-profile.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pairing-qr-camera.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pairing-qr-camera.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pairing-qr-detector.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pairing-qr-detector.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pairing-qr.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pairing-qr.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pairing-qr.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pairing-qr.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pairing.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pairing.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pairing.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pairing.ts"
+      ]
+    },
+    {
+      "source": "src/lib/payments-cards.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/payments-cards.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/payments-cards.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/payments-cards.ts"
       ]
     },
     {
@@ -145,7 +2529,1480 @@
       "disposition": "JEV",
       "targets": [
         "packages/engine/test/session-runtime-verbs.test.ts",
-        "products/webui/e2e/session-gate-presets.e2e.ts"
+        "products/webui/e2e/session-gate-presets.e2e.ts",
+        "packages/engine/sdk/src/platform/gate/presets.ts"
+      ]
+    },
+    {
+      "source": "src/lib/permission-mode.ts",
+      "disposition": "JEV",
+      "targets": [
+        "packages/engine/sdk/src/platform/gate/presets.ts"
+      ]
+    },
+    {
+      "source": "src/lib/presentation-bridge.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/presentation-bridge.test.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-status-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/lib/presentation-bridge.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/presentation-bridge.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-status-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/lib/provider-models.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/provider-models.test.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/provider-models.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/provider-models.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/provider-status.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/provider-status.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/provider-status.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/provider-status.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/approval-action-link.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/approval-action-link.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/approval-action-link.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/approval-action-link.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/fleet-focus-link.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/fleet-focus-link.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/fleet-focus-link.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/fleet-focus-link.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/notification-link.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/notification-link.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/notification-link.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/notification-link.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/push-client.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/push-client.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/push-client.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/push-client.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/push-facade.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/push-facade.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/push-support.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/push-support.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/push-support.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/push-support.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/reconcile-on-open.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/reconcile-on-open.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/push/sw.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/push/sw.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pwa/install-prompt.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/pwa/install-prompt.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pwa/install-prompt.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/pwa/install-prompt.ts"
+      ]
+    },
+    {
+      "source": "src/lib/pwa/register-sw.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/pwa/register-sw.ts"
+      ]
+    },
+    {
+      "source": "src/lib/queries.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/queries.ts"
+      ]
+    },
+    {
+      "source": "src/lib/relay-connection.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/relay-connection.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/relay-connection.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/relay-connection.ts"
+      ]
+    },
+    {
+      "source": "src/lib/relay-pairing.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/relay-pairing.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/relay-pairing.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/relay-pairing.ts"
+      ]
+    },
+    {
+      "source": "src/lib/relay-stream-overflow.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/relay-stream-overflow.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/relay-stream-overflow.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/relay-stream-overflow.ts"
+      ]
+    },
+    {
+      "source": "src/lib/rewind.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/rewind.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/rewind.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/rewind.ts"
+      ]
+    },
+    {
+      "source": "src/lib/router.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/router.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/router.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/router.ts"
+      ]
+    },
+    {
+      "source": "src/lib/secret-store-only-config-keys.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/secret-store-only-config-keys.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/secret-store-only-config-keys.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/secret-store-only-config-keys.ts"
+      ]
+    },
+    {
+      "source": "src/lib/sessions-union.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/sessions-union.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/sessions-union.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/sessions-union.ts"
+      ]
+    },
+    {
+      "source": "src/lib/setting-label.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/setting-label.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/setting-label.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/setting-label.ts"
+      ]
+    },
+    {
+      "source": "src/lib/settings-model.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/settings-model.test.ts",
+        "packages/engine/sdk/src/platform/config/schema-domain-payments.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "src/lib/settings-model.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/settings-model.ts"
+      ]
+    },
+    {
+      "source": "src/lib/settings-owner-profile-group.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/settings-owner-profile-group.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/settings-wake-word-group.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/settings-wake-word-group.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/stepup-prompter.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/stepup-prompter.ts"
+      ]
+    },
+    {
+      "source": "src/lib/stepup.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/stepup.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/stepup.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/stepup.ts"
+      ]
+    },
+    {
+      "source": "src/lib/theme.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/theme.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/theme.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/theme.ts"
+      ]
+    },
+    {
+      "source": "src/lib/timezones.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/timezones.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/timezones.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/timezones.ts"
+      ]
+    },
+    {
+      "source": "src/lib/toast.dom.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/toast.dom.test.tsx"
+      ]
+    },
+    {
+      "source": "src/lib/toast.provider.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/toast.provider.test.tsx"
+      ]
+    },
+    {
+      "source": "src/lib/toast.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/toast.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/toast.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/toast.ts"
+      ]
+    },
+    {
+      "source": "src/lib/triggers-settings-reachable.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/triggers-settings-reachable.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/ui-preferences.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/ui-preferences.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/ui-preferences.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/ui-preferences.ts"
+      ]
+    },
+    {
+      "source": "src/lib/unified-diff.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/unified-diff.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/unified-diff.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/unified-diff.ts"
+      ]
+    },
+    {
+      "source": "src/lib/uuid.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/uuid.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/uuid.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/uuid.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/capture.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/capture.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/capture.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/capture.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/index.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/mic-arbiter.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/mic-arbiter.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/mic-arbiter.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/mic-arbiter.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/request-policy.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/voice/request-policy.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/request-policy.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/voice/request-policy.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/tts-player.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/tts-player.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/tts-player.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/tts-player.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/useVoice.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/useVoice.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/useWake.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/useWake.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/voice-config.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/voice-config.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/voice-config.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/voice-config.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/voice-local-setup.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/voice-local-setup.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/voice-local-setup.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/voice-local-setup.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-chime.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-chime.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-chime.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-chime.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-config.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-config.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-config.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-config.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-host.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-host.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-host.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-host.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-models.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-models.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-models.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-models.ts"
+      ]
+    },
+    {
+      "source": "src/lib/voice/wake-runtime.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/voice/wake-runtime.ts"
+      ]
+    },
+    {
+      "source": "src/lib/when-label.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/when-label.test.ts"
+      ]
+    },
+    {
+      "source": "src/lib/when-label.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/lib/when-label.ts"
+      ]
+    },
+    {
+      "source": "src/styles.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/attempt-comparison.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/attempt-comparison.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/auth-gate.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/auth-gate.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/calendar.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/calendar.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/chat-actions.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/chat-actions.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/chat-artifacts.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/chat-artifacts.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/chat-composer.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/chat-composer.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/chat-search.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/chat-search.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/chat-stream.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/chat-stream.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/chat-view.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/chat-view.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/checkin.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/checkin.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/command.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/command.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/data-view.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/data-view.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/dates.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/dates.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/device.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/device.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/diff-multibuffer.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/diff-multibuffer.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/feedback.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/feedback.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/knowledge.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/knowledge.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/library.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/library.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/mail.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/mail.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/markdown.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/markdown.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/memory-diagnostics.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/memory-diagnostics.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/memory-provenance.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/memory-provenance.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/memory.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/memory.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/model-workspace.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/model-workspace.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/notifications.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/notifications.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/owner-profile.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/owner-profile.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/pairing-handoff.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/pairing-handoff.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/pairing-scanner.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/pairing-scanner.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/pairing-tokens.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/pairing-tokens.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/personal.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/personal.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/power.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/power.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/pricing.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/pricing.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/principals.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/principals.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/providers.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/providers.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/queued-messages.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/queued-messages.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/session-changes.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/session-changes.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/session-rewind.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/session-rewind.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/settings-dialog.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/settings-dialog.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/settings.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/settings.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/shell.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/shell.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/status.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/status.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/steer-composer.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/steer-composer.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/tailscale.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/tailscale.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/task-graph.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/task-graph.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/toast.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/toast.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/ui.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/ui.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/voice.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/voice.css"
+      ]
+    },
+    {
+      "source": "src/styles/components/work.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/components/work.css"
+      ]
+    },
+    {
+      "source": "src/styles/fonts.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/fonts.css"
+      ]
+    },
+    {
+      "source": "src/styles/generated/presentation-tokens.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/generated/presentation-tokens.css"
+      ]
+    },
+    {
+      "source": "src/styles/materials.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/materials.css"
+      ]
+    },
+    {
+      "source": "src/styles/skeleton.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/skeleton.css"
+      ]
+    },
+    {
+      "source": "src/styles/tokens.css",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/styles/tokens.css"
+      ]
+    },
+    {
+      "source": "src/views/ChatView.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/ChatView.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/ChatView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/ChatView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/KnowledgeView.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/KnowledgeView.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/KnowledgeView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/KnowledgeView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/calendar/CalendarEventPeek.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/calendar/CalendarEventPeek.tsx"
+      ]
+    },
+    {
+      "source": "src/views/calendar/CalendarMonth.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/calendar/CalendarMonth.tsx"
+      ]
+    },
+    {
+      "source": "src/views/calendar/CalendarView.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/calendar/CalendarView.test.tsx",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts",
+        "packages/engine/sdk/src/platform/daemon/http/browser-judgment-error.ts"
+      ]
+    },
+    {
+      "source": "src/views/calendar/CalendarView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/calendar/CalendarView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/ArtifactsPanel.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/ArtifactsPanel.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/ChatHeader.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/ChatHeader.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/ChatHeader.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/ChatHeader.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/ChatSearch.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/ChatSearch.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/Composer.dom.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/Composer.dom.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/Composer.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/Composer.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/MemoryProvenanceChip.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/MemoryProvenanceChip.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/MemoryProvenanceChip.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/MemoryProvenanceChip.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/MessageItem.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/MessageItem.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/MessageLineage.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/MessageLineage.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/MessageList.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/MessageList.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/MessageList.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/MessageList.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/QueuedMessagesPanel.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/QueuedMessagesPanel.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/QueuedMessagesPanel.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/QueuedMessagesPanel.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/ToolActivityGroup.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/ToolActivityGroup.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/ToolActivityGroup.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/ToolActivityGroup.tsx"
+      ]
+    },
+    {
+      "source": "src/views/chat/auto-title.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/auto-title.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/composer-attachments.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/composer-attachments.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/composer-attachments.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/composer-attachments.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/index.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/lineage.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/lineage.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/lineage.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/lineage.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/message-utils.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/message-utils.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/message-utils.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/message-utils.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/new-chat.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/new-chat.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/new-chat.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/new-chat.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/search-jump.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/search-jump.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/search-jump.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/search-jump.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/types.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/types.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/useChatSearch.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/useChatSearch.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/useChatSearch.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/useChatSearch.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/useChatSend.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/useChatSend.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/useChatSend.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/useChatSend.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/useChatStream.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/useChatStream.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/chat/useChatStream.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/chat/useChatStream.ts"
+      ]
+    },
+    {
+      "source": "src/views/checkin/CheckInView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/checkin/CheckInView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/dates/DatesGiftHistoryPeek.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/dates/DatesGiftHistoryPeek.tsx"
+      ]
+    },
+    {
+      "source": "src/views/dates/DatesView.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/dates/DatesView.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/dates/DatesView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/dates/DatesView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/fleet/AttemptComparison.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/fleet/AttemptComparison.test.tsx",
+        "packages/engine/sdk/src/platform/contract/best-of-n.ts",
+        "packages/engine/sdk/src/platform/contract/group-runner.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/fleet/AttemptComparison.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/fleet/AttemptComparison.tsx",
+        "packages/engine/sdk/src/platform/contract/best-of-n.ts",
+        "packages/engine/sdk/src/platform/contract/group-runner.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/fleet/FleetSessionActions.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/fleet/FleetSessionActions.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/AddLinkDialog.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/AddLinkDialog.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeActivity.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeActivity.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeCandidates.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeCandidates.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeCandidates.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeCandidates.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeJobsPeek.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeJobsPeek.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeJobsPeek.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeJobsPeek.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeMap.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeMap.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgeMap.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgeMap.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgePacket.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgePacket.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/knowledge/KnowledgePacket.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/knowledge/KnowledgePacket.tsx"
+      ]
+    },
+    {
+      "source": "src/views/library/LibraryView.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/library/LibraryView.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/library/LibraryView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/library/LibraryView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/library/ReviewTab.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/library/ReviewTab.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/library/ReviewTab.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/library/ReviewTab.tsx"
+      ]
+    },
+    {
+      "source": "src/views/library/library-data.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/library/library-data.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-status-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/views/library/test-harness.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/library/test-harness.ts"
       ]
     },
     {
@@ -153,6 +4010,13 @@
       "disposition": "PORT",
       "targets": [
         "products/webui/src/views/mail/MailCompose.tsx"
+      ]
+    },
+    {
+      "source": "src/views/mail/MailMessagePeek.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/mail/MailMessagePeek.tsx"
       ]
     },
     {
@@ -173,16 +4037,768 @@
         "packages/engine/sdk/src/platform/email/reply-subject-source.ts",
         "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts"
       ]
+    },
+    {
+      "source": "src/views/memory/AddMemoryDialog.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/AddMemoryDialog.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/ConsolidationReceipts.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/ConsolidationReceipts.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/ConsolidationReceipts.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/ConsolidationReceipts.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemoryRecordDetail.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemoryRecordDetail.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemoryRecordDetail.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemoryRecordDetail.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemoryRecordPane.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemoryRecordPane.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemoryRecordRow.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemoryRecordRow.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemorySearchHonestyNote.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemorySearchHonestyNote.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemorySearchHonestyNote.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemorySearchHonestyNote.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemoryView.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemoryView.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/MemoryView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/MemoryView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/memory/memory-helpers.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/memory-helpers.test.ts"
+      ]
+    },
+    {
+      "source": "src/views/memory/memory-helpers.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/memory/memory-helpers.ts"
+      ]
+    },
+    {
+      "source": "src/views/personal/PersonalPage.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/personal/PersonalPage.tsx"
+      ]
+    },
+    {
+      "source": "src/views/personal/PersonalView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/personal/PersonalView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/personal/openSettings.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/personal/openSettings.ts"
+      ]
+    },
+    {
+      "source": "src/views/phone/PhoneNodeView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/phone/PhoneNodeView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/principals/PrincipalsView.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/principals/PrincipalsView.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/HunkActionSheet.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/HunkActionSheet.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/HunkCommentSheet.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/HunkCommentSheet.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/HunkCommentSheet.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/HunkCommentSheet.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/HunkRevertSheet.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/HunkRevertSheet.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/SessionChanges.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/SessionChanges.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/SessionChanges.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/SessionChanges.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/SessionRewind.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/SessionRewind.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/SessionRewind.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/SessionRewind.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/SteerComposer.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/SteerComposer.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/sessions/SteerComposer.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/sessions/SteerComposer.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/ApprovalDetail.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/ApprovalDetail.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/AttemptGroupDetail.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/AttemptGroupDetail.tsx",
+        "packages/engine/sdk/src/platform/contract/best-of-n.ts",
+        "packages/engine/sdk/src/platform/contract/group-runner.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/CheckpointsPanel.test.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/CheckpointsPanel.test.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/CheckpointsPanel.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/CheckpointsPanel.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/CiWatchDetail.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/CiWatchDetail.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/HostedSessionDetail.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/HostedSessionDetail.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/NewWorkMenu.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/NewWorkMenu.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/ProcessDetail.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/ProcessDetail.tsx",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/SessionDetail.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/SessionDetail.tsx",
+        "packages/engine/sdk/src/platform/gate/presets.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/TaskDetail.tsx",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/TaskDetail.tsx"
+      ]
+    },
+    {
+      "source": "src/views/work/WorkView.test.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/WorkView.test.tsx",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/WorkView.tsx",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/WorkView.tsx",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/useApprovalActions.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/useApprovalActions.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/useWorkData.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/src/views/work/useWorkData.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/work-items.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/work-items.test.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "src/views/work/work-items.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/views/work/work-items.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "e2e/approval-push-action.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/approval-push-action.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/approvals-depth.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/approvals-depth.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/approvals-push.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/approvals-push.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/calendar.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/calendar.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/chat-journey.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/chat-journey.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/chat-session-switch.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/chat-session-switch.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/checkpoints-tasks-mobile.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/checkpoints-tasks-mobile.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/ci-fix-session.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/ci-fix-session.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/command-palette.e2e.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/command-palette.e2e.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/webui-runtime.ts"
+      ]
+    },
+    {
+      "source": "e2e/credential-status.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/credential-status.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/daemon-receipts.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/daemon-receipts.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/dates.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/dates.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/design-proof.e2e.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/design-proof.e2e.ts",
+        "packages/engine/sdk/src/platform/contract/best-of-n.ts",
+        "packages/engine/sdk/src/platform/contract/group-runner.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "e2e/desktop-unregressed.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/desktop-unregressed.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/fleet-attention.e2e.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/fleet-attention.e2e.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "e2e/fleet-depth.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/fleet-depth.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/fleet-observed.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/fleet-observed.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/hero-steer-from-phone.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/hero-steer-from-phone.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/hosted-sessions.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/hosted-sessions.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/knowledge-depth.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/knowledge-depth.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/lan-origin-posture.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/lan-origin-posture.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/mail.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/mail.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/memory-consolidation-receipts.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/memory-consolidation-receipts.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/memory-diagnostics.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/memory-diagnostics.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/memory-journey.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/memory-journey.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/memory-provenance-chip.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/memory-provenance-chip.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/model-workspace.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/model-workspace.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/pairing-handoff.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/pairing-handoff.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/pairing-tokens.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/pairing-tokens.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/pairing.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/pairing.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/phone-smoke.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/phone-smoke.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/power.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/power.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/pwa-offline.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/pwa-offline.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/pwa.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/pwa.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/queued-messages.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/queued-messages.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/settings-config.e2e.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/settings-config.e2e.ts",
+        "packages/engine/sdk/src/platform/config/schema-domain-payments.ts",
+        "packages/engine/sdk/src/platform/judgment-browser/service.ts"
+      ]
+    },
+    {
+      "source": "e2e/shell-layout.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/shell-layout.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/app.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/app.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/assert-contract-shape.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/support/assert-contract-shape.test.ts",
+        "packages/engine/sdk/src/platform/state/batteries/memory-review-priority.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/gate/presets.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/assert-contract-shape.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/assert-contract-shape.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/chat-mock.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/chat-mock.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/design-proof.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/support/design-proof.ts",
+        "packages/engine/sdk/src/platform/contract/best-of-n.ts",
+        "packages/engine/sdk/src/platform/contract/group-runner.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/mock-daemon.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/support/mock-daemon.ts",
+        "packages/engine/sdk/src/platform/state/batteries/memory-review-priority.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/gate/presets.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/onnx-fixture.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/onnx-fixture.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/push-mocks.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/push-mocks.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/requests.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/requests.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/seed.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/support/seed.ts",
+        "packages/engine/sdk/src/platform/state/batteries/memory-review-priority.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/gate/presets.ts"
+      ]
+    },
+    {
+      "source": "e2e/support/voice-mock.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/support/voice-mock.ts"
+      ]
+    },
+    {
+      "source": "e2e/tailscale-serve.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/tailscale-serve.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/task-graph.e2e.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/e2e/task-graph.e2e.ts",
+        "packages/engine/sdk/src/platform/runtime/fleet/adapters/contract.ts",
+        "packages/engine/sdk/src/platform/contract/fleet-controls.ts",
+        "packages/engine/sdk/src/platform/control-plane/routes/fleet.ts"
+      ]
+    },
+    {
+      "source": "e2e/touch-targets.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/touch-targets.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/tsconfig.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/tsconfig.json"
+      ]
+    },
+    {
+      "source": "e2e/turn-control.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/turn-control.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/visual-proofs.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/visual-proofs.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/voice-local-setup.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/voice-local-setup.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/voice.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/voice.e2e.ts"
+      ]
+    },
+    {
+      "source": "e2e/wake-word.e2e.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/webui/e2e/wake-word.e2e.ts"
+      ]
     }
   ],
   "pending": [
-    "All 62 JEV inventory dispositions require per-caller completion evidence; merged slices do not close the full 666-path inventory or complete its source mappings.",
+    "All 666 original paths now have location/disposition mappings (597 PORT, 62 JEV, 7 authorized DROP). Mapping completeness is not semantic implementation or acceptance: see docs/audit/webui-source-accounting.md for all 62 owner/caller/test rows and explicit remaining work. Status remains partial.",
     "Fixed Library/status catalogs are implemented; unknown prose stays unclassified until an approved dynamic source and caller exist. Remaining semantic readers still require migration and proof.",
     "Contract-tree inspection, native recorded evidence and explicit cancellation are merged in PRs 120-122. Source-bearing native admission (PR129), durable execution (PR135), hosted turn delivery (PR139), native-owned session continuation (PR142), Fleet actions (PR144) and selected-hunk comments (PR146) are implemented. Remaining ordinary hosted ingress and semantic consumers still require their own current source, authority and execution evidence; historical escalation is not a semantic approval fallback.",
     "THE-70 is complete through merged PR149: production installation, authority-bound chat-title/error references, dynamic-error callers and actual daemon/runtime proofs are implemented. Its three original closed purposes use the configured Jev route; fixed status catalogs remain enum-only. Synthetic/loopback proof does not establish THE-35 live calibration, and no browser model credentials or provider client may be introduced.",
     "The contracts.start wire has no native source and remains rejected by native admission. Implemented native intake uses host-owned source capture and persisted paired-admin authority with read:work-ledger and write:work-ledger; its execution and hosted-delivery integrations retain their own current scopes, durable identities and no-replay boundaries. Ordinary hosted ingress is a separate migration.",
     "Canonical display.theme supplies the pinned 13-choice enum/default, and context provenance propagates through the session wire/WebUI via PR127. PR189 reconciles settings drafts after refreshed canonical config. Remaining concrete settings gaps are canonical persisted display.treeGlyphs (schema/default/generated metadata/persistence/browser proof; genuine credential classification prerequisite) and publication/browser qualification of engine-owned gate-preset presentation. The local preset slice now consumes the engine table directly and adds three mapping records; this is not merged acceptance. The local Mail reply-subject slice now supplies the typed webui.mail.reply-subject reader and reachable caller from canonical account/mailbox/UID-bound source references, with three additional mapping records. Local source tests and affected type/build checks passed on source commit 56f00c52; final union publication and actual browser qualification remain pending, and live calibration remains THE-35.",
     "Session follow-up receipts and identity-bound close/reopen/delete are merged in PRs 123-124. A real connected-daemon auth/status/session/chat smoke and approved live-provider parity remain necessary; controlled browser and scripted real-route captures do not establish that acceptance.",
-    "Accounting checked against merged main dfe395031e14542ac21d35fb89336886fbdacffd on 2026-10-08. THE-70 post-merge CI37521857400 passed 36 validation jobs and 838 browser cases with 76 explicit skips; those receipts qualify that stated baseline, not a final release SHA. Complete source mappings, remaining product parity and final integrated acceptance stay open; see docs/audit/webui-acceptance-reconciliation.md."
+    "Accounting checked against merged main dfe395031e14542ac21d35fb89336886fbdacffd on 2026-10-08. THE-70 post-merge CI37521857400 passed 36 validation jobs and 838 browser cases with 76 explicit skips; those receipts qualify that stated baseline, not a final release SHA. Complete source mappings, remaining product parity and final integrated acceptance stay open; see docs/audit/webui-acceptance-reconciliation.md.",
+    "Static source accounting checked at f0d7d07cbda54ea6ba33952e77041a792f34d055 on 2026-10-09. PR195 preset/Mail deliveries are merged; publication-pending statements above are historical receipts, not current blockers. Genuine unknown-key, credential/provider alignment, family, devserver, code-language, speech-seam, install-platform and review-queue fixture obligations remain at this snapshot. Existing safety boundaries and all owner-retired infrastructure remain intact. No new runtime, visual, live-provider or actual-main acceptance was performed by this accounting pass."
   ]
 }

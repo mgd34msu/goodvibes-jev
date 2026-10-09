@@ -5282,6 +5282,45 @@ export interface OperatorMethodInputMap {
         input: {
             subjectRef: string;
         };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.pwa.install-platform";
+        batteryVersion: 1;
+        input: {
+            userAgent: string;
+            platform: string;
+            maxTouchPoints: number;
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.credentials.provider-key";
+        batteryVersion: 1;
+        input: {
+            providerId: string;
+            keys: readonly string[];
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.config.credential-key";
+        batteryVersion: 1;
+        input: {
+            keys: readonly string[];
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.code.language";
+        batteryVersion: 1;
+        input: {
+            sessionId: string;
+            messageId: string;
+            start: number;
+            end: number;
+            contentDigest: string;
+        };
     };
     // (undocumented)
     "knowledge.ask": ({
@@ -19590,6 +19629,286 @@ export interface OperatorMethodOutputMap {
         protocolVersion: 1;
         requestId: string;
         battery: "webui.mail.reply-subject";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.pwa.install-platform";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            platform: "ios-share-menu" | "other";
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.pwa.install-platform";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.credentials.provider-key";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            matches: readonly boolean[];
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.credentials.provider-key";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.config.credential-key";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            matches: readonly boolean[];
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.config.credential-key";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.code.language";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            language: "bash" | "c" | "cpp" | "csharp" | "css" | "diff" | "dockerfile" | "go" | "ini" | "java" | "javascript" | "json" | "markdown" | "php" | "plaintext" | "python" | "ruby" | "rust" | "shell" | "sql" | "typescript" | "wasm" | "xml" | "yaml";
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.code.language";
         batteryVersion: 1;
         status: "held";
         reason: "uncertain";
@@ -35022,6 +35341,7 @@ export function transienceFromReading(failure: FailureConclusions): FailureTrans
 export interface TransienceOptions {
     readonly describe?: (error: unknown) => string;
     readonly fromProvider?: boolean;
+    readonly reading?: FailureReadOptions;
 }
 
 // @public

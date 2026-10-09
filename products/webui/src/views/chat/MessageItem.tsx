@@ -161,10 +161,10 @@ export function MessageItem({
         // the transcript after every automatic compaction.
         <details className="message-compaction-handoff">
           <summary>Compaction handoff: context re-injected after auto-compaction ({text.split('\n').length} lines)</summary>
-          <MarkdownMessage content={text} />
+          <MarkdownMessage content={text} source={message.sessionId && message.id ? { sessionId: message.sessionId, messageId: message.id } : undefined} />
         </details>
       ) : (
-        text && <MarkdownMessage content={text} />
+        text && <MarkdownMessage content={text} source={message.sessionId && message.id ? { sessionId: message.sessionId, messageId: message.id } : undefined} />
       )}
       {attachments.length > 0 && (
         <div className="message-attachments">

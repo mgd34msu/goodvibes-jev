@@ -12,7 +12,7 @@ import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_UPDATE_GUIDANCE } from '../../runt
  *   /update [check]          , resolve the latest release tag and report
  *                                whether this build is already current.
  *   /update apply             , for a binary install (the curl installer),
- *                                download + verify + atomically swap THIS
+ *                                download + verify + safely replace THIS
  *                                app's binary, and refresh the sqlite-vec
  *                                native addon in lockstep so the vector index
  *                                never goes stale beside a new binary. Every
@@ -50,6 +50,8 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   applyVerifiedUpdate,
+  captureUpdateFileIo,
+  UpdateTransactionError,
   realUpdateFileIo,
   rollbackKeptPrevious,
   type UpdateFileIo,
@@ -91,21 +93,13 @@ async function downloadText(fetchImpl: UpdateFetchLike, url: string): Promise<st
 }
 
 /**
- * Where cancellation stops being allowed. An update is genuinely abortable up
- * to and including the moment BEFORE the first file is written: every fetch on
- * the way there carries the caller's signal, and every await boundary re-checks
- * it. From the first write onward the swap owns the installed files and always
- * runs to completion, a half-applied swap is the one outcome worse than a slow
- * one.
- *
- * This record makes that boundary readable from outside the call. The launch
- * updater gives `applyUpdate` a budget and abandons the promise when it runs
- * out, so it cannot learn from the return value which side of the line the work
- * was on, it reads these flags instead, and prints the receipt that is
- * actually true (see src/cli/launch-auto-update.ts).
+ * External progress for launch-time budgets. Preparation is cancellable until
+ * the synchronous live commit; a compensated failure is not an installation.
+ * A completed commit or explicit recovery fence must never be called a clean
+ * deferral when a launch caller is deciding what happened on disk.
  */
 export interface UpdateSwapProgress {
-  /** True from the first file write of the swap phase; from here the swap is never interrupted. */
+  /** The disk update committed or requires recovery; it cannot be called a clean deferral. */
   begun: boolean;
   /** True once every target file has been swapped into place and the update is fully installed. */
   committed: boolean;
@@ -126,12 +120,7 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-/**
- * The shared UpdateFetchLike init shape predates cancellation, so the signal
- * rides on a widened version of it: the real `fetch` reads it, which is what
- * makes the DOWNLOAD itself cancellable rather than merely abandoned, and a
- * test stub that ignores the extra field behaves exactly as it did before.
- */
+/** Preserve the core's owned deadline signal; use the caller signal for pre-reads. */
 type AbortableFetchInit = NonNullable<Parameters<UpdateFetchLike>[1]> & { signal?: AbortSignal };
 
 function abortableFetch(fetchImpl: UpdateFetchLike, signal: AbortSignal | undefined): UpdateFetchLike {
@@ -139,39 +128,7 @@ function abortableFetch(fetchImpl: UpdateFetchLike, signal: AbortSignal | undefi
   const withSignal = fetchImpl as (url: string, init?: AbortableFetchInit) => ReturnType<UpdateFetchLike>;
   return async (url, init) => {
     throwIfAborted(signal);
-    return await withSignal(url, { ...init, signal });
-  };
-}
-
-/**
- * Wraps the filesystem seam so the first MUTATING call flips `begun`. The swap
- * phase is the only part of the apply path that writes anything, so that first
- * write is exactly the point after which cancellation must no longer be
- * honoured. Reads (the daemon-present probe, the target-exists check inside the
- * swap) leave the flag alone.
- */
-function trackSwapProgress(io: UpdateFileIo, progress: UpdateSwapProgress): UpdateFileIo {
-  const begin = (): void => {
-    progress.begun = true;
-  };
-  return {
-    writeFile: (path, data) => {
-      begin();
-      io.writeFile(path, data);
-    },
-    rename: (from, to) => {
-      begin();
-      io.rename(from, to);
-    },
-    chmod: (path, mode) => {
-      begin();
-      io.chmod(path, mode);
-    },
-    mkdir: (path) => {
-      begin();
-      io.mkdir(path);
-    },
-    exists: (path) => io.exists(path),
+    return await withSignal(url, { ...init, signal: init?.signal ?? signal });
   };
 }
 
@@ -250,8 +207,7 @@ export interface ApplyUpdateOptions {
    * Cancels the update, for real: it is passed to every fetch in the path and
    * re-checked at every await boundary, so an abort stops the download instead
    * of leaving it running unwatched. Honoured only up to the moment before the
-   * swap begins; from the first file write onward it is deliberately ignored
-   * (see UpdateSwapProgress).
+   * live commit begins; staged files are cleaned if it aborts before that point.
    */
   readonly signal?: AbortSignal;
   /** Shared record letting the caller tell a cancelled update apart from one whose swap had already started. */
@@ -265,11 +221,13 @@ export interface ApplyUpdateOptions {
  * resolve the latest tag, compare to the running version, and if newer,
  * download + checksum-verify EVERY artifact before swapping any one (so a
  * checksum failure never leaves a mismatched pair installed), then
- * atomically swap each in place with the outgoing file kept at
- * `<path>.previous`. For any other install kind, never attempts a swap, it
+ * replace the staged cohort with compensation on failure and outgoing files
+ * kept at `<path>.previous`; the cohort is not filesystem-wide atomic. For any other install kind, never attempts a swap, it
  * prints the exact command for that install method instead.
  */
 export async function applyUpdate(options: ApplyUpdateOptions): Promise<void> {
+  options = { ...options, io: captureUpdateFileIo(options.io ?? realUpdateFileIo),
+    configManager: { get: options.configManager.get.bind(options.configManager) } };
   const installKind: InstallKind = detectInstallKind(options.execPath);
   if (installKind !== 'binary') {
     options.print(
@@ -288,7 +246,7 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<void> {
   const fetchImpl = abortableFetch(options.fetchImpl, signal);
 
   throwIfAborted(signal);
-  const latestTag = await resolveLatestReleaseTag(fetchImpl, REPO_RELEASES_LATEST_URL);
+  const latestTag = await resolveLatestReleaseTag(fetchImpl, REPO_RELEASES_LATEST_URL, signal ? { signal } : {});
   if (compareVersions(options.currentVersion, latestTag) >= 0) {
     options.print(`Already current: running v${normalizeVersion(options.currentVersion)}, latest release is ${latestTag}.`);
     return;
@@ -337,25 +295,27 @@ export async function applyUpdate(options: ApplyUpdateOptions): Promise<void> {
       : []),
   ];
 
-  // One mechanism everywhere: downloads + verifies ALL targets before any
-  // write, then swaps each atomically with the outgoing file kept at
-  // `<path>.previous`.
-  //
-  // This is the last point at which the update can be called off. The
-  // downloads inside applyVerifiedUpdate are still cancellable (the signal
-  // rides on every request), but its swap loop is synchronous and runs to
-  // completion once its first write lands, which is precisely what
-  // `progress.begun` records, and why nothing below this call re-checks the
-  // signal.
+  // The canonical helper stages all targets, checks cancellation immediately
+  // before live renames, and compensates failed commits. Its synchronous commit
+  // cannot lose an installed/recovery result to an asynchronous timeout race.
   throwIfAborted(signal);
-  await applyVerifiedUpdate({
-    fetchImpl,
-    downloadBaseUrl: baseUrl,
-    targets,
-    io: progress ? trackSwapProgress(io, progress) : io,
-    platform: options.platform,
-  });
-  if (progress) progress.committed = true;
+  try {
+    await applyVerifiedUpdate({
+      fetchImpl,
+      downloadBaseUrl: baseUrl,
+      targets,
+      io,
+      platform: options.platform,
+      ...(signal ? { signal } : {}),
+    });
+    if (progress) { progress.begun = true; progress.committed = true; }
+  } catch (error) {
+    if (progress && error instanceof UpdateTransactionError) {
+      progress.begun = error.receipt.committed || error.receipt.recoveryRequired;
+      progress.committed = error.receipt.committed;
+    }
+    throw error;
+  }
 
   const serviceInfo = detectDaemonServiceManaged(options.platform, options.configManager, options.runCommand);
 

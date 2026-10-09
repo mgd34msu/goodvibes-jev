@@ -27,6 +27,8 @@ export interface BrowserJudgmentMailSubjectSource {
   readonly snapshot: BrowserJudgmentMailSubjectSnapshot;
 }
 export interface BrowserJudgmentChatSessions {
+  /** Optional canonical completed messages; absence holds code-language reading. */
+  getMessages?(sessionId: string): readonly { readonly id: string; readonly sessionId: string; readonly content: string; readonly createdAt: number; readonly supersededAt?: number | undefined }[];
   getSession(id: string): { readonly id: string; readonly title: string; readonly createdAt: number; readonly updatedAt: number } | null;
 }
 export interface BrowserJudgmentErrorSource {

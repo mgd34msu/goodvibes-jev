@@ -29,8 +29,10 @@
  * contract); the raw key/value form remains, demoted to an explicit escape hatch
  * for unschema'd keys (RawConfigEditor, in "All settings").
  */
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { readConfigKey, type ConfigKeyResult } from '../../../lib/config-key-judgment';
+import { subscribeClientLifetime } from '../../../lib/client-lifetime';
 import { sdk, type ConfigSetOutcome } from '../../../lib/goodvibes';
 import { formatError, serializeError } from '../../../lib/errors';
 import { asRecord } from '../../../lib/object';
@@ -41,7 +43,7 @@ import { SettingsField } from '../SettingsField';
 import { SettingsHeadingLevel } from './parts';
 import { FeatureUnitCard } from '../FeatureUnitCard';
 import { PaymentCardEntry } from '../PaymentCardEntry';
-import { displayConfigValue } from '../../../lib/config-redaction';
+import { displayConfigValue, isUnresolvedConfigKey } from '../../../lib/config-redaction';
 import {
   buildSettingsModel,
   filterSettingsModel,
@@ -90,7 +92,69 @@ export function ConfigSettingsProvider({ enabled = true, children }: { enabled?:
     retry: false,
   });
 
-  const groups = useMemo(() => buildSettingsModel(config.data), [config.data]);
+  const baseGroups = useMemo(() => buildSettingsModel(config.data), [config.data]);
+  const unresolvedNames = baseGroups
+    .flatMap((group) => group.rawRows.map((row) => row.key))
+    .filter(isUnresolvedConfigKey);
+  const nameSignature = JSON.stringify(unresolvedNames);
+  const [classification, setClassification] = useState<{
+    data: unknown;
+    updatedAt: number;
+    nameSignature: string;
+    result: ConfigKeyResult;
+  }>();
+  const [identityRevision, setIdentityRevision] = useState(0);
+  useEffect(
+    () =>
+      subscribeClientLifetime(() => {
+        setClassification(undefined);
+        setIdentityRevision((value) => value + 1);
+      }),
+    []
+  );
+  useEffect(() => {
+    const names = JSON.parse(nameSignature) as string[];
+    if (!enabled || !config.isSuccess || config.isFetching || !names.length || names.length > 64)
+      return;
+    const abort = new AbortController();
+    void readConfigKey(names, abort.signal).then((result) => {
+      if (!abort.signal.aborted)
+        setClassification({
+          data: config.data,
+          updatedAt: config.dataUpdatedAt,
+          nameSignature,
+          result,
+        });
+    });
+    return () => abort.abort();
+  }, [
+    enabled,
+    config.isSuccess,
+    config.isFetching,
+    config.data,
+    config.dataUpdatedAt,
+    nameSignature,
+    identityRevision,
+  ]);
+  const current =
+    enabled &&
+    config.isSuccess &&
+    !config.isFetching &&
+    classification?.data === config.data &&
+    classification.updatedAt === config.dataUpdatedAt &&
+    classification.nameSignature === nameSignature &&
+    classification.result.status === "ready" &&
+    classification.result.isCurrent()
+      ? classification.result
+      : undefined;
+  const groups = current
+    ? buildSettingsModel(
+        config.data,
+        // Only an explicit negative can clear a row; absence must remain masked.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare
+        new Set(unresolvedNames.filter((_, index) => current.matches[index] === false))
+      )
+    : baseGroups;
   // payments.currency's live value, for MoneyField's currency label, read from
   // the live config since it may sit in a different group than the money field.
   const currency = useMemo(() => {
@@ -249,7 +313,7 @@ export function ConfigGroupList({
                   <div key={row.key} className="settings-readable__row">
                     <dt className="settings-readable__key">
                       {row.key}
-                      {row.isSecret && <span className="settings-secret-flag"> (secret)</span>}
+                      {row.isSecret && <span className="settings-secret-flag"> {isUnresolvedConfigKey(row.key) ? '(masked)' : '(secret)'}</span>}
                       {row.daemonOwned && (
                         <span
                           className="settings-daemon-flag"
@@ -261,7 +325,7 @@ export function ConfigGroupList({
                       )}
                     </dt>
                     <dd className={row.isSecret ? 'settings-value settings-value--secret' : 'settings-value'}>
-                      {displayConfigValue(row.key, row.value)}
+                      {displayConfigValue(row.key, row.value, row.displayCleared)}
                     </dd>
                   </div>
                 ))}

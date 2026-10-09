@@ -32,52 +32,13 @@ import {
 // Semver ordering
 // ---------------------------------------------------------------------------
 
-interface ParsedVersion {
-  readonly major: number;
-  readonly minor: number;
-  readonly patch: number;
-  /** Dot-separated prerelease identifiers; empty for a stable release. */
-  readonly prerelease: readonly string[];
-}
-
-/** Parse `X.Y.Z`, `X.Y.Z-pre.1`, `X.Y.Z+build`. Returns null for anything else. */
-export function parseVersion(raw: string): ParsedVersion | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(raw.trim());
-  if (!match) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] ? match[4].split('.') : [],
-  };
-}
-
-function compareIdentifiers(a: string, b: string): number {
-  const aNumeric = /^\d+$/.test(a);
-  const bNumeric = /^\d+$/.test(b);
-  // Semver 11.4.1-3: numeric identifiers compare numerically and always rank
-  // lower than alphanumeric ones.
-  if (aNumeric && bNumeric) return Number(a) - Number(b);
-  if (aNumeric) return -1;
-  if (bNumeric) return 1;
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** Semver precedence: negative when a < b, positive when a > b, 0 when equal. */
-export function compareVersions(a: ParsedVersion, b: ParsedVersion): number {
-  if (a.major !== b.major) return a.major - b.major;
-  if (a.minor !== b.minor) return a.minor - b.minor;
-  if (a.patch !== b.patch) return a.patch - b.patch;
-  // A prerelease ranks below the release it precedes.
-  if (a.prerelease.length === 0 && b.prerelease.length > 0) return 1;
-  if (a.prerelease.length > 0 && b.prerelease.length === 0) return -1;
-  const shared = Math.min(a.prerelease.length, b.prerelease.length);
-  for (let i = 0; i < shared; i += 1) {
-    const diff = compareIdentifiers(a.prerelease[i]!, b.prerelease[i]!);
-    if (diff !== 0) return diff;
-  }
-  return a.prerelease.length - b.prerelease.length;
-}
+// Keep the release tool's public names while sharing precedence with the runtime.
+import {
+  parseSemanticVersion as parseVersion,
+  compareSemanticVersions as compareVersions,
+  type ParsedSemanticVersion as ParsedVersion,
+} from '../sdk/src/platform/runtime/semantic-version.js';
+export { parseVersion, compareVersions };
 
 // ---------------------------------------------------------------------------
 // The decision

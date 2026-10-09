@@ -34,11 +34,6 @@ export async function handleHomeAssistantSurfaceWebhook(
     ?? readString(body.text)
     ?? readString(body.task)
     ?? '';
-  const controlCommand = text ? context.parseSurfaceControlCommand(text) : null;
-  if (controlCommand) {
-    const message = await context.performSurfaceControlCommand(controlCommand);
-    return Response.json({ acknowledged: true, control: true, message });
-  }
 
   const conversationId = readString(body.conversationId ?? body.conversation_id)
     ?? readString(body.threadId ?? body.thread_id)
@@ -71,6 +66,46 @@ export async function handleHomeAssistantSurfaceWebhook(
   if (!policy.allowed) {
     return Response.json({ error: `Blocked by channel policy: ${policy.reason}` }, { status: 403 });
   }
+
+  // The authenticated source remains live while Jev may be retrying. Local
+  // credential writes cancel the read; configuration/registry/env changes are
+  // checked synchronously before transmission, retention and consumption.
+  const credentialAbort = new AbortController();
+  const signal = AbortSignal.any([req.signal, credentialAbort.signal]);
+  const sourceState = () => JSON.stringify([
+    context.configManager.get('surfaces.homeassistant.enabled'),
+    context.configManager.get('surfaces.homeassistant.webhookSecret'),
+    context.serviceRegistry.get?.('homeassistant'),
+    process.env.HOMEASSISTANT_WEBHOOK_SECRET, process.env.HOME_ASSISTANT_WEBHOOK_SECRET, process.env.HA_GOODVIBES_WEBHOOK_SECRET,
+  ]);
+  const capturedSource = sourceState();
+  const assertSourceCurrentSync = () => {
+    signal.throwIfAborted();
+    if (sourceState() !== capturedSource) throw new Error('Home Assistant source authorization changed');
+  };
+  const assertSourceCurrent = async () => {
+    assertSourceCurrentSync();
+    const currentSecret = await resolveHomeAssistantWebhookSecret(context);
+    assertSourceCurrentSync();
+    if (!context.configManager.get('surfaces.homeassistant.enabled') || !currentSecret
+      || !safeEqual(currentSecret, secret) || !isAuthorizedHomeAssistantRequest(req, currentSecret)) {
+      credentialAbort.abort();
+      throw new Error('Home Assistant source authorization changed');
+    }
+  };
+  let unsubscribe: (() => void) | undefined;
+  try {
+    unsubscribe = context.secretsManager?.onDidChange?.(() => credentialAbort.abort());
+    await assertSourceCurrent();
+    const controlCommand = text ? await context.parseSurfaceControlCommand(text, {
+      signal, beforeAttempt: assertSourceCurrentSync, beforeAsyncAttempt: assertSourceCurrent,
+    }) : null;
+    await assertSourceCurrent();
+    if (controlCommand) {
+      const message = await context.performSurfaceControlCommand(controlCommand);
+      return Response.json({ acknowledged: true, control: true, message });
+    }
+  } finally { unsubscribe?.(); }
 
   if (!text.trim()) {
     await context.routeBindings.start();

@@ -128,3 +128,11 @@ describe('isHttpOnLan', () => {
     expect(isHttpOnLan(origin as string)).toBe(expected);
   });
 });
+
+test('persistence accepts a settled bundled binding including its observed HTTPS scheme', () => {
+  const cfg = fakeConfig({ 'web.publicBaseUrl': '', 'controlPlane.webui.serve': true,
+    'controlPlane.hostMode': 'network', 'controlPlane.port': 3141, 'controlPlane.tls.mode': 'off' });
+  const resolved = ensurePublicBaseUrl(cfg, stableProbe, { host: '0.0.0.0', port: 4567, scheme: 'https' });
+  expect(resolved.origin).toBe('https://workshop.local:4567');
+  expect(cfg.writes).toEqual([['web.publicBaseUrl', 'https://workshop.local:4567']]);
+});

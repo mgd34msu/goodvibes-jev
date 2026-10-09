@@ -37,8 +37,9 @@ no TLS live-restart policy. Offline pair uses the declared configuration.
 The exact shipped `http://127.0.0.1:3423` placeholder follows the webui command's
 existing equality rule; this is not evidence about who set a stored value.
 
-Startup does not persist a public URL or runtime overrides. The existing
-`ensurePublicBaseUrl` helper still only writes an empty value. A local reprint
+The subsequent [startup maintenance caller](daemon-startup-maintenance-callers.md)
+restores public-URL persistence only for an empty value, a stable served name
+and a matching durable endpoint. Runtime overrides remain unpersisted. A local reprint
 may carry its declared nonzero `--port`, but cannot observe another process's
 ephemeral endpoint. Zero/invalid local ports refuse before reading credentials.
 

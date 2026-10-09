@@ -14,6 +14,7 @@ import { parseTelegramBotCommand, telegramBotCommandReply } from './commands.js'
  * omits it only where no bot token is resolvable.
  */
 export interface TelegramUpdateDeps {
+  readonly signal?: AbortSignal | undefined;
   readonly acquireSourceAccount?: (() => Promise<TelegramSourceAccountHandle | null>) | undefined;
   readonly sendMessage?: ((input: {
     readonly chatId: string;
@@ -99,7 +100,7 @@ export async function handleTelegramSurfaceWebhook(
   if (!payload) return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   // A webhook's shared URL/secret does not prove the recipient bot incarnation.
   // Never promote an accidentally supplied polling capability through HTTP.
-  return processTelegramUpdate(payload, context, { sendMessage: deps.sendMessage });
+  return processTelegramUpdate(payload, context, { sendMessage: deps.sendMessage, signal: req.signal });
 }
 
 /**
@@ -277,7 +278,7 @@ export async function processTelegramUpdate(
     });
   }
 
-  const controlCommand = context.parseSurfaceControlCommand(task);
+  const controlCommand = await context.parseSurfaceControlCommand(task, deps.signal ? { signal: deps.signal } : {});
   if (controlCommand) {
     const message = await context.performSurfaceControlCommand(controlCommand);
     return Response.json({ ok: true, acknowledged: true, message });

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveWorkspaceToolchain, validateToolchainArguments } from '../../../scripts/run-toolchain.ts';
@@ -63,4 +64,12 @@ test('native prebuild validates the private manifest fallback without modifying 
   }
   writeFileSync(manifestPath, JSON.stringify({ name: '@fixture/foreign', version: '1.28.25' }));
   expect(() => checkBinaryVersion(root)).toThrow('@goodvibes-jev/daemon manifest');
+});
+
+test('ordinary Node hosted-proof protocol parser and synthetic wire responses fail closed', () => {
+  const result = spawnSync('node', ['--test', join(import.meta.dir, '../../../scripts/hosted-session-protocol.test.mjs')], {
+    encoding: 'utf8', timeout: 10_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 });

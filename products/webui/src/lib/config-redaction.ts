@@ -1,176 +1,48 @@
-/**
- * config-redaction.ts, secret-free config display, honestly.
- *
- * GROUNDED: GET /config (config.get) returns configManager.getAll() verbatim,
- * a plain structuredClone with NO field-level redaction anywhere in the daemon
- * (packages/sdk/src/platform/config/manager.ts). Provider API keys are NOT part
- * of this object (they live in the separate SecretsManager store, resolved
- * through api-keys.ts), but several config values ARE plain, secret-shaped
- * strings the daemon config object carries directly: Slack/Discord/Telegram/
- * WhatsApp/Matrix/etc bot tokens and signing/webhook secrets
- * (schema-domain-surfaces.ts), mail and calendar passwords and secret
- * references (schema-domain-daemon-mailbox.ts,
- * DAEMON_OWNED_NON_SCHEMA_CONFIG_PATHS in config-ownership.ts), the cluster
- * coordination phrase and key material, and Cloudflare provisioning tokens
- * (schema-domain-runtime.ts). A web settings surface reading config.get must
- * never render any of those verbatim.
- *
- * DECLARED LIST IS PRIMARY, NOT A NAMING HEURISTIC. This module used to decide
- * "is this a secret?" mostly by pattern-matching the key's last dot-segment
- * against /(token|secret|password|apikey|api_key)$/i, with the curated list as
- * a secondary top-up. That is backwards, and it is a real defect rather than a
- * style preference: a sibling round found the identical suffix-matching shape
- * in the agent's support-bundle redactor, and it matched NONE of `cardNumber`,
- * `cardExpiry`, `cardholderName`, fields that are obviously sensitive to a
- * person but carry no "token/secret/password" word anywhere in their name. The
- * same blind spot exists here: `cloudflare.apiTokenRef` ends in "Ref", not
- * "token"/"secret"/"password", so the suffix pattern let it through; so did
- * `calendar.google.icsUrl` (a private calendar feed URL that grants read
- * access to anyone holding it, config-ownership.ts treats it as a credential
- * for exactly that reason) and `cluster.groupMaterial` (literal key material).
- * A key that merely LOOKS naming-convention-compliant is not the same thing as
- * a key a person has actually decided is safe to show, only enumeration does
- * that.
- *
- * So the order of authority is now:
- *   1. SECRET_CONFIG_KEYS, the declared, enumerated set below. This is the
- *      thing that actually decides "mask this." It carries every mail/calendar
- *      credential and secret-reference, every `surfaces.<channel>.*` token or
- *      secret-shaped field (including surfaces.telephony's, previously
- *      missing), the Cloudflare provisioning tokens, and the cluster
- *      coordination secret/key material, and any payments/card field this
- *      repo defines (none exist in the current schema; see
- *      config-redaction.test.ts for the scan that would catch one arriving
- *      undeclared, to the extent a naming scan can).
- *   2. SECRET_KEY_SUFFIX, kept as an ADDITIONAL safety net, not the decision
- *      maker: a key the declared list has not caught up to yet, but whose last
- *      segment still looks secret-shaped, is also masked. This can never
- *      UNDER-mask relative to declared-list-only; it only ever adds more
- *      masking.
- *   3. Neither is a promise of completeness for a case the brief itself names:
- *      a field whose CONTENT is sensitive but whose NAME carries no signal at
- *      all (card numbers, expiry, cardholder name) cannot be caught by any
- *      naming scan, declared or heuristic. config-redaction.test.ts runs a
- *      broad, test-only content scan (keyword search anywhere in the dotted
- *      key, not just the last segment) over every real schema key and every
- *      daemon-owned non-schema path, and fails the moment one matches that
- *      broad net without being in SECRET_CONFIG_KEYS, so a new field that
- *      merely CONTAINS "secret"/"token"/"password"/"credential" anywhere is
- *      reported by a test rather than silently rendered. A field with no
- *      naming signal whatsoever is the one class this cannot catch
- *      automatically; there is no such field in this repo's schema today.
- */
-import { asRecord } from './object';
+/** Config display uses canonical declarations. Unknown keys are masked until a current key-name reading settles. No value is sent for interpretation. */
+import { asRecord } from "./object";
+import {
+  SECRET_BEARING_CONFIG_PATHS,
+  isSecretBearingConfigKey,
+} from "@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs";
+import { CONFIG_SCHEMA_ENTRIES } from "./generated/config-schema";
 
-/**
- * The declared, enumerated set of config keys that hold secret-shaped values.
- * This is the PRIMARY classifier, SECRET_KEY_SUFFIX below is an additional
- * safety net, not a substitute for naming a key here.
- */
-export const SECRET_CONFIG_KEYS: ReadonlySet<string> = new Set([
-  // Chat/notification surface tokens and signing secrets, ported from
-  // goodvibes-tui's src/config/secret-config.ts SECRET_CONFIG_KEYS.
-  'surfaces.slack.signingSecret',
-  'surfaces.slack.botToken',
-  'surfaces.slack.appToken',
-  'surfaces.discord.botToken',
-  'surfaces.ntfy.token',
-  'surfaces.webhook.secret',
-  'surfaces.homeassistant.accessToken',
-  'surfaces.homeassistant.webhookSecret',
-  'surfaces.telegram.botToken',
-  'surfaces.telegram.webhookSecret',
-  'surfaces.googleChat.verificationToken',
-  'surfaces.signal.token',
-  'surfaces.whatsapp.accessToken',
-  'surfaces.whatsapp.verifyToken',
-  'surfaces.whatsapp.signingSecret',
-  'surfaces.imessage.token',
-  'surfaces.msteams.appPassword',
-  'surfaces.bluebubbles.password',
-  'surfaces.mattermost.botToken',
-  'surfaces.matrix.accessToken',
-  // Telephony surface, confirmed gap: schema-domain-surfaces.ts defines these
-  // three, none of which were in the TUI's ported list or caught by name alone
-  // once considered as a set rather than case-by-case.
-  'surfaces.telephony.token',
-  'surfaces.telephony.authToken',
-  'surfaces.telephony.webhookSecret',
-  // Mail and calendar credentials, schema-domain-daemon-mailbox.ts.
-  'surfaces.email.password',
-  'surfaces.email.imapPassword',
-  'surfaces.email.imap.password',
-  'surfaces.email.smtp.password',
-  'surfaces.calendar.caldavPassword',
-  // Mail/calendar secret references and the credential-shaped calendar feed
-  // URL, DAEMON_OWNED_NON_SCHEMA_CONFIG_PATHS in the SDK's config-ownership.ts
-  // (app-layer paths, not CONFIG_SCHEMA scalars, so they never showed up in
-  // any suffix scan over the schema).
-  'email.passwordRef',
-  // Arrived with the 1.19.1 SDK, which split the single mail password reference
-  // into an IMAP one and this SMTP one. Caught by the content scan in
-  // config-redaction.test.ts rather than by anyone noticing, which is what that
-  // scan is for. Undeclared, it would have rendered the operator's outgoing-mail
-  // credential reference verbatim in the settings surface.
-  'email.smtpPasswordRef',
-  'calendar.google.clientSecretRef',
-  'calendar.microsoft.clientSecretRef',
-  'calendar.google.icsUrl',
-  'google.oauth.refreshToken',
-  // Cluster coordination, cluster.secret is the shared signing phrase;
-  // cluster.groupMaterial is literal key material (config-ownership.ts calls
-  // it exactly that). cluster.secret already happened to match the old suffix
-  // pattern; cluster.groupMaterial did not.
-  'cluster.secret',
-  'cluster.groupMaterial',
-  // Cloudflare provisioning tokens, schema-domain-runtime.ts. Every one of
-  // these ends in "...Ref" (a reference into the secret store), not
-  // "token"/"secret"/"password", so the old suffix-only heuristic masked none
-  // of them. Deliberately NOT here: cloudflare.accessServiceTokenId (the
-  // resource id, not the secret value, same shape as calendar.google.clientId)
-  // and cloudflare.secretsStoreName/secretsStoreId (which store to use, not a
-  // secret itself).
-  'cloudflare.apiTokenRef',
-  'cloudflare.workerTokenRef',
-  'cloudflare.workerClientTokenRef',
-  'cloudflare.tunnelTokenRef',
-  'cloudflare.accessServiceTokenRef',
-]);
-
-/**
- * Additional safety net: the key's last dot-segment looks secret-shaped. Never
- * the decision-maker (see the module header), a key that needs masking
- * belongs in SECRET_CONFIG_KEYS above; this only ever adds masking on top of
- * that, for a key the declared list has not caught up to yet.
- */
-const SECRET_KEY_SUFFIX = /(token|secret|password|apikey|api_key)$/i;
-
+export const SECRET_CONFIG_KEYS: ReadonlySet<string> = new Set(SECRET_BEARING_CONFIG_PATHS);
+const SCHEMA_KEYS = new Set(CONFIG_SCHEMA_ENTRIES.map((entry) => entry.key));
+/** Exact schema facts remain structural; undeclared live keys have no display authorization. */
 export function isSecretConfigKey(key: string): boolean {
-  if (SECRET_CONFIG_KEYS.has(key)) return true;
-  const lastSegment = key.split('.').pop() ?? key;
-  return SECRET_KEY_SUFFIX.test(lastSegment);
+  return isSecretBearingConfigKey(key) || !SCHEMA_KEYS.has(key);
 }
-
-/** Mask a secret string the same shape the TUI uses: keep the last 4 chars, star the rest. */
+export function isUnresolvedConfigKey(key: string): boolean {
+  return !isSecretBearingConfigKey(key) && !SCHEMA_KEYS.has(key);
+}
+/** Mask a declared secret string, preserving the existing four-character hint. */
 export function maskSecretValue(value: string): string {
-  if (value.length === 0) return '(empty)';
-  if (value.length <= 4) return '••••';
-  return `${'•'.repeat(Math.min(12, Math.max(4, value.length - 4)))}${value.slice(-4)}`;
+  if (value.length === 0) return "(empty)";
+  if (value.length <= 4) return "••••";
+  return `${"•".repeat(Math.min(12, Math.max(4, value.length - 4)))}${value.slice(-4)}`;
 }
 
-/** Render a config value for display, masking it first if the key is secret-shaped. */
-export function displayConfigValue(key: string, value: unknown): string {
-  if (value === null || value === undefined) return '(unset)';
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'string') {
-    if (value === '') return '(empty)';
-    return isSecretConfigKey(key) ? maskSecretValue(value) : value;
+/** Render a config value for display, masking declared secrets and unresolved names. */
+export function displayConfigValue(key: string, value: unknown, cleared = false): string {
+  if (isUnresolvedConfigKey(key) && !cleared) return "••••";
+  if (
+    isSecretBearingConfigKey(key) &&
+    typeof value !== "string" &&
+    value !== null &&
+    value !== undefined
+  )
+    return "••••";
+  if (value === null || value === undefined) return "(unset)";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") {
+    if (value === "") return "(empty)";
+    return isSecretBearingConfigKey(key) ? maskSecretValue(value) : value;
   }
-  if (typeof value === 'number') return String(value);
+  if (typeof value === "number") return String(value);
   try {
-    return JSON.stringify(value) ?? '(unrepresentable)';
+    return JSON.stringify(value) ?? "(unrepresentable)";
   } catch {
-    return '(unrepresentable)';
+    return "(unrepresentable)";
   }
 }
 
@@ -272,8 +144,9 @@ export interface ConfigEntry {
 }
 
 /** Flatten a nested config object into dotted-key rows, deepest values only
- *  (objects are descended, not shown as a row themselves, arrays are treated
- *  as leaf values). Mirrors the dotted config-key shape config.set expects. */
+ *  (objects are descended except at declared secret paths; arrays are leaves).
+ *  A secret object remains one protected row, never clearable child names.
+ *  Mirrors the dotted config-key shape config.set expects. */
 export function flattenConfig(value: unknown, prefix = ''): ConfigEntry[] {
   const record = asRecord(value);
   const keys = Object.keys(record);
@@ -284,7 +157,7 @@ export function flattenConfig(value: unknown, prefix = ''): ConfigEntry[] {
     const fullKey = prefix ? `${prefix}.${key}` : key;
     const item = record[key];
     const isPlainObject = item !== null && typeof item === 'object' && !Array.isArray(item);
-    if (isPlainObject) {
+    if (isPlainObject && !SECRET_CONFIG_KEYS.has(fullKey)) {
       entries.push(...flattenConfig(item, fullKey));
     } else {
       entries.push({ key: fullKey, value: item, category: categoryLabelForKey(fullKey) });

@@ -29,6 +29,7 @@ let serveRunResult: { receipt: { at: number; command: string; ok: boolean; url?:
 };
 
 mock.module('../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   // Not called by anything TailscaleSettings renders, but src/lib/queries.ts (imported
   // for queryKeys) statically imports these two names from this module, they must
   // resolve or the import itself fails before any test runs (same gotcha

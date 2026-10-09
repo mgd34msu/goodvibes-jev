@@ -1,4 +1,4 @@
-import { BROWSER_JUDGMENT_PATH } from '@goodvibes-jev/engine/daemon-sdk';
+import { BROWSER_JUDGMENT_PATH, WEBUI_CODE_LANGUAGES } from '@goodvibes-jev/engine/daemon-sdk';
 import { methodDescriptor, objectSchema, arraySchema, STRING_SCHEMA, NUMBER_SCHEMA, BOOLEAN_SCHEMA } from './method-catalog-shared.js';
 
 const literal = (value: string | number) => ({ type: typeof value, enum: [value] });
@@ -24,6 +24,10 @@ const inputs = [
     registryVersion: ref, candidates: { ...arraySchema(candidate), minItems: 1, maxItems: 64 },
   }, ['query', 'registryVersion', 'candidates'])],
   ['webui.mail.reply-subject', objectSchema({ subjectRef: ref }, ['subjectRef'])],
+  ['webui.pwa.install-platform', objectSchema({ userAgent: { type: 'string', minLength: 1, maxLength: 2048 }, platform: { type: 'string', maxLength: 128 }, maxTouchPoints: { type: 'integer', minimum: 0, maximum: 256 } }, ['userAgent', 'platform', 'maxTouchPoints'])],
+  ['webui.credentials.provider-key', objectSchema({ providerId: { type: 'string', minLength: 1, maxLength: 128 }, keys: { ...arraySchema(ref), minItems: 1, maxItems: 64 } }, ['providerId', 'keys'])],
+  ['webui.config.credential-key', objectSchema({ keys: { ...arraySchema(ref), minItems: 1, maxItems: 64 } }, ['keys'])],
+  ['webui.code.language', objectSchema({ sessionId: ref, messageId: ref, start: { type: 'integer', minimum: 0 }, end: { type: 'integer', minimum: 1, maximum: 1_000_000 }, contentDigest: { type: 'string', pattern: '^[0-9a-f]{64}$' } }, ['sessionId', 'messageId', 'start', 'end', 'contentDigest'])],
 ] as const;
 const envelope = (battery: string, input: Record<string, unknown>) => objectSchema({
   protocolVersion: literal(1), requestId: { ...STRING_SCHEMA, format: 'uuid' }, battery: literal(battery), batteryVersion: literal(1), input,
@@ -46,6 +50,10 @@ const values = [
   ] },
   objectSchema({ registryVersion: ref, accepted: arraySchema(objectSchema({ candidateIndex: { type: 'number', minimum: 0, maximum: 63 }, probability: p }, ['candidateIndex', 'probability'])), rejected: arraySchema({ type: 'number', minimum: 0, maximum: 63 }) }, ['registryVersion', 'accepted', 'rejected']),
   objectSchema({ alreadyReply: BOOLEAN_SCHEMA }, ['alreadyReply']),
+  objectSchema({ platform: { type: 'string', enum: ['ios-share-menu', 'other'] } }, ['platform']),
+  objectSchema({ matches: arraySchema(BOOLEAN_SCHEMA) }, ['matches']),
+  objectSchema({ matches: arraySchema(BOOLEAN_SCHEMA) }, ['matches']),
+  objectSchema({ language: { type: 'string', enum: [...WEBUI_CODE_LANGUAGES] } }, ['language']),
 ];
 const output = (battery: string, value: Record<string, unknown>) => {
   const structural: Record<string, Record<string, unknown>> = battery === 'webui.errors.daemon-refusal'

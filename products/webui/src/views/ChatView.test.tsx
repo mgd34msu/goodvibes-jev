@@ -43,6 +43,7 @@ const streamMock = mock((sessionId: string, options: StreamCall['options']) => {
 });
 
 mock.module('../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   DEFAULT_SSE_RECONNECT: { enabled: true, baseDelayMs: 1_000, maxDelayMs: 30_000, backoffFactor: 2, maxAttempts: 10 },
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),

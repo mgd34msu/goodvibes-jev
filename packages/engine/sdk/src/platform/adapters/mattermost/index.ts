@@ -121,7 +121,7 @@ export async function handleMattermostSurfaceWebhook(req: Request, context: Surf
     });
   }
 
-  const controlCommand = context.parseSurfaceControlCommand(task);
+  const controlCommand = await context.parseSurfaceControlCommand(task, { signal: req.signal });
   if (controlCommand) {
     const message = await context.performSurfaceControlCommand(controlCommand);
     return Response.json({ ok: true, acknowledged: true, message });

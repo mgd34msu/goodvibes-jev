@@ -98,6 +98,7 @@ function buildHarness(
       getSession: (id: string) => (id === session.id ? session : undefined),
     },
     channelPolicy: {
+      preflightIngress: async () => ({ allowed: true, reason: 'ok', policy: { allowlistUserIds: [] } }),
       evaluateIngress: async () => ({ allowed: true, reason: 'ok', policy: { allowlistUserIds: [] } }),
     },
     controlPlaneGateway: {},

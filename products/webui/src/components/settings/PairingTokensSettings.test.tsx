@@ -27,6 +27,7 @@ let listData: { tokens: { id: string; name: string; createdAt: number; lastSeenA
 };
 
 mock.module('../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   setExplicitAuthToken: (token: string) => {

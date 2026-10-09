@@ -1,5 +1,9 @@
 # WebUI acceptance reconciliation
 
+The [integrated semantic-caller follow-on](webui-semantic-integration-20261009.md)
+records subsequent source implementation and its browser-execution limit.
+The baseline accounting below remains attached to its original SHA.
+
 Historical checkpoint: 2026-10-05, merged main
 `1941b66e59822f98864474dda198bb86dd1443d1` (tree
 `a4648cde33bc703301d23678727d50196556a59a`).
@@ -8,7 +12,18 @@ remains **In Progress** and [migration.json](../../products/webui/migration.json
 remains **partial**. This is an evidence reconciliation, not a new feature gate
 or a declaration of full product parity.
 
-## Current accounting checkpoint (2026-10-08)
+## Source-accounting checkpoint (2026-10-09)
+
+The [full source/caller/test register](webui-source-accounting.md) audits
+`f0d7d07cbda54ea6ba33952e77041a792f34d055` against the same authorized upstream.
+All 666 original locations now have mappings, with the seven authorized DROP
+reasons unchanged. The 62 semantic rows and 209 retained PORT test files have
+explicit source/test accounting. This is not a new execution receipt: semantic
+reader gaps, legacy display equivalence and final acceptance remain open;
+`migration.json` remains partial. PR195 presets/Mail are merged deliveries;
+publication-pending sections below describe historical local checkpoints.
+
+## Historical accounting checkpoint (2026-10-08)
 
 Reviewed source: merged main `dfe395031e14542ac21d35fb89336886fbdacffd`.
 The historical counts below remain attached to their original SHA. That

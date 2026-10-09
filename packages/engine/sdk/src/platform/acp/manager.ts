@@ -1,3 +1,7 @@
+import { captureAutonomousSource } from '../permissions/autonomous.js';
+import { autonomousSourceRevision } from '../permissions/autonomous-protocol-binding.js';
+import { currentExternalOperationSource } from '../permissions/external-operation-scope.js';
+import type { ExternalPermissionHost, ExternalOperationSource } from '../permissions/external-request.js';
 /**
  * AcpManager, Manages the lifecycle of all subagent ACP connections.
  *
@@ -43,16 +47,19 @@ export class AcpManager {
   private connections = new Map<string, AcpConnection>();
   private pending = new Map<string, Promise<SubagentResult>>();
   private agentCmd: string[];
+  private readonly permissionHost: ExternalPermissionHost | undefined;
   private readonly requestPermission?: PermissionRequestHandler | undefined;
   private readonly runtimeBus: RuntimeEventBus | null;
   private readonly hookDispatcher: Pick<HookDispatcher, 'fire'> | null;
 
   constructor(options: {
+    readonly permissionHost?: ExternalPermissionHost;
     readonly requestPermission?: PermissionRequestHandler | undefined;
     readonly runtimeBus?: RuntimeEventBus | null | undefined;
     readonly hookDispatcher?: Pick<HookDispatcher, 'fire'> | null | undefined;
   } = {}) {
     this.agentCmd = resolveAgentCommand();
+    this.permissionHost = options.permissionHost;
     this.requestPermission = options.requestPermission;
     this.runtimeBus = options.runtimeBus ?? null;
     this.hookDispatcher = options.hookDispatcher ?? null;
@@ -62,7 +69,15 @@ export class AcpManager {
    * Spawn a new subagent and start running the task.
    * Returns the subagent ID immediately; the task runs in the background.
    */
-  async spawn(task: SubagentTask): Promise<string> {
+  async spawn(task: SubagentTask, operation: ExternalOperationSource | undefined = currentExternalOperationSource()): Promise<string> {
+    operation?.signal?.throwIfAborted(); operation?.assertCurrent();
+    const source = operation ? captureAutonomousSource(operation.sourceOf()) : undefined;
+    const sourceRevision = source ? autonomousSourceRevision(source) : undefined;
+    const assertOperationCurrent = () => {
+      operation?.signal?.throwIfAborted(); operation?.assertCurrent();
+      if (operation && autonomousSourceRevision(captureAutonomousSource(operation.sourceOf())) !== sourceRevision) throw new Error('ACP originating source changed');
+    };
+    const ownedOperation = operation && source ? { ...operation, assertCurrent: assertOperationCurrent, sourceOf: () => { assertOperationCurrent(); return source; } } : undefined;
     const id = randomUUID();
     const conn = new AcpConnection(
       id,
@@ -71,6 +86,8 @@ export class AcpManager {
       this.requestPermission,
       this.runtimeBus,
       this.hookDispatcher,
+      this.permissionHost,
+      ownedOperation,
     );
     this.connections.set(id, conn);
 

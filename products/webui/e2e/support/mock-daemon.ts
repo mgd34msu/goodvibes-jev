@@ -1,3 +1,4 @@
+import { MEMORY_REVIEW_PROBABILITIES, rankFixtureMemoryReview } from './memory-review-fixture';
 /**
  * installMockDaemon, the hermetic seam for the Playwright harness.
  *
@@ -223,6 +224,10 @@ export function createMockPairingStore(
 }
 
 export interface MockDaemonOptions {
+  /** Explicit synthetic needs_review probabilities. No production confidence cutoff is simulated. */
+  memoryReviewProbabilities?: Readonly<Record<string, number>>;
+  /** Explicit synthetic reading assigned to records created during this fixture. */
+  createdMemoryReviewProbability?: number;
   /** Seed a stored token so the app boots signed-in. Default true. */
   signedIn?: boolean;
   /** When true, close SSE streams immediately (drives reconnect/paused states). */
@@ -1127,6 +1132,7 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
   // daemon-owned single-writer store (never a second copy diverging from what the UI
   // reads back).
   let memoryRecords: MemoryRecordWire[] = SEED_MEMORY_RECORDS.map(memoryRecordWire);
+  const memoryReviewProbabilities = new Map(Object.entries(options.memoryReviewProbabilities ?? MEMORY_REVIEW_PROBABILITIES));
   let memoryIdCounter = 0;
 
   // Checkpoints (checkpoints.*): one seeded checkpoint so the phone confirm-sheet
@@ -1876,11 +1882,15 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
         updatedAt: now,
       };
       memoryRecords = [record, ...memoryRecords];
+      memoryReviewProbabilities.set(record.id, options.createdMemoryReviewProbability ?? 0.9);
       return json(route, { record });
     }
     if (path === '/api/memory/review-queue' && method === 'GET') {
       if (!memoryAvailable) return methodNotFound(route);
-      return json(route, { records: memoryRecords.filter((r) => r.confidence < 60 || r.reviewState === 'fresh') });
+      const requestedLimit = Number(url.searchParams.get('limit') ?? 10);
+      const limit = Number.isInteger(requestedLimit) && requestedLimit >= 0 ? requestedLimit : 10;
+      const records = rankFixtureMemoryReview(memoryRecords, memoryReviewProbabilities, limit);
+      return records ? json(route, { records }) : json(route, { error: 'Synthetic review reading unavailable' }, 503);
     }
     const memoryReviewMatch = path.match(/^\/api\/memory\/records\/([^/]+)\/review$/);
     if (method === 'POST' && memoryReviewMatch) {

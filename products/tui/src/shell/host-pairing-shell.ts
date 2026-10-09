@@ -35,7 +35,7 @@ export function wireHostPairingShell(options: {
       && [null, 'command'].includes(getActiveModalName(input)) && !input.searchManager.active && !input.historySearch.active,
     executeOwnerCommand: line => {
       const [name, ...args] = line.slice(1).trim().split(/\s+/);
-      void commandRegistry.executeFromOwner(name!, args, commandContext)
+      void commandRegistry.executeFromOwner(name!, args, commandContext, line)
         .catch(() => { conversation.logWrapped('Pairing replacement command failed. Preview pairing again before taking further action.'); render(); });
     },
   });
