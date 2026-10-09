@@ -49,14 +49,15 @@ export async function markGapRepairAttempt(
     readonly acceptedSourceIds?: readonly string[] | undefined;
     readonly promotedFactCount?: number | undefined;
     readonly nextRepairAttemptAt?: number | undefined;
+    readonly assertCurrent?: (() => void) | undefined;
   },
-): Promise<void> {
+): Promise<KnowledgeNodeRecord> {
   const nextRepairAttemptAt = details.nextRepairAttemptAt ?? (
     details.status === 'searched_no_sources' || details.status === 'failed' || details.status === 'deferred'
       ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS
       : undefined
   );
-  await upsertObservedKnowledgeNode(store, {
+  const committed = await upsertObservedKnowledgeNode(store, {
     id: gap.id,
     kind: gap.kind,
     slug: gap.slug,
@@ -77,12 +78,13 @@ export async function markGapRepairAttempt(
       nextRepairAttemptAt,
       knowledgeSpaceId: spaceId,
     },
-  }, 'research-task', gap, () => store.getNode(gap.id));
+  }, 'research-task', gap, () => { details.assertCurrent?.(); return store.getNode(gap.id); });
   if (details.status === 'repaired') {
     for (const issue of store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open')) {
       await resolveIssue(store, issue, spaceId, details.reason ?? 'Gap was repaired with accepted source-backed evidence.');
     }
   }
+  return committed;
 }
 
 async function resolveIssue(store: KnowledgeStore, issue: KnowledgeIssueRecord, spaceId: string, reason: string): Promise<void> {

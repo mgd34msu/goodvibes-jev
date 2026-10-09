@@ -15,8 +15,10 @@ import type {
 } from './types.js';
 import { recoverNoRepairerTasks, recoverStaleActiveTasks } from './self-improvement-recovery.js';
 import { sourceKnowledgeSpace, uniqueStrings } from './utils.js';
-import { withTimeout } from './timeouts.js';
-import { createTimeoutController } from '../../utils/fetch-with-timeout.js';
+import { runWithRepairBudget } from './self-improvement-budget.js';
+import { captureRepairFailureReader, type RepairFailureConclusion } from './self-improvement-failure.js';
+import { captureRepairFailureWrites, KnowledgeRepairFailureWriteStaleError } from './self-improvement-failure-writes.js';
+import { KnowledgeNodeActivationHeldError } from '../activation/types.js';
 import { updateRefinementTask, upsertRefinementTaskForGap } from './self-improvement-tasks.js';
 import { promoteRepairSources } from './self-improvement-promotion.js';
 import { discoverIntrinsicGaps } from './self-improvement-intrinsic-gaps.js';
@@ -363,6 +365,12 @@ async function repairCandidateGap(options: {
     return emptyRepairOutcome({ skippedGaps: 1 });
   }
   context.activeGapRepairs.add(repairKey);
+  let failureTaskSnapshot: string | undefined;
+  const failureStopped = () => options.shouldStop() || (failureTaskSnapshot !== undefined
+    && JSON.stringify(context.store.getRefinementTask(options.task.id)) !== failureTaskSnapshot);
+  const readFailure = captureRepairFailureReader({ signal: options.input.signal,
+    deadlineAt: options.startedAt + options.maxRunMs, shouldStop: failureStopped,
+    ownerStopped: () => context.shouldStop?.() === true });
   try {
     return await executeGapRepair({
       ...options,
@@ -371,40 +379,54 @@ async function repairCandidateGap(options: {
   } catch (error) {
     if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
     const reason = error instanceof Error ? error.message : String(error);
-    const nextRepairAttemptAt = isBudgetError(reason)
-      ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS
-      : undefined;
-    if (nextRepairAttemptAt) {
-      await markGapRepairAttempt(context.store, gap, spaceId, {
-        status: 'deferred',
-        reason,
-        nextRepairAttemptAt,
-      });
-      await updateRefinementTask(context.store, options.task, 'blocked', 'Repair was deferred after exhausting the current run budget.', {
-        retryable: true,
-        nextRepairAttemptAt,
-        error: reason,
-      });
-      return emptyRepairOutcome({
-        repairableGaps: 1,
-        queuedTasks: 1,
-        blockedGaps: 1,
-        nextRepairAttemptAt,
-        errors: [{ gapId: gap.id, error: reason }],
-      });
-    }
-    await updateRefinementTask(context.store, options.task, 'failed', reason);
-    await markGapRepairAttempt(context.store, gap, spaceId, {
-      status: 'failed',
-      reason,
-    });
-    return emptyRepairOutcome({
-      repairableGaps: 1,
-      queuedTasks: 1,
-      errors: [{ gapId: gap.id, error: reason }],
-    });
+    // Classification introduces a yield after execution failed. A newer attempt
+    // of this same nonterminal task must not inherit the old failure's decision.
+    const failureTask = context.store.getRefinementTask(options.task.id);
+    if (!failureTask) return emptyRepairOutcome({ skippedGaps: 1 });
+    failureTaskSnapshot = JSON.stringify(failureTask);
+    const failure = await readFailure(error);
+    if (options.shouldStop() || !failure.isCurrent()) return emptyRepairOutcome({ skippedGaps: 1 });
+    return await persistGapRepairFailure(context, gap, failureTask, spaceId, reason, failure);
   } finally {
     context.activeGapRepairs.delete(repairKey);
+  }
+}
+
+async function persistGapRepairFailure(context: SelfImproveContext, gap: KnowledgeNodeRecord,
+  task: KnowledgeRefinementTaskRecord, spaceId: string, reason: string,
+  failure: RepairFailureConclusion): Promise<GapRepairOutcome> {
+  const owner = captureRepairFailureWrites(context.store, gap, task, failure.isOwnerCurrent);
+  const { isCurrent: _isCurrent, isOwnerCurrent: _isOwnerCurrent, ...failureCause } = failure;
+  const nextRepairAttemptAt = (failure.cause === 'run_budget' || failure.cause === 'request_timeout')
+    ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS : undefined;
+  try {
+    owner.assertCurrent();
+    if (nextRepairAttemptAt) {
+      owner.acceptGap(await markGapRepairAttempt(context.store, gap, spaceId, {
+        status: 'deferred', reason, nextRepairAttemptAt, assertCurrent: owner.assertCurrent,
+      }));
+      owner.acceptTask(await updateRefinementTask(context.store, task, 'blocked', failure.cause === 'run_budget'
+        ? 'Repair was deferred after exhausting the current run budget.'
+        : 'Repair was deferred after a request timed out.', {
+        failureCause, retryable: true, nextRepairAttemptAt, error: reason,
+      }, owner.assertCurrent));
+      owner.assertCurrent();
+      return emptyRepairOutcome({ repairableGaps: 1, queuedTasks: 1, blockedGaps: 1,
+        nextRepairAttemptAt, errors: [{ gapId: gap.id, error: reason }] });
+    }
+    owner.acceptTask(await updateRefinementTask(context.store, task, 'failed', reason,
+      { failureCause }, owner.assertCurrent));
+    owner.acceptGap(await markGapRepairAttempt(context.store, gap, spaceId, {
+      status: 'failed', reason, assertCurrent: owner.assertCurrent,
+    }));
+    owner.assertCurrent();
+    return emptyRepairOutcome({ repairableGaps: 1, queuedTasks: 1, errors: [{ gapId: gap.id, error: reason }] });
+  } catch (error) {
+    if (error instanceof KnowledgeRepairFailureWriteStaleError
+      || (error instanceof KnowledgeNodeActivationHeldError && (error.reason === 'stale' || error.reason === 'aborted'))) {
+      return emptyRepairOutcome({ skippedGaps: 1 });
+    }
+    throw error;
   }
 }
 
@@ -464,22 +486,17 @@ async function runGapRepairerWithBudget(input: {
   readonly remainingMs: number;
 }): Promise<GapRepairerResult> {
   const { input: runInput, spaceId, gap, gapContext, gapRepairer, remainingMs } = input;
-  const budget = createTimeoutController(remainingMs, runInput.signal);
-  try {
-    return await withTimeout(gapRepairer({
-      spaceId,
-      query: gap.title,
-      gaps: [gap],
-      sources: gapContext.sources,
-      linkedObjects: gapContext.linkedObjects,
-      facts: gapContext.facts,
-      maxSources: 5,
-      deadlineAt: Date.now() + remainingMs,
-      signal: budget.signal,
-    }), remainingMs, 'Semantic gap repair exceeded its run budget.');
-  } finally {
-    budget.dispose();
-  }
+  return runWithRepairBudget((signal) => gapRepairer({
+    spaceId,
+    query: gap.title,
+    gaps: [gap],
+    sources: gapContext.sources,
+    linkedObjects: gapContext.linkedObjects,
+    facts: gapContext.facts,
+    maxSources: 5,
+    deadlineAt: Date.now() + remainingMs,
+    signal,
+  }), remainingMs, runInput.signal);
 }
 
 async function recordGapRepairAssessment(
@@ -612,8 +629,4 @@ function resolveSelfImproveSpace(store: KnowledgeStore, input: KnowledgeSemantic
   if (firstSource) return sourceKnowledgeSpace(firstSource);
   const firstGap = input.gapIds?.map((id) => store.getNode(id)).find((node): node is KnowledgeNodeRecord => Boolean(node));
   return normalizeKnowledgeSpaceId(firstGap ? getKnowledgeSpaceId(firstGap) : undefined);
-}
-
-function isBudgetError(message: string): boolean {
-  return /\b(timeout|timed out|budget|deadline|exceeded)\b/i.test(message);
 }
