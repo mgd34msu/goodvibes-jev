@@ -9,19 +9,19 @@
 import { authedRequest } from './calendar-api-shared.js';
 import { normalizeGoogleEvent } from './merged-calendar-model.js';
 import type { EventDateTime } from './types.js';
-import type { HttpFetch, MergedCalendarEvent, NewCalendarEvent, ProviderCalendar } from './oauth-types.js';
+import type { CalendarRequestOptions, HttpFetch, MergedCalendarEvent, NewCalendarEvent, ProviderCalendar } from './oauth-types.js';
 
 const BASE = 'https://www.googleapis.com/calendar/v3';
 
 /** List the user's calendars. Write access is inferred from accessRole. */
-export async function listGoogleCalendars(fetchImpl: HttpFetch, token: string): Promise<ProviderCalendar[]> {
+export async function listGoogleCalendars(fetchImpl: HttpFetch, token: string, options: CalendarRequestOptions = {}): Promise<ProviderCalendar[]> {
   const out: ProviderCalendar[] = [];
   let pageToken: string | undefined;
   do {
     const url = new URL(`${BASE}/users/me/calendarList`);
     url.searchParams.set('maxResults', '250');
     if (pageToken) url.searchParams.set('pageToken', pageToken);
-    const body = (await authedRequest(fetchImpl, 'google', { url: url.toString(), method: 'GET', token })) as {
+    const body = (await authedRequest(fetchImpl, 'google', { url: url.toString(), method: 'GET', token }, options)) as {
       items?: unknown[];
       nextPageToken?: unknown;
     };
@@ -58,6 +58,7 @@ export async function listGoogleEvents(
   fetchImpl: HttpFetch,
   token: string,
   query: GoogleEventsQuery,
+  options: CalendarRequestOptions = {},
 ): Promise<MergedCalendarEvent[]> {
   const out: MergedCalendarEvent[] = [];
   let pageToken: string | undefined;
@@ -69,7 +70,7 @@ export async function listGoogleEvents(
     url.searchParams.set('orderBy', 'startTime');
     url.searchParams.set('maxResults', String(query.pageSize ?? 250));
     if (pageToken) url.searchParams.set('pageToken', pageToken);
-    const body = (await authedRequest(fetchImpl, 'google', { url: url.toString(), method: 'GET', token })) as {
+    const body = (await authedRequest(fetchImpl, 'google', { url: url.toString(), method: 'GET', token }, options)) as {
       items?: unknown[];
       nextPageToken?: unknown;
     };
@@ -91,6 +92,7 @@ export async function createGoogleEvent(
   calendarId: string,
   calendarLabel: string,
   event: NewCalendarEvent,
+  options: CalendarRequestOptions = {},
 ): Promise<MergedCalendarEvent> {
   const payload: Record<string, unknown> = {
     summary: event.summary,
@@ -100,7 +102,7 @@ export async function createGoogleEvent(
     ...(event.description ? { description: event.description } : {}),
   };
   const url = `${BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
-  const created = await authedRequest(fetchImpl, 'google', { url, method: 'POST', token, body: payload });
+  const created = await authedRequest(fetchImpl, 'google', { url, method: 'POST', token, body: payload }, options);
   const normalized = normalizeGoogleEvent(created, calendarId, calendarLabel);
   if (!normalized) throw new Error('Google accepted the event but returned an unreadable body.');
   return normalized;

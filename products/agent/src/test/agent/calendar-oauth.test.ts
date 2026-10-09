@@ -368,3 +368,38 @@ describe('calendar connect/disconnect/accounts commands', () => {
     expect(out).not.toBe('Usage: /calendar connect <google|outlook> [--device]');
   });
 });
+
+describe('calendar OAuth service permission reading', () => {
+  test('the real service/connector propagates an exact Jev permission and owned cancellation', async () => {
+    const { CalendarConnector, CalendarTokenStore, providerProfile, resolveClientConfig } = await import('@goodvibes-jev/engine/sdk/platform/calendar');
+    const { installJudgmentPort } = await import('@goodvibes-jev/engine/errors');
+    const { fakePort, choiceAnswer, noulAnswer } = await import('@goodvibes-jev/judgment/testing');
+    const fake = fakePort((name, question, state) => {
+      const id = (state as { tokens: { id: string; text: string }[] }).tokens.find((token) => token.text === 'calendar.events.readonly')!.id;
+      return name === 'pick' ? choiceAnswer(question, id, 0.98) : noulAnswer(name === `fits_${id}` ? 0.98 : 0.02);
+    });
+    const previous = installJudgmentPort(fake.port);
+    try {
+      const secrets = memorySecrets();
+      await new CalendarTokenStore({ secrets }).save('google', { accessToken: 'synthetic-calendar-token', tokenType: 'Bearer', expiresAt: Date.now() + 3_600_000, obtainedAt: Date.now() },
+        { provider: 'google', accountId: 'google', label: 'Fixture', scopes: [], connectedAt: Date.now() });
+      let calls = 0;
+      const connector = new CalendarConnector({ secrets, fetchImpl: async () => {
+        calls++;
+        return { status: 403, ok: false, header: () => null, text: async () => 'calendar.events.readonly is missing for this request.', json: async () => ({}) };
+      } });
+      const service = new CalendarOAuthService({ config: mapConfig(), secrets, connector });
+      const config = resolveClientConfig(providerProfile('google'), { clientId: 'synthetic-client' });
+      const window = { timeMin: '2026-07-01T00:00:00Z', timeMax: '2026-08-01T00:00:00Z' };
+      const controller = new AbortController();
+      await expect(service.listEventsForProvider(config, window, { signal: controller.signal }))
+        .rejects.toMatchObject({ degraded: { kind: 'insufficient-scope', missingScope: 'calendar.events.readonly' } });
+      expect(fake.requests).toHaveLength(1);
+      expect(fake.requests[0]?.signal).toBe(controller.signal);
+      expect(JSON.stringify(fake.requests[0]?.state)).not.toContain('synthetic-calendar-token');
+      controller.abort();
+      await expect(service.listEvents(window, { signal: controller.signal })).rejects.toThrow();
+      expect(calls).toBe(1);
+    } finally { installJudgmentPort(previous); }
+  });
+});

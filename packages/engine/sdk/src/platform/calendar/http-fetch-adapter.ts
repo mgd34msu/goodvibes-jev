@@ -12,6 +12,7 @@ type FetchLike = (url: string, init?: {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  signal?: AbortSignal;
 }) => Promise<{
   status: number;
   ok: boolean;
@@ -26,6 +27,7 @@ export function fetchAdapter(fetchImpl?: FetchLike): HttpFetch {
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const res = await impl(req.url, {
       method: req.method,
+      ...(req.signal ? { signal: req.signal } : {}),
       ...(req.headers ? { headers: { ...req.headers } } : {}),
       ...(req.body !== undefined ? { body: req.body } : {}),
     });

@@ -164,6 +164,7 @@ export { fetchAdapter } from './http-fetch-adapter.js';
 
 export type {
   CalendarProviderId,
+  CalendarRequestOptions,
   CalendarSource,
   OAuthProviderProfile,
   OAuthClientOverrides,
@@ -185,3 +186,5 @@ export type {
   NewCalendarEvent,
   ConnectedAccount,
 } from './oauth-types.js';
+
+export { CalendarScopeReadingError } from './batteries/missing-permission.js';
