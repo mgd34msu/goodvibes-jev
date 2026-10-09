@@ -735,7 +735,453 @@
       "targets": [
         "products/daemon/src/test/scripts/release-prepare.test.ts"
       ]
+    },
+    {
+      "source": "src/test/daemon/sqlite-store-recovery.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-handler-sqlite-recovery.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/sqlite-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/state/daemon-handler-sqlite-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/aggregator.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/aggregator.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/cursor-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/cursor-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/poller.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/poller.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/provider-adapter.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/provider-adapter.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/providers/discord.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/providers/discord.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/providers/slack.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/providers/slack.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/inbox/cursor-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-inbox-cursor-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/inbox/poller.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-inbox-poller.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/address-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/address-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/approval-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/approval-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/budget-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/budget-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/card-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/card-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/checkout-handlers.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/checkout-handlers.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/checkout-journal-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/checkout-journal-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/index.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/notifier.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/notifier.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/purchase-ledger.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/purchase-ledger.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/payments/approval-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-approval-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/payments/budget-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-budget-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/payments/card-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-card-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/payments/checkout-journal-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-checkout-journal-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/payments/purchase-ledger.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-purchase-ledger.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/payments/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-register.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/gateway-payments-verbs.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/payments-host-gateway-verbs.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/routing/inbox-bridge.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-routing/inbox-bridge.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/routing/route-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-routing/route-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/routing/routing-resolver.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-routing/routing-resolver.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/routing/route-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-channel-route-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/routing/routing-resolver.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-channel-routing-resolver.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/cloud-terminal.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/cloud-terminal.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/docker.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/docker.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/index.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/local-process.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/local-process.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/process-runner.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/process-runner.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/ssh.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/ssh.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/backends/types.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/backends/types.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/dispatcher.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/dispatcher.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/surface.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/peer-registry.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/peer-registry.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/remote/service.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/remote/host/service.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/remote/backends.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-remote-backends-port.test.ts",
+        "packages/engine/test/daemon-remote-process-runner.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/remote/dispatcher.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-remote-dispatcher.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/remote/index.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-remote-surface.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/remote/peer-registry.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-remote-peer-registry.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/remote/route-gating.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-remote-route-gating.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/remote/service.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-remote-service.test.ts"
+      ]
+    },
+    {
+      "source": "src/cluster/daemon-ws-call.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/terminal-shell/src/daemon-ws-call.ts"
+      ]
+    },
+    {
+      "source": "src/cluster/raw-reply-route.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/terminal-shell/src/raw-reply-route.ts"
+      ]
+    },
+    {
+      "source": "src/test/cluster/daemon-ws-call.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-cluster-ws-call.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cluster/raw-reply-route.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-cluster-raw-reply.test.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/boot-tasks.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/boot-tasks.ts",
+        "products/daemon/src/runtime/boot-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/plugin-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/plugin-composition.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/triage/scorer.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/triage/scorer.ts",
+        "packages/engine/sdk/src/platform/intake/triage/battery.ts",
+        "packages/engine/sdk/src/platform/intake/triage/evidence.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/triage/pipeline.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/triage/pipeline.ts",
+        "packages/engine/sdk/src/platform/intake/triage/store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/triage/types.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/triage/types.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/triage/scorer.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/intake-triage.test.ts",
+        "packages/engine/test/intake-triage-source-parity.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/triage/pipeline.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/intake-triage.test.ts",
+        "packages/engine/test/intake-triage-store.test.ts",
+        "packages/engine/test/intake-triage-source-parity.test.ts"
+      ]
+    },
+    {
+      "source": "scripts/hosted-session-proof.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/scripts/hosted-session-proof.mjs",
+        "products/daemon/scripts/hosted-session-protocol.mjs"
+      ]
+    },
+    {
+      "source": "src/test/daemon/send-command.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/send-command.test.ts",
+        "products/daemon/src/test/daemon/send-wire.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/send-wire.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/send-wire.test.ts",
+        "products/daemon/src/test/daemon/send-delivery.test.ts",
+        "products/daemon/src/test/daemon/send-executable.test.ts"
+      ]
     }
   ],
-  "remaining": "The executable dispatches existing command adapters and explicitly composed hosts. Bounded discovery, effective-token startup pairing, Linux native producer/consumer qualification, account-eligible clustered Slack/email owners and canonical multi-owner composition are implemented; see docs/audit/daemon-migration-status-2026-10-08.md for evidence and remaining A\u2013G acceptance criteria. The lifecycle artifact resolver and its tests are mapped without activating updates. The shipped entrypoint now composes complete Slack/Discord/email unconfigured membership with no provider polling; configured sources still require trusted local authority and a production Discord catalog. Explicit owned triage read-enrichment/scoring integration is credited to PR215; automatic service/update lifecycle policy and wiring, remaining token pruning/legacy adoption/public-URL persistence, actual compiled hosted-model/Jev proof and platform/release acceptance remain open. The partial src/daemon/cli.ts and inbox/index.ts adaptations are intentionally not marked fully migrated. This partial workspace does not satisfy migration:complete; the two release-preparation source/test rows now have explicit-input local mechanics and fixture proof (docs/audit/daemon-release-preparation.md). The other three release/compiled-hosting/toolchain rows and product release/version policy remain separately incomplete; no release or update activation is configured. Source-level fixtures and Linux artifact proof do not establish live provider/service calibration or whole-session transport bounds."
+  "remaining": "Migration remains partial. The source-accounting reconciliation in docs/audit/daemon-source-accounting-2026-10-09.md maps 165 of the 281 pinned rows; 116 remain unmapped. Completed component hoists do not establish complete product parity. The shipped entrypoint composes Slack/Discord/email unconfigured membership without provider polling; explicit account-owned Slack/email and owned triage read-enrichment/scoring exist. Configured standalone sources still need trusted local authority and a production Discord catalog. Startup token pruning, guarded legacy reconciliation and public-URL persistence now have admitted callers and fixture proof; actual service adoption remains separate. The compiled Linux hosted-model/Jev proof and original hosted CLI assertion crosswalk now pass against the hash-verified historical 0aaa artifact with verifier f1d28987; this is not a current-source native build or transitive-equivalence claim. Product update policy, authenticated artifacts and automatic lifecycle activation, supported-platform/release acceptance, live provider/service calibration and whole-session transport bounds remain open. Whole CLI, inbox/index, privacy mapping and triage integration/index/tagger surfaces are not marked fully migrated; the typed triage core and adapted original scorer/pipeline assertions are mapped separately. Local release-preparation source/test mechanics are mapped without adopting version/publication policy or activating a release. See the current source-accounting audit for precise evidence and retained obligations; original dated audits are historical checkpoints."
 }

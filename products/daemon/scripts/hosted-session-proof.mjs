@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -91,9 +91,9 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       const response = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json', Connection: 'close' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10_000) });
       const text = await response.text(); return { status: response.status, value: text ? JSON.parse(text) : null };
     }
-    async function invoke(method, body) {
+    async function invoke(method, body, expectedStatus = 200) {
       const result = await request(`/api/control-plane/methods/${method}/invoke`, { body });
-      assert.equal(result.status, 200, `${method}: ${JSON.stringify(result.value)}`); return result.value;
+      assert.equal(result.status, expectedStatus, `${method}: ${JSON.stringify(result.value)}`); return result.value;
     }
     async function start() {
       output = ''; errors = ''; childPid = undefined; exited = false;
@@ -154,11 +154,60 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       ['/api/sessions/not-an-owned-session/follow-up', { body: 'must not dispatch' }],
       ['/api/sessions/not-an-owned-session/turns/cancel', { expectedTurnId: 'must-not-cancel' }],
     ]) assert.equal((await request(path, body, 'wrong-owned-token')).status, 401);
-    const killPolicy = await invoke('sessions.hosted.create', { workspaceRoot: work, clientId: 'kill-reader', modelId: 'owned-native:owned-model', detachPolicy: 'kill' });
+    // Preserve the original compiled proof's persisted setting and precedence
+    // assertions. Exercise the public control methods, not a fixture-only API.
+    async function setDetachPolicy(policy) {
+      await invoke('config.set', { key: 'hostedSessions.detachPolicy', value: policy });
+      const settings = await invoke('config.get', { key: 'hostedSessions.detachPolicy' });
+      assert.equal(settings.hostedSessions.detachPolicy, policy);
+      assert.equal(typeof settings.hostedSessions.maxSessions, 'number');
+      assert.equal(JSON.parse(readFileSync(join(daemon, 'settings.json'), 'utf8')).hostedSessions.detachPolicy, policy);
+    }
+    await setDetachPolicy('kill');
+    const killPolicy = await invoke('sessions.hosted.create', { workspaceRoot: work, clientId: 'kill-reader', modelId: 'owned-native:owned-model' });
+    assert.equal(killPolicy.session.status, 'idle');
+    assert.equal(killPolicy.session.effectiveDetachPolicy, 'kill');
+    assert((await invoke('sessions.hosted.list', {})).sessions.some(session => session.id === killPolicy.session.id));
+    assert.equal(modelRequests.length, 0, 'lifecycle-only creation must not dispatch a model');
+    await invoke('sessions.steer', { sessionId: killPolicy.session.id, body: 'owned-original-steer' }, 202);
+    await until(async () => {
+      const value = await attach(killPolicy.session.id, 'kill-watcher');
+      return value.session.status === 'idle' && value.history.some(message => message.role === 'assistant' && message.content.includes(marker));
+    }, 'original steer assistant history');
+    assert(modelRequests.some(value => value.stream === true && value.messages.some(message => message.role === 'user' && message.content === 'owned-original-steer')));
+    const watched = await invoke('sessions.hosted.detach', { sessionId: killPolicy.session.id, clientId: 'kill-watcher' });
+    assert.equal(watched.session.status, 'idle');
+    assert.deepEqual(watched.session.attachedClients, ['kill-reader']);
     const killed = await invoke('sessions.hosted.detach', { sessionId: killPolicy.session.id, clientId: 'kill-reader' });
     assert.equal(killed.session.status, 'terminated'); assert.equal(killed.session.terminatedReason, 'detached');
-    assert.equal(modelRequests.length, 0, 'lifecycle-only create/attach/detach must not dispatch a model');
-    const created = await invoke('sessions.hosted.create', { workspaceRoot: work, clientId: 'owned-reader', modelId: 'owned-native:owned-model', detachPolicy: 'survive' });
+
+    await setDetachPolicy('survive');
+    const survivor = await invoke('sessions.hosted.create', { workspaceRoot: work, clientId: 'survive-reader', modelId: 'owned-native:owned-model' });
+    assert.equal(survivor.session.effectiveDetachPolicy, 'survive');
+    const survived = await invoke('sessions.hosted.detach', { sessionId: survivor.session.id, clientId: 'survive-reader' });
+    assert.equal(survived.session.status, 'idle'); assert.deepEqual(survived.session.attachedClients, []);
+    const reattached = await attach(survivor.session.id, 'survive-reader-2');
+    assert.equal(reattached.session.id, survivor.session.id); assert.equal(reattached.session.status, 'idle');
+    const overridden = await invoke('sessions.hosted.create', { workspaceRoot: work, clientId: 'override-reader', modelId: 'owned-native:owned-model', detachPolicy: 'kill' });
+    assert.equal(overridden.session.effectiveDetachPolicy, 'kill');
+    const overriddenAfter = await invoke('sessions.hosted.detach', { sessionId: overridden.session.id, clientId: 'override-reader' });
+    assert.equal(overriddenAfter.session.status, 'terminated'); assert.equal(overriddenAfter.session.terminatedReason, 'detached');
+    const explicit = await invoke('sessions.hosted.kill', { sessionId: survivor.session.id });
+    assert.equal(explicit.session.status, 'terminated'); assert.equal(explicit.session.terminatedReason, 'killed');
+    assert.deepEqual((await invoke('sessions.hosted.list', {})).sessions, []);
+    const terminated = (await invoke('sessions.hosted.list', { includeTerminated: true })).sessions;
+    assert(terminated.length >= 3);
+    for (const [id, reason] of [[killPolicy.session.id, 'detached'], [survivor.session.id, 'killed'], [overridden.session.id, 'detached']]) {
+      const session = terminated.find(session => session.id === id);
+      assert.equal(session?.status, 'terminated'); assert.equal(session.terminatedReason, reason);
+    }
+    const refused = await request('/api/control-plane/methods/sessions.hosted.create/invoke', { body: { workspaceRoot: 'relative/path' } });
+    assert(refused.status >= 400 && refused.status < 500, JSON.stringify(refused));
+    assert.match(JSON.stringify(refused.value), /absolute/i);
+    assert.deepEqual((await invoke('sessions.hosted.list', {})).sessions, []);
+    assert.equal(modelRequests.length, 1, 'policy, kill, list, and refused create must not dispatch a model');
+    const created = await invoke('sessions.hosted.create', { workspaceRoot: work, clientId: 'owned-reader', modelId: 'owned-native:owned-model' });
+    assert.equal(created.session.effectiveDetachPolicy, 'survive');
     const sessionId = created.session.id;
     assert.equal((await attach(sessionId)).session.id, sessionId);
     await watch(sessionId);
@@ -196,6 +245,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     for (const controller of streams) controller.abort();
     const beforeRestart = modelRequests.length;
     await shutdown(); await start();
+    assert.equal((await invoke('config.get', { key: 'hostedSessions.detachPolicy' })).hostedSessions.detachPolicy, 'survive');
     const restoredList = await invoke('sessions.hosted.list', {});
     assert(restoredList.sessions.find(session => session.id === sessionId)?.restoredFromDisk);
     const restored = await attach(sessionId);
@@ -208,7 +258,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     for (const controller of streams) controller.abort();
     await shutdown();
     await until(() => held.size === 0, 'shutdown cancels owned provider socket');
-    assert.equal(modelRequests.length, 4, 'one model request per success, cancel, failure, and shutdown turn');
+    assert.equal(modelRequests.length, 5, 'one model request per original steer, success, cancel, failure, and shutdown turn');
     await Promise.all(readers);
     assert.ifError(peerError); assert.ifError(streamError);
     assert(judgmentRequests.every(request => request.path === '/v1/systemone' && request.authorization === 'Bearer synthetic-system-one-key' && request.body.model === 'jev-1.13.0'));
@@ -224,7 +274,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     const identityCounts = {};
     for (const count of identities.values()) identityCounts[count] = (identityCounts[count] ?? 0) + 1;
     return { elapsedMs: Date.now() - startedAt, judgmentQuestionGroups: Object.fromEntries(questionGroups), judgmentUniqueIdentities: identities.size, judgmentRequestsPerIdentity: identityCounts,
-      evidence: 'synthetic-http-protocol-only; not live Jev calibration', modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, streamedDeltas: deltas.length, restartHistoryPreserved: true, cancellationSettled: true, failureObserved: true, shutdownDuringStream: true };
+      evidence: 'synthetic-http-protocol-only; not live Jev calibration', modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, streamedDeltas: deltas.length, persistedDetachPolicyPrecedence: true, originalSteerHistoryPreserved: true, lastWatcherDetachKills: true, explicitKillAndTerminatedList: true, relativeWorkspaceRefused: true, restartHistoryPreserved: true, cancellationSettled: true, failureObserved: true, shutdownDuringStream: true };
   } catch (error) {
     console.error('HOSTED FAILURE DETAILS', JSON.stringify({ output, errors, modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, events: events.filter(event => event.value.type).map(event => event.value) })); throw error;
   } finally {
