@@ -1,0 +1,3411 @@
+{
+  "schemaVersion": 1,
+  "pinnedSourceRevision": "254699bf5d834cdca41436211ada1ae32bf89258",
+  "pinnedSourceTree": "f11b13cea45cd108e50e66c6a5ae3c72c07dc048",
+  "baselineCommit": "edf6f5d8e87c81c0959e5e58348c9dce1f6d6e44",
+  "baselineMapped": 165,
+  "reviewedResidualRows": 116,
+  "additionalMapped": 25,
+  "currentMapped": 190,
+  "currentUnmapped": 91,
+  "meaning": "Every residual original row is accounted here. A mapping credits its bounded source/assertion responsibility, not deployment, policy, live calibration or whole-product completion. Target lists name canonical implementation/suite owners; proofFiles/restoredEvidence disclose additional product invocation proof. Metadata validation alone is not behavioral proof.",
+  "originalDispositionCounts": {
+    "PORT": 184,
+    "JEV": 3,
+    "HOIST": 94
+  },
+  "rows": [
+    {
+      "source": ".github/actions/setup/action.yml",
+      "originalBlob": "fb40d5e62c70e23a788ce1d447c52c6d32643390",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Install pinned Bun, restore lockfile-keyed Bun cache and run frozen dependency installation.",
+      "targets": [
+        ".github/actions/setup/action.yml"
+      ],
+      "evidence": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "detail": "Actual validate/build/product/native CI jobs use ./.github/actions/setup."
+        },
+        {
+          "file": "packages/engine/test/bun-pin-agreement.test.ts",
+          "detail": "Tests the canonical Bun pin agreement rules."
+        },
+        {
+          "file": "packages/engine/scripts/bun-pin-rule.ts",
+          "detail": "Root manifest is the Bun pin owner, including composite defaults."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "Same default Bun 1.3.14, SHA-pinned setup action, cache path/key/restore prefix and frozen install. Cache is now explicit restore plus conditional always-save rather than the combined cache action.",
+      "proofFiles": [
+        ".github/workflows/ci.yml",
+        "packages/engine/test/bun-pin-agreement.test.ts",
+        "packages/engine/scripts/bun-pin-rule.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        ".github/actions/setup/action.yml"
+      ],
+      "canonicalOwner": "workspace"
+    },
+    {
+      "source": ".github/workflows/ci.yml",
+      "originalBlob": "38e9fd36a2b0b3bea6c071d15650501d082ab6b9",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Gate daemon typecheck, tests, architecture/workflow shape, package checks and Linux compiled boot/hosted proof; tag and dispatch its release after green main CI.",
+      "targets": [
+        ".github/workflows/ci.yml"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-native-packaging.md",
+          "detail": "Documents actual daemon producer/consumer qualification and retains publication limits."
+        },
+        {
+          "file": "packages/engine/test/workflow-shape.test.ts",
+          "detail": "Asserts current producer/consumer and required-job dependency graph; not proof that legacy product release semantics exist."
+        }
+      ],
+      "remaining": [
+        "Root CI has real daemon product and native consumers, but whole-source credit would also imply the retired standalone architecture/workflow/publish gates and daemon tag/release ownership. Those are not fully replaced; root release remains separately armed and daemon publication policy open."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-native-packaging.md",
+        "packages/engine/test/workflow-shape.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": ".github/workflows/release.yml",
+      "originalBlob": "ed82cf34c7de1616a57c7bff722ee1441bb0c6ab",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "By-reference green tagged CI, four-platform daemon binaries, native/npm install smokes, flat assets/checksums, GitHub release, npm and GitHub Packages publication.",
+      "targets": [
+        ".github/workflows/release.yml",
+        "products/daemon/scripts/ci-artifact.ts",
+        "products/daemon/scripts/verify-binary.mjs"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Daemon remains private and has no publish/postinstall lane."
+        },
+        {
+          "file": "packages/engine/scripts/release-shared.ts",
+          "detail": "public packageDirs contains engine and judgment only, not daemon."
+        },
+        {
+          "file": "docs/audit/daemon-native-packaging.md",
+          "detail": "Four build targets configured; only Linux qualified; release sections deferred."
+        }
+      ],
+      "remaining": [
+        "Need explicit daemon release ownership, exact tested-artifact four-platform publication/install proof, registry and GitHub mirror decisions. Existing root release is not a daemon release successor."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "packages/engine/scripts/release-shared.ts",
+        "docs/audit/daemon-native-packaging.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": ".gitignore",
+      "originalBlob": "01ac0121e5001de54778910eabf6b94c3a8dc888",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Ignore standalone dependencies, generated native/vendor outputs, private/runtime files, test scratch, caches and local-only reports with explicit committed exceptions.",
+      "targets": [
+        "products/daemon/.gitignore",
+        ".gitignore"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/.gitignore",
+          "detail": "Only /native/ is product-local."
+        },
+        {
+          "file": ".gitignore",
+          "detail": "Root covers node_modules, dist, .goodvibes, engine scratch, Python/cache artifacts and :memory:."
+        }
+      ],
+      "remaining": [
+        "Combined current ignore rules do not preserve all original protections/exceptions, including environment/encrypted-file patterns, standalone vendor/platform-package outputs and daemon-local scratch/report patterns. Do not map the one-line native ignore as whole parity or blindly restore obsolete paths."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/.gitignore",
+        ".gitignore"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "CHANGELOG.md",
+      "originalBlob": "757d4412ee0f29439ee48de0a619166729957fef",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "Preserve historical 1.28.x standalone daemon release history; legacy release preparation consumed this history.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicitly says upstream release history is evidence, not Jev history; no synthetic release or bump."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "No product changelog created; explicit preparation requires caller-owned notes."
+        }
+      ],
+      "remaining": [
+        "No live successor is required by the existing policy, but a PORT mapping cannot claim a current changelog that does not exist. Preserve the pinned historical blob; a future product changelog requires release ownership."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/inventory/daemon.md",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "README.md",
+      "originalBlob": "704e71e90db0055f177ebdb9c60d01ee19f32d3f",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Product-over-SDK architecture and handler-family orientation, version line, public install/build/run instructions, artifact names and documentation index.",
+      "targets": [
+        "products/daemon/README.md"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/README.md",
+          "detail": "Current truthful private-workspace commands, explicit host/native packaging and release limitations are documented."
+        },
+        {
+          "file": "docs/audit/daemon-handler-assembly.md",
+          "detail": "Current engine/product handler assembly is recorded separately."
+        }
+      ],
+      "remaining": [
+        "Current README is a useful deliberate replacement overview, but it is not the full original handler-family/install/reference-document crosswalk. Public install/release instructions cannot be carried as active; full manual and product release policy remain absent."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-handler-assembly.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "bin/goodvibes-daemon",
+      "originalBlob": "147f1a00c0b5b4a4fc875ebbdd34303656fa778e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Choose supported local/vendored native executable, checksum self-heal from release, source Bun fallback and unsupported-platform refusal.",
+      "targets": [
+        "products/daemon/bin/goodvibes-daemon"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Bin points to the checked-in Bun shim."
+        },
+        {
+          "file": "products/daemon/bin/goodvibes-daemon",
+          "detail": "Actual shim only imports ../dist/cli/entrypoint.js."
+        },
+        {
+          "file": "docs/audit/daemon-cli-entrypoint.md",
+          "detail": "Documents the emitted command executable as a private Bun package."
+        }
+      ],
+      "remaining": [
+        "Native priority selection, supported-target refusal, checksum download/self-heal and fallback decision tree are absent. Do not credit these using the emitted CLI shim alone."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "products/daemon/bin/goodvibes-daemon",
+        "docs/audit/daemon-cli-entrypoint.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "bin/launcher-support.js",
+      "originalBlob": "64644dd7db082ee8a91a9ef8fccb164245910cf0",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Native/addon target-name resolution, executable/source-checkout checks, repository URL normalization and checksum-verified self-heal downloads.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "products/daemon/bin/goodvibes-daemon",
+          "detail": "Does not import support helpers or implement self-heal."
+        },
+        {
+          "file": "products/daemon/toolchain.config.json",
+          "detail": "Build artifact names exist, but build configuration is not the download/install helper contract."
+        }
+      ],
+      "remaining": [
+        "No daemon self-heal helper successor/caller exists. Needs packaging/release design before restoration; engine build target naming is only partial overlap."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/bin/goodvibes-daemon",
+        "products/daemon/toolchain.config.json"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "bun.lock",
+      "originalBlob": "216191a69e0ffabc7f99b82faf2be5090893d6b9",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "Generated exact dependency resolution and integrity data for frozen installation.",
+      "targets": [
+        "bun.lock"
+      ],
+      "evidence": [
+        {
+          "file": "bun.lock",
+          "detail": "Contains products/daemon workspace identity/version, workspace engine/judgment dependencies and canonical package resolutions."
+        },
+        {
+          "file": "package.json",
+          "detail": "Root workspaces and Bun version own installation."
+        },
+        {
+          "file": ".github/actions/setup/action.yml",
+          "detail": "Actual frozen install consumes root lock."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicit upstream delta ruling prohibits overwriting independent workspace lock."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "Independent generated workspace lock replaces the standalone lock; never hand-copy obsolete upstream resolutions.",
+      "proofFiles": [
+        "bun.lock",
+        "package.json",
+        ".github/actions/setup/action.yml",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "bun.lock"
+      ],
+      "canonicalOwner": "workspace"
+    },
+    {
+      "source": "bunfig.toml",
+      "originalBlob": "352f6c4948a97b189d91e87b6ed5bcb0a827261d",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "At the actual pinned revision this file only registers the temp-cleanup preload; coverage configuration has already been removed upstream.",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Actual test script uses engine guarded runner with --cwd ../../products/daemon src/test."
+        },
+        {
+          "file": "products/daemon/src/test/helpers/owned-temp.ts",
+          "detail": "Current daemon fixtures require the runner marker and allocate under redirected tmpdir."
+        },
+        {
+          "file": "packages/engine/test/test-tmp-containment.test.ts",
+          "detail": "Counts successful/failing-run cleanup, owner isolation and real runner temp containment."
+        },
+        {
+          "file": "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+          "detail": "Explicitly retains reviewed monorepo test isolation and containment rather than standalone runner."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "Parent-owned post-child cleanup replaces bunfig afterAll preload configuration; no coverage quota is present in the pinned source or restored.",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "products/daemon/src/test/helpers/owned-temp.ts",
+        "packages/engine/test/test-tmp-containment.test.ts",
+        "docs/audit/daemon-upstream-reconciliation-2026-10-01.md"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "docs/commands-reference.md",
+      "originalBlob": "4451e8f97be9a0d2f43fe7abd08c459d2120854e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Complete CLI/global flag/exit-code/remote-target/passthrough/refused-flag manual",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-cli-contract-port.md",
+        "docs/audit/daemon-command-adapters-port.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-cli-contract-port.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-command-adapters-port.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "No complete current 20-command reference, global options and error/remote convention manual exists in the product. Source/catalog/help tests do not replace reference prose."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-cli-contract-port.md",
+        "docs/audit/daemon-command-adapters-port.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/configuration.md",
+      "originalBlob": "be49681b5bf0f04cf1e96fca2aedc8117c19bd02",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Shared versus daemon tiers and every channel/WebUI/control-plane/hosted/payment/update/service setting",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-config-adapters-port.md",
+        "docs/audit/daemon-payment-composition.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-config-adapters-port.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-payment-composition.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "No full current configuration table/manual, including Jev merchant/reply readings and updated redaction ownership, exists. Partial adapter audits do not close the manual."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-config-adapters-port.md",
+        "docs/audit/daemon-payment-composition.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/getting-started.md",
+      "originalBlob": "d26574d14bf3705a81a4d1202e5bb9a75c321e29",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Installer/npm setup, first boot and pairing, state locations and health checks",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-production-bootstrap.md",
+        "docs/audit/daemon-functional-pairing-startup.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-production-bootstrap.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-functional-pairing-startup.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "Private source/native build instructions exist, but published install/first-use deployment instructions await actual packaging and service/platform acceptance."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-production-bootstrap.md",
+        "docs/audit/daemon-functional-pairing-startup.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/hosted-sessions.md",
+      "originalBlob": "55b0b6179e13fa19f91471c2d1a5164b97f5f537",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Hosted-session model/workspace trust/five verbs/steering/detach leases/kill/limits",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-wire-proof.md",
+        "docs/audit/product-daemon-semantic-integration-2026-10-09.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-wire-proof.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/product-daemon-semantic-integration-2026-10-09.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "Wire/artifact audits prove subsets; no complete current user reference for trust, leases, detach policy and limits is present."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-wire-proof.md",
+        "docs/audit/product-daemon-semantic-integration-2026-10-09.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/service-and-deployment.md",
+      "originalBlob": "c4a7024da1914e2223414e7853a744c9efaf0e6e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "systemd/launchd/Windows artifacts, login-home paths, service verbs, consented migration and home semantics",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-service-commands-port.md",
+        "docs/audit/daemon-startup-maintenance-callers.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-service-commands-port.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-startup-maintenance-callers.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "Current service adapter audits and README refusals are partial; deployment/platform acceptance and current end-user service guide remain open."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-service-commands-port.md",
+        "docs/audit/daemon-startup-maintenance-callers.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/testing-and-validation.md",
+      "originalBlob": "d3fdbe895e7739be83d24c9144b8b9e14cc1f005",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Outcome-driven local/CI testing, per-file/changed selection, runtime/wire/compiled layers, release preparation",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "The testing policy is preserved, but no whole current daemon testing/CI/manual command guide reconciles all old commands and current private release boundary."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/troubleshooting.md",
+      "originalBlob": "4a29aa2023f5aa7ce2e4d4c92aabd2beb545a6f9",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Startup errors, log rotation/paths, lifecycle records, HTTP auth health/status, pairing, ports and installed-versus-running service diagnosis",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-cli-entrypoint.md",
+        "docs/audit/daemon-companion-token-bootstrap.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-cli-entrypoint.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-companion-token-bootstrap.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "Current audits explain individual failures, not the complete original operational troubleshooting guide."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-cli-entrypoint.md",
+        "docs/audit/daemon-companion-token-bootstrap.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "docs/updates-and-rollback.md",
+      "originalBlob": "edc23b69419346d5317e4124e2b18c7fc7583634",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Hourly updater, idle restart, previous-binary rollback, crash-loop rejected versions, receipts, CLI update/check and install-kind guard",
+      "targets": [
+        "products/daemon/README.md",
+        "docs/audit/daemon-migration-status-2026-10-08.md",
+        "docs/audit/daemon-runtime-helpers-port.md"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-migration-status-2026-10-08.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        },
+        {
+          "file": "docs/audit/daemon-runtime-helpers-port.md",
+          "detail": "Current bounded documentation of part of this original manual."
+        }
+      ],
+      "remaining": [
+        "A full current updater deployment policy and operational rollback guide remain absent; preserved helpers do not activate automatic update/release behavior."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-migration-status-2026-10-08.md",
+        "docs/audit/daemon-runtime-helpers-port.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/boot-smoke.ts",
+      "originalBlob": "accd636f4ee1b1d83d187bfea87db7eef3b50a06",
+      "originalDisposition": "JEV",
+      "reviewStatus": "partial",
+      "purpose": "Compiled normal boot/status/honest bind banner; corrupt-settings nonzero exit and named error; actual sqlite-vec memory add/semantic-search round trip.",
+      "targets": [
+        "products/daemon/scripts/verify-binary.mjs"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/scripts/verify-binary.mjs",
+          "detail": "Real source-free version/help/send/production startup and hosted-model proof, but not all original assertions."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Requires replacing sqlite-vec error/failure word co-occurrence with a Jev reading."
+        }
+      ],
+      "remaining": [
+        "Need exact malformed-settings/error diagnostic, startup bind/banner mismatch assertions, compiled memory.records.add/search-semantic exercise, and the required Jev log-error reading. Strong hosted/session tests do not erase these assertions."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/scripts/verify-binary.mjs",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/bun-compile-compat.ts",
+      "originalBlob": "c0c53bd89a47d6fb9ea7587b93e16a00b68b4487",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Adapt css-tree JSON imports, jsdom sync-XHR and stylesheet, and embedded sql.js WASM for Bun compilation.",
+      "targets": [
+        "packages/engine/toolchain/src/lib/bun-compile-compat.ts",
+        "packages/engine/toolchain/src/lib/bun-compile.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/scripts/compile.ts",
+          "detail": "Actual product compile driver calls public compileBunBinary."
+        },
+        {
+          "file": "products/daemon/toolchain.config.json",
+          "detail": "build.compileDriver selects scripts/compile.ts."
+        },
+        {
+          "file": "products/tui/src/test/scripts/compiled-html-extraction.test.ts",
+          "detail": "Real shared compile driver executes installed-owner HTML extraction source and source-free binary, and verifies no dependency bytes changed."
+        },
+        {
+          "file": "docs/audit/daemon-native-packaging.md",
+          "detail": "Documents shared driver and daemon artifact path."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "All seven original source patches retained. Installed-owner resolution and in-memory Bun files replace writes into shared node_modules. Unexpected source shapes now fail closed rather than warn/skip.",
+      "proofFiles": [
+        "products/daemon/scripts/compile.ts",
+        "products/daemon/toolchain.config.json",
+        "products/tui/src/test/scripts/compiled-html-extraction.test.ts",
+        "docs/audit/daemon-native-packaging.md"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/toolchain/src/lib/bun-compile-compat.ts",
+        "packages/engine/toolchain/src/lib/bun-compile.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "scripts/check-architecture.ts",
+      "originalBlob": "80e03f6134e6158002eb9694752b707139f37bd2",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Pinned file contains only runtime relative-import Tarjan SCCs, four daemon layer rules and nonvacuous layer existence; historical quota/pattern/any/mock gates are already deleted.",
+      "targets": [
+        "packages/engine/scripts/product-workspace-contract.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/scripts/product-workspace-contract.ts",
+          "detail": "Checks pinned inventory, workspace module imports/public exports, tsconfig coverage and mappings, not daemon runtime SCCs/layers."
+        }
+      ],
+      "remaining": [
+        "No canonical implementation/caller for original runtime cycle detection or the four adapted daemon dependency rules was found. Do not restore deleted style/quota rules or count generic import-boundary checks as equivalent."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/scripts/product-workspace-contract.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/check-bun.sh",
+      "originalBlob": "970ebfe783aff5fd737a31984389194cd931d95a",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Preinstall working-Bun-on-PATH probe with actionable install diagnostics.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Declares Bun 1.3.14 but has no check-bun/preinstall script."
+        },
+        {
+          "file": "products/daemon/bin/goodvibes-daemon",
+          "detail": "Bun shebang executes only once invoked; it is not an install-time diagnostic probe."
+        }
+      ],
+      "remaining": [
+        "No current daemon preinstall probe successor. Decide whether private/source package contracts intentionally retire this UX when package/install ownership is settled."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "products/daemon/bin/goodvibes-daemon"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/check-workflows.ts",
+      "originalBlob": "3532910bf34ffd1c1cb0c0073b0245409ff05e78",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Parse all yml/yaml workflows, require name/on/nonempty jobs, executing runs-on+steps or reusable uses, ban all job-level continue-on-error.",
+      "targets": [
+        "packages/engine/test/workflow-shape.test.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/test/workflow-shape.test.ts",
+          "detail": "Actual default engine test suite parses .yml and guards dependency graph/pins/timeouts/selected required publication failure propagation."
+        },
+        {
+          "file": "packages/engine/scripts/test-discovery.ts",
+          "detail": "Default recursive discovery includes workflow-shape suite."
+        }
+      ],
+      "remaining": [
+        "Current shape suite does not establish every original baseline: .yaml discovery, nonempty document/name/on/jobs, every executing runs-on/steps, blanket all-job continue-on-error ban. Preserve partial accounting instead of claiming its larger test count is equivalence."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/test/workflow-shape.test.ts",
+        "packages/engine/scripts/test-discovery.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/ci-publish.ts",
+      "originalBlob": "e6541c76c883e36c03b38c6c653a414754badb2a",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Idempotent npm publication with exact pre/post registry version checks and unhidden publish diagnostics.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "packages/engine/scripts/publish-packages.ts",
+          "detail": "Canonical publisher is for engine/judgment release cohort."
+        },
+        {
+          "file": "packages/engine/scripts/release-shared.ts",
+          "detail": "packageDirs excludes daemon."
+        },
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Daemon is private."
+        }
+      ],
+      "remaining": [
+        "Daemon npm publication is unconfigured. Root publisher cannot account a private product that it never stages or publishes."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/scripts/publish-packages.ts",
+        "packages/engine/scripts/release-shared.ts",
+        "products/daemon/package.json"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/postinstall.d.ts",
+      "originalBlob": "ade1fe845e3fa520f802658ad6aa2a4bc1cadaa7",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Types for plain-JS install helpers; pinned declaration already drifts from actual exports.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "No postinstall entry or download helper is shipped."
+        }
+      ],
+      "remaining": [
+        "No current download/install helper declarations. A future port must align actual exports and remove stale installWakeWordModel, not copy dead types."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/postinstall.js",
+      "originalBlob": "f961a88e01222a7ecc27cebd00dabf2e57f032df",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Install release native binary/addon from checksum-verified download or smoke asset directory; honor source/no-download/unsupported-target skips.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "No postinstall hook; private package does not download release bytes."
+        },
+        {
+          "file": "products/daemon/scripts/run-toolchain.ts",
+          "detail": "Build tooling resolves installed engine, not end-user postinstall releases."
+        }
+      ],
+      "remaining": [
+        "No native postinstall/download/checksum successor or daemon npm install proof. Release ownership needed before enabling."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "products/daemon/scripts/run-toolchain.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/prebuild.ts",
+      "originalBlob": "8471aaded815426d5691db0646613eb82d3a53c1",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Under a workspace lock, apply compile compatibility and synchronize manifest-driven fallback/README version surfaces before build.",
+      "targets": [
+        "products/daemon/scripts/check-version.ts",
+        "products/daemon/scripts/compile.ts",
+        "products/daemon/scripts/release-prepare.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/toolchain.config.json",
+          "detail": "Native prebuild runs only check-version; compileDriver separately handles compatibility."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "Sync is explicit and compensation is not concurrent-writer coordination."
+        }
+      ],
+      "remaining": [
+        "Responsibilities intentionally split, but original lock-protected automatic sync is not present. Must record the explicit validation-only policy and unresolved coordination, not claim shared compile/version files reproduce the whole prebuild."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/toolchain.config.json",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/project-surfaces.ts",
+      "originalBlob": "8f43df3b08b1bbb749e597fdc32193c1805318e3",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Read product manifest version and synchronize compiled fallback and an existing README badge, exposing a sync alias.",
+      "targets": [
+        "products/daemon/scripts/release-prepare.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "release:prepare is an actual explicit command."
+        },
+        {
+          "file": "products/daemon/README.md",
+          "detail": "Documents --no-bump --no-changelog sync."
+        },
+        {
+          "file": "products/daemon/src/test/scripts/release-prepare.test.ts",
+          "detail": "No-bump repairs fallback/badge with unchanged manifest and absent changelog; exact repeated sync makes zero writes; metadata/no-badge cases covered."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "Explicit local mechanics and original source bounded port."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "prepareRelease(root,[--no-bump,--no-changelog]) provides both original outputs, now validates inputs and compensates write failure rather than swallowing missing files. No-op alias is internal tooling, not a published API.",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "products/daemon/README.md",
+        "products/daemon/src/test/scripts/release-prepare.test.ts",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "products/daemon/scripts/release-prepare.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "scripts/publish-check.ts",
+      "originalBlob": "8f24a9b3625bdbd5e5f53e56be52258792ebf914",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "SDK pin/installed/lockfile tri-agreement and import sweep, manifest/published tarball paths/size/bin policy and optional npm-auth probe.",
+      "targets": [
+        "packages/engine/scripts/product-workspace-contract.ts",
+        "products/daemon/scripts/verify-binary.mjs"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-native-packaging.md",
+          "detail": "Private packaging audit explicitly leaves publish unconfigured."
+        },
+        {
+          "file": "packages/engine/scripts/release-shared.ts",
+          "detail": "Canonical pack/publish cohort excludes daemon."
+        }
+      ],
+      "remaining": [
+        "Workspace identity/import checks and native proof exist, but no current complete daemon published-tarball/auth gate exists. Generic engine pack check is not a product tarball check."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-native-packaging.md",
+        "packages/engine/scripts/release-shared.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/publish-github-mirror.ts",
+      "originalBlob": "36d901eed90ffe0ecfc020081dc648dbddb85a00",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Repack the matching daemon tarball under GitHub Packages scope and publish idempotently with temporary auth configuration.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Private product has no mirror command."
+        },
+        {
+          "file": "docs/audit/daemon-native-packaging.md",
+          "detail": "No daemon publication lane enabled."
+        }
+      ],
+      "remaining": [
+        "No daemon mirror successor; GitHub Packages scope/cohort and exact tarball identity policy remain undecided."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "docs/audit/daemon-native-packaging.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/release.ts",
+      "originalBlob": "b5a0392d69379675587e6d1077d0b4c8be1c0205",
+      "originalDisposition": "JEV",
+      "reviewStatus": "missing",
+      "purpose": "Prepare product-change release-note bullets, git-log dry-run fallback and invoke configured release-cut; inventory requires Jev semantic note validation.",
+      "targets": [],
+      "evidence": [
+        {
+          "file": "products/daemon/scripts/release-prepare.ts",
+          "detail": "Local stamping/scaffolding only; no notes-content reading, release-cut, commit or tag."
+        },
+        {
+          "file": "products/daemon/toolchain.config.json",
+          "detail": "releaseCut omitted."
+        }
+      ],
+      "remaining": [
+        "Need release ownership plus actual Jev product-change note reading and configured release-cut. Existing release-prepare does not replace this distinct script."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/scripts/release-prepare.ts",
+        "products/daemon/toolchain.config.json"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/run-tests.ts",
+      "originalBlob": "64c31334692d923fd077f0580554c57f3fb5283c",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "Standalone parallel per-file recursive runner with changed/path selection, deadlines, temp containment/manifest cleanup and failure propagation.",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/scripts/test-discovery.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/test-isolation.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Actual test command invokes guarded engine runner."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicit monorepo-policy replacement of standalone per-file runner/changed-selection optimization."
+        },
+        {
+          "file": "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+          "detail": "Retains canonical owned isolation and containment; does not restore deleted gates."
+        },
+        {
+          "file": "packages/engine/test/test-discovery.test.ts",
+          "detail": "Actual runner nested discovery and explicit-selection test."
+        },
+        {
+          "file": "packages/engine/test/test-tmp-containment.test.ts",
+          "detail": "Real owned-temp successful/failing cleanup and foreign-directory isolation."
+        },
+        {
+          "file": "packages/engine/test/toolchain/test-runner-boundary.test.ts",
+          "detail": "Actual packed owner activates isolation/preloads and external I/O refusal."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "Canonical guarded runner replaces CLI/per-file concurrency design; keeps recursive suite discovery, explicit selection, timeout/failure propagation and stronger owned-child isolation. Upstream --jobs/changed optimization is deliberately not a compatibility promise.",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "docs/inventory/daemon.md",
+        "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+        "packages/engine/test/test-discovery.test.ts",
+        "packages/engine/test/test-tmp-containment.test.ts",
+        "packages/engine/test/toolchain/test-runner-boundary.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/scripts/test-discovery.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/test-isolation.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "scripts/sdk-dev.ts",
+      "originalBlob": "96fed586518e6c38186f7a296446581fe009a93a",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "Forward link/status/restore to a sibling SDK checkout overlay tool for iterative local development.",
+      "targets": [
+        "products/daemon/package.json"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "workspace:* engine dependency uses current in-repo code."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicitly allows retiring forwarding script when no external overlay remains."
+        },
+        {
+          "file": "packages/engine/scripts/sdk-dev.ts",
+          "detail": "Canonical external consumer overlay tool still exists; it is not called by daemon workspace."
+        }
+      ],
+      "remaining": [
+        "No external overlay needed for the daemon workspace. This is authorized tooling retirement/replacement, not preservation of the old forwarding CLI; do not invent an unused wrapper or DROP merely to gain a mapping."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "docs/inventory/daemon.md",
+        "packages/engine/scripts/sdk-dev.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/stale-tmp-sweep.ts",
+      "originalBlob": "262eba334056c1723b586510422c5bc2d6d1de62",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "Age-gated cleanup of local .test-tmp entries and exact known legacy OS-temp prefixes.",
+      "targets": [
+        "packages/engine/toolchain/src/test-runner/stale-tmp-sweep.ts",
+        "packages/engine/scripts/test.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/scripts/test.ts",
+          "detail": "Actual runner sweeps its one-hour old owned run-parent prefix."
+        },
+        {
+          "file": "packages/engine/test/test-tmp-containment.test.ts",
+          "detail": "Old owned directories reclaimed, fresh siblings/foreign entries/missing roots preserved."
+        },
+        {
+          "file": "packages/engine/test/proof-temp-sweep.test.ts",
+          "detail": "Retained evidence and explicit outputs preserved."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicitly retains reviewed monorepo owned-temp/evidence preservation policy."
+        }
+      ],
+      "remaining": [
+        "Safe canonical sweep exists, but full old-prefix/.test-tmp coverage is not established; old engine project-temp helper still creates registry paths outside redirected tmpdir. Resolve the legacy helper lifecycle separately before claiming wholesale cleanup parity."
+      ],
+      "adaptation": "Current cleanup intentionally scopes ownership to run-parent prefixes and can preserve evidence; it does not blindly sweep retired standalone prefix lists.",
+      "proofFiles": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/test/test-tmp-containment.test.ts",
+        "packages/engine/test/proof-temp-sweep.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/test-pattern-rule.ts",
+      "originalBlob": "45e4db348a28c6fe314102b38c985af2033ffacc",
+      "originalDisposition": "PORT",
+      "reviewStatus": "policy-replacement",
+      "purpose": "Parse standalone runner positional filter/changed base while skipping runner options and substring-filter source paths.",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/scripts/test-discovery.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Actual test command invokes guarded engine runner."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicit monorepo-policy replacement of standalone per-file runner/changed-selection optimization."
+        },
+        {
+          "file": "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+          "detail": "Retains canonical owned isolation and containment; does not restore deleted gates."
+        },
+        {
+          "file": "packages/engine/test/test-discovery.test.ts",
+          "detail": "Actual runner nested discovery and explicit-selection test."
+        },
+        {
+          "file": "packages/engine/test/test-tmp-containment.test.ts",
+          "detail": "Real owned-temp successful/failing cleanup and foreign-directory isolation."
+        },
+        {
+          "file": "packages/engine/test/toolchain/test-runner-boundary.test.ts",
+          "detail": "Actual packed owner activates isolation/preloads and external I/O refusal."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "Canonical runner passes explicit caller selections to Bun and uses default recursive discovery when absent. Existing policy explicitly forbids replacing Jev runner semantics with this standalone optimization.",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "docs/inventory/daemon.md",
+        "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+        "packages/engine/test/test-discovery.test.ts",
+        "packages/engine/test/test-tmp-containment.test.ts",
+        "packages/engine/test/toolchain/test-runner-boundary.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/scripts/test-discovery.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "scripts/test-temp-manifest.ts",
+      "originalBlob": "6cd494209ea8d18a726b67f247dd4e189865e160",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "After child exit remove explicitly registered directories, including paths outside that child TMPDIR, using a defensive manifest parser.",
+      "targets": [
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+          "detail": "Parent cleanup fully removes the owned run parent."
+        },
+        {
+          "file": "packages/engine/test/_helpers/project-temp.ts",
+          "detail": "Still creates .test-tmp directly under cwd, outside tmpdir."
+        },
+        {
+          "file": "packages/engine/test/_helpers/temp-registry.ts",
+          "detail": "Registration/drain APIs exist, but no current engine caller consumes the drain/manifest."
+        }
+      ],
+      "remaining": [
+        "Parent run-tree cleanup is not the old arbitrary owned-path manifest guarantee. No manifest handoff/parser or post-child cleanup for registered outside-root paths is wired in the engine."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/test/_helpers/project-temp.ts",
+        "packages/engine/test/_helpers/temp-registry.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/verify-release-tag-version.ts",
+      "originalBlob": "37c38bafa9dd30a25ef1ba820588156a2c1125fb",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Require GITHUB_REF_NAME to equal v plus the daemon manifest version.",
+      "targets": [
+        "packages/engine/scripts/verify-release-tag-version.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/scripts/verify-release-tag-version.ts",
+          "detail": "Current gate compares against engine version."
+        },
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Daemon remains independently at 1.28.25, unlike current root/engine 2.0.23."
+        }
+      ],
+      "remaining": [
+        "Same string-check mechanism is not same product identity: need chosen daemon/shared version policy and actual daemon release caller before whole-file credit."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/scripts/verify-release-tag-version.ts",
+        "products/daemon/package.json"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "scripts/workspace-lock.ts",
+      "originalBlob": "ffdaf347953b3abf854351526558d9b871237b73",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Serialize daemon prebuild mutations with mkdir/owner record, stale/dead-owner reclaim and bounded polling.",
+      "targets": [
+        "packages/engine/scripts/workspace-lock.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/scripts/workspace-lock.ts",
+          "detail": "Canonical implementation keeps mkdir/stale/dead-pid semantics, async waits, common-git-dir scope and longer queue ceiling."
+        },
+        {
+          "file": "packages/engine/scripts/build.ts",
+          "detail": "Actual root engine build caller."
+        },
+        {
+          "file": "packages/engine/scripts/test.ts",
+          "detail": "Actual guarded runner caller."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "Current local stamping explicitly is not concurrent-writer coordination."
+        }
+      ],
+      "remaining": [
+        "Actual canonical lock exists, but original daemon prebuild/version-write critical section is not protected by it. No direct equivalent lock lifecycle regression found; cannot claim daemon release coordination."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/scripts/workspace-lock.ts",
+        "packages/engine/scripts/build.ts",
+        "packages/engine/scripts/test.ts",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/cli.ts",
+      "originalBlob": "5e8e7aff5a82fbdc604d3a0d637078a35497e058",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "targets": [
+        "products/daemon/src/cli/entrypoint.ts",
+        "products/daemon/src/cli/run.ts",
+        "products/daemon/src/cli/serve.ts",
+        "products/daemon/src/cli/startup-maintenance.ts",
+        "products/daemon/src/cli/startup-pairing.ts"
+      ],
+      "evidence": [
+        "docs/audit/daemon-production-bootstrap.md",
+        "docs/audit/daemon-startup-maintenance-callers.md",
+        "docs/audit/product-daemon-semantic-integration-2026-10-09.md"
+      ],
+      "remaining": [
+        "Original startup updateArtifact/overridden-home activation is not wired until product release/update policy is resolved. Complete configured provider/local-authority bootstrap and actual service/platform acceptance remain separate."
+      ],
+      "adaptation": "Admitted startup maintenance and Linux synthetic hosted proof are complete within their existing scoped receipts; do not relabel them absent.",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-production-bootstrap.md",
+        "docs/audit/daemon-startup-maintenance-callers.md",
+        "docs/audit/product-daemon-semantic-integration-2026-10-09.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/inbox/index.ts",
+      "originalBlob": "57ce1e27fa2efae74f89fbb7159a3fabb4eadef7",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/registration.ts",
+        "products/daemon/src/runtime/production-inbox-composition.ts",
+        "products/daemon/src/runtime/multiowner-inbox-composition.ts"
+      ],
+      "evidence": [
+        "docs/audit/daemon-production-bootstrap.md",
+        "docs/audit/daemon-multiowner-inbox-composition.md"
+      ],
+      "remaining": [
+        "Canonical registration and all three unconfigured memberships exist, but complete account-bound production Discord DM catalog/history and configured standalone local-screening authority are missing."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-production-bootstrap.md",
+        "docs/audit/daemon-multiowner-inbox-composition.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/inbox/mapping.ts",
+      "originalBlob": "117965d4debe0783215f52f9dcc36278aeba6428",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/text-normalization.ts",
+        "packages/engine/sdk/src/platform/intake/protected-preview.ts"
+      ],
+      "evidence": [
+        "docs/contracts/intake-text-normalization.md",
+        "docs/contracts/protected-source-screening.md"
+      ],
+      "remaining": [
+        "Original digest/markup/MIME helper portions are hoisted. Whole source privacy-preview adaptation, original redaction/preview assertion matrix and deployment authority/live semantic proof are not complete. No regex/hosted-raw-text fallback is permitted."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/contracts/intake-text-normalization.md",
+        "docs/contracts/protected-source-screening.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/index.ts",
+      "originalBlob": "e0d8a1e93fc01c47294186587a49de3bce5360fd",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/triage/owned.ts",
+        "packages/engine/sdk/src/platform/intake/index.ts"
+      ],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "Owned scoring and read enrichment are implemented. Original API also exposes provider tagger/associated types; the provider-write owner is absent, so this whole source/barrel is not mapped."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/integration.ts",
+      "originalBlob": "eb0c756fc6d4fca1c2c616a105bfa983eeb53a14",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/triage/owned.ts",
+        "packages/engine/sdk/src/platform/intake/index.ts"
+      ],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "Owned scoring and read enrichment are implemented. Original API also exposes provider tagger/associated types; the provider-write owner is absent, so this whole source/barrel is not mapped."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/tagger/discord.ts",
+      "originalBlob": "5e9d4716a623a154b2aa7830de498536f647e247",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "targets": [],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "Original reaction analog and read-before-merge forum applied_tags behavior, no-PATCH-on-read-failure and owned credential/transport lifetime are not present as an intake triage tagger."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/tagger/imap.ts",
+      "originalBlob": "6ccae26f73028bfb46cf84586d3216f43d3244ed",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "targets": [],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "Original UID STORE keyword writer, protocol quoting/control-byte refusal, tagged responses, timeout/close and bounded retry owner are absent; FETCH readers are not a substitute."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/tagger/index.ts",
+      "originalBlob": "8de67ffc5b86d7e16f8361e9b6167378ac3490ea",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "targets": [],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "No triage provider-write composition dispatching email/Slack/Discord with actual shared execution authority and credential/config provenance is present. Original human-confirmation flags need explicit current authority adaptation, not blind copying."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/tagger/shared.ts",
+      "originalBlob": "55964d7ee543c905ebf1a90ed41a22f9d6b98299",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "targets": [],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "Original provider config/request/result types, metadata targeting, keyword encoding and tag-to-reaction helpers are not implemented as a triage-write contract. Custom tag meaning must follow the inventoried Jev decision rather than substring heuristics."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/daemon/handlers/triage/tagger/slack.ts",
+      "originalBlob": "3d832c3de0520e18160064fc953aa45bf88255e4",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "targets": [],
+      "evidence": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "remaining": [
+        "Original Slack reaction mutation with credential lookup, metadata targeting, already_reacted behavior and hard refusal is absent as an intake triage tagger."
+      ],
+      "adaptation": "",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "docs/audit/daemon-owned-inbox-triage.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/runtime/update-check.ts",
+      "originalBlob": "14e0735dd6df7499e1079e2c3b450b385e2234bd",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/install-kind.ts",
+        "packages/engine/sdk/src/platform/runtime/self-update.ts"
+      ],
+      "evidence": [
+        "packages/engine/test/daemon-update-check-source-parity.test.ts",
+        "packages/engine/test/self-update-policy.test.ts",
+        "products/daemon/src/test/daemon/lifecycle.test.ts",
+        "products/daemon/src/daemon/lifecycle.ts"
+      ],
+      "remaining": [],
+      "adaptation": "Original detector is byte-equivalent in the shared owner. Fallback formatter takes an explicit package name instead of hardcoding the daemon name; pure fixture asserts original strings without selecting or activating a product release policy. Original canonical version/tag re-exports remain in the shared self-update owner.",
+      "purpose": "Original runtime/handler source responsibilities",
+      "proofFiles": [
+        "packages/engine/test/daemon-update-check-source-parity.test.ts",
+        "packages/engine/test/self-update-policy.test.ts",
+        "products/daemon/src/test/daemon/lifecycle.test.ts",
+        "products/daemon/src/daemon/lifecycle.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/sdk/src/platform/runtime/install-kind.ts",
+        "packages/engine/sdk/src/platform/runtime/self-update.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/cluster/commands.test.ts",
+      "originalBlob": "a6bfd11bd075aa79f7058953a8e0abb22a81ea93",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/cluster-commands.test.ts"
+      ],
+      "evidence": [
+        "Exact original-to-current diff retains all 26 original cases/assertions: parsing, target/token resolution, errors, JSON, join prompting, clipboard, rotation, status secrecy and ages.",
+        "Only imports/comment changes, added Jev group-selection cases, and stronger literal OSC52 byte assertion replace the original self-comparison.",
+        "Actual caller: products/daemon/src/cli/run.ts:121 invokes runClusterCommand."
+      ],
+      "remaining": [],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/cluster-commands.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/cluster-commands.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/daemon/control-routes.test.ts",
+      "originalBlob": "f5cf57d9a0344dab504197f073e0b6542f0501c9",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-sdk.test.ts"
+      ],
+      "evidence": [
+        "Current lines 16-76 preserve original status 200/version and current-auth 200/authenticated/admin-role assertions; package-derived version and login coverage are additions.",
+        "Actual builder composition: packages/engine/sdk/src/platform/daemon/http/router.ts:477."
+      ],
+      "remaining": [],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/daemon-sdk.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/daemon-sdk.test.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/daemon/daemon-route-seams.test.ts",
+      "originalBlob": "d10df8ab1bcacdb1294e0d0ffa24d6795d4c0de4",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-sdk.test.ts"
+      ],
+      "evidence": [
+        "Original has five injected route-builder cases. Current suite asserts surfaces, GraphQL schema and artifacts; system case at line 239 checks only function existence.",
+        "Production builders are composed in packages/engine/sdk/src/platform/daemon/http/router.ts:477-538."
+      ],
+      "remaining": [
+        "Invoke actual system handler and assert 200/installed=true plus controlPlane, httpListener and outbound TLS posture.",
+        "Injected provider snapshots must produce the original providers response.",
+        "GraphQL schema response must include original language=graphql and domain=knowledge fields."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/daemon-sdk.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/error-response.test.ts",
+      "originalBlob": "6d33e9f8f476ca997dceed40e09fd8b86f8c5ec1",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-sdk.test.ts",
+        "packages/engine/test/daemon-sdk-helpers.test.ts"
+      ],
+      "evidence": [
+        "daemon-sdk.test.ts:121-152 reproduces most output fields from a pre-shaped object with category/guidance already set.",
+        "Current privileged diagnostic option is explicit in successor tests."
+      ],
+      "remaining": [
+        "Real ProviderError(401) through jsonErrorResponse must derive authentication category/hint and preserve requestId; current pre-shaped fixture does not prove this chain.",
+        "Explicitly reconcile privileged-diagnostic response policy with original unrestricted output assertion."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/daemon-sdk.test.ts",
+        "packages/engine/test/daemon-sdk-helpers.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/fatal-boot-report.test.ts",
+      "originalBlob": "aa1d96a5117deafee31e4849c5bbd43a3e0d04c1",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-isolation-guards.test.ts",
+        "products/daemon/src/test/cli/startup-diagnostics-executable.test.ts"
+      ],
+      "evidence": [
+        "daemon-isolation-guards.test.ts:306-385 compiles fixture and checks malformed settings disclosure and successful readable settings.",
+        "Its synthetic legacy fixture expects silence, whereas pinned original expects ConfigManager ingestion disclosure."
+      ],
+      "remaining": [
+        "File-descriptor writer behavior despite replaced stderr.write, newline handling, stdout surviving immediate exit.",
+        "Default/custom context, stack/non-Error handling, closed descriptor resilience and exported surface assertions.",
+        "Actual activity-log malformed-settings reason.",
+        "Pinned original legacy ConfigManager baseline instead of deliberately bypassing ingestion."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/daemon-isolation-guards.test.ts",
+        "products/daemon/src/test/cli/startup-diagnostics-executable.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/fixtures/daemon-fatal-boot-entry.ts",
+      "originalBlob": "aea2b399f6aec7fc3a3a8831bfc2d1934c8b8090",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/fixtures/daemon-fatal-boot-entry.ts"
+      ],
+      "evidence": [
+        "Current fixture retains real ConfigManager/logger/fatal reporter and is compiled by daemon-isolation-guards.test.ts:308.",
+        "It substitutes resolveDaemonCliPaths, surfaceRoot=goodvibes and output markers; it does not mirror the current product entrypoint."
+      ],
+      "remaining": [
+        "Document/qualify this fixture adaptation and confirm required product boot-path behavior before declaring exact successor mapping."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/fixtures/daemon-fatal-boot-entry.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/fixtures/daemon-fatal-boot-legacy-entry.ts",
+      "originalBlob": "ab6ce91f2fc646eb563686071393b69438a487e6",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/fixtures/daemon-fatal-boot-legacy-entry.ts"
+      ],
+      "evidence": [
+        "Original constructs ConfigManager with no configured activity logger.",
+        "Current namesake configures logger then throws a synthetic error to bypass ingestion disclosure, proving a different baseline."
+      ],
+      "remaining": [
+        "Retain the pinned original ConfigManager ingestion baseline or explicitly account for the changed proof obligation; filename match is insufficient."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/fixtures/daemon-fatal-boot-legacy-entry.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-acp-verbs.test.ts",
+      "originalBlob": "c4fd3b398a043f81bdb9fb3b8fc0f6ff0fff70f2",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/acp-host.test.ts"
+      ],
+      "evidence": [
+        "Original 58-123 covers composed daemon. Current 203-238 covers independently registered real ACP handlers/discovery/nonexistent cwd.",
+        "Product caller: service-graph.ts:496-505,574-605."
+      ],
+      "remaining": [
+        "Product descriptors/handlers/discovery and exact UNAUTHENTICATED/401.",
+        "INVALID_ARGUMENT/400 for missing agentId, missing cwd and nonexistent-directory cwd through product graph."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/acp-host.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-catalog-handler-or-route.test.ts",
+      "originalBlob": "d36b26f66afc53c463f80bf9010f51d8fec77273",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/capability-route-reconcile.test.ts"
+      ],
+      "evidence": [
+        "Current 65-66,181-218 use SDK catalog/inert probes; no-HTTP entries are unchecked; later handlers are inert."
+      ],
+      "remaining": [
+        "Original composed >400 descriptors, representative IDs and zero stranded methods.",
+        ">50 actual anonymous socket probes and exhaustive handled/routed partition with >100 in each category.",
+        "Hosted/approval/credential attached handlers (original 122-215)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/capability-route-reconcile.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-checkin-round-trip.test.ts",
+      "originalBlob": "475f1ce5d9ecabcbcb4c15df6f092f2ffdcbd7fa",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/checkin.test.ts",
+        "packages/engine/test/checkin-composed.test.ts"
+      ],
+      "evidence": [
+        "checkin:121-160,195-215 covers outcomes/independent registrar; checkin-composed:20-58 supplies recorded Jev contact/fidelity."
+      ],
+      "remaining": [
+        "Original product default disabled and enabled manual outcome/summary.",
+        "Receipt trigger=manual and string briefingSummary.",
+        "Quiet/disabled skipped receipt has no delivery fields (original 64-114)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/checkin.test.ts",
+        "packages/engine/test/checkin-composed.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-ci-principals-channel-profiles-round-trip.test.ts",
+      "originalBlob": "b338985e65c685b6f531c5ceff3906c3b48a27a3",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/principals-gateway-verbs.test.ts",
+        "packages/engine/test/channel-profiles.test.ts",
+        "packages/engine/test/ci-watch.test.ts"
+      ],
+      "evidence": [
+        "Current separate registrar suites at principals:31-95, profiles:33-57 and watch:174-192 are partial.",
+        "Pinned blob b338985e ends at line 139 and contains no ci.status invocation; inventory prose is stale."
+      ],
+      "remaining": [
+        "Original all 15 descriptors/handlers on product graph.",
+        "Profile returned surfaceKind/model and set/get/list/delete identity.",
+        "Watch returned repo/deliveryChannel and list/delete identity.",
+        "Principal create/list/exact-identity resolve/delete together on same product graph (original 52-137)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/principals-gateway-verbs.test.ts",
+        "packages/engine/test/channel-profiles.test.ts",
+        "packages/engine/test/ci-watch.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-device-capability-verbs.test.ts",
+      "originalBlob": "283c14d78cfde28ee2fc72b9c6953a4f06952744",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/device-capabilities.test.ts",
+        "products/daemon/src/test/runtime/host-runtime-leaves.test.ts"
+      ],
+      "evidence": [
+        "Engine 872-1127 covers many verb cases; product 19-47 checks registration/actor/policy with transport/approval callbacks that throw if used."
+      ],
+      "remaining": [
+        "Actual product paired-phone node identity/label and tool/capability/reason roundtrip.",
+        "Dispatch versus denial/no dispatch, retained bytes, grant reuse/revoke/operator audit/daemon actor.",
+        "Malformed input/unknown node zero asks/dispatches (original 158-306).",
+        "Current autonomous decision contract supersedes legacy human-confirmation expectations."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/device-capabilities.test.ts",
+        "products/daemon/src/test/runtime/host-runtime-leaves.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-fleet-needs-input-push.test.ts",
+      "originalBlob": "64fd387d845fe6ff57a4053db4a87833f21461c4",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/web-push-vapid-chain.test.ts",
+        "packages/engine/test/push-needs-input-source.test.ts",
+        "products/daemon/src/test/runtime/host-runtime-leaves.test.ts"
+      ],
+      "evidence": [
+        "Web push 285-301,581-616 uses SDK bootDaemon with manually attached bridge; source 82-102 stubs delivery; product 77-91 checks subscription/presence only.",
+        "Product bridge wiring exists at service-graph.ts:610."
+      ],
+      "remaining": [
+        "Product snapshot bridge actually emits blocked event.",
+        "Integrated encrypted delivery with attached-session suppression and unsuppressed sibling.",
+        "Fresh/stale/unknown presence in same composed chain (original 131-236)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/web-push-vapid-chain.test.ts",
+        "packages/engine/test/push-needs-input-source.test.ts",
+        "products/daemon/src/test/runtime/host-runtime-leaves.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-hosted-session-failures.test.ts",
+      "originalBlob": "480ed68cc6af242b59c4a5e8647a7bf23d0ab727",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/hosted-session-routes.test.ts",
+        "products/daemon/src/test/daemon/daemon-wire.test.ts"
+      ],
+      "evidence": [
+        "Engine route tests 117-147 throw fake-service errors and 188-230 check registration; product daemon-wire proves successful lifecycle."
+      ],
+      "remaining": [
+        "Five product handlers and empty initial list.",
+        "Real manager unknown-session 404, create-kill-attach 409/reason, maxSessions=1 429 naming hostedSessions.maxSessions.",
+        "Capacity restored after kill and shared fixture completeness (original 79-171)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/hosted-session-routes.test.ts",
+        "products/daemon/src/test/daemon/daemon-wire.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-inbox-list-reachable.test.ts",
+      "originalBlob": "550bfb454bac6aa947f3506364a9d2f4f7d4eb99",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/channel-inbox-list-verb.test.ts",
+        "products/daemon/src/test/runtime/production-inbox-composition.test.ts",
+        "products/daemon/src/test/runtime/daemon-fixture-boot.test.ts",
+        "products/daemon/src/test/runtime/owned-triage-http.test.ts"
+      ],
+      "evidence": [
+        "Engine 95-123,157-252 uses synthetic mirror. Product production 30-39 proves unconfigured membership, fixture-boot 25-60 configured HTTP, triage HTTP 43 anonymous 401."
+      ],
+      "remaining": [
+        "Original live product three-provider unconfigured REST/filter/aggregate field-type and hasMore=truncated crosscheck.",
+        "Invalid cursor through live product route returns 400 INVALID_ARGUMENT (original 42-115)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/channel-inbox-list-verb.test.ts",
+        "products/daemon/src/test/runtime/production-inbox-composition.test.ts",
+        "products/daemon/src/test/runtime/daemon-fixture-boot.test.ts",
+        "products/daemon/src/test/runtime/owned-triage-http.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-initiative-verbs.test.ts",
+      "originalBlob": "d7bbb6cf9ebe011caff0c6bbe686d1cddcecdbb8",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/ci-watch-polling.test.ts",
+        "packages/engine/test/principals-gateway-verbs.test.ts",
+        "packages/engine/test/checkin.test.ts",
+        "packages/engine/test/channel-profiles.test.ts"
+      ],
+      "evidence": [
+        "Family suites are separate; ci-watch-polling:130-161 uses fake polling host."
+      ],
+      "remaining": [
+        "Original 19 handlers and fresh empty receipts/principals/watches/profile bindings on one product graph.",
+        "Default disabled check-in and ci-watch-poller in actual composed watcher registry (original 36-60,69-154)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/ci-watch-polling.test.ts",
+        "packages/engine/test/principals-gateway-verbs.test.ts",
+        "packages/engine/test/checkin.test.ts",
+        "packages/engine/test/channel-profiles.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-occasions-verbs.test.ts",
+      "originalBlob": "5301b6599da04f85746e35369281da47388b730e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/occasions-verbs.test.ts",
+        "packages/engine/test/gateway-response-contract-conformance.test.ts"
+      ],
+      "evidence": [
+        "Occasions 118-125,160-311 independently registers populated fixtures; response conformance 331-337 also uses populated fixture."
+      ],
+      "remaining": [
+        "Original 17 product handlers and fresh empty occasions/plans/conflicts.",
+        "String timezone, null awayNow/nudge, truthy state and sweep ranAt number/delivered false (original 48-141)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/occasions-verbs.test.ts",
+        "packages/engine/test/gateway-response-contract-conformance.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-rewind-conversation-scope.test.ts",
+      "originalBlob": "493ccb2d2a99d86b0af3c1e90ad4d4a2c3a388d1",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "products/daemon/src/test/runtime/conversation-rewind-port.test.ts",
+        "packages/engine/test/rewind-service.test.ts",
+        "packages/engine/test/client-seam-conversation-rewind-host.test.ts"
+      ],
+      "evidence": [
+        "Product port test 22-55 is direct port use. Engine service/client-host tests independently compose broker/service/client."
+      ],
+      "remaining": [
+        "Product-composed rewind.plan/apply preview 2 dropped/3 remaining and real 3-to-2 truncation.",
+        "Unhosted reason and skipped receipt.",
+        "Cross-process host verbs produce 4 dropped/9 remaining (original 68-192)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "products/daemon/src/test/runtime/conversation-rewind-port.test.ts",
+        "packages/engine/test/rewind-service.test.ts",
+        "packages/engine/test/client-seam-conversation-rewind-host.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-verb-family-parity.test.ts",
+      "originalBlob": "0a247c2801ff4bb3629790a7704079dcd0ec52d5",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [],
+      "evidence": [
+        "Existing registrar/schema/SDK conformance sweeps are different oracles; no full product family table/reverse sweep successor located."
+      ],
+      "remaining": [
+        "Original complete family table and registration reasons (73-375).",
+        "Forward presence/attached handlers/no absent family/duplicate-free IDs and reverse sweep forbidding unlisted handlers (381-426)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/gateway-ws-only-invokable.test.ts",
+      "originalBlob": "c701a7e6958243a93ac1c56c914ddc3ce75d89a0",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/terminal-shell-conformance.test.ts",
+        "packages/engine/test/fleet-checkpoints-search.test.ts",
+        "packages/engine/test/approval-decisions-persist.test.ts"
+      ],
+      "evidence": [
+        "Terminal conformance 101-134 uses fake dependencies and does not invoke handlers; fleet 198-205 tests SDK snapshot; approval 260-298 tests independent populated rule store."
+      ],
+      "remaining": [
+        "Original product-composed 15 descriptors/handlers and snapshot shape.",
+        "Fresh empty archive/rules and false deletion of unknown rule on same graph (original 22-100)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/terminal-shell-conformance.test.ts",
+        "packages/engine/test/fleet-checkpoints-search.test.ts",
+        "packages/engine/test/approval-decisions-persist.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/http-policy.test.ts",
+      "originalBlob": "0e58d8e97fa8cd1f833e839ee848fc50e824938e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-sdk-helpers.test.ts"
+      ],
+      "evidence": [
+        "Current lines 181-289 cover principal resolution and private-host branches. ScopeMatches lower-level tests at 114-120 cover read:* matching."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "packages/engine/test/daemon-http-policy-source-parity.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "All three pinned helper cases directly exercise sdk/platform/daemon/http-policy, including full principal equality, wildcard through buildMissingScopeBody, exact elevated denial and private-host config refusal."
+      ],
+      "mappedTargets": [
+        "packages/engine/test/daemon-http-policy-source-parity.test.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/daemon/inbox/aggregator.test.ts",
+      "originalBlob": "7799de0b494f166cc200118900df4afa51b01095",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts",
+        "packages/engine/test/daemon-inbox-registration.test.ts"
+      ],
+      "evidence": [
+        "Aggregation lines 27-155 cover attributed merge, tied paging, watermark/filter, unavailable/thrown/unconfigured/pending statuses, empty registry, normalization, cursor decoder and wire mapping.",
+        "Composite lines 38-91 invoke real registered handler for interleaved complete paging, tied ordering, filters, statuses and unknown provider.",
+        "Actual registration implementation is packages/engine/sdk/src/platform/intake/registration.ts, composed by daemon owned inbox factories."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts",
+        "packages/engine/test/daemon-inbox-registration.test.ts",
+        "products/daemon/src/test/runtime/inbox-source-parity.test.ts",
+        "products/daemon/src/test/runtime/inbox-route-composition.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Original primitive merge/paging/tie/filter/outage/standby assertions plus actual product registered-handler query-string cursor roundtrip, malformed-cursor code/status/message through invoke and HTTP, exact provider failures and numeric lastSyncAt. Product proof: products/daemon/src/test/runtime/inbox-source-parity.test.ts."
+      ],
+      "mappedTargets": [
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts",
+        "packages/engine/test/daemon-inbox-registration.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/daemon/inbox/mapping.test.ts",
+      "originalBlob": "cddb13456910653f1e9a43fffcce04df51a3d0fc",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/intake-text-normalization.test.ts"
+      ],
+      "evidence": [
+        "Digest, markup and MIME cases retained; inventory and docs/contracts/intake-text-normalization.md explicitly mark redaction/preview behavior partial."
+      ],
+      "remaining": [
+        "Literal email and Slack token redaction.",
+        "Recorded Jev sensitive-span cases for phone/account/IP/bearer/key-value and no-span ordinary prose.",
+        "Capped subject and capped single-line plain-text/redacted body previews."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/intake-text-normalization.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/inbox/register.test.ts",
+      "originalBlob": "b54560218c81efe37cc282dbf06283d829da1aff",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-inbox-registration.test.ts",
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts"
+      ],
+      "evidence": [
+        "Registration/wire/paging is substantially covered; composite lines 38-63 prepopulate routeId in item fixtures.",
+        "Product Slack/email composition tests assert undefined routeId."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "packages/engine/test/daemon-inbox-registration.test.ts",
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts",
+        "products/daemon/src/test/runtime/inbox-source-parity.test.ts",
+        "products/daemon/src/test/runtime/inbox-route-composition.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Canonical descriptor deep equality before/after attachment, teardown and wire/paging behavior are complemented by actual persisted routing assignment through Slack/email production factories into returned item.routeId. Product proofs: inbox-source-parity.test.ts and inbox-route-composition.test.ts; no prepopulated routeId fixture substitutes for resolver invocation."
+      ],
+      "mappedTargets": [
+        "packages/engine/test/daemon-inbox-registration.test.ts",
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/daemon/provider-registration.test.ts",
+      "originalBlob": "38cf1636144d4d6315f2b3db1f33bcffffcaaea0",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "products/daemon/src/test/runtime/provider-discovery.test.ts",
+        "products/daemon/src/test/runtime/daemon-host.test.ts",
+        "packages/engine/test/discovery-cache-projection.test.ts"
+      ],
+      "evidence": [
+        "Current tests cover initialization, scan lifetime, cache registration, ownership and failures. All registerDiscoveredProviders test references were reviewed for repeated/overlap cases."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "packages/engine/test/daemon-provider-registration-source-parity.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Repeated and overlapping discovered-provider sets mutate the real registry without accumulating providers; exact membership supplements original counts."
+      ],
+      "mappedTargets": [
+        "packages/engine/test/daemon-provider-registration-source-parity.test.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/daemon/safe-serve.test.ts",
+      "originalBlob": "4185e50646225615bf6ddd142acc0d8e9c4b8d51",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/daemon-safe-serve.test.ts"
+      ],
+      "evidence": [
+        "Exact diff retains all three original tests/assertions except import; bind-time failure and no-fetch pass-through cases are additions.",
+        "Actual product callers: products/daemon/src/runtime/daemon-host.ts:149,165."
+      ],
+      "remaining": [],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/daemon-safe-serve.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/daemon-safe-serve.test.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/daemon/server.test.ts",
+      "originalBlob": "67e47828b137c5d5fe2eb7c9a635f938bf373175",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "products/daemon/src/test/daemon/daemon-wire.test.ts",
+        "packages/engine/test/session-cookie-auth-roundtrip.test.ts",
+        "packages/engine/test/login-ratelimit.test.ts"
+      ],
+      "evidence": [
+        "Original has 75 cases on real DaemonServer/HttpListener composition. Product daemon-wire proves selected WS authentication, SSE and hosted-turn behavior, not full original matrix.",
+        "Engine suites independently cover additional authentication and general API rate limiting."
+      ],
+      "remaining": [
+        "Complete original 75-case assertion crosswalk remains open; partial suites cannot be counted as whole-row equivalence.",
+        "Concrete unresolved cases include direct daemon/listener TLS-option forwarding and transport lifecycle events.",
+        "Composed channel policy/accounts/setup/doctor/watchers and full webhook ingress/signed Slack-action matrix.",
+        "Remote pairing/work requeue and remaining knowledge/multimodal/automation/session/artifact routes on the real composition.",
+        "Adapt legacy human approval expectations to current autonomous decision contract rather than mechanically restoring them."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "products/daemon/src/test/daemon/daemon-wire.test.ts",
+        "packages/engine/test/session-cookie-auth-roundtrip.test.ts",
+        "packages/engine/test/login-ratelimit.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/service-manager.test.ts",
+      "originalBlob": "5c85003cde26cc618fda3d58e7a5cf1b78594594",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/service-manager.test.ts",
+        "products/daemon/src/test/daemon/service-commands.test.ts"
+      ],
+      "evidence": [
+        "Engine suite extensively tests launchd artifacts/actions/status; manual coverage near line 493 only checks status makes no actionRunner call."
+      ],
+      "remaining": [
+        "Real manual child install/start/restart/stop with pid/running/log-path assertions.",
+        "Manual definition path and default entry command.",
+        "Configured-name systemd artifact and exact mutating command sequence.",
+        "Windows schtasks artifact and exact Run/End/Run sequence."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/service-manager.test.ts",
+        "products/daemon/src/test/daemon/service-commands.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/standalone-routes.test.ts",
+      "originalBlob": "a0e9d9b72aa253bee5a0eea3a325c6d26cd3c02e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/companion-chat-daemon-wire.test.ts",
+        "packages/engine/test/companion-chat-routes.test.ts",
+        "packages/engine/test/companion-chat-verbs-daemon-wire.test.ts"
+      ],
+      "evidence": [
+        "Engine route/manager tests include session operations and UNKNOWN_ARTIFACT (companion-chat-routes:456), but do not constitute original real standalone host composition."
+      ],
+      "remaining": [
+        "Artifact bytes travel through actual standalone HTTP upload/message into stored messages, SSE and provider prompt.",
+        "Companion metadata/model/session/provider/snapshot assertions on same host.",
+        "Registering discovered providers increases host provider count.",
+        "Standalone panel list is empty/200 and panel open is 404."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/companion-chat-daemon-wire.test.ts",
+        "packages/engine/test/companion-chat-routes.test.ts",
+        "packages/engine/test/companion-chat-verbs-daemon-wire.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/surface-dispatched-reply.test.ts",
+      "originalBlob": "04819faa7778a15f1df57f082394c10847a06cab",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/surface-reply-duplicate-append.test.ts",
+        "packages/engine/test/channel-reply-pipeline-delta.test.ts"
+      ],
+      "evidence": [
+        "Real broker/pipeline/store delivery behavior is covered by current components; no equivalent HTTP deliver-route test located."
+      ],
+      "remaining": [
+        "HTTP delivery naming agent binds both input and session and returns delivered.",
+        "HTTP answer delivery completes input, emits correct final channel text/agent and appends assistant message.",
+        "HTTP delivery without agent binds nothing and sends nothing."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/surface-reply-duplicate-append.test.ts",
+        "packages/engine/test/channel-reply-pipeline-delta.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/telemetry-routes.test.ts",
+      "originalBlob": "9a3a2665be876a498eefa8440007456aaf9bfcaa",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/router-e2e-telemetry.test.ts",
+        "packages/engine/test/otlp-ingest-e2e.test.ts"
+      ],
+      "evidence": [
+        "Router suite uses stub TelemetryApi; OTLP suite proves ingestion rather than original two-turn bus/store sequence."
+      ],
+      "remaining": [
+        "Real RuntimeEventBus/store TURN_SUBMITTED and TURN_COMPLETED yield snapshot limit=1, one trace and two OTLP log records.",
+        "Limited principal raw-view request returns 403 through same real telemetry handler."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/router-e2e-telemetry.test.ts",
+        "packages/engine/test/otlp-ingest-e2e.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/triage/helpers.ts",
+      "originalBlob": "1c50c0243c28cb18d0f77b8b886fde99fb42ecda",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [],
+      "evidence": [
+        "Original defines silent logger, credential map, legacy HandlerContext factory, owned temporary-directory wrappers and inbound-item builder.",
+        "Current typed/owned triage fixtures cover scoring but no complete original provider-mutation harness successor located."
+      ],
+      "remaining": [
+        "Credential resolveRef/resolveConfigSecret/put/has map and configured legacy handler fixture required by tagger tests.",
+        "Account for replacement helper ownership alongside actual IMAP/tagger behavioral port rather than map unrelated temp helpers."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/triage/imap-client.test.ts",
+      "originalBlob": "319a8331eb38e4196f0c44beb09de5a1909e6ff3",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [],
+      "evidence": [
+        "No current imapStoreFlagOverTls/makeRetryingImapStoreFlag implementation or matching STORE test suite located. IMAP FETCH suites exercise different protocol behavior."
+      ],
+      "remaining": [
+        "Pre-socket rejection of control chars, wildcard/nonnumeric UIDs and invalid flags as non-transient.",
+        "LOGIN/SELECT/STORE/LOGOUT tagged OK and BYE paths; NO/BAD non-transient; untagged lines ignored.",
+        "Bad greeting, premature close, socket error, inactivity timeout transient classification.",
+        "No retry for protocol errors; transient retry cap and first-success stop."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/triage/integration.test.ts",
+      "originalBlob": "989325ba756b445001d23e4145f2c8cba81d367b",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/intake-triage-owned.test.ts"
+      ],
+      "evidence": [
+        "Current lines 48-69,200-205,258-275 cover scoring enrichment, unscored rows and detach; API now owns sources rather than wrapping a generic registrar."
+      ],
+      "remaining": [
+        "Unrelated handler registration preserves exact handler identity, or document why this wrapper-specific contract is superseded.",
+        "Exhaustive no inbox.triage.* registration and one-registration count.",
+        "Original unchanged empty list result."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/intake-triage-owned.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/daemon/triage/tagger.test.ts",
+      "originalBlob": "16b2aee6792b9b5f39c9fb408b0646b94c26bbf8",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "missing",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [],
+      "evidence": [
+        "No current createTriageTagger/provider-side triage tagging implementation/suite located."
+      ],
+      "remaining": [
+        "Disabled/unsupported surface, missing UID and unresolved credential cases.",
+        "IMAP normalized keyword/password and transient retry behavior.",
+        "Slack reaction, already_reacted success and hard failure.",
+        "Discord reaction fallback, forum existing-tag merge and no PATCH when GET fails.",
+        "Adapt legacy confirm/explicitUserRequest gating to current autonomous authority contract."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/deps/dependency-check.test.ts",
+      "originalBlob": "0b8f258629393a4f0c92d0c57b0b354588ed6aa7",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Actual pinned tests exercise sql.js table roundtrip, fuse.js search, jszip archive roundtrip, ast-grep parsing, grammar files and WASM initialization. Earlier pin/range/ACP assertions are already deleted upstream.",
+      "targets": [
+        "packages/engine/test/optional-dependency-boot.test.ts",
+        "packages/engine/test/toolchain/binary-dependency-resolution.test.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/test/optional-dependency-boot.test.ts",
+          "detail": "Different optional loader/source-free negative and present-package behaviors."
+        },
+        {
+          "file": "packages/engine/test/toolchain/binary-dependency-resolution.test.ts",
+          "detail": "Installed owner/addon resolution, not all original dependency operations."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicit fuse removal and obsolete pin/source checks retirement."
+        }
+      ],
+      "remaining": [
+        "Need assertion-level successors for retained sql.js/jszip/ast-grep/grammar/runtime operations in the installed product graph. Engine loader/export tests alone do not close them. Do not restore fuse or deleted package-pin assertions."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/test/optional-dependency-boot.test.ts",
+        "packages/engine/test/toolchain/binary-dependency-resolution.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/authenticated-websocket.ts",
+      "originalBlob": "9360c052232cb805cb80a8ed6e97a286b92d4a0b",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "WebSocket subclass supplying a fixed bearer Authorization header.",
+      "targets": [
+        "products/agent/src/test/helpers/authenticated-websocket.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/agent/src/test/runtime/realtime-transport.test.ts",
+          "detail": "Actual authenticated client caller."
+        },
+        {
+          "file": "products/agent/src/test/release-gates/transport-parity-gate.test.ts",
+          "detail": "Actual control-plane transport gate caller."
+        }
+      ],
+      "remaining": [
+        "Byte-identical active sibling-product successor exists, but engine/workspace canonicalOwner does not allow an Agent target. Do not create an unused daemon copy simply to satisfy PORT."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/agent/src/test/runtime/realtime-transport.test.ts",
+        "products/agent/src/test/release-gates/transport-parity-gate.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/config-manager-stub.ts",
+      "originalBlob": "4e0b6f27ff50e2e0335937d03968424514dff6ab",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Typed get/getCategory/setProjectValue record-backed ConfigManager doubles without recursively redeclaring generic conditional member types.",
+      "targets": [
+        "packages/engine/test/_helpers/config-manager-stub.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/test/workstream-services.test.ts",
+          "detail": "Calls real canonical get/getCategory helpers."
+        },
+        {
+          "file": "packages/engine/test/workstream-planner-inputs.test.ts",
+          "detail": "Calls helpers to configure actual planner/contract fixtures."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/test/workstream-services.test.ts",
+        "packages/engine/test/workstream-planner-inputs.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/_helpers/config-manager-stub.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/helpers/disposables.test.ts",
+      "originalBlob": "08133ee59bcd88b5b38f274282db56003f2d2b43",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Reverse teardown/explicit disposer/callback/refusal/failure/idempotent flush plus runtime interval drainage and repeated-reset tolerance.",
+      "targets": [
+        "products/tui/src/test/helpers/disposables.test.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/helpers/disposables.test.ts",
+          "detail": "Near-identical active suite but original resetting-twice test is absent."
+        },
+        {
+          "file": "products/tui/src/test/helpers/runtime-services.ts",
+          "detail": "Current TUI graph differs from daemon original."
+        }
+      ],
+      "remaining": [
+        "Original repeated-reset assertion and daemon graph-specific teardown are not wholly crosswalked; sibling-product target also lies outside proposed canonicalOwner scopes."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/helpers/disposables.test.ts",
+        "products/tui/src/test/helpers/runtime-services.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/disposables.ts",
+      "originalBlob": "4e3c698d44ba3da680eecbbb5c4a22a544032999",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "Per-file afterEach/afterAll reverse disposer registry; method/bare-function/Symbol.dispose resolution and surfaced aggregate failures.",
+      "targets": [
+        "products/tui/src/test/helpers/disposables.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/helpers/disposables.test.ts",
+          "detail": "Active behavioral suite exercises byte-identical helper."
+        },
+        {
+          "file": "packages/engine/test/_helpers/disposables.ts",
+          "detail": "Partial alternate only: engine default each-scope omits the original afterAll(flush) backstop."
+        }
+      ],
+      "remaining": [
+        "Byte-identical TUI successor exists. Do not map to engine as equivalent without accounting for missing default afterAll; sibling target not permitted by engine/workspace owner scopes."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/helpers/disposables.test.ts",
+        "packages/engine/test/_helpers/disposables.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/liveness.ts",
+      "originalBlob": "fc2a5a8d91abd3e1243b5521c01dd351e659f888",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "Assert stable frame dimensions/chrome/selection with only declared value-cell differences.",
+      "targets": [
+        "products/tui/src/test/helpers/liveness.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/renderer/liveness-contract.test.ts",
+          "detail": "Actual helper consumer checks stable/changing frame behavior."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicitly says original was unused by daemon and should live once with TUI."
+        }
+      ],
+      "remaining": [
+        "Faithful active TUI successor with extra renderer glyph/style support; no daemon copy owed. Current proposed canonicalOwner cannot name another product, so do not add an invalid PORT map."
+      ],
+      "adaptation": "Imports canonical engine Line and active TUI theme; extends structural glyphs and recognizes style-selected rows.",
+      "proofFiles": [
+        "products/tui/src/test/renderer/liveness-contract.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/project-temp.test.ts",
+      "originalBlob": "37f90fcf13b1d008652b13c0a7446817ad9ec69d",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "Prefix/root placement, uniqueness, registration and root path assertions.",
+      "targets": [
+        "products/tui/src/test/helpers/project-temp.test.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/helpers/project-temp.test.ts",
+          "detail": "Byte-identical original suite in active TUI test tree."
+        },
+        {
+          "file": "products/tui/package.json",
+          "detail": "Current TUI test workflow discovers src/test."
+        }
+      ],
+      "remaining": [
+        "Complete sibling suite is present; no allowed engine/workspace mapping. Cannot use generic run-parent tests as proof of .test-tmp registry assertions."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/helpers/project-temp.test.ts",
+        "products/tui/package.json"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/project-temp.ts",
+      "originalBlob": "3a97ad306c3238b07a924ed1b31f89a826df6649",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Create cwd/.test-tmp unique dirs, register automatic cleanup and set once-per-process Git discovery ceiling.",
+      "targets": [
+        "packages/engine/test/_helpers/project-temp.ts",
+        "products/tui/src/test/helpers/project-temp.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/test/daemon-handler-sqlite-recovery.test.ts",
+          "detail": "Real moved daemon suite calls engine helper."
+        },
+        {
+          "file": "packages/engine/test/_helpers/project-temp.ts",
+          "detail": "Original implementation except removed per-repo comment; paths deliberately do not follow TMPDIR."
+        },
+        {
+          "file": "products/tui/src/test/helpers/project-temp.test.ts",
+          "detail": "Byte-identical source suite tests TUI helper."
+        }
+      ],
+      "remaining": [
+        "TUI complete source exists; engine creation/registration exists but its comment-promised preload automatic cleanup has no current engine drain consumer. Do not credit full lifecycle based on source equality."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/test/daemon-handler-sqlite-recovery.test.ts",
+        "packages/engine/test/_helpers/project-temp.ts",
+        "products/tui/src/test/helpers/project-temp.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/provider-cache.ts",
+      "originalBlob": "ff00a8ba5de18a6162b93ea38c077e223533423f",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Create/clean isolated cache root, compute paths and write caller-supplied catalog v4 and benchmark v1 envelopes with overridable time/TTL.",
+      "targets": [
+        "products/tui/src/test/helpers/provider-metadata-cache-fixture.ts",
+        "products/tui/src/test/helpers/benchmark-cache-fixture.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/helpers/provider-metadata-cache-fixture.ts",
+          "detail": "Current helper seeds empty v5 catalog plus other metadata caches."
+        },
+        {
+          "file": "products/tui/src/test/helpers/benchmark-cache-fixture.ts",
+          "detail": "Uses canonical BenchmarkStore path but only empty cache."
+        },
+        {
+          "file": "products/tui/src/test/input/model-picker.test.ts",
+          "detail": "Locally writes arbitrary benchmark entries through BenchmarkStore."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Original unused in daemon; directs retaining only where a sibling test consumes it."
+        }
+      ],
+      "remaining": [
+        "No whole current arbitrary catalog/benchmark fixture API+cleanup+TTL successor found. Existing empty/current-schema helpers are useful but partial; do not restore stale v4 envelopes."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/helpers/provider-metadata-cache-fixture.ts",
+        "products/tui/src/test/helpers/benchmark-cache-fixture.ts",
+        "products/tui/src/test/input/model-picker.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/runtime-services.ts",
+      "originalBlob": "5de1982e21877ea0955ab12c82429d767d65b62e",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Lazily compose/reset real hermetic runtime graph and many test managers/getters, pin daemon home, dispose graph and root; legacy WRFC helpers included.",
+      "targets": [
+        "products/daemon/src/testing/daemon-fixture.ts",
+        "products/tui/src/test/helpers/runtime-services.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/src/testing/daemon-fixture.ts",
+          "detail": "Current declared public product fixture uses real owned daemon graph."
+        },
+        {
+          "file": "products/tui/src/test/helpers/runtime-services.ts",
+          "detail": "Near original sibling helper changes graph composition, removes daemon-home pin and legacy WRFC members."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicitly retires WRFC helper under one-contract-runner design."
+        }
+      ],
+      "remaining": [
+        "No whole API/lifecycle crosswalk for remaining daemon test getters and manager resets; a new runtime fixture is not automatically equivalent. Do not restore retired WRFC helpers."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/daemon/src/testing/daemon-fixture.ts",
+        "products/tui/src/test/helpers/runtime-services.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/session-surface.ts",
+      "originalBlob": "705eaf293be72db0fd4b89d7a3ca37d23d35d4eb",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "Build declare-once scoped SessionSurface and age recovery snapshots by ten minutes plus offset.",
+      "targets": [
+        "products/tui/src/test/helpers/session-surface.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/runtime/recovery-decisions.test.ts",
+          "detail": "Actual current test consumer."
+        },
+        {
+          "file": "products/tui/src/test/runtime/recovery-offer-wiring.test.ts",
+          "detail": "Uses surface and age helpers."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Original unused by daemon; keep only at real sibling consumer."
+        }
+      ],
+      "remaining": [
+        "Current TUI copy is faithful within the explicitly chosen consumer surface, but sibling target outside proposed owner scopes. Engine alternate uses test-surface, not daemon identity."
+      ],
+      "adaptation": "Canonical engine createSessionSurface import and TUI surface root replace unused daemon-specific scope.",
+      "proofFiles": [
+        "products/tui/src/test/runtime/recovery-decisions.test.ts",
+        "products/tui/src/test/runtime/recovery-offer-wiring.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/settings-control-plane.ts",
+      "originalBlob": "dd8e4286bc769008e9a7c3e434df8faaa4a81230",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "Force-remove settings-sync.json under the supplied ConfigManager control-plane directory.",
+      "targets": [
+        "products/agent/src/test/helpers/settings-control-plane.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/agent/src/test/core/orchestrator.test.ts",
+          "detail": "Actual helper caller."
+        },
+        {
+          "file": "products/agent/src/test/permissions/approval-posture.test.ts",
+          "detail": "Actual helper caller."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Original unused by daemon; keep only at active sibling consumer."
+        }
+      ],
+      "remaining": [
+        "Only import identity differs; complete active Agent successor exists. Cannot claim an engine/workspace mapping or justify a dead daemon duplicate."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/agent/src/test/core/orchestrator.test.ts",
+        "products/agent/src/test/permissions/approval-posture.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/temp-cleanup.test.ts",
+      "originalBlob": "ac2cbc95e7fd0e04adec34582b08cce3a528331a",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Explicit registry removal/missing path, late-writer drain/survivors and actual child preload cleanup while preserving unregistered directories.",
+      "targets": [
+        "products/tui/src/test/helpers/temp-cleanup.test.ts",
+        "packages/engine/test/test-tmp-containment.test.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/helpers/temp-cleanup.test.ts",
+          "detail": "Near original but original already-deleted-directory test missing."
+        },
+        {
+          "file": "packages/engine/test/test-tmp-containment.test.ts",
+          "detail": "Current run-parent lifecycle tests cover different behavior, not all old registered-path/preload assertions."
+        }
+      ],
+      "remaining": [
+        "Need exact assertion crosswalk for missing registry case and old process/preload handoff; generic parent-root cleanup alone does not close all assertions. TUI successor cannot use proposed engine/workspace scope."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/helpers/temp-cleanup.test.ts",
+        "packages/engine/test/test-tmp-containment.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/temp-registry.ts",
+      "originalBlob": "40b74acfdb9f80403147b2e17f3419b4d43c5491",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Explicit owned-directory registry, cleanup, bounded late-writer drain with backoff and survivors reporting.",
+      "targets": [
+        "packages/engine/test/_helpers/temp-registry.ts",
+        "products/tui/src/test/helpers/temp-registry.ts"
+      ],
+      "evidence": [
+        {
+          "file": "packages/engine/test/_helpers/project-temp.ts",
+          "detail": "Real engine caller registers dirs."
+        },
+        {
+          "file": "packages/engine/test/_helpers/temp-registry.ts",
+          "detail": "Entire original implementation remains except removed per-repo header."
+        },
+        {
+          "file": "products/tui/src/test/preload/temp-cleanup.ts",
+          "detail": "Active TUI drain/manifest consumer exists."
+        }
+      ],
+      "remaining": [
+        "Engine drain/cleanup has no external caller; only registration is used. TUI full lifecycle remains, but source-identical engine module alone does not demonstrate automatic cleanup/late-writer guarantees."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "packages/engine/test/_helpers/project-temp.ts",
+        "packages/engine/test/_helpers/temp-registry.ts",
+        "products/tui/src/test/preload/temp-cleanup.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/helpers/test-managers.ts",
+      "originalBlob": "fda24c6bb40dc0cb4bd54d533e97a0dfee10da29",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Construct real config/secrets/subscription/service/provider/favorites/benchmark/no-op panel/bookmark/ToolLLM managers and typed test model/provider patches.",
+      "targets": [
+        "products/tui/src/test/helpers/test-managers.ts",
+        "products/agent/src/test/helpers/test-managers.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/helpers/runtime-services.ts",
+          "detail": "Current caller uses sibling model/provider fixture utilities."
+        },
+        {
+          "file": "products/tui/src/test/helpers/test-managers.ts",
+          "detail": "Near original but panelManager/createTestPanelManager removed."
+        },
+        {
+          "file": "products/agent/src/test/helpers/test-managers.ts",
+          "detail": "Different agent-specific composition; not a whole daemon helper clone."
+        }
+      ],
+      "remaining": [
+        "No complete canonical daemon/engine helper/API crosswalk, especially no-op panel wrapper and all manager lifetimes. Similar sibling composition alone is insufficient."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/helpers/runtime-services.ts",
+        "products/tui/src/test/helpers/test-managers.ts",
+        "products/agent/src/test/helpers/test-managers.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/preload/temp-cleanup.ts",
+      "originalBlob": "61c252e8d0638b49f023086a0a21e7d2cbb50af0",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Redirect three temp variables into a process root, register it, afterAll drain/late-write reporting and write all owned paths into runner manifest.",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "products/tui/src/test/preload/temp-cleanup.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/preload/temp-cleanup.ts",
+          "detail": "Byte-identical complete sibling preload."
+        },
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Daemon now uses parent-owned guarded runner; no standalone preload."
+        },
+        {
+          "file": "packages/engine/test/_helpers/temp-registry.ts",
+          "detail": "Legacy engine outside-TMPDIR registry has no drain/manifest consumer."
+        }
+      ],
+      "remaining": [
+        "Current daemon owner-tree containment is authorized replacement of test config, but old explicit registry manifest/leak reporting is not wholly wired for moved engine helpers. TUI complete source alone is not an engine/workspace mapping."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/preload/temp-cleanup.ts",
+        "products/daemon/package.json",
+        "packages/engine/test/_helpers/temp-registry.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/runtime/control-plane-store-location.test.ts",
+      "originalBlob": "b3e502544ad18c064a3fc0dfb12d8dc3a82780be",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/control-plane-store-paths.test.ts",
+        "products/daemon/src/test/runtime/checkpoint-eligibility.test.ts"
+      ],
+      "evidence": [
+        "Engine generic scoping/blank-root and product fallback/shared preference tests do not prove original daemon-specific path matrix.",
+        "Actual wiring: service-graph.ts:147,249."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Real daemon graph asserts nonempty surface, project-scoped broker path distinct from user path, daemon-scoped pairing path, and shared-workspace writer/reader agreement."
+      ],
+      "mappedTargets": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/runtime/control-plane-store-writes.test.ts",
+      "originalBlob": "be41234ad4cdf9b1ab991cf4f5e401022e33a7b7",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "products/daemon/src/test/runtime/credential-mail-composition.test.ts",
+        "products/daemon/src/test/runtime/checkpoint-eligibility.test.ts"
+      ],
+      "evidence": [
+        "Credential-mail fixture injects metadata and does not mint PairingTokenManager record at daemon-scoped path."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Real graph PairingTokenManager writes into selected daemon scope and a second manager reads the fixture record; both home/project unscoped orphan paths remain absent. Shared writer/read path has no legacy/surface duplicate."
+      ],
+      "mappedTargets": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/runtime/device-posture-key-governance.test.ts",
+      "originalBlob": "58f237bcd8a3b3972afaea86a8f5ddea179b1c72",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/device-capabilities.test.ts",
+        "products/daemon/src/test/runtime/host-runtime-leaves.test.ts"
+      ],
+      "evidence": [
+        "Engine unit/runtime coverage is substantial; product host-runtime-leaves:18-46 checks attachment/live policy but not original behavior matrix."
+      ],
+      "remaining": [
+        "Standard-only/never allow-always choices and resulting grant counts (original 404-436).",
+        "ask-precise and clipboard ask-only requests produce no durable grants (483-501,525-539).",
+        "Configured audit retention actually trims old records (735-761).",
+        "Changed sweep cadence actually reaps expired bytes (622-652).",
+        "Actual product phone-tool success/refusal and dispatch (787-830); runtime config-to-policy/artifact and catalog effects (843-871)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/device-capabilities.test.ts",
+        "products/daemon/src/test/runtime/host-runtime-leaves.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/runtime/hosted-exec-posture.test.ts",
+      "originalBlob": "b9425e803bdb015b340f7ba40e105e6689b44934",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/hosted-session-exec-posture.test.ts"
+      ],
+      "evidence": [
+        "Engine containment tests do not invoke product createHostedSessionOptions.",
+        "Product code exists at hosted-session-composition.ts:74-103,184-190."
+      ],
+      "remaining": [
+        "Product floor provides explicit posture function with constant conversational result across inputs.",
+        "Product prompt includes shared diagnosis section, workspace and ask/refusal wording (original 42-83), with required autonomous adaptation."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/hosted-session-exec-posture.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/runtime/hosted-sessions.test.ts",
+      "originalBlob": "989d7f9e2111455f261f0749ed4c4caad98b50d0",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/hosted-session-routes.test.ts",
+        "products/daemon/src/test/runtime/daemon-host.test.ts",
+        "products/daemon/src/test/daemon/daemon-wire.test.ts"
+      ],
+      "evidence": [
+        "Engine manager/routes/store and product lifecycle/hosted-turn tests provide partial coverage."
+      ],
+      "remaining": [
+        "Product trust question names session workspace and persists trusted state there (original 104-127).",
+        "Floor workspace/surface and adapted contractRunner assertion (134-142).",
+        "Product prompt contract (146-150).",
+        "Product detach-setting/override and restart/live-control assertions require full original crosswalk."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/hosted-session-routes.test.ts",
+        "products/daemon/src/test/runtime/daemon-host.test.ts",
+        "products/daemon/src/test/daemon/daemon-wire.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/runtime/localhost-fetch-approval-wiring.test.ts",
+      "originalBlob": "59d66e729069f61957850d226fa43668e1d16268",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/fetch-localhost-approval.test.ts"
+      ],
+      "evidence": [
+        "Original lines 25-70 cover approval persists and asks once, fresh-manager reuse, and denial without persistence. Current lines 56-128 preserve all three with real loopback fetch, disk settings and reload.",
+        "Actual product caller: products/daemon/src/runtime/service-graph.ts:616."
+      ],
+      "remaining": [],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/fetch-localhost-approval.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/fetch-localhost-approval.test.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/runtime/memory-fold.test.ts",
+      "originalBlob": "d0d2319ef20d5d4b997e6d875393cd2d44d10d50",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/memory-canonical-cross-surface.test.ts",
+        "products/daemon/src/test/runtime/boot-composition.test.ts"
+      ],
+      "evidence": [
+        "Engine lines 85-145 cover lower-level foldMemoryStores; boot-composition:93-120 covers positive legacy-record import.",
+        "Actual caller: boot-composition.ts:47."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts",
+        "products/daemon/src/test/runtime/boot-composition.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Actual no-source report has zero imports/failures and working-directory attribution, repeat has zero imports, and production boot fold caller executes; existing boot suite retains positive import."
+      ],
+      "mappedTargets": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts",
+        "products/daemon/src/test/runtime/boot-composition.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/runtime/memory-governance-composition.test.ts",
+      "originalBlob": "08ef6d16a89482362bad692fba26fe4fc740ec19",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/memory-governor.test.ts"
+      ],
+      "evidence": [
+        "Engine lines 541-570 exercise wireDaemonMemoryGovernance with stubs/one job. TUI namesake test composes wrong product.",
+        "Actual daemon wiring: service-graph.ts:537-553."
+      ],
+      "remaining": [
+        "Daemon snapshot tier/budget/ordered thresholds.",
+        "Both real registered caches reflected in snapshots.",
+        "All three pausable job IDs and no paused jobs at rest."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/memory-governor.test.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/test/runtime/notification-dispatch.test.ts",
+      "originalBlob": "20badcabd6c3e57c1c121ac21ad0c302e7b15261",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "products/daemon/src/test/runtime/notification-component.test.ts"
+      ],
+      "evidence": [
+        "Current lines 60-120 retain all five original component cases.",
+        "Actual current wiring at service-graph.ts:744-750 visibly satisfies intended no-panel/existing-webhook shape."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "products/daemon/src/test/runtime/notification-component.test.ts",
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "All five original notification component cases plus actual graph pressure event reaching its existing webhook owner and detaching on close; original no-panel source assertions retained."
+      ],
+      "mappedTargets": [
+        "products/daemon/src/test/runtime/notification-component.test.ts",
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/runtime/personal-capture-wiring.test.ts",
+      "originalBlob": "80230faf1cb2af0024371c15cda6105774d3345a",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/personal-information-capture.test.ts",
+        "packages/engine/test/daemon-channel-continuation-tools.test.ts"
+      ],
+      "evidence": [
+        "Pinned original is 46 lines; source-scraping assertions were removed upstream. Remaining assertions: nonempty restricted tools, profile, rich session context, no write/edit/exec.",
+        "personal-information-capture.test.ts:46-75 preserves these under explicit ownerChannels authority and verifies ungranted channels omit profile.",
+        "daemon-channel-continuation-tools.test.ts:211-224,277-309 verifies actual first/queued provider requests expose exactly fetch/find/profile/read; 230-274 checks collaborator/unlisted channels cannot regain profile.",
+        "Helper implementation: packages/engine/sdk/src/platform/channels/spawn-contract.ts:277-289. Corrected served callers: SDK runtime/services.ts:488-508 and daemon/facade-composition.ts:779-802.",
+        "Reachability correction: facade.ts:312-320 replaces graph continuation runner before daemon-host.ts:181 listener admission; no ordinary pre-facade completeAgent caller found. session-intents.ts:188,212 supplies tools only for explicit nonempty routing.tools, never absent/default routing. No served-runtime bug established; see runtime_reachability_correction."
+      ],
+      "remaining": [],
+      "adaptation": "Original pure-helper assertions now require explicit ownerChannels authority; served first/queued requests preserve restricted tools. Facade replaces the graph runner before listener admission; no pre-facade production invocation or default routing overwrite was established.",
+      "proofFiles": [
+        "packages/engine/test/personal-information-capture.test.ts",
+        "packages/engine/test/daemon-channel-continuation-tools.test.ts",
+        "docs/audit/sdk-channel-capabilities.md"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/personal-information-capture.test.ts",
+        "packages/engine/test/daemon-channel-continuation-tools.test.ts"
+      ],
+      "canonicalOwner": "engine"
+    },
+    {
+      "source": "src/test/runtime/plugin-composition.test.ts",
+      "originalBlob": "2647b9be04cfa4205f04ce6a4d761146a0ce9df3",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "products/daemon/src/test/runtime/boot-composition.test.ts",
+        "products/daemon/src/test/runtime/boot-graph.test.ts"
+      ],
+      "evidence": [
+        "Current suites prove enabled plugin initialization, served gateway/channel registrations and shutdown.",
+        "Implementation visibly returns registries at plugin-composition.ts:92-110."
+      ],
+      "remaining": [],
+      "adaptation": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+      "proofFiles": [
+        "products/daemon/src/test/runtime/boot-composition.test.ts",
+        "products/daemon/src/test/runtime/boot-graph.test.ts",
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "accounting": "mapped",
+      "initialReviewStatus": "partial",
+      "restoredEvidence": [
+        "Real production boot loads combined delivery/gateway/unserved-slash plugin; exact served router/catalog/channel identities, slash register/unregister acceptance, actual delivery/gateway calls and cleanup are asserted."
+      ],
+      "mappedTargets": [
+        "products/daemon/src/test/runtime/boot-composition.test.ts",
+        "products/daemon/src/test/runtime/boot-graph.test.ts",
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/runtime/trust-gated-approvals.test.ts",
+      "originalBlob": "b4175d856406ec9ecc6cd934208413c15e29ac91",
+      "originalDisposition": "HOIST",
+      "reviewStatus": "complete",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/test/workspace-trust-approval.test.ts"
+      ],
+      "evidence": [
+        "Exact pinned blob diff retains all assertions. Current lines 118-249 cover workspace prompt/args/timeout, original call, trust persistence, restricted refusal, reads, prior state, routeId/metadata and unanswered rejection.",
+        "Actual callers: products/daemon/src/runtime/service-graph.ts:633-641 and hosted-session-composition.ts:121-139.",
+        "Successor header warning about two missing composition assertions is stale: they are absent from the pinned October 1 original."
+      ],
+      "remaining": [],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/test/workspace-trust-approval.test.ts"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "packages/engine/test/workspace-trust-approval.test.ts"
+      ],
+      "canonicalOwner": null
+    },
+    {
+      "source": "src/test/setup.ts",
+      "originalBlob": "627c602dbc4a51a6c0996f8cf5d8226e21b1c62d",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete-source-not-adopted",
+      "purpose": "MockLLMProvider canned response sequencing/tool-call stop reasons, temp config/dir/file helpers and renderer Line/text conversions.",
+      "targets": [
+        "products/tui/src/test/setup.ts"
+      ],
+      "evidence": [
+        {
+          "file": "products/tui/src/test/setup.ts",
+          "detail": "Full original implementation retained with only engine type import renames."
+        },
+        {
+          "file": "products/tui/src/test/renderer/conversation-surface.test.ts",
+          "detail": "Actual lineToString consumer."
+        },
+        {
+          "file": "products/tui/src/test/renderer/model-workspace.test.ts",
+          "detail": "Actual Line/text helpers consumer."
+        },
+        {
+          "file": "docs/inventory/daemon.md",
+          "detail": "Explicitly unused by daemon; retain only at sibling consumer."
+        }
+      ],
+      "remaining": [
+        "Full active TUI successor; no daemon copy owed. Proposed engine/workspace canonicalOwner does not cover sibling products."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "products/tui/src/test/setup.ts",
+        "products/tui/src/test/renderer/conversation-surface.test.ts",
+        "products/tui/src/test/renderer/model-workspace.test.ts",
+        "docs/inventory/daemon.md"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "src/testing/hosted-session-failures.ts",
+      "originalBlob": "69095eaa6e784681b2fc9a0434841fb27a9fc8de",
+      "originalDisposition": "PORT",
+      "reviewStatus": "missing",
+      "purpose": "Original behavioral assertions and fixture invocation boundary",
+      "targets": [
+        "packages/engine/sdk/src/platform/control-plane/routes/hosted-sessions.ts"
+      ],
+      "evidence": [
+        "Current lines 194-200 retain only five method IDs; no HOSTED_SESSION_FAILURE_FIXTURES or equivalent clientAction records found."
+      ],
+      "remaining": [
+        "Original exported fixture interface, three records with methodId/code/status/when/clientAction and list (original 28-92)."
+      ],
+      "adaptation": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+      "proofFiles": [
+        "packages/engine/sdk/src/platform/control-plane/routes/hosted-sessions.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "toolchain.config.json",
+      "originalBlob": "d39c1a0d263a738019d45c96b8d7188a298ecae9",
+      "originalDisposition": "PORT",
+      "reviewStatus": "partial",
+      "purpose": "Identity/SDK ownership, four build targets/addons, prebuild/smoke, releaseCut sync/commit/changelog, publish tarball policy and per-job-green tagged CI verification.",
+      "targets": [
+        "products/daemon/toolchain.config.json"
+      ],
+      "evidence": [
+        {
+          "file": "docs/audit/daemon-native-packaging.md",
+          "detail": "Section-by-section source accounting, four original artifact/addon names and Linux proof; release sections omitted."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "Local no-bump sync now exists, but releaseCut hook still not configured."
+        },
+        {
+          "file": "products/daemon/scripts/run-toolchain.ts",
+          "detail": "Actual build/smoke caller uses current config."
+        }
+      ],
+      "remaining": [
+        "releaseCut/publish/perJobGreen remain unconfigured; local sync availability does not configure them. Four-target settings do not prove all platforms or a release."
+      ],
+      "adaptation": "",
+      "proofFiles": [
+        "docs/audit/daemon-native-packaging.md",
+        "docs/audit/daemon-release-preparation.md",
+        "products/daemon/scripts/run-toolchain.ts"
+      ],
+      "accounting": "unmapped"
+    },
+    {
+      "source": "tsconfig.test.json",
+      "originalBlob": "b8072a46a3e32ee6d604e8a72730b0a75873921b",
+      "originalDisposition": "PORT",
+      "reviewStatus": "complete",
+      "purpose": "No-emit Bun typechecking of all src and scripts including tests.",
+      "targets": [
+        "products/daemon/tsconfig.json"
+      ],
+      "evidence": [
+        {
+          "file": "products/daemon/package.json",
+          "detail": "Actual typecheck command tsc --noEmit -p tsconfig.json."
+        },
+        {
+          "file": "products/daemon/tsconfig.json",
+          "detail": "Bun+Node types, noEmit, src/**/*.ts and scripts/**/*.ts include all authored current TS."
+        },
+        {
+          "file": "packages/engine/scripts/product-workspace-contract.ts",
+          "detail": "Checks every authored product source/tooling file belongs to a real TS project."
+        },
+        {
+          "file": "docs/audit/daemon-release-preparation.md",
+          "detail": "Prior bounded receipt reports full daemon tsc on this project."
+        }
+      ],
+      "remaining": [],
+      "adaptation": "Test typecheck is merged into the product main no-emit project; distinct build project excludes tests for emission. No duplicate tsconfig.test file needed.",
+      "proofFiles": [
+        "products/daemon/package.json",
+        "products/daemon/tsconfig.json",
+        "packages/engine/scripts/product-workspace-contract.ts",
+        "docs/audit/daemon-release-preparation.md"
+      ],
+      "accounting": "mapped",
+      "mappedTargets": [
+        "products/daemon/tsconfig.json"
+      ],
+      "canonicalOwner": null
+    }
+  ]
+}

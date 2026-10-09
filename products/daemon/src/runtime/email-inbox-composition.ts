@@ -1,3 +1,4 @@
+import { createInboxRouteResolver } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { ClusterClock } from '@goodvibes-jev/engine/sdk/platform/cluster';
 import { ownInboxEligibility } from './inbox-eligibility.js';
 /** Explicit single-account mail inbox; does not enable all-provider default serve. */
@@ -42,7 +43,11 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
   factories: Pick<EmailDaemonInboxFactories, 'createOwner' | 'eligibilityClock'>,
   register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1]) => T,
 ): (...args: Parameters<DaemonInboxFactory>) => Promise<T> {
-  return async (context, _routing, controls) => {
+  return async (context, routing, controls) => {
+    const resolveProfileId = routing.resolveProfileId.bind(routing);
+    const resolveRouteId = createInboxRouteResolver({
+      getProfileForChannel: resolveProfileId, resolveProfile: resolveProfileId,
+    });
     // The canonical daemon mailbox has no separate enable switch. Its shared
     // reader derives readiness from configured endpoint/account fields.
     const config: { get(key: string): unknown } = context.configManager;
@@ -64,7 +69,7 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
     let surface: T | undefined;
     try {
       owner = (factories.createOwner ?? createEmailInboxOwner)({ account: options.account, service: mail.service,
-        screening: options.screening, assertCurrent: current,
+        screening: options.screening, assertCurrent: current, resolveRouteId,
         getCheckpoint: () => {
           if (!surface?.getImapCheckpoint) throw new Error('Email inbox checkpoint storage is unavailable');
           return surface.getImapCheckpoint('email');

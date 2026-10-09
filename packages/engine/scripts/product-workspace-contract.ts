@@ -169,6 +169,42 @@ function typeCoverage(directory: string, files: readonly string[]): { tsconfigs:
   return { tsconfigs, findings };
 }
 
+type CanonicalOwnerScope = 'engine' | 'workspace';
+
+/** Ownership metadata never changes the pinned source disposition or proves parity. */
+function canonicalOwnerScope(root: string, value: unknown, disposition: Disposition | undefined, label: string, findings: string[]): CanonicalOwnerScope | undefined {
+  if (value === undefined) return undefined;
+  const owner = object(value);
+  const start = findings.length;
+  if (disposition !== 'PORT') findings.push(`${label}: canonicalOwner is only allowed for original PORT rows`);
+  if (owner === undefined || Object.keys(owner).some((key) => !['scope', 'reason', 'evidence'].includes(key))) {
+    findings.push(`${label}: malformed canonicalOwner or unknown keys`);
+    return undefined;
+  }
+  if (owner.scope !== 'engine' && owner.scope !== 'workspace') findings.push(`${label}: unknown canonicalOwner scope`);
+  if (typeof owner.reason !== 'string' || owner.reason.trim().length === 0) findings.push(`${label}: canonicalOwner requires a nonempty reason`);
+  const evidence = strings(owner.evidence);
+  if (evidence === undefined || evidence.length === 0 || new Set(evidence).size !== evidence.length) {
+    findings.push(`${label}: canonicalOwner requires distinct evidence files`);
+  }
+  for (const entry of evidence ?? []) {
+    const path = containedFile(root, entry);
+    if (path === undefined || readFileSync(path, 'utf8').trim().length === 0) findings.push(`${label}: missing, empty or outside-workspace canonicalOwner evidence ${entry}`);
+  }
+  return findings.length === start ? owner.scope as CanonicalOwnerScope : undefined;
+}
+
+/** Both the declared path and its resolved file must belong to the claimed owner. */
+function targetHasCanonicalOwner(root: string, target: string, scope: CanonicalOwnerScope): boolean {
+  const file = containedFile(root, target);
+  if (file === undefined) return false;
+  const belongs = (parts: string[]): boolean => scope === 'engine'
+    ? parts[0] === 'packages' && parts[1] === 'engine'
+    : parts[0] !== 'products' && parts[0] !== 'packages';
+  return belongs(relative(resolve(root), resolve(root, target)).split(/[\\/]/))
+    && belongs(relative(realpathSync(root), realpathSync(file)).split(/[\\/]/));
+}
+
 function migrationFindings(root: string, source: ProductSource, migration: Record<string, unknown>, rows: ReadonlyMap<string, Disposition>, complete: boolean): string[] {
   const findings: string[] = [];
   const label = source.path;
@@ -189,6 +225,7 @@ function migrationFindings(root: string, source: ProductSource, migration: Recor
     mapped.add(mapping.source);
     const disposition = rows.get(mapping.source);
     if (disposition === undefined || mapping.disposition !== disposition) findings.push(`${label}: mapping disagrees with inventory for ${mapping.source}`);
+    const ownerScope = canonicalOwnerScope(root, mapping.canonicalOwner, disposition, `${label}: ${mapping.source}`, findings);
     const targets = strings(mapping.targets);
     if (disposition === 'DROP') {
       if (targets?.length !== 0 || typeof mapping.reason !== 'string' || mapping.reason.trim().length === 0) findings.push(`${label}: DROP must name its reason and no targets for ${mapping.source}`);
@@ -197,7 +234,8 @@ function migrationFindings(root: string, source: ProductSource, migration: Recor
       for (const target of targets ?? []) {
         if (containedFile(root, target) === undefined) findings.push(`${label}: missing or outside-workspace target ${target}`);
         if (disposition === 'HOIST' && !target.startsWith('packages/engine/')) findings.push(`${label}: HOIST target must live in the engine: ${target}`);
-        if (disposition === 'PORT' && !target.startsWith(`${source.path}/`)) findings.push(`${label}: PORT target must live in its product: ${target}`);
+        if (ownerScope !== undefined && !targetHasCanonicalOwner(root, target, ownerScope)) findings.push(`${label}: target does not belong to canonicalOwner ${ownerScope}: ${target}`);
+        if (disposition === 'PORT' && ownerScope === undefined && !target.startsWith(`${source.path}/`)) findings.push(`${label}: PORT target must live in its product: ${target}`);
       }
     }
   }

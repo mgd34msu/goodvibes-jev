@@ -1181,7 +1181,339 @@
         "products/daemon/src/test/daemon/send-delivery.test.ts",
         "products/daemon/src/test/daemon/send-executable.test.ts"
       ]
+    },
+    {
+      "source": ".github/actions/setup/action.yml",
+      "disposition": "PORT",
+      "targets": [
+        ".github/actions/setup/action.yml"
+      ],
+      "canonicalOwner": {
+        "scope": "workspace",
+        "reason": "Same default Bun 1.3.14, SHA-pinned setup action, cache path/key/restore prefix and frozen install. Cache is now explicit restore plus conditional always-save rather than the combined cache action.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          ".github/workflows/ci.yml",
+          "packages/engine/test/bun-pin-agreement.test.ts",
+          "packages/engine/scripts/bun-pin-rule.ts"
+        ]
+      }
+    },
+    {
+      "source": "bun.lock",
+      "disposition": "PORT",
+      "targets": [
+        "bun.lock"
+      ],
+      "canonicalOwner": {
+        "scope": "workspace",
+        "reason": "Independent generated workspace lock replaces the standalone lock; never hand-copy obsolete upstream resolutions.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "bun.lock",
+          "package.json",
+          ".github/actions/setup/action.yml",
+          "docs/inventory/daemon.md"
+        ]
+      }
+    },
+    {
+      "source": "bunfig.toml",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Parent-owned post-child cleanup replaces bunfig afterAll preload configuration; no coverage quota is present in the pinned source or restored.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "products/daemon/package.json",
+          "products/daemon/src/test/helpers/owned-temp.ts",
+          "packages/engine/test/test-tmp-containment.test.ts",
+          "docs/audit/daemon-upstream-reconciliation-2026-10-01.md"
+        ]
+      }
+    },
+    {
+      "source": "scripts/bun-compile-compat.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/toolchain/src/lib/bun-compile-compat.ts",
+        "packages/engine/toolchain/src/lib/bun-compile.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "All seven original source patches retained. Installed-owner resolution and in-memory Bun files replace writes into shared node_modules. Unexpected source shapes now fail closed rather than warn/skip.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "products/daemon/scripts/compile.ts",
+          "products/daemon/toolchain.config.json",
+          "products/tui/src/test/scripts/compiled-html-extraction.test.ts",
+          "docs/audit/daemon-native-packaging.md"
+        ]
+      }
+    },
+    {
+      "source": "scripts/project-surfaces.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/scripts/release-prepare.ts"
+      ]
+    },
+    {
+      "source": "scripts/run-tests.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/scripts/test-discovery.ts",
+        "packages/engine/toolchain/src/test-runner/owned-test-child.ts",
+        "packages/engine/toolchain/src/test-runner/test-run-tmp.ts",
+        "packages/engine/toolchain/src/test-runner/test-isolation.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Canonical guarded runner replaces CLI/per-file concurrency design; keeps recursive suite discovery, explicit selection, timeout/failure propagation and stronger owned-child isolation. Upstream --jobs/changed optimization is deliberately not a compatibility promise.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "products/daemon/package.json",
+          "docs/inventory/daemon.md",
+          "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+          "packages/engine/test/test-discovery.test.ts",
+          "packages/engine/test/test-tmp-containment.test.ts",
+          "packages/engine/test/toolchain/test-runner-boundary.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "scripts/test-pattern-rule.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/scripts/test.ts",
+        "packages/engine/scripts/test-discovery.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Canonical runner passes explicit caller selections to Bun and uses default recursive discovery when absent. Existing policy explicitly forbids replacing Jev runner semantics with this standalone optimization.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "products/daemon/package.json",
+          "docs/inventory/daemon.md",
+          "docs/audit/daemon-upstream-reconciliation-2026-10-01.md",
+          "packages/engine/test/test-discovery.test.ts",
+          "packages/engine/test/test-tmp-containment.test.ts",
+          "packages/engine/test/toolchain/test-runner-boundary.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/runtime/update-check.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/install-kind.ts",
+        "packages/engine/sdk/src/platform/runtime/self-update.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Original detector is byte-equivalent in the shared owner. Fallback formatter takes an explicit package name instead of hardcoding the daemon name; pure fixture asserts original strings without selecting or activating a product release policy. Original canonical version/tag re-exports remain in the shared self-update owner.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/daemon-update-check-source-parity.test.ts",
+          "packages/engine/test/self-update-policy.test.ts",
+          "products/daemon/src/test/daemon/lifecycle.test.ts",
+          "products/daemon/src/daemon/lifecycle.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/cluster/commands.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/cluster-commands.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/control-routes.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/daemon-sdk.test.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/daemon-sdk.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/daemon/http-policy.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/daemon-http-policy-source-parity.test.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/daemon-http-policy-source-parity.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/daemon/inbox/aggregator.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts",
+        "packages/engine/test/daemon-inbox-registration.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/inbox/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-inbox-registration.test.ts",
+        "packages/engine/test/daemon-inbox-aggregation.test.ts",
+        "packages/engine/test/daemon-inbox-composite.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/provider-registration.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/daemon-provider-registration-source-parity.test.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Original missing assertions restored through actual canonical owners and composed fixtures; no original disposition or independent activation gate is changed.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/daemon-provider-registration-source-parity.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/daemon/safe-serve.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/daemon-safe-serve.test.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/daemon-safe-serve.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/helpers/config-manager-stub.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/_helpers/config-manager-stub.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Typed get/getCategory/setProjectValue record-backed ConfigManager doubles without recursively redeclaring generic conditional member types.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/workstream-services.test.ts",
+          "packages/engine/test/workstream-planner-inputs.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/runtime/control-plane-store-location.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/control-plane-store-writes.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/localhost-fetch-approval-wiring.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/fetch-localhost-approval.test.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Existing canonical engine implementation and suite retain the pinned original assertions; product-specific imports and fixture ownership are adapted without copying a second owner.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/fetch-localhost-approval.test.ts"
+        ]
+      }
+    },
+    {
+      "source": "src/test/runtime/memory-fold.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts",
+        "products/daemon/src/test/runtime/boot-composition.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/notification-dispatch.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/notification-component.test.ts",
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/personal-capture-wiring.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "packages/engine/test/personal-information-capture.test.ts",
+        "packages/engine/test/daemon-channel-continuation-tools.test.ts"
+      ],
+      "canonicalOwner": {
+        "scope": "engine",
+        "reason": "Original pure-helper assertions now require explicit ownerChannels authority; served first/queued requests preserve restricted tools. Facade replaces the graph runner before listener admission; no pre-facade production invocation or default routing overwrite was established.",
+        "evidence": [
+          "docs/audit/daemon-canonical-owner-accounting-2026-10-09.md",
+          "packages/engine/test/personal-information-capture.test.ts",
+          "packages/engine/test/daemon-channel-continuation-tools.test.ts",
+          "docs/audit/sdk-channel-capabilities.md"
+        ]
+      }
+    },
+    {
+      "source": "src/test/runtime/plugin-composition.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/boot-composition.test.ts",
+        "products/daemon/src/test/runtime/boot-graph.test.ts",
+        "products/daemon/src/test/runtime/composition-source-parity.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/trust-gated-approvals.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/workspace-trust-approval.test.ts"
+      ]
+    },
+    {
+      "source": "tsconfig.test.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/tsconfig.json"
+      ]
     }
   ],
-  "remaining": "Migration remains partial. The source-accounting reconciliation in docs/audit/daemon-source-accounting-2026-10-09.md maps 165 of the 281 pinned rows; 116 remain unmapped. Completed component hoists do not establish complete product parity. The shipped entrypoint composes Slack/Discord/email unconfigured membership without provider polling; explicit account-owned Slack/email and owned triage read-enrichment/scoring exist. Configured standalone sources still need trusted local authority and a production Discord catalog. Startup token pruning, guarded legacy reconciliation and public-URL persistence now have admitted callers and fixture proof; actual service adoption remains separate. The compiled Linux hosted-model/Jev proof and original hosted CLI assertion crosswalk now pass against the hash-verified historical 0aaa artifact with verifier f1d28987; this is not a current-source native build or transitive-equivalence claim. Product update policy, authenticated artifacts and automatic lifecycle activation, supported-platform/release acceptance, live provider/service calibration and whole-session transport bounds remain open. Whole CLI, inbox/index, privacy mapping and triage integration/index/tagger surfaces are not marked fully migrated; the typed triage core and adapted original scorer/pipeline assertions are mapped separately. Local release-preparation source/test mechanics are mapped without adopting version/publication policy or activating a release. See the current source-accounting audit for precise evidence and retained obligations; original dated audits are historical checkpoints."
+  "remaining": "Migration remains partial. The source-accounting reconciliation in docs/audit/daemon-canonical-owner-accounting-2026-10-09.md maps 190 of the 281 pinned rows; 91 remain unmapped. Completed component hoists do not establish complete product parity. The shipped entrypoint composes Slack/Discord/email unconfigured membership without provider polling; explicit account-owned Slack/email and owned triage read-enrichment/scoring exist. Configured standalone sources still need trusted local authority and a production Discord catalog. Startup token pruning, guarded legacy reconciliation and public-URL persistence now have admitted callers and fixture proof; actual service adoption remains separate. The compiled Linux hosted-model/Jev proof and original hosted CLI assertion crosswalk now pass against the hash-verified historical 0aaa artifact with verifier f1d28987; this is not a current-source native build or transitive-equivalence claim. Product update policy, authenticated artifacts and automatic lifecycle activation, supported-platform/release acceptance, live provider/service calibration and whole-session transport bounds remain open. Whole CLI, inbox/index, privacy mapping and triage integration/index/tagger surfaces are not marked fully migrated; the typed triage core and adapted original scorer/pipeline assertions are mapped separately. Local release-preparation source/test mechanics are mapped without adopting version/publication policy or activating a release. See the current source-accounting audit for precise evidence and retained obligations; original dated audits are historical checkpoints."
 }

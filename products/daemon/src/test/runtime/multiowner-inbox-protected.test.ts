@@ -11,7 +11,6 @@ import { createEmailInboxOwner, createSlackInboxOwner, digestSender,
   type EmailInboxAccount, type InboxListOutput, type InboxPollingControl } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { ProtectedSourceOwnerOptions } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { HandlerContext } from '../../daemon/handlers/context.js';
-import type { DaemonInboxFactory } from '../../runtime/daemon-handler-composition.js';
 import { createEmailDaemonInboxSourceFactory } from '../../runtime/email-inbox-composition.js';
 import { composeMailDeps } from '../../runtime/mail-composition.js';
 import { createMultiOwnerDaemonInboxFactory } from '../../runtime/multiowner-inbox-composition.js';
@@ -100,7 +99,7 @@ test('real protected Slack and email share a canonical projection and refuse cro
     createEmailDaemonInboxSourceFactory({ account: emailAccount, screening: screening('email', emailAuthority) }, {
       createOwner(options) { const owner = createEmailInboxOwner(options); emailScope = owner.scopeId; return owner; },
     }),
-  ])(context, {} as Parameters<DaemonInboxFactory>[1], {
+  ])(context, { async initialize() {}, async close() {}, unregister() {}, resolveProfileId: () => null }, {
     gatePolling(id, control) { controls.set(id, control); },
     createEmailService() {
       const { emailServiceDeps } = composeMailDeps({ configManager,

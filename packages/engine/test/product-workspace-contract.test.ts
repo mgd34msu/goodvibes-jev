@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { inspectProductWorkspaces, inventoryDispositions, moduleSpecifiers, productCheckCommands, productTestMatrix, readProductSources, selectProductWorkspaces, type ProductSource } from '../scripts/product-workspace-contract.ts';
@@ -331,4 +331,107 @@ test('the product matrix CLI emits only complete inspected JSON and refuses sele
   const filtered = spawnSync('bun', [runner, 'matrix', 'daemon'], { cwd: root, encoding: 'utf8', timeout: 10_000 });
   expect(filtered.status).toBe(1);
   expect(filtered.stderr).toContain('matrix does not accept product selectors');
+});
+
+
+function canonicalFixture(scope: 'engine' | 'workspace' = 'engine') {
+  const root = fixture();
+  const target = scope === 'engine' ? 'packages/engine/shared.ts' : 'workspace-tool.ts';
+  write(root, target, 'export const realOwner = true;');
+  write(root, 'docs/audit/owner.md', 'The original source is implemented by the shared owner; fixture evidence only.');
+  const mapping = { source: 'src/main.ts', disposition: 'PORT', targets: [target],
+    canonicalOwner: { scope, reason: 'Existing canonical implementation replaces duplicate product ownership.', evidence: ['docs/audit/owner.md'] } };
+  mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [mapping]; });
+  return { root, target, mapping };
+}
+
+test('explicit canonical owners preserve original PORT disposition while admitting real shared files', () => {
+  for (const scope of ['engine', 'workspace'] as const) {
+    const { root } = canonicalFixture(scope);
+    expect(inspectProductWorkspaces(root, [source]).findings).toEqual([]);
+    expect(inventoryDispositions(readFileSync(join(root, source.inventory), 'utf8'), '').get('src/main.ts')).toBe('PORT');
+  }
+});
+
+test('canonical ownership cannot bypass missing original rows or strict parity/proof/audit evidence', () => {
+  const { root } = canonicalFixture();
+  write(root, source.inventory, '| `src/main.ts` | PORT | Original |\n| `src/other.ts` | PORT | Still missing |\n');
+  const findings = inspectProductWorkspaces(root, [{ ...source, files: ['src/main.ts', 'src/other.ts'] }], true).findings.join('\n');
+  expect(findings).toContain('source module not accounted for: src/other.ts');
+  for (const evidence of ['parity', 'proof', 'patternAudit']) expect(findings).toContain(`missing ${evidence} evidence file`);
+});
+
+for (const [name, owner] of [
+  ['null metadata', null], ['array metadata', []],
+  ['unknown scope', { scope: 'anywhere', reason: 'reason', evidence: ['docs/audit/owner.md'] }],
+  ['unknown keys', { scope: 'engine', reason: 'reason', evidence: ['docs/audit/owner.md'], waiveParity: true }],
+  ['missing reason', { scope: 'engine', evidence: ['docs/audit/owner.md'] }],
+  ['empty reason', { scope: 'engine', reason: '  ', evidence: ['docs/audit/owner.md'] }],
+  ['missing evidence', { scope: 'engine', reason: 'reason' }],
+  ['empty evidence', { scope: 'engine', reason: 'reason', evidence: [] }],
+  ['nonstring evidence', { scope: 'engine', reason: 'reason', evidence: [false] }],
+  ['duplicate evidence', { scope: 'engine', reason: 'reason', evidence: ['docs/audit/owner.md', 'docs/audit/owner.md'] }],
+  ['missing evidence file', { scope: 'engine', reason: 'reason', evidence: ['docs/audit/missing.md'] }],
+  ['escaped evidence', { scope: 'engine', reason: 'reason', evidence: ['../outside.md'] }],
+] as const) {
+  test(`canonical ownership rejects ${name}`, () => {
+    const { root, mapping } = canonicalFixture();
+    mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [{ ...mapping, canonicalOwner: owner }]; });
+    expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('canonicalOwner');
+  });
+}
+
+test('canonical ownership rejects empty and out-of-workspace symlink evidence', () => {
+  const { root } = canonicalFixture();
+  write(root, 'docs/audit/owner.md', ' \n');
+  expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('empty or outside-workspace canonicalOwner evidence');
+  const other = fixture(false); write(other, 'evidence.md', 'An outside file must not count.');
+  rmSync(join(root, 'docs/audit/owner.md'));
+  symlinkSync(join(other, 'evidence.md'), join(root, 'docs/audit/owner.md'));
+  expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('outside-workspace canonicalOwner evidence');
+});
+
+for (const [scope, target] of [
+  ['engine', 'workspace-tool.ts'], ['engine', 'packages/other/shared.ts'], ['engine', 'products/daemon/src/main.ts'],
+  ['workspace', 'packages/engine/shared.ts'], ['workspace', 'packages/other/shared.ts'], ['workspace', 'products/daemon/src/main.ts'],
+  ['workspace', 'products/other/shared.ts'],
+] as const) {
+  test(`canonical ${scope} owner refuses target ${target}`, () => {
+    const { root, mapping } = canonicalFixture(scope);
+    write(root, target, 'export const wrongOwner = true;');
+    mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [{ ...mapping, targets: [target] }]; });
+    expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('target does not belong to canonicalOwner');
+  });
+}
+
+test('canonical ownership rejects absent and escaped targets, even with valid evidence', () => {
+  const { root, mapping } = canonicalFixture();
+  for (const target of ['packages/engine/missing.ts', '../outside.ts', join(root, 'packages/engine/shared.ts')]) {
+    mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [{ ...mapping, targets: [target] }]; });
+    expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('missing or outside-workspace target');
+  }
+});
+
+test('canonical ownership cannot use an in-workspace symlink to change the actual owner', () => {
+  for (const scope of ['engine', 'workspace'] as const) {
+    const { root, target } = canonicalFixture(scope);
+    rmSync(join(root, target));
+    symlinkSync(join(root, 'products/daemon/src/main.ts'), join(root, target));
+    expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('target does not belong to canonicalOwner');
+  }
+});
+
+for (const disposition of ['HOIST', 'JEV', 'DROP'] as const) {
+  test(`canonical ownership cannot override an original ${disposition} disposition`, () => {
+    const { root, mapping } = canonicalFixture();
+    write(root, source.inventory, `| \`src/main.ts\` | ${disposition} | Original |\n`);
+    mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [{ ...mapping, disposition }]; });
+    expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('canonicalOwner is only allowed for original PORT rows');
+  });
+}
+
+test('canonical ownership never authorizes changing the original disposition', () => {
+  const { root, mapping } = canonicalFixture();
+  mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [{ ...mapping, disposition: 'HOIST' }]; });
+  expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('mapping disagrees with inventory');
 });

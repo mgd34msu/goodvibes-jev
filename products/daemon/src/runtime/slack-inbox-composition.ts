@@ -1,3 +1,4 @@
+import { createInboxRouteResolver } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { ClusterClock } from '@goodvibes-jev/engine/sdk/platform/cluster';
 import { ownInboxEligibility } from './inbox-eligibility.js';
 import { realpath } from 'node:fs/promises';
@@ -53,7 +54,11 @@ function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
   register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1]) => T,
   requireFinalProof: boolean,
 ): (...args: Parameters<DaemonInboxFactory>) => Promise<T> {
-  return async (context, _routing, controls) => {
+  return async (context, routing, controls) => {
+    const resolveProfileId = routing.resolveProfileId.bind(routing);
+    const resolveRouteId = createInboxRouteResolver({
+      getProfileForChannel: resolveProfileId, resolveProfile: resolveProfileId,
+    });
     const clustered = context.configManager.get('cluster.enabled') === true;
     if (clustered && !controls.gatePollingOwned) throw new Error('Clustered inbox requires owned gate retirement');
     if (clustered && !controls.onAccountInvalidation) throw new Error('Clustered Slack inbox requires owned account invalidation');
@@ -70,7 +75,7 @@ function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
     current();
     const workingDirectory = await realpath(context.workingDirectory);
     current();
-    const owner = await (factories.createOwner ?? createSlackInboxOwner)(context, {
+    const owner = await (factories.createOwner ?? createSlackInboxOwner)({ ...context, resolveRouteId }, {
       account, screening: options.screening, assertCurrent: current,
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });

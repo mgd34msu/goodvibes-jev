@@ -78,11 +78,12 @@ function usableToken(token: string | null): token is string {
 
 /** Explicit real provider owner; nothing polls, reads credentials or registers at construction. */
 export async function createSlackInboxOwner(
-  context: Pick<AdapterContext, 'credentials' | 'logger'>,
+  context: Pick<AdapterContext, 'credentials' | 'logger' | 'resolveRouteId'>,
   options: SlackInboxOwnerOptions,
   factories: SlackInboxOwnerFactories = {},
 ): Promise<VerifiedSlackInboxOwner> {
   const account = captureAccount(options.account);
+  const resolveRouteId = context.resolveRouteId;
   const scopeId = digest(JSON.stringify(['slack-inbox', 1, account.workspaceId, account.userId]));
   const lifetime = new AbortController();
   const signal = AbortSignal.any([lifetime.signal, options.screening.authority.signal, ...(options.signal ? [options.signal] : [])]);
@@ -197,6 +198,7 @@ export async function createSlackInboxOwner(
           if (verifiedCredential && verifiedCredential !== digest(token)) invalidateIdentity();
           let verified: number | undefined;
           const delegate = createSlackInboxAdapter({ logger: context.logger,
+            ...(resolveRouteId ? { resolveRouteId } : {}),
             credentials: { resolveRef: async () => null, resolveConfigSecret: async (key) => key === KEY ? token : null },
           }, { http: identityHttp(token, (epoch) => { verified = epoch; }), mapItem: mapper });
           const result = await delegate.poll(options);

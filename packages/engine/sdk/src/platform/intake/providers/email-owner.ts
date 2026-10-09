@@ -9,7 +9,7 @@ import { createProtectedSourceOwner } from '../../security/source-screening/owne
 import type { ProtectedSourceOwnerOptions, ProtectedSource } from '../../security/source-screening/types.js';
 import type { OwnedInboxReadLease } from '../registration.js';
 import { digestSender, normalizeWhitespace, stripMarkup } from '../text-normalization.js';
-import { POLL_CADENCE_MS, type ImapUidCheckpoint, type InboundChannelItem, type InboundProviderAdapter, type ProviderPollOptions, type ProviderPollResult } from '../provider-adapter.js';
+import { POLL_CADENCE_MS, type RouteResolver, type ImapUidCheckpoint, type InboundChannelItem, type InboundProviderAdapter, type ProviderPollOptions, type ProviderPollResult } from '../provider-adapter.js';
 
 export interface EmailInboxAccount {
   readonly host: string;
@@ -26,6 +26,8 @@ export interface EmailInboxOwnerOptions {
   readonly assertCurrent: () => void;
   /** Read-only view of the actual durable inbox checkpoint, supplied by its registrar. */
   readonly getCheckpoint: () => ImapUidCheckpoint | null;
+  /** Optional metadata-only routing capability captured by the owned poll. */
+  readonly resolveRouteId?: RouteResolver;
   readonly signal?: AbortSignal;
 }
 /** Preserve the original asynchronous callable contract while adding a final fence. */
@@ -83,6 +85,7 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
   const authority = options.screening.authority;
   const assertAuthority = authority.assertCurrent;
   const getCheckpoint = options.getCheckpoint;
+  const resolveRouteId = options.resolveRouteId;
   const scopeId = createHash('sha256').update(JSON.stringify(['email-inbox', 1, account])).digest('hex');
   const lifetime = new AbortController();
   const signal = AbortSignal.any([lifetime.signal, options.screening.authority.signal, ...(options.signal ? [options.signal] : [])]);
@@ -183,8 +186,19 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
             if (operationSignal.aborted || judged.status !== 'settled') return unavailable(true);
             const projected = screening.project(judged.receipt);
             const uid = source.detail.uid;
+            const fromDigest = digestSender(`email:${source.detail.from.trim().toLowerCase()}`);
+            let routeId: string | undefined;
+            if (resolveRouteId) {
+              try {
+                const resolved = await resolveRouteId({ provider: 'email', fromDigest, kind: 'dm' });
+                if (typeof resolved === 'string' && resolved.length > 0) routeId = resolved;
+              } catch { /* Optional routing failure cannot expose source or poison a poll. */ }
+              current(); observation.assertCurrent();
+              if (operationSignal.aborted || epoch !== identityEpoch) return unavailable(true);
+            }
             items.push({ id: `email:${scopeId}:${String(observation.uidValidity).padStart(10, '0')}:${String(uid).padStart(10, '0')}`,
-              provider: 'email', kind: 'dm' as const, fromDigest: digestSender(`email:${source.detail.from.trim().toLowerCase()}`),
+              provider: 'email', kind: 'dm' as const, fromDigest,
+              ...(routeId === undefined ? {} : { routeId }),
               subjectPreview: prefix(projected[3]!, 200), bodyPreview: prefix(projected[4]!, 500),
               receivedAt: Date.now(), unread: message.unread });
           } finally {
