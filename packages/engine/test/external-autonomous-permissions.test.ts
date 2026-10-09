@@ -82,7 +82,7 @@ import { parseElicitationParams } from '../sdk/src/platform/mcp/elicitation.ts';
 import { elicitationContent } from '../sdk/src/platform/mcp/elicitation-schema.ts';
 const form = { message: 'Tell us the requested display name', requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } };
 const operation = () => ({ sourceOf: () => ({ goal: 'Use the supplied display name Alice', criteria: [] }), inputFacts: [{ name: 'Alice' }], assertCurrent() {} });
-function mcp() {
+function mcp(inputId = 'form') {
   const handler = createMcpAutonomousElicitationHandler(host);
   const wire: Record<string, unknown>[] = [];
   const client = new McpClient({ name: 'synthetic', command: '/synthetic/server' }, {
@@ -96,7 +96,7 @@ function mcp() {
     if (message.method === 'tools/call') {
       const params = message.params as Record<string, unknown>;
       const result = params.inputResponses ? { content: [], received: params.inputResponses } : {
-        resultType: 'input_required', inputRequests: { form: { method: 'elicitation/create', params: form } }, requestState: 'state-1',
+        resultType: 'input_required', inputRequests: { [inputId]: { method: 'elicitation/create', params: form } }, requestState: 'state-1',
       };
       queueMicrotask(() => access._dispatchLine(JSON.stringify({ jsonrpc: '2.0', id: message.id, result })));
     }
@@ -138,7 +138,7 @@ test('MCP strict structural schema validation rejects extras, fractional integer
   expect(elicitationContent({ type: 'object', properties: { password: { type: 'string' } } }, { password: 'protected' })).toBeNull();
 });
 
-function httpMcp() {
+function httpMcp(requestId?: string) {
   const handler = createMcpAutonomousElicitationHandler(host);
   const responses: Array<{ id: string; result: unknown; session: string | null }> = [];
   const streams = new Map<string, { controller: ReadableStreamDefaultController<Uint8Array>; parentId: unknown }>();
@@ -157,7 +157,7 @@ function httpMcp() {
     if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (body.method === 'tools/list') return json({ jsonrpc: '2.0', id: body.id, result: { tools: [{ name: 'register', description: 'synthetic', inputSchema: { type: 'object' } }] } });
     if (body.method === 'tools/call') {
-      const id = `form-${body.id}`;
+      const id = requestId ?? `form-${body.id}`;
       const stream = new ReadableStream<Uint8Array>({ start(controller) {
         streams.set(id, { controller, parentId: body.id });
         controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ jsonrpc: '2.0', id, method: 'elicitation/create', params: form })}\n\n`));
@@ -435,4 +435,158 @@ test('ACP duplicate in-flight RPC ID invalidates both incarnations without any s
   wire.write({ jsonrpc: '2.0', id: 1, result: secondResult }, send);
   expect(writes).toEqual([{ jsonrpc: '2.0', id: 1, result: { outcome: { outcome: 'cancelled' } } }]);
   expect(humans).toBe(0); expect(invalidations.size).toBe(0);
+});
+
+import { PAN_SHAPED_PROTOCOL_UUID, selectedDiffSource } from './_helpers/protocol-identity.ts';
+test('ACP canonical connection UUID is structural identity, not raw card input', async () => {
+  const f = acp();
+  (f.service as unknown as { records: Map<string, unknown> }).records.set(PAN_SHAPED_PROTOCOL_UUID, f.record);
+  f.record.info.id = PAN_SHAPED_PROTOCOL_UUID;
+  expect(await f.client.requestPermission(request())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } });
+  expect(humans).toBe(0);
+});
+test('ACP captured native diff provenance stays bound without raw re-screening', async () => {
+  const f = acp(); Object.assign(f.record.operation.source, selectedDiffSource());
+  expect(await f.client.requestPermission(request())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } });
+});
+test('MCP connection UUID is validated metadata through actual MRTR wire', async () => {
+  const f = mcp(); (f.client as unknown as { connectionId: string }).connectionId = PAN_SHAPED_PROTOCOL_UUID;
+  expect((await f.client.callTool('register', { name: 'Alice' }, operation()) as { received: unknown }).received)
+    .toEqual({ form: { action: 'accept', content: { name: 'Alice' } } });
+});
+test('MCP multiple fact candidates use private native provenance only in binding, never semantic state', async () => {
+  factSelection = 'revise_1'; const f = mcp();
+  const observed: string[] = []; beforeRead = async input => { observed.push(JSON.stringify((input as unknown as { state: unknown }).state)); };
+  const source = { ...operation(), sourceOf: selectedDiffSource, inputFacts: [{ name: 'Alice' }, { name: 'Bob' }] };
+  expect((await f.client.callTool('register', { name: 'Bob' }, source) as { received: unknown }).received)
+    .toEqual({ form: { action: 'accept', content: { name: 'Bob' } } });
+  expect(observed.length).toBeGreaterThan(0); expect(observed.some(state => state.includes(PAN_SHAPED_PROTOCOL_UUID))).toBe(false);
+});
+for (const field of ['args', 'destination', 'goal', 'diff', 'connection', 'genuine-card', 'credential']) test(`actual external admission still refuses protected ${field}`, async () => {
+  const f = acp(); const input = request(); let readings = 0; beforeRead = async () => { readings++; };
+  if (field === 'genuine-card') input.toolCall.rawInput = { path: '4111111111111111' };
+  if (field === 'credential') input.toolCall.rawInput = { path: 'password=synthetic-private' };
+  if (field === 'args') input.toolCall.rawInput = { path: PAN_SHAPED_PROTOCOL_UUID };
+  if (field === 'destination') f.record.info.binaryPath = PAN_SHAPED_PROTOCOL_UUID;
+  if (field === 'goal') f.record.operation.source.goal = PAN_SHAPED_PROTOCOL_UUID;
+  if (field === 'diff') { const source = selectedDiffSource(); source.selectedDiffContext.unifiedDiff = source.selectedDiffContext.unifiedDiff.replace('+after', '+password=synthetic-private'); Object.assign(f.record.operation.source, source); }
+  if (field === 'connection') { f.record.info.id = 'password=synthetic-private'; (f.service as unknown as { records: Map<string, unknown> }).records.set(f.record.info.id, f.record); }
+  expect(await f.client.requestPermission(input)).toEqual({ outcome: { outcome: 'cancelled' } }); expect(humans).toBe(0); expect(readings).toBe(0);
+});
+
+import { autonomousSourceRevision, externalRequestRevision, externalSourceRequestRevision } from '../sdk/src/platform/permissions/autonomous-protocol-binding.ts';
+import { captureAutonomousSource } from '../sdk/src/platform/permissions/autonomous.ts';
+import { hashState, type EntryType } from '@goodvibes-jev/judgment';
+test('typed source revision retains canonical hash identity and exact private provenance', () => {
+  const source = selectedDiffSource(); const revision = autonomousSourceRevision(source);
+  expect(revision).toBe(hashState(captureAutonomousSource(source) as unknown as EntryType));
+  source.selectedDiffContext.provenance.latestCheckpointId = 'changed';
+  expect(autonomousSourceRevision(source)).not.toBe(revision);
+});
+for (const shape of ['getter', 'prototype', 'toJSON']) test(`new revision paths reject executable ${shape} without running it`, () => {
+  let effects = 0;
+  const make = () => {
+    const value = shape === 'prototype' ? Object.create({ inherited: true }) as Record<string, unknown> : {} as Record<string, unknown>;
+    if (shape === 'getter') Object.defineProperty(value, 'goal', { enumerable: true, get() { effects++; return 'Do it'; } });
+    else value.goal = 'Do it';
+    value.criteria = [];
+    if (shape === 'toJSON') Object.defineProperty(value, 'toJSON', { value() { effects++; return {}; } });
+    return value;
+  };
+  expect(() => autonomousSourceRevision(make())).toThrow();
+  expect(() => externalRequestRevision(PAN_SHAPED_PROTOCOL_UUID, '/synthetic', make())).toThrow();
+  expect(() => externalSourceRequestRevision(make(), selectedDiffSource())).toThrow();
+  expect(effects).toBe(0);
+});
+
+import { captureAcpPermissionRequest, captureMcpElicitationRequest, captureMcpInputRequired, readProtocolRequest } from '../sdk/src/platform/permissions/protocol-request.ts';
+for (const field of ['session', 'toolCall', 'option']) test(`ACP ${field} UUID survives actual host-to-wire admission and original response routing`, async () => {
+  const f = guardedAcp(); const input = request();
+  if (field === 'session') { input.sessionId = PAN_SHAPED_PROTOCOL_UUID; f.record.acpSessionId = PAN_SHAPED_PROTOCOL_UUID; }
+  if (field === 'toolCall') input.toolCall.toolCallId = PAN_SHAPED_PROTOCOL_UUID;
+  if (field === 'option') input.options[1]!.optionId = PAN_SHAPED_PROTOCOL_UUID;
+  f.wire.observe({ jsonrpc: '2.0', id: PAN_SHAPED_PROTOCOL_UUID, method: 'session/request_permission', params: input });
+  const result = await f.client.requestPermission(input); f.wire.write({ jsonrpc: '2.0', id: PAN_SHAPED_PROTOCOL_UUID, result }, f.send);
+  expect(f.writes).toEqual([{ jsonrpc: '2.0', id: PAN_SHAPED_PROTOCOL_UUID, result: { outcome: { outcome: 'selected', optionId: field === 'option' ? PAN_SHAPED_PROTOCOL_UUID : 'allow' } } }]);
+  expect(humans).toBe(0);
+});
+test('MCP UUID request map key survives stdio MRTR and exact original response routing', async () => {
+  const f = mcp(PAN_SHAPED_PROTOCOL_UUID);
+  const result = await f.client.callTool('register', { name: 'Alice' }, operation()) as { received: unknown };
+  expect(result.received).toEqual({ [PAN_SHAPED_PROTOCOL_UUID]: { action: 'accept', content: { name: 'Alice' } } }); expect(f.wire).toHaveLength(2);
+});
+test('MCP UUID requestId survives correlated HTTP SSE and final response write', async () => {
+  const f = httpMcp(PAN_SHAPED_PROTOCOL_UUID); await f.client.connect();
+  try { await f.client.callTool('register', { name: 'Alice' }, operation());
+    expect(f.responses).toHaveLength(1); expect(f.responses[0]).toMatchObject({ id: PAN_SHAPED_PROTOCOL_UUID, result: { action: 'accept', content: { name: 'Alice' } } });
+  } finally { await f.client.disconnect(); }
+});
+test('protocol projection preserves all semantic fields and exact identity changes affect revision', () => {
+  const original = request(); original.toolCall.toolCallId = PAN_SHAPED_PROTOCOL_UUID;
+  const a = readProtocolRequest(captureAcpPermissionRequest(original));
+  original.toolCall.toolCallId = 'other-request'; const b = readProtocolRequest(captureAcpPermissionRequest(original));
+  expect(a.meaning).toEqual(b.meaning); expect(a.revision).not.toBe(b.revision);
+  expect((a.wire as ReturnType<typeof request>).toolCall.toolCallId).toBe(PAN_SHAPED_PROTOCOL_UUID);
+  expect(Object.isFrozen(a.wire)).toBe(true); expect(Object.isFrozen(a.meaning)).toBe(true);
+  expect(() => readProtocolRequest({ wire: a.wire, meaning: a.meaning, revision: a.revision })).toThrow();
+});
+for (const field of ['message', 'schema', 'rawParams', 'unknown']) test(`MCP UUID in raw ${field} retains full privacy screening`, async () => {
+  let reads = 0; beforeRead = async () => { reads++; };
+  const params = { ...form, requestedSchema: structuredClone(form.requestedSchema) } as Record<string, unknown>;
+  if (field === 'message') params.message = PAN_SHAPED_PROTOCOL_UUID;
+  if (field === 'schema') params.requestedSchema = { ...form.requestedSchema, description: PAN_SHAPED_PROTOCOL_UUID };
+  if (field === 'rawParams') params.requestId = PAN_SHAPED_PROTOCOL_UUID;
+  const input = { ...parseElicitationParams('synthetic', form, PAN_SHAPED_PROTOCOL_UUID),
+    ...(field === 'message' ? { message: PAN_SHAPED_PROTOCOL_UUID } : {}),
+    ...(field === 'schema' ? { requestedSchema: params.requestedSchema as Record<string, unknown> } : {}),
+    ...(field === 'rawParams' ? { rawParams: params } : {}),
+    ...(field === 'unknown' ? { unknown: PAN_SHAPED_PROTOCOL_UUID } : {}),
+  };
+  const outcome = await createMcpAutonomousElicitationHandler(host)(input, { scope: { connectionId: 'connection', destination: '/synthetic', signal: new AbortController().signal, assertCurrent() {} }, operation: operation() });
+  expect(outcome).toEqual({ action: 'cancel' }); expect(reads).toBe(0);
+});
+for (const secret of ['4111111111111111', 'password=synthetic-private']) test('credential/card-shaped protocol IDs are not broadly exempted', () => {
+  const input = request(); input.toolCall.toolCallId = secret;
+  expect(() => captureAcpPermissionRequest(input)).toThrow();
+  expect(() => captureMcpElicitationRequest(parseElicitationParams('synthetic', form, secret))).toThrow();
+  expect(() => captureMcpInputRequired({ resultType: 'input_required', inputRequests: { [secret]: { method: 'elicitation/create', params: form } } })).toThrow();
+});
+for (const shape of ['getter', 'prototype', 'toJSON', 'cycle', 'oversize', 'proxy']) test(`protocol capture rejects ${shape} before serialization or judgment`, () => {
+  let effects = 0; let input: unknown = request();
+  if (shape === 'getter') Object.defineProperty(input, 'sessionId', { get() { effects++; return 'session'; } });
+  if (shape === 'prototype') Object.setPrototypeOf(input, { inherited: true });
+  if (shape === 'toJSON') Object.defineProperty(input, 'toJSON', { value() { effects++; return {}; } });
+  if (shape === 'cycle') Object.assign(input as object, { cycle: input });
+  if (shape === 'oversize') Object.assign(input as object, { extra: 'x'.repeat(1_000_001) });
+  if (shape === 'proxy') input = new Proxy(input as object, { getPrototypeOf() { effects++; return Object.prototype; } });
+  expect(() => captureAcpPermissionRequest(input)).toThrow(); expect(effects).toBe(0);
+});
+test('ACP UUID identity swap/reuse invalidates old wire admission, including after revocation', async () => {
+  const f = guardedAcp(); const input = request(); input.toolCall.toolCallId = PAN_SHAPED_PROTOCOL_UUID;
+  f.wire.observe({ jsonrpc: '2.0', id: 'rpc', method: 'session/request_permission', params: input });
+  const old = await f.client.requestPermission(input);
+  for (const invalidate of invalidations) invalidate();
+  f.wire.observe({ jsonrpc: '2.0', id: 'rpc', method: 'session/request_permission', params: { ...request(), toolCall: { ...request().toolCall, toolCallId: 'replacement' } } });
+  f.wire.write({ jsonrpc: '2.0', id: 'rpc', result: old }, f.send);
+  expect(f.writes.every(message => JSON.stringify(message).includes('cancelled'))).toBe(true);
+  f.wire.close(); expect(invalidations.size).toBe(0);
+});
+test('forged protocol subject cannot reach canonical external admission', async () => {
+  let reads = 0; beforeRead = async () => { reads++; };
+  await expect(admitExternalRequest(host, { connectionId: 'connection', destination: '/synthetic', signal: new AbortController().signal, assertCurrent() {} }, operation(), {
+    tool: 'synthetic', args: {}, protocolSubject: { wire: request(), meaning: {}, revision: 'a'.repeat(64) } as never,
+  })).rejects.toThrow('owned request');
+  expect(reads).toBe(0); expect(humans).toBe(0); expect(invalidations.size).toBe(0);
+});
+test('protocol projection cannot discard unknown array properties or embedded identity-looking data', () => {
+  const input = request(); Object.assign(input.options, { password: 'synthetic-private' });
+  expect(() => captureAcpPermissionRequest(input)).toThrow();
+  expect(() => captureMcpInputRequired({ resultType: 'input_required', inputRequests: {
+    [PAN_SHAPED_PROTOCOL_UUID]: { method: 'elicitation/create', params: { ...form, requestId: PAN_SHAPED_PROTOCOL_UUID } },
+  } })).toThrow();
+});
+test('MCP numeric and string request IDs retain distinct bound revisions', () => {
+  const number = readProtocolRequest(captureMcpElicitationRequest(parseElicitationParams('synthetic', form, 1)));
+  const string = readProtocolRequest(captureMcpElicitationRequest(parseElicitationParams('synthetic', form, '1')));
+  expect(number.meaning).toEqual(string.meaning); expect(number.revision).not.toBe(string.revision);
 });

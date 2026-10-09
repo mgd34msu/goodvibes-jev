@@ -57,3 +57,14 @@ Synthetic qualification covers actual stdio and HTTP writes, the real Agent rout
 and facade, typed non-act results, scoped uncertainty, endpoint/policy/source swaps,
 reconnect, delayed schema loading, cancellation, and MRTR revocation. These proofs
 do not assert live-provider calibration or support for uncorrelated legacy input.
+
+Protocol identity is captured separately from business content. Only the declared
+ACP session/tool-call/permission-option IDs, MCP elicitation request ID, and MRTR
+request-map keys use the canonical typed-reference rules. Their original bytes
+remain in the immutable request and its revision, while semantic readings see
+fixed role markers. A UUID-shaped value in arguments, messages, schemas, diffs,
+destinations or undeclared fields still crosses the full raw privacy boundary.
+Native selected-diff provenance likewise remains in source identity while only
+its screened semantic projection is read. Descriptor-safe capture rejects
+executable views before serialization; neither identity nor a captured subject
+creates approval authority.

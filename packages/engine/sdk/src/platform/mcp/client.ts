@@ -1,3 +1,4 @@
+import { captureMcpInputRequired, readProtocolRequest } from '../permissions/protocol-request.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import type { ExternalOperationSource, ExternalRequestScope } from '../permissions/external-request.js';
@@ -313,7 +314,7 @@ export class McpClient {
         const result = await this._request('tools/call', params, this._toolCallHeaders(toolName, ownedArgs), boundOperation, beforeSend);
         assertCurrent(); responses = null;
         if (this.negotiated?.era !== 'modern' || !isInputRequiredResult(result)) return result;
-        const ownedResult = snapshotJudgmentInput(result) as typeof result;
+        const ownedResult = readProtocolRequest(captureMcpInputRequired(result)).wire as typeof result;
         responses = await this._resolveInputRequests(toolName, ownedResult.inputRequests, boundOperation);
         assertCurrent();
         params = { name: toolName, arguments: ownedArgs, ...(responses ? { inputResponses: responses } : {}),

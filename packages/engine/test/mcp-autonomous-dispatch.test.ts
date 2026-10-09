@@ -192,3 +192,16 @@ test('actual facade preserves absent call support and forwards schema with the r
   const schemaOnly = { marker: 'owned', getToolSchema() { expect(this.marker).toBe('owned'); return Promise.resolve(null); } };
   const api = createRuntimeMcpApi(schemaOnly as never); expect(api.callTool).toBeUndefined(); expect(await api.getToolSchema!('mcp:synthetic:write')).toBeNull();
 });
+import { selectedDiffSource } from './_helpers/protocol-identity.ts';
+test('actual registry admits a captured native source with canonical UUID provenance', async () => {
+  const f = fixture();
+  const result = await withExternalOperationSource({ ...operation(), sourceOf: selectedDiffSource }, () => f.api.callTool!('mcp:synthetic:write', { name: 'Bob' }));
+  expect(result).toMatchObject({ done: true }); expect(f.wire).toHaveLength(1); expect(humans).toBe(0);
+});
+
+test('changing native provenance after capture cannot reuse the original MCP authority', async () => {
+  const f = fixture(); const source = selectedDiffSource(); let observed = false;
+  beforeRead = async () => { observed = true; source.selectedDiffContext.provenance.latestCheckpointId = 'new-checkpoint'; };
+  await expect(withExternalOperationSource({ ...operation(), sourceOf: () => source }, () => f.api.callTool!('mcp:synthetic:write', {}))).rejects.toThrow();
+  expect(observed).toBe(true); expect(f.wire).toHaveLength(0);
+});
