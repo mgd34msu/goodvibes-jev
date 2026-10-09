@@ -1,3 +1,4 @@
+import { readExternalRequestEvidence, type ExternalRequestEvidence } from '../permissions/external-request-evidence.js';
 /**
  * The gate's Jev reading of one tool call: the risk-family and side-effect
  * batteries asked in parallel (one request each), composed in code into the
@@ -115,6 +116,7 @@ export function readingState(toolName: string, args: Record<string, unknown>, wo
 const factOf = (reading: YesNoReading): boolean => reading.verdict !== 'no';
 
 export interface ReadToolCallInput {
+  readonly externalRequestEvidence?: ExternalRequestEvidence | undefined;
   /** A host-scoped recorded port carrying lifecycle/authority checks. */
   readonly port?: JudgmentPort | undefined;
   readonly toolName: string;
@@ -133,7 +135,8 @@ export const GATE_SITE = 'engine.gate';
 /** Reads one tool call through the gate's two batteries, in parallel. */
 export async function readToolCall(input: ReadToolCallInput, site: string = GATE_SITE): Promise<GateReading> {
   const { toolName, args, workingDirectory, signal: abortSignal, askKind = false, askObfuscated = false, port: scopedPort } = input;
-  const state = readingState(toolName, args, workingDirectory);
+  const external = readExternalRequestEvidence(input.externalRequestEvidence);
+  const state: { [key: string]: JsonValue } = { ...readingState(toolName, args, workingDirectory), ...(external ? { externalRequest: readingArguments(external) } : {}) };
   const shell = askObfuscated === true;
   // Bind cache publication to the owned input actually sent, not borrowed
   // arguments or options that may change while the readings are in flight.

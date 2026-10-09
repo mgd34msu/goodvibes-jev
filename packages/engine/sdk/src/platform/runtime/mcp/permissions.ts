@@ -1,3 +1,4 @@
+import { readExternalRequestEvidence, type ExternalRequestEvidence } from '../../permissions/external-request-evidence.js';
 /**
  * MCP per-server permission and trust-level management.
  *
@@ -19,11 +20,12 @@ import type {
   McpServerPermissions,
 } from './types.js';
 import { logger } from '../../utils/logger.js';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { sideEffect } from '../../gate/batteries/side-effect.js';
 import { hostsInScope, pathsInScope, readScopedValues } from './scope.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
-import { readingState, readToolCall } from '../../gate/reading.js';
+import { readingArguments, readingState, readToolCall } from '../../gate/reading.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -58,22 +60,26 @@ function modeFromTrustLevel(level: McpTrustLevel): McpTrustMode {
  * trust-mode rules ask or refuse. The role, scope and trust-mode rules that
  * consume the readings stay code: they carry out the owner's configuration.
  */
+export interface McpReadingOwner { readonly externalRequestEvidence?: ExternalRequestEvidence | undefined; readonly port?: JudgmentPort | undefined; readonly signal?: AbortSignal | undefined }
+
 async function readMcpCall(
   serverName: string,
   toolName: string,
   args: Record<string, unknown>,
-): Promise<{ readonly capability: McpCapabilityClass; readonly confident: boolean; readonly riskLevel: import('./types.js').McpRiskLevel }> {
+  owner: McpReadingOwner,
+): Promise<{ readonly capability: McpCapabilityClass; readonly confident: boolean; readonly judgmentDecisionIds: readonly string[]; readonly riskLevel: import('./types.js').McpRiskLevel }> {
   const site = 'engine.mcp.capability';
   assertJudgmentInput(serverName);
-  const state = readingState(toolName, args);
+  const external = readExternalRequestEvidence(owner.externalRequestEvidence);
+  const state = { ...readingState(toolName, args), ...(external ? { externalRequest: readingArguments(external) } : {}) };
   const [run, reading] = await Promise.all([
-    sideEffect.run(judgmentPort(site), { ...state, server: serverName }, { site, only: ['capability'] }),
-    readToolCall({ toolName: `mcp:${serverName}.${toolName}`, args }, site),
+    sideEffect.run(owner.port ?? judgmentPort(site), { ...state, server: serverName }, { site, only: ['capability'], ...(owner.signal ? { signal: owner.signal } : {}) }),
+    readToolCall({ toolName: `mcp:${serverName}.${toolName}`, args, externalRequestEvidence: owner.externalRequestEvidence, port: owner.port, ...(owner.signal ? { signal: owner.signal } : {}) }, site),
   ]);
   const capabilityReading = run.readings.capability;
   run.recordAction(`capability:${capabilityReading.choice}`);
   reading.recordAction(`stakes:${reading.stakes}`);
-  return { capability: capabilityReading.choice, confident: capabilityReading.outcome === 'act', riskLevel: reading.stakes };
+  return { capability: capabilityReading.choice, confident: capabilityReading.outcome === 'act' && reading.familyConfident && reading.uncertain.length === 0 && reading.boundary.cardDetails !== 'uncertain' && reading.boundary.catastrophic !== 'uncertain', judgmentDecisionIds: [...(reading.judgmentDecisionIds ?? []), ...(run.result.decisionId ? [run.result.decisionId] : [])], riskLevel: reading.stakes };
 }
 
 function roleAllowsCapability(role: McpServerRole, capability: McpCapabilityClass): boolean {
@@ -437,6 +443,7 @@ export class McpPermissionManager {
     serverName: string,
     toolName: string,
     args: Record<string, unknown>,
+    owner: McpReadingOwner = {},
   ): Promise<McpPermission> {
     const record = this.permissions.get(serverName);
     if (!record) {
@@ -457,13 +464,20 @@ export class McpPermissionManager {
       };
     }
 
-    const { capability, confident, riskLevel } = await readMcpCall(serverName, toolName, args);
+    const { capability, confident, riskLevel, judgmentDecisionIds } = await readMcpCall(serverName, toolName, args, owner);
     const capabilityAllowed = record.profile.allowedCapabilities.length === 0 || record.profile.allowedCapabilities.includes(capability);
     const coherentRole = roleAllowsCapability(record.profile.role, capability);
-    const scoped = await readScopedValues(serverName, toolName, args, { paths: record.profile.allowedPaths.length > 0, hosts: record.profile.allowedHosts.length > 0 });
+    const scoped = await readScopedValues(serverName, toolName, args, { paths: record.profile.allowedPaths.length > 0, hosts: record.profile.allowedHosts.length > 0 }, owner);
     const pathScoped = pathsInScope(record.profile.allowedPaths, scoped.paths);
     const hostScoped = hostsInScope(record.profile.allowedHosts, scoped.hosts);
-    const incoherent = !confident || !coherentRole || !capabilityAllowed || !pathScoped || !hostScoped;
+    const causes = [
+      ...(!confident || scoped.uncertain ? ['uncertain-reading' as const] : []),
+      ...(!coherentRole ? ['role-mismatch' as const] : []),
+      ...(!capabilityAllowed ? ['capability-out-of-scope' as const] : []),
+      ...(!pathScoped ? ['path-out-of-scope' as const] : []),
+      ...(!hostScoped ? ['host-out-of-scope' as const] : []),
+    ];
+    const incoherent = causes.length > 0;
 
     let assessment: McpCoherenceAssessment;
     if (record.profile.mode === 'allow-all') {
@@ -534,7 +548,9 @@ export class McpPermissionManager {
       }
     }
 
-    const permission = {
+    const permission: McpPermission = {
+      causes: assessment.verdict === 'ask' && !incoherent ? ['risk-policy'] : causes,
+      judgmentDecisionIds: [...judgmentDecisionIds, ...scoped.judgmentDecisionIds],
       allowed: assessment.verdict === 'allow',
       reason: assessment.reason,
       verdict: assessment.verdict,

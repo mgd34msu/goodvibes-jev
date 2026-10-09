@@ -1,3 +1,4 @@
+import { captureExternalRequestEvidence } from './external-request-evidence.js';
 /** ACP/MCP use the same recorded autonomous admission as native tools. No human fallback. */
 import { randomUUID } from 'node:crypto';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
@@ -32,7 +33,8 @@ export interface ExternalOperationSource {
 }
 
 export async function admitExternalRequest(host: ExternalPermissionHost, transport: ExternalRequestScope,
-  operation: ExternalOperationSource, input: { readonly tool: string; readonly args: Record<string, unknown>; readonly supportingDecisionIds?: readonly string[] }) {
+  operation: ExternalOperationSource, input: { readonly tool: string; readonly args: Record<string, unknown>; readonly supportingDecisionIds?: readonly string[]; readonly serverPolicy?: Readonly<Record<string, unknown>> }) {
+  const externalRequestEvidence = captureExternalRequestEvidence({ destination: transport.destination, ...(input.serverPolicy ? { serverPolicy: input.serverPolicy } : {}) });
   if (!host.port.recorder) throw new Error('External protocol admission requires a recorded judgment owner');
   const invalidation = new AbortController();
   const unsubscribe = host.config.onDidInvalidate(() => invalidation.abort());
@@ -50,7 +52,7 @@ export async function admitExternalRequest(host: ExternalPermissionHost, transpo
       return source;
     };
     const admission = await awaitPermission(() => host.permissionManager.admitAutonomous(randomUUID(), input.tool, args, {
-      signal, sourceOf, assertPrepared: assertCurrent, ...(input.supportingDecisionIds ? { preparationDecisionIds: input.supportingDecisionIds } : {}),
+      externalRequestEvidence, signal, sourceOf, assertPrepared: assertCurrent, ...(input.supportingDecisionIds ? { preparationDecisionIds: input.supportingDecisionIds } : {}),
       schemaRevision: autonomousRevision({ connection: transport.connectionId, destination: transport.destination, args }),
       decoratePort: () => host.port,
     }), signal);
