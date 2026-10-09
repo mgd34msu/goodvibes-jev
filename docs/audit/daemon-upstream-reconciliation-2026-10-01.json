@@ -49,7 +49,7 @@
       "oldBlob": "d0b2150cbf23bbb6d1a4996f0bb3d19cc7ee1077",
       "newBlob": "38e9fd36a2b0b3bea6c071d15650501d082ab6b9",
       "ruling": "monorepo-policy",
-      "reason": "Existing Jev CI already removed coverage/line quotas and retains full tests, types, packaged exports and actual containment. Product binary smoke remains deferred until executable packaging exists."
+      "reason": "Existing Jev CI already removed coverage/line quotas and retains full tests, types, packaged exports and actual containment. October 8 target reconciliation: Linux native producer/consumer qualification now builds and verifies the actual executable with exact-source artifact binding; see daemon-native-packaging.md. Hosted-runtime, other-platform execution and release acceptance remain distinct."
     },
     {
       "path": ".github/workflows/release.yml",
@@ -145,7 +145,7 @@
       "oldBlob": "b1f4049c0be0c3a7b5516364ad3dcf295ad7a528",
       "newBlob": "7e32e247090130563e08930cde2b45caee7d0b20",
       "ruling": "deferred",
-      "reason": "Carry streaming fixture plus stored assistant-reply marker into the compiled-daemon proof when a real executable exists. Provider-request count alone is insufficient."
+      "reason": "Deferred: the executable and Linux native qualification exist, but the shipped entrypoint still lacks default production inbox/capability bootstrap and actual compiled hosted-model/Jev proof with persisted assistant reply and session lifecycle assertions. Explicit configured-host fixtures do not close this acceptance; see daemon-migration-status-2026-10-08.md."
     },
     {
       "path": "scripts/release-prepare.ts",

@@ -7,6 +7,9 @@
  */
 
 export { ConfigManager } from './manager.js';
+export type { PreparedConfigMutation, PreparedConfigMutationTransition, PreparedConfigMutationRequest,
+  PreparedConfigMutationFacts, PreparedConfigMutationDestination, PreparedConfigMutationTransitionFacts,
+  PreparedConfigMutationReceipt } from './prepared-mutation.js';
 export type { HostBooleanSetting, HostBooleanSettingHandle, HostBooleanSettingResolved } from './host-settings.js';
 export type { DeepReadonly, ConfigKeyTier, ConfigKeySource, DaemonConfigPatch } from './manager.js';
 export { SHARED_CONFIG_KEYS, isSharedConfigKey } from './shared-config-tier.js';

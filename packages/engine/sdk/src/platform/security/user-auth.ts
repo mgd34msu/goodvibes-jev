@@ -2,6 +2,8 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
+import { confirmFileDurable } from '../utils/atomic-json-store.js';
+import { SettingsAuthorityUnavailableError } from './settings-authority.js';
 
 export interface AuthUser {
   username: string;
@@ -13,6 +15,23 @@ export interface AuthSession {
   token: string;
   username: string;
   expiresAt: number;
+}
+
+declare const settingsSessionAuthorityBrand: unique symbol;
+/** Opaque same-session precondition. Contains no credential or fingerprint. */
+export interface SettingsSessionAuthority {
+  readonly kind: 'session';
+  readonly roles: readonly string[];
+  readonly [settingsSessionAuthorityBrand]: true;
+}
+interface SettingsSessionAuthorityRecord {
+  readonly token: string;
+  readonly session: AuthSession;
+  readonly user: AuthUser;
+  readonly username: string;
+  readonly passwordHash: string;
+  readonly roles: readonly string[];
+  readonly expiresAt: number;
 }
 
 interface UserAuthConfig {
@@ -164,20 +183,22 @@ function fingerprintToken(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
-function readBootstrapUsers(filePath: string): AuthUser[] | null {
+function readBootstrapUsers(filePath: string, observedRecovery?: () => void, freshAbsence = false): AuthUser[] | null {
   try {
-    if (!existsSync(filePath)) return null;
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<AuthUserStore>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.users)) return null;
+    try { validateSettingsUserStore(parsed); } catch { observedRecovery?.(); }
+    if (parsed.version !== 1 || !Array.isArray(parsed.users)) { observedRecovery?.(); return null; }
     const users = parsed.users.filter((user): user is AuthUser =>
       Boolean(user)
       && typeof user.username === 'string'
       && typeof user.passwordHash === 'string'
       && (user.roles === undefined || Array.isArray(user.roles))
     );
+    if (users.length === 0 || users.length !== parsed.users.length) observedRecovery?.();
     return users.length > 0 ? users : null;
-  } catch {
+  } catch (error) {
+    if (!freshAbsence || (error as NodeJS.ErrnoException).code !== 'ENOENT') observedRecovery?.();
     return null;
   }
 }
@@ -239,8 +260,8 @@ function writeBootstrapCredentialFile(filePath: string, username: string, passwo
   );
 }
 
-function loadOrBootstrapUsers(filePath: string, credentialPath: string): AuthUser[] {
-  const existing = readBootstrapUsers(filePath);
+function loadOrBootstrapUsers(filePath: string, credentialPath: string, observedRecovery?: () => void, freshAbsence = false): AuthUser[] {
+  const existing = readBootstrapUsers(filePath, observedRecovery, freshAbsence);
   if (existing) return existing;
 
   const initialPassword = generateInitialPassword();
@@ -316,8 +337,36 @@ function detectBootstrapCredentialDrift(
   }
 }
 
+/** Strict observation only: legacy bootstrap/recovery retains its own behavior. */
+function inspectSettingsUserStore(filePath: string): boolean {
+  let raw: string;
+  try { raw = readFileSync(filePath, 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  const parsed = JSON.parse(raw) as Partial<AuthUserStore> | null;
+  validateSettingsUserStore(parsed);
+  confirmFileDurable(filePath);
+  return true;
+}
+
+function validateSettingsUserStore(parsed: Partial<AuthUserStore> | null): void {
+  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.users) || parsed.users.length === 0) {
+    throw new SettingsAuthorityUnavailableError();
+  }
+  const names = new Set<string>();
+  for (const user of parsed.users) {
+    if (!user || typeof user.username !== 'string' || !user.username || names.has(user.username)
+      || typeof user.passwordHash !== 'string' || !user.passwordHash
+      || (user.roles !== undefined && (!Array.isArray(user.roles) || user.roles.some(role => typeof role !== 'string')))) {
+      throw new SettingsAuthorityUnavailableError();
+    }
+    names.add(user.username);
+  }
+}
+
 export class UserAuthManager {
   private users = new Map<string, AuthUser>();
+  private settingsFaulted = false;
+  private readonly settingsAuthorities = new WeakMap<SettingsSessionAuthority, SettingsSessionAuthorityRecord>();
   private sessions = new Map<string, AuthSession>();
   /** Per-username failure counters for account-level lockout (independent of IP throttling). */
   private accountLocks = new Map<string, AccountLockState>();
@@ -342,7 +391,13 @@ export class UserAuthManager {
     this.persistUsers = config.users === undefined;
     this.scryptParams = config.scryptParams ?? DEFAULT_SCRYPT_PARAMS;
     this.nowFn = config.nowFn ?? (() => Date.now());
-    const seedUsers = config.users ?? loadOrBootstrapUsers(this.userStorePath, this.bootstrapCredentialPath);
+    let freshAbsence = false;
+    if (this.persistUsers) {
+      try { freshAbsence = !inspectSettingsUserStore(this.userStorePath); }
+      catch { this.settingsFaulted = true; }
+    }
+    const seedUsers = config.users ?? loadOrBootstrapUsers(this.userStorePath, this.bootstrapCredentialPath,
+      () => { this.settingsFaulted = true; }, freshAbsence);
 
     for (const user of seedUsers) {
       this.users.set(user.username, user);
@@ -529,6 +584,37 @@ export class UserAuthManager {
     return session;
   }
 
+  /** Capture the exact in-memory session and current user, never username alone. */
+  captureSettingsAuthority(token: string): SettingsSessionAuthority | null {
+    if (this.settingsFaulted) return null;
+    const session = this.sessions.get(token);
+    if (!session || session.token !== token || !Number.isFinite(session.expiresAt) || Date.now() >= session.expiresAt) return null;
+    const user = this.users.get(session.username);
+    if (!user || user.username !== session.username || (user.roles !== undefined
+      && (!Array.isArray(user.roles) || user.roles.some(role => typeof role !== 'string')))) return null;
+    const roles = Object.freeze([...(user.roles ?? [])]);
+    const handle = Object.freeze({ kind: 'session' as const, roles }) as SettingsSessionAuthority;
+    this.settingsAuthorities.set(handle, { token, session, user, username: user.username,
+      passwordHash: user.passwordHash, roles, expiresAt: session.expiresAt });
+    return handle;
+  }
+
+  /** Synchronous final check after every reentrant preparation callback. */
+  assertSettingsAuthorityCurrent(authority: SettingsSessionAuthority): void {
+    const expected = this.settingsAuthorities.get(authority);
+    if (!expected || this.settingsFaulted) throw new SettingsAuthorityUnavailableError();
+    const session = this.sessions.get(expected.token);
+    const user = this.users.get(expected.username);
+    const roles = user?.roles ?? [];
+    if (session !== expected.session || user !== expected.user
+      || session.token !== expected.token || session.username !== expected.username
+      || session.expiresAt !== expected.expiresAt || Date.now() >= expected.expiresAt
+      || user.username !== expected.username || user.passwordHash !== expected.passwordHash
+      || roles.length !== expected.roles.length || roles.some((role, index) => role !== expected.roles[index])) {
+      throw new SettingsAuthorityUnavailableError();
+    }
+  }
+
   revokeSession(token: string): boolean {
     if (this.sessions.delete(token)) return true;
     for (const sessionToken of this.sessions.keys()) {
@@ -611,7 +697,8 @@ export class UserAuthManager {
     this.revokeSessionsForUser(normalized);
     this.persist();
     if (normalized === 'admin') {
-      writeBootstrapCredentialFile(this.bootstrapCredentialPath, normalized, nextPassword);
+      try { writeBootstrapCredentialFile(this.bootstrapCredentialPath, normalized, nextPassword); }
+      catch (error) { this.settingsFaulted = true; throw error; }
     }
   }
 
@@ -650,6 +737,7 @@ export class UserAuthManager {
 
   private persist(): void {
     if (!this.persistUsers) return;
-    writeBootstrapUsers(this.userStorePath, [...this.users.values()]);
+    try { writeBootstrapUsers(this.userStorePath, [...this.users.values()]); }
+    catch (error) { this.settingsFaulted = true; throw error; }
   }
 }

@@ -1,5 +1,7 @@
 # Daemon content reconciliation after the platform update
 
+October 8 status cross-reference: [the current evidence reconciliation](daemon-migration-status-2026-10-08.md) credits subsequent discovery, pairing, Linux native, Slack/email clustered and multi-owner composition, and lifecycle-resolver work. The checkpoint descriptions and counts below are historical; the remaining default bootstrap and release obligations are not waived.
+
 The reviewed upstream range is `443e5ee4d6cda0d36d57e2886398d0836074a4a9`
 through `254699bf5d834cdca41436211ada1ae32bf89258` (four commits, 41 changed
 files). The companion JSON records both full tree IDs, every changed file's

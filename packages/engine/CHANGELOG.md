@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Retain the last complete configuration and tier ownership if any reload
+  layer refuses, while preserving lifetime invalidation, permission-incarnation
+  advancement, restrictive host-setting defaults, and successful-load behavior.
+
 - Observe bounded service-manager handover outcomes before claiming success or
   exiting. Order reload before start enqueue, preserve completed update/rollback
   disk evidence on failure, and cancel/drain external shutdown races without

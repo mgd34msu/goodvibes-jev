@@ -2,6 +2,9 @@
 import { types as nodeTypes } from 'node:util';
 import type { ToolExecuteOptions } from '../types/tools.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { ConfigManager, PreparedConfigMutation } from '../config/manager.js';
+import type { ConfigWriteRoute } from '../config/daemon-config-route.js';
+import { assertPreparedConfigWriteRoute } from '../config/settings-precondition-client.js';
 
 export type ToolInputProjectionProblem = 'held' | 'capacity' | 'unconfigured' | 'invalid' | 'unavailable' | 'stale' | 'cancelled' | 'released' | 'binding-changed';
 
@@ -34,6 +37,25 @@ export interface ToolAdmissionEvidence {
   readonly revision: string;
 }
 
+/** Closed backend facts. The effect was resolved by the registered settings owner. */
+export interface AgentSettingsAdmissionEvidence {
+  readonly kind: 'agent-settings';
+  readonly operation: 'set' | 'reset';
+  readonly key: string;
+  readonly effect: Readonly<Record<string, unknown>>;
+  readonly revision: string;
+}
+/** Internal descriptive alias; keep the existing public READ declaration explicit. */
+export type AgentReadAdmissionEvidence = ToolAdmissionEvidence;
+export type ToolOwnedAdmissionEvidence = ToolAdmissionEvidence | AgentSettingsAdmissionEvidence;
+
+/** Opaque local mutation binding; never serialized as judgment evidence. */
+export interface ToolPreparedSettingsMutation {
+  readonly owner: ConfigManager;
+  readonly mutation: PreparedConfigMutation;
+  readonly route?: ConfigWriteRoute | undefined;
+}
+
 export type ToolInputProjectionResult = {
   readonly status: 'held';
   readonly release?: (() => Promise<void>) | undefined;
@@ -46,16 +68,33 @@ export type ToolInputProjectionResult = {
   /** An empty, frozen identity token. Its creating owner keeps all bindings privately. */
   readonly executionContext?: object | undefined;
   readonly admissionEvidence?: ToolAdmissionEvidence | undefined;
+  readonly settingsAdmissionEvidence?: AgentSettingsAdmissionEvidence | undefined;
+  readonly settingsMutation?: ToolPreparedSettingsMutation | undefined;
   /** Optional validation of repaired bindings; omission refuses any changed projected input. */
   readonly assertRepairedArgs?: ((args: Record<string, unknown>) => void) | undefined;
 };
 
 /** Own the closed factual payload before its projector can retain or mutate it. */
-export function captureAdmissionEvidence(value: unknown): ToolAdmissionEvidence | undefined {
+function captureOwnedAdmissionEvidence(value: unknown): ToolOwnedAdmissionEvidence | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) throw new ToolInputProjectionError('invalid');
   const prototype: unknown = Object.getPrototypeOf(value);
   const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (descriptors['kind'] && 'value' in descriptors['kind'] && descriptors['kind'].value === 'agent-settings') {
+    const keys = ['kind', 'operation', 'key', 'effect', 'revision'];
+    if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(descriptors).length !== keys.length
+      || !keys.every(key => descriptors[key] && 'value' in descriptors[key]!)) throw new ToolInputProjectionError('invalid');
+    const revision: unknown = descriptors['revision']!.value;
+    if (typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)) throw new ToolInputProjectionError('invalid');
+    const captured = captureProjectionArgs({ kind: descriptors['kind']!.value, operation: descriptors['operation']!.value,
+      key: descriptors['key']!.value, effect: descriptors['effect']!.value }, 'goodvibes_settings');
+    if ((captured['operation'] !== 'set' && captured['operation'] !== 'reset') || typeof captured['key'] !== 'string'
+      || !captured['key'] || !captured['effect'] || typeof captured['effect'] !== 'object' || Array.isArray(captured['effect'])) {
+      throw new ToolInputProjectionError('invalid');
+    }
+    return Object.freeze({ kind: 'agent-settings', operation: captured['operation'], key: captured['key'],
+      effect: captured['effect'] as Readonly<Record<string, unknown>>, revision });
+  }
   const suppliedAliases = Object.hasOwn(descriptors, 'aliases');
   if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(descriptors).length !== (suppliedAliases ? 5 : 4)
     || (suppliedAliases && !('value' in descriptors['aliases']!))
@@ -83,6 +122,32 @@ export function captureAdmissionEvidence(value: unknown): ToolAdmissionEvidence 
     .map(alias => Object.freeze({ path: alias.path, target: alias.target }))) : undefined;
   return Object.freeze({ kind: 'agent-read', root: captured['root'], paths: Object.freeze([...paths]), revision,
     ...(aliases ? { aliases } : {}) });
+}
+
+/** Retain the original READ-only projection/accessor contract for SDK embedders. */
+export function captureAdmissionEvidence(value: unknown): ToolAdmissionEvidence | undefined {
+  const evidence = captureOwnedAdmissionEvidence(value);
+  if (evidence && evidence.kind !== 'agent-read') throw new ToolInputProjectionError('invalid');
+  return evidence;
+}
+
+export function captureSettingsAdmissionEvidence(value: unknown): AgentSettingsAdmissionEvidence | undefined {
+  const evidence = captureOwnedAdmissionEvidence(value);
+  if (evidence && evidence.kind !== 'agent-settings') throw new ToolInputProjectionError('invalid');
+  return evidence;
+}
+
+/** Authenticate the handle with its existing owner before retaining it privately. */
+export function captureSettingsMutation(value: unknown): ToolPreparedSettingsMutation | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) throw new ToolInputProjectionError('invalid');
+  const owner = projectionProperty(value, 'owner') as ConfigManager | undefined;
+  const mutation = projectionProperty(value, 'mutation') as PreparedConfigMutation | undefined;
+  const route = projectionProperty(value, 'route') as ConfigWriteRoute | undefined;
+  if (!owner || !mutation) throw new ToolInputProjectionError('invalid');
+  owner.assertPreparedMutation(mutation);
+  if (route) assertPreparedConfigWriteRoute(route);
+  return Object.freeze({ owner, mutation, ...(route ? { route } : {}) });
 }
 
 export interface ToolInputProjector {

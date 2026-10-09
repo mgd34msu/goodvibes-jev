@@ -1,5 +1,7 @@
 # Bounded daemon command executable and explicit serving launcher
 
+October 8 status cross-reference: [the current evidence reconciliation](daemon-migration-status-2026-10-08.md) credits subsequent discovery, pairing, Linux native, Slack/email clustered and multi-owner composition, and lifecycle-resolver work. The checkpoint descriptions and counts below are historical; the remaining default bootstrap and release obligations are not waived.
+
 THE-18 remains **In Progress**. This increment supplies a real command dispatcher
 and composes an explicitly supplied inbox into the existing owned daemon host.
 It does not supply a default provider factory or claim native release parity.

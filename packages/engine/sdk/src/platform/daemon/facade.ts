@@ -123,6 +123,8 @@ export class DaemonServer {
   private readonly integrationHelpers: IntegrationHelperService;
   private configManager: ConfigManager;
   private authToken: string | null = null;
+  /** Exact serving lifetime, retired before stop callbacks and token/bind ABA. */
+  private settingsLifetime: object | null = null;
   private userAuth: UserAuthManager;
   private githubWebhookSecret: string | null;
   private automationManager: AutomationManager;
@@ -230,6 +232,7 @@ export class DaemonServer {
       runtime: resolved,
       pendingSurfaceReplies: this.pendingSurfaceReplies,
       authToken: () => this.authToken,
+      settingsLifetime: () => this.settingsLifetime,
       trustProxyEnabled: () => this.trustProxyEnabled(),
       dispatchApiRoutes: (req) => this.dispatchApiRoutes(req),
       parseJsonBody: (req) => this.parseJsonBody(req),
@@ -340,6 +343,8 @@ export class DaemonServer {
       logger.info('DaemonServer.enable: daemon disabled by config (daemon.enabled=false), not enabling');
       return false;
     }
+    // Only a successful start creates a serving lifetime after retirement.
+    this.settingsLifetime = this.settingsLifetime === null || this.server === null || this.tornDown ? null : {};
     this.enabled = true;
     this.authToken = token ?? null;
     this.controlPlaneGateway.setServerState({ enabled: true, host: this.host, port: this.port });
@@ -402,6 +407,7 @@ export class DaemonServer {
    * Start the daemon. Refuses to start if not explicitly enabled.
    */
   async start(): Promise<void> {
+    if (this.server === null) this.settingsLifetime = null;
     // Guarantees the daemon refuses to inherit from its host; see
     // facade-boot-guarantees.ts for why each one is owned here and why order matters.
     await runDaemonBootGuarantees(this.configManager, this.runtimeServices);
@@ -460,6 +466,7 @@ export class DaemonServer {
     this.transportEventsHelper.emitTransportInitializing();
     try {
       this.tlsState = resolveInboundTlsContext(this.configManager, 'controlPlane'); this.tornDown = false; // a daemon that is up again is one that can be torn down again
+      this.settingsLifetime = {};
       this.server = this.serveFactory({
         port: this.port,
         hostname: this.host,
@@ -558,6 +565,7 @@ export class DaemonServer {
         trustProxy: this.tlsState.trustProxy,
       });
     } catch (err) {
+      this.settingsLifetime = null;
       const message = summarizeError(err);
       this.releaseBrowserJudgmentChats?.();
       this.releaseBrowserJudgmentChats = undefined;
@@ -632,12 +640,23 @@ export class DaemonServer {
   }
 
   private async stopRuntime(forHandover: boolean): Promise<void> {
-    this.lifecycle?.beginStopping(forHandover);
-    if (this.tornDown) {
+    const alreadyTornDown = this.tornDown;
+    // Both public and update/rollback stops retire SETTINGS before synchronous
+    // abort callbacks can re-enter enable() and mint a new serving lifetime.
+    this.settingsLifetime = null;
+    this.tornDown = true;
+    try {
+      this.lifecycle?.beginStopping(forHandover);
+    } catch (error) {
+      // No resource teardown has begun. Preserve the caller's ability to retry
+      // cleanup while the retired SETTINGS lifetime remains closed.
+      this.tornDown = alreadyTornDown;
+      throw error;
+    }
+    if (alreadyTornDown) {
       await this.lifecycle?.drainHandovers(forHandover);
       return;
     }
-    this.tornDown = true; // Release resources whether or not the listener ever bound a socket.
 
     // Tear down config watcher only on intentional stop; during a restart cycle
     // (_restarting) it must stay active so mid-restart changes hit the dirty flag.
