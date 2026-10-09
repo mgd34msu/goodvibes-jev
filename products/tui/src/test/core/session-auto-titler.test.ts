@@ -13,6 +13,7 @@ function fakeConversation(overrides: Partial<{
   return {
     applied,
     title: '',
+    getReplacementGeneration: () => 0,
     getTitleSource: () => overrides.titleSource ?? 'system',
     setSystemTitle: (v: string) => { applied.push(v); },
     getMessageSnapshot: () => overrides.messages ?? [{ role: 'user', content: 'help me refactor the auth module' }],

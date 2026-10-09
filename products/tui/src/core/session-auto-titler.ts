@@ -10,20 +10,22 @@
 
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { createSessionTitleGenerator, type SessionTitleModel } from '@goodvibes-jev/engine/sdk/platform/sessions';
+export { sanitizeSessionTitle as sanitizeTitle } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import { readSessionSettings } from '../config/tui-extension-settings.ts';
 
 /** Minimal conversation surface the titler needs. */
 export interface TitlerConversation {
   readonly title: string;
+  /** Changes only when the conversation is replaced, never on append. */
+  getReplacementGeneration(): number;
   getTitleSource(): 'system' | 'user';
   setSystemTitle(value: string): void;
   getMessageSnapshot(): ConversationMessageSnapshot[];
 }
 
-/** Minimal weak-model surface (satisfied by the tool LLM). */
-export interface TitlerModel {
-  chat(prompt: string, options?: { maxTokens?: number; systemPrompt?: string }): Promise<string>;
-}
+/** Configured helper-model contract owned by the engine. */
+export type TitlerModel = SessionTitleModel;
 
 export interface SessionAutoTitlerOptions {
   readonly conversation: TitlerConversation;
@@ -32,6 +34,8 @@ export interface SessionAutoTitlerOptions {
   readonly turns: { on(event: string, handler: () => void): () => void };
   /** Called with the generated title after it is applied (for a system message / repaint). */
   readonly onTitled?: (title: string) => void;
+  readonly getSessionId?: () => string;
+  readonly isActive?: () => boolean;
   /** Test seams. */
   readonly readSettings?: (configManager: Pick<ConfigManager, 'getRaw'>) => { autoTitle?: boolean };
 }
@@ -42,69 +46,32 @@ export interface SessionAutoTitler {
   maybeTitle(): Promise<void>;
 }
 
-const MAX_TITLE_CHARS = 60;
-const TITLE_SYSTEM_PROMPT =
-  'You write terse chat titles. Reply with ONLY a 3 to 6 word title, Title Case, no surrounding quotes, no trailing punctuation, no preamble.';
-
-/** Extract plain text from a user message's content. */
-function userText(snapshot: ConversationMessageSnapshot[]): string | null {
-  for (const message of snapshot) {
-    if (message.role !== 'user') continue;
-    const { content } = message;
-    if (typeof content === 'string') {
-      const trimmed = content.trim();
-      if (trimmed) return trimmed;
-      continue;
-    }
-    const text = content
-      .map((part) => (part && typeof part === 'object' && 'text' in part && typeof (part as { text: unknown }).text === 'string' ? (part as { text: string }).text : ''))
-      .join(' ')
-      .trim();
-    if (text) return text;
-  }
-  return null;
-}
-
-/** Reduce a model reply to a clean single-line title. */
-export function sanitizeTitle(raw: string): string | null {
-  const firstLine = (raw.split('\n', 1)[0] ?? '').trim();
-  const unquoted = firstLine.replace(/^["'`]+|["'`]+$/g, '').trim();
-  const cleaned = unquoted.replace(/[.!?,;:]+$/g, '').replace(/\s+/g, ' ').trim();
-  if (!cleaned) return null;
-  return cleaned.length > MAX_TITLE_CHARS ? cleaned.slice(0, MAX_TITLE_CHARS).trim() : cleaned;
-}
-
+/** The TUI owns settings, events, session identity and applying the shared result. */
 export function createSessionAutoTitler(options: SessionAutoTitlerOptions): SessionAutoTitler {
   const readSettings = options.readSettings ?? readSessionSettings;
-  let attempted = false;
+  const generator = createSessionTitleGenerator(options.model);
+  let closed = false;
 
   const maybeTitle = async (): Promise<void> => {
-    if (attempted) return;
+    if (closed || options.isActive?.() === false) return;
     if (!readSettings(options.configManager).autoTitle) return;
-    // Never overwrite a user-chosen title.
     if (options.conversation.getTitleSource() === 'user') return;
-    const first = userText(options.conversation.getMessageSnapshot());
-    if (!first) return;
-    attempted = true; // Set before the async call so a burst of TURN_COMPLETED fires once.
+    const sessionId = options.getSessionId?.();
+    const generation = options.conversation.getReplacementGeneration();
     try {
-      const reply = await options.model.chat(
-        `Title this conversation. First user message:\n"""${first.slice(0, 2000)}"""`,
-        { maxTokens: 24, systemPrompt: TITLE_SYSTEM_PROMPT },
-      );
-      const title = sanitizeTitle(reply);
-      if (!title) return;
-      // Re-check: a user may have set a title during the await.
+      const title = await generator.generate(() => options.conversation.getMessageSnapshot());
+      if (!title || closed || options.isActive?.() === false) return;
+      if (sessionId !== options.getSessionId?.() || generation !== options.conversation.getReplacementGeneration()) return;
+      // Re-check immediately before application: the user may have named it.
       if (options.conversation.getTitleSource() === 'user') return;
       options.conversation.setSystemTitle(title);
       options.onTitled?.(title);
     } catch {
-      // Tool LLM unavailable or failed: leave the session untitled, silently.
+      // Preserve the optional feature's silent, best-effort delivery contract.
     }
   };
 
-  const unsubs: Array<() => void> = [
-    options.turns.on('TURN_COMPLETED', () => { void maybeTitle(); }),
-  ];
-
+  const off = options.turns.on('TURN_COMPLETED', () => { void maybeTitle(); });
+  const unsubs = [() => { closed = true; off(); }];
   return { unsubs, maybeTitle };
 }

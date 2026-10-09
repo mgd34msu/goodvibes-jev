@@ -101,19 +101,14 @@ async function buildProviderReadiness(runtime: CliCommandRuntime) {
   try {
     await services.providerRegistry.ready();
     const snapshots = await listProviderRuntimeSnapshots(services.providerRegistry);
-    return snapshots.map((snapshot) => ({
+    return await Promise.all(snapshots.map(async (snapshot) => ({
       provider: snapshot.providerId,
       active: snapshot.active,
       configured: snapshot.runtime.auth?.configured ?? true,
       configuredVia: snapshot.runtime.auth?.mode ?? 'unknown',
       models: snapshot.modelCount,
-      setup: classifyProviderSetup({
-        providerId: snapshot.providerId,
-        authMode: snapshot.runtime.auth?.mode,
-        configured: snapshot.runtime.auth?.configured ?? true,
-        modelCount: snapshot.modelCount,
-      }),
-    }));
+      setup: await classifyProviderSetup(snapshot, { site: 'tui.support-bundle.setup' }),
+    })));
   } finally {
     services.providerRegistry.stopWatching();
     // A one-shot command still composes the whole graph, and that graph starts

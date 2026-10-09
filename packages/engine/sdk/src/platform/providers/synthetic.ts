@@ -247,6 +247,13 @@ export class SyntheticProvider implements LLMProvider {
     ];
   }
 
+  describeRuntime(): import('./interface.js').ProviderRuntimeMetadata {
+    return {
+      setup: { description: 'Multi-backend router delegates to independent provider instances with potentially different hosting, credentials and billing. It has no single setup/payment class.' },
+      models: { models: this.models },
+    };
+  }
+
   // Track cooldowns: syntheticModelId -> array of expiresAt timestamps indexed by resolved backend position
   private cooldowns = new Map<string, number[]>();
   // Track active backend index per resolved model ID

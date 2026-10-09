@@ -6,6 +6,15 @@ import type {
   KnowledgeRefinementTaskUpsertInput,
 } from './types.js';
 
+const guardedInputs = new WeakMap<KnowledgeRefinementTaskUpsertInput, () => void>();
+
+/** Internal process-owned commit guard; copied/serialized task data carries no authority. */
+export function guardKnowledgeRefinementTaskInput(input: KnowledgeRefinementTaskUpsertInput,
+  assertCurrent: () => void): KnowledgeRefinementTaskUpsertInput {
+  guardedInputs.set(input, assertCurrent);
+  return input;
+}
+
 export async function upsertKnowledgeRefinementTask(
   sqlite: SQLiteStore,
   refinementTasks: Map<string, KnowledgeRefinementTaskRecord>,
@@ -13,6 +22,7 @@ export async function upsertKnowledgeRefinementTask(
   createId: () => string,
 ): Promise<KnowledgeRefinementTaskRecord> {
   const existing = input.id ? refinementTasks.get(input.id) : null;
+  guardedInputs.get(input)?.();
   // Terminal decisions belong to this task identity. A new gap/task is a new
   // lifecycle; retryable blocked/failed tasks intentionally remain writable.
   if (existing && isTerminalRefinementState(existing.state)) return existing;
@@ -68,6 +78,8 @@ export async function upsertKnowledgeRefinementTask(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
+  // No await separates this check from SQL and cache mutation.
+  guardedInputs.get(input)?.();
   sqlite.run(`
     INSERT OR REPLACE INTO knowledge_refinement_tasks (
       id, space_id, subject_kind, subject_id, subject_title, subject_type, gap_id,

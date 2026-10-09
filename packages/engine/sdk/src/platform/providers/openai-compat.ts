@@ -1,3 +1,4 @@
+import { safeEndpointOrigin } from './provider-setup.js';
 import { ProviderAttemptDeniedError, revalidateProviderAttempt } from './attempt-guard.js';
 import type OpenAI from 'openai';
 import { createOpenAIClient } from './optional-openai.js';
@@ -121,6 +122,8 @@ export interface OpenAICompatOptions {
   allowAnonymous?: boolean | undefined;
   anonymousConfigured?: boolean | undefined;
   anonymousDetail?: string | undefined;
+  /** Operator/provider declaration, independent of the currently configured auth route. */
+  setupDescription?: string | undefined;
   /** Override runtime auth posture when apiKey is an internal transport placeholder. */
   authConfigured?: boolean | undefined;
   /** Shared cache-hit tracker owned by the runtime service graph. */
@@ -195,6 +198,7 @@ export class OpenAICompatProvider implements LLMProvider {
   private readonly allowAnonymous: boolean;
   private readonly anonymousConfigured: boolean;
   private readonly anonymousDetail?: string | undefined;
+  private readonly setupDescription?: string | undefined;
   private readonly cacheHitTracker: Pick<CacheHitTracker, 'recordTurn'>;
   private readonly baseURL: string;
   private readonly endpointHost: string;
@@ -244,6 +248,7 @@ export class OpenAICompatProvider implements LLMProvider {
     this.allowAnonymous = opts.allowAnonymous ?? false;
     this.anonymousConfigured = opts.anonymousConfigured ?? false;
     this.anonymousDetail = opts.anonymousDetail;
+    this.setupDescription = opts.setupDescription;
     this.cacheHitTracker = opts.cacheHitTracker ?? NOOP_CACHE_HIT_TRACKER;
     this.baseURL = opts.baseURL;
     this.endpointHost = (() => {
@@ -612,6 +617,10 @@ export class OpenAICompatProvider implements LLMProvider {
           : `API key for ${this.name} is not configured`,
     }, authRoutes);
     return {
+      setup: {
+        ...(this.setupDescription ?? this.anonymousDetail ? { description: this.setupDescription ?? this.anonymousDetail } : {}),
+        ...(safeEndpointOrigin(this.baseURL) ? { endpointOrigin: safeEndpointOrigin(this.baseURL)! } : {}),
+      },
       auth: {
         mode: this.allowAnonymous && !this.configured ? 'anonymous' : 'api-key',
         configured: auth.configured,
