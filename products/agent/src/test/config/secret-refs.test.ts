@@ -203,12 +203,13 @@ describe('secret refs', () => {
     expect(await manager.get('GV_EXTERNAL_REF_TEST')).toBe(externalProviderValue);
   });
 
-  test('persistSecretBackedConfigValue: setDynamic failure prevents secret from being written', async () => {
-    // D3: if setDynamic throws, no secret must be written.
+  test('persistSecretBackedConfigValue: non-mutating validation failure prevents secret writes', async () => {
+    // Reject at the same non-mutating admission boundary as the real manager.
     const setDynamicError = new Error('unknown setting');
     const configManager: SecretBackedConfigManager = {
       get: () => 'secure',
-      setDynamic: () => { throw setDynamicError; },
+      validateDynamic: () => { throw setDynamicError; },
+      setDynamic: () => { throw new Error('must not publish rejected config'); },
     };
     const written: Array<{ key: string; value: string }> = [];
     const secretsManager: SecretBackedSecretStore = {
@@ -224,12 +225,25 @@ describe('secret refs', () => {
       ),
     ).rejects.toThrow('unknown setting');
 
-    // No secret must have been written after setDynamic threw.
+    // No secret may be written after preflight rejects.
     expect(written).toEqual([]);
   });
 
-  test('persistSecretBackedConfigValue: clearSecretKey delete passes the resolved medium', async () => {
-    // D3: the delete path must receive the same medium as the set path.
+  test('persistSecretBackedConfigValue: a final persistence failure rejects after successful admission', async () => {
+    const written: string[] = [];
+    const configManager: SecretBackedConfigManager = {
+      get: () => 'plaintext_allowed',
+      validateDynamic: () => {},
+      setDynamic: () => { throw new Error('synthetic config disk failure'); },
+    };
+    await expect(persistSecretBackedConfigValue(configManager, {
+      set: async key => { written.push(key); },
+    }, 'surfaces.slack.botToken', 'synthetic-new-secret')).rejects.toThrow('synthetic config disk failure');
+    expect(written).toEqual(['GOODVIBES_SURFACES_SLACK_BOT_TOKEN']);
+  });
+
+  test('persistSecretBackedConfigValue: clearSecretKey revokes every medium in its scope', async () => {
+    // Revocation must include values saved under an earlier storage policy.
     const configManager: SecretBackedConfigManager = {
       get: (key) => key === 'storage.secretPolicy' ? 'plaintext_allowed' : undefined,
       setDynamic: () => {},
@@ -249,8 +263,7 @@ describe('secret refs', () => {
     );
 
     expect(deletedWith).toHaveLength(1);
-    // Medium must be 'plaintext' (derived from storage.secretPolicy = 'plaintext_allowed').
-    expect((deletedWith[0].options as { medium?: string }).medium).toBe('plaintext');
+    expect(deletedWith[0].options).toEqual({ scope: 'daemon' });
   });
 
   test('ServiceRegistry resolves tokenRef without requiring a local tokenKey value', async () => {

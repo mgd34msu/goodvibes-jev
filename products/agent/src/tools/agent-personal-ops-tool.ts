@@ -1,3 +1,4 @@
+import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -172,16 +173,17 @@ export function createAgentPersonalOpsTool(deps: AgentPersonalOpsToolDeps): Tool
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
+      options?.signal?.throwIfAborted();
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentPersonalOpsToolArgs;
       const action = readAction(args);
 
-      if (action === 'briefing') return harnessTool.execute(briefingArgs(args));
-      if (action === 'status') return harnessTool.execute(statusArgs(args));
-      if (action === 'queue') return harnessTool.execute(queueArgs(args));
-      if (action === 'intake') return harnessTool.execute(intakeArgs(args));
-      if (action === 'lane') return harnessTool.execute(laneArgs(args));
-      if (action === 'read') return harnessTool.execute(readArgs(args));
+      if (action === 'briefing') return harnessTool.execute(briefingArgs(args), options);
+      if (action === 'status') return harnessTool.execute(statusArgs(args), options);
+      if (action === 'queue') return harnessTool.execute(queueArgs(args), options);
+      if (action === 'intake') return harnessTool.execute(intakeArgs(args), options);
+      if (action === 'lane') return harnessTool.execute(laneArgs(args), options);
+      if (action === 'read') return harnessTool.execute(readArgs(args), options);
 
       return error('Unknown Personal Ops action. Use action:"briefing" for the user-first daily plan.');
     },
@@ -193,5 +195,5 @@ export function registerAgentPersonalOpsTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('personal_ops')) registry.register(createAgentPersonalOpsTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('personal_ops')) registry.register(createAgentPersonalOpsTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createPersonalOpsInputProjector(registry, undefined, (args) => ['queue', 'intake', 'lane', 'read'].includes(readAction(args))) });
 }

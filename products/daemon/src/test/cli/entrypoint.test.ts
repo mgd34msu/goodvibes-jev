@@ -141,7 +141,7 @@ for (const [args, expected] of [
     expect(existsSync(join(result.root, 'work', 'elsewhere'))).toBe(false);
   });
 }
-for (const args of [[], ['serve'], ['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y']]) {
+for (const args of [['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y']]) {
   test(`uncomposed built CLI refuses ${args.join(' ') || 'bare serve'} before files or service work`, async () => {
     const result = await oneShot(args);
     expect(result.code).toBe(2); expect(result.stderr).toMatch(/composition|not been migrated/);
@@ -166,6 +166,36 @@ test('CLI errors from caller-owned output/config ports never render exception va
   expect(await runDaemonCli(['--version'], { stdout() { throw new Error('PRIVATE_OUTPUT_VALUE'); }, stderr: (line) => { lines.push(line); } })).toBe(1);
   expect(lines).toEqual(['Daemon command failed']);
 });
+
+test('shipped emitted entrypoint serves complete fresh-install inbox membership without injected adapters', async () => {
+  const lease = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('lease') });
+  const port = lease.port!; await lease.stop(true);
+  const root = makeOwnedTempDir('daemon-production-serving');
+  mkdirSync(join(root, 'daemon'), { recursive: true });
+  writeFileSync(join(root, 'daemon', 'settings.json'), JSON.stringify({ cluster: { enabled: false }, relay: { enabled: false } }));
+  const fx = launch(['serve', '--hostname', '127.0.0.1', '--port', String(port)], false, root);
+  try {
+    await fx.waitFor('host started');
+    const response = await fetch(`http://127.0.0.1:${port}/api/channels/inbox`, { headers: { Authorization: 'Bearer synthetic-cli-token' } });
+    expect(response.status).toBe(200);
+    const receipt = await response.json() as { providers?: unknown; data?: { providers?: unknown } };
+    const providers = receipt.providers ?? receipt.data?.providers;
+    expect(providers).toEqual(['slack', 'discord', 'email'].map(provider => ({ provider,
+      state: 'unconfigured', configured: false, syncing: false, itemCount: 0, storedCount: 0 })));
+    expect(fx.child.kill('SIGTERM')).toBe(true);
+    expect(await fx.waitForExit()).toBe(0);
+    await expect(fetch(`http://127.0.0.1:${port}/api/channels/inbox`)).rejects.toThrow();
+  } finally { await fx.close(); }
+}, 30_000);
+
+test('shipped entrypoint refuses configured provider intake without trusted account admission', async () => {
+  const root = makeOwnedTempDir('daemon-production-refusal');
+  mkdirSync(join(root, 'daemon'), { recursive: true });
+  writeFileSync(join(root, 'daemon', 'settings.json'), JSON.stringify({ cluster: { enabled: false }, relay: { enabled: false },
+    surfaces: { slack: { enabled: true } } }));
+  const result = await oneShot(['serve', '--hostname', '127.0.0.1', '--port', '41379'], root);
+  expect(result.code).toBe(1); expect(result.stdout).not.toContain('host started');
+}, 30_000);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   test(`emitted explicit launcher serves real loopback contracts and awaits inbox drainage on ${signal}`, async () => {

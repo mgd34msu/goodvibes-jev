@@ -1,7 +1,9 @@
+import { installAgentDaemonCredentialsClient } from '../../config/daemon-credential-routing.ts';
+import { installAgentDaemonConfigClient } from '../../config/daemon-config-routing.ts';
 /**
  * Tests for SettingsModal state class.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { isAgentHiddenSettingKey, SettingsModal, SETTINGS_CATEGORIES, SETTINGS_CATEGORY_GROUPS } from '../../input/settings-modal.ts';
@@ -528,10 +530,259 @@ describe('SettingsModal', () => {
     modal.editBuffer = 'ntfy-token';
     expect(modal.commitEdit()).toBe(true);
 
+    expect(await modal.pendingSecretWrite).toBe(true);
     const secretKey = buildGoodVibesSecretKey('surfaces.ntfy.token');
     expect(cm.get('surfaces.ntfy.token')).toBe(buildGoodVibesSecretRef(secretKey));
     expect(await secrets.get(secretKey)).toBe('ntfy-token');
   });
+
+  test('secret edits wait for storage, reject repeated commits, and publish only on completion', async () => {
+    let finish!: () => void;
+    const stored = new Promise<void>((resolve) => { finish = resolve; });
+    let writes = 0;
+    let deletes = 0;
+    const secrets = { set: () => { writes++; return stored; }, delete: async () => { deletes++; } };
+    const applied: unknown[] = [];
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: (change) => { applied.push(change); } });
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+    const previous = cm.get('surfaces.ntfy.token');
+    modal.activateSelected();
+    modal.editBuffer = 'deferred-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    expect(completion).not.toBeNull();
+    expect(cm.get('surfaces.ntfy.token')).toBe(previous);
+    expect(applied).toEqual([]);
+    expect(modal.lastSettingEffectMessage).toBe('Saving credential…');
+    expect(modal.commitEdit()).toBe(false);
+    expect(writes).toBe(1);
+    expect(modal.resetSelected()).toBeNull();
+    expect(deletes).toBe(0);
+    expect(cm.get('surfaces.ntfy.token')).toBe(previous);
+    expect(modal.lastSettingEffectMessage).toBe('Saving credential…');
+
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.ntfy.token')).toBe(buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token')));
+    expect(applied).toHaveLength(1);
+    expect(modal.pendingSecretWrite).toBeNull();
+    expect(modal.lastSettingEffectMessage).toBe('Credential saved.');
+  });
+
+  test('rejected secret storage preserves the reference and surfaces failure without a saved callback', async () => {
+    let fail!: (error: Error) => void;
+    const stored = new Promise<void>((_resolve, reject) => { fail = reject; });
+    const secrets = { set: () => stored, delete: async () => {} };
+    let applied = 0;
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: () => { applied++; } });
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+    const previous = cm.get('surfaces.ntfy.token');
+    modal.activateSelected();
+    modal.editBuffer = 'rejected-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    fail(new Error('storage unavailable'));
+    expect(await completion).toBe(false);
+    expect(cm.get('surfaces.ntfy.token')).toBe(previous);
+    expect(applied).toBe(0);
+    expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+    expect(modal.pendingSecretWrite).toBeNull();
+  });
+
+  test('a secret completion after reopen stays with its original config and callback', async () => {
+    let finish!: () => void;
+    const stored = new Promise<void>((resolve) => { finish = resolve; });
+    const secrets = { set: () => stored, delete: async () => {} };
+    let originalApplied = 0;
+    let replacementApplied = 0;
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: () => { originalApplied++; } });
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+    modal.activateSelected();
+    modal.editBuffer = 'original-owner-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    modal.close();
+    const replacementRoot = join(tmpDir, 'replacement-owner');
+    mkdirSync(replacementRoot, { recursive: true });
+    const replacement = createConfigManager(replacementRoot);
+    const previous = replacement.get('surfaces.ntfy.token');
+    modal.open(replacement, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+      { onSettingApplied: () => { replacementApplied++; } });
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.ntfy.token')).toBe(buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token')));
+    expect(replacement.get('surfaces.ntfy.token')).toBe(previous);
+    expect(originalApplied).toBe(1);
+    expect(replacementApplied).toBe(0);
+    expect(modal.lastSettingEffectMessage).toBeNull();
+  });
+
+  test('clearing a secret keeps its reference until deletion completes', async () => {
+    let finish!: () => void;
+    const cleared = new Promise<void>((resolve) => { finish = resolve; });
+    const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token'));
+    cm.setDynamic('surfaces.ntfy.token', reference);
+    const secrets = { set: async () => {}, delete: () => cleared };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+    modal.activateSelected();
+    modal.editBuffer = '';
+    expect(modal.commitEdit()).toBe(true);
+    expect(cm.get('surfaces.ntfy.token')).toBe(reference);
+    const completion = modal.pendingSecretWrite;
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.ntfy.token')).toBe('');
+  });
+
+  test('secret completion rechecks policy instead of publishing after authority becomes unavailable', async () => {
+    let finish!: () => void;
+    const stored = new Promise<void>((resolve) => { finish = resolve; });
+    const secrets = { set: () => stored, delete: async () => {} };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+    const previous = cm.get('surfaces.ntfy.token');
+    modal.activateSelected();
+    modal.editBuffer = 'pending-policy-token';
+    expect(modal.commitEdit()).toBe(true);
+    const completion = modal.pendingSecretWrite;
+    const policy = spyOn(cm, 'getHostSettingsSchema').mockImplementation(() => { throw new Error('policy metadata unavailable'); });
+    try {
+      finish();
+      expect(await completion).toBe(false);
+      expect(cm.get('surfaces.ntfy.token')).toBe(previous);
+      expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+    } finally { policy.mockRestore(); }
+  });
+
+  test('secret reference publication waits for its captured connected config owner', async () => {
+    let finishStorage!: () => void;
+    let finishRoute!: () => void;
+    let routeStarted!: () => void;
+    const stored = new Promise<void>((resolve) => { finishStorage = resolve; });
+    const routed = new Promise<void>((resolve) => { finishRoute = resolve; });
+    const started = new Promise<void>((resolve) => { routeStarted = resolve; });
+    const writes: unknown[] = [];
+    const owner = { ownsKey: () => true, set: async (key: string, value: unknown) => {
+      writes.push({ key, value }); routeStarted(); await routed;
+    } };
+    const secrets = { set: () => stored, delete: async () => {} };
+    installAgentDaemonConfigClient(owner as unknown as Parameters<typeof installAgentDaemonConfigClient>[0]);
+    try {
+      modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+      while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+      modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+      const previous = cm.get('surfaces.ntfy.token');
+      modal.activateSelected();
+      modal.editBuffer = 'routed-token';
+      expect(modal.commitEdit()).toBe(true);
+      const completion = modal.pendingSecretWrite;
+      installAgentDaemonConfigClient(null);
+      expect(writes).toEqual([]);
+      finishStorage();
+      await started;
+      expect(writes).toEqual([{ key: 'surfaces.ntfy.token', value: buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token')) }]);
+      expect(cm.get('surfaces.ntfy.token')).toBe(previous);
+      finishRoute();
+      expect(await completion).toBe(true);
+      expect(cm.get('surfaces.ntfy.token')).toBe(previous);
+    } finally { installAgentDaemonConfigClient(null); }
+  });
+
+  for (const rejects of [false, true]) {
+    test(`selected secret reset waits for deletion and reports ${rejects ? 'failure' : 'completion'}`, async () => {
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const removed = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+      let deletes = 0;
+      let applied = 0;
+      const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token'));
+      cm.setDynamic('surfaces.ntfy.token', reference);
+      const secrets = { set: async () => { throw new Error('reset must delete'); }, delete: () => { deletes++; return removed; } };
+      modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets,
+        { onSettingApplied: () => { applied++; } });
+      while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+      modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+      expect(modal.resetSelected()).toBeNull();
+      const completion = modal.pendingSecretWrite;
+      expect(completion).not.toBeNull();
+      expect(cm.get('surfaces.ntfy.token')).toBe(reference);
+      expect(applied).toBe(0);
+      expect(deletes).toBe(1);
+      expect(modal.resetSelected()).toBeNull();
+      expect(deletes).toBe(1);
+      if (rejects) fail(new Error('deletion failed with synthetic-hidden-token'));
+      else finish();
+      expect(await completion).toBe(!rejects);
+      expect(cm.get('surfaces.ntfy.token')).toBe(rejects ? reference : '');
+      expect(applied).toBe(rejects ? 0 : 1);
+      expect(modal.pendingSecretWrite).toBeNull();
+      expect(modal.lastSettingEffectMessage).not.toContain('synthetic-hidden-token');
+      if (rejects) expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+    });
+  }
+
+  test('a pending selected secret reset finishes against its original owner after reopen', async () => {
+    let finish!: () => void;
+    const removed = new Promise<void>((resolve) => { finish = resolve; });
+    const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token'));
+    cm.setDynamic('surfaces.ntfy.token', reference);
+    const secrets = { set: async () => {}, delete: () => removed };
+    modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+    modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+    expect(modal.resetSelected()).toBeNull();
+    const completion = modal.pendingSecretWrite;
+    modal.close();
+    const replacementRoot = join(tmpDir, 'reset-replacement-owner');
+    mkdirSync(replacementRoot, { recursive: true });
+    const replacement = createConfigManager(replacementRoot);
+    replacement.setDynamic('surfaces.ntfy.token', reference);
+    modal.open(replacement, ffm, subscriptionManager, serviceRegistry, mcpRegistry, secrets);
+    finish();
+    expect(await completion).toBe(true);
+    expect(cm.get('surfaces.ntfy.token')).toBe('');
+    expect(replacement.get('surfaces.ntfy.token')).toBe(reference);
+    expect(modal.lastSettingEffectMessage).toBeNull();
+  });
+
+  for (const rejects of [false, true]) {
+    test(`selected secret reset routes clear to its daemon and waits for ${rejects ? 'refusal' : 'completion'}`, async () => {
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const removed = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+      let clears = 0;
+      const writer = { set: async () => { throw new Error('reset must clear'); },
+        clear: () => { clears++; return removed; } };
+      const reference = buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.ntfy.token'));
+      cm.setDynamic('surfaces.ntfy.token', reference);
+      installAgentDaemonCredentialsClient(writer as unknown as Parameters<typeof installAgentDaemonCredentialsClient>[0]);
+      try {
+        modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);
+        while (modal.currentCategory !== 'surfaces') modal.nextCategory();
+        modal.selectedIndex = modal.currentItems.findIndex((entry) => entry.setting.key === 'surfaces.ntfy.token');
+        expect(modal.resetSelected()).toBeNull();
+        const completion = modal.pendingSecretWrite;
+        expect(completion).not.toBeNull();
+        expect(clears).toBe(1);
+        expect(cm.get('surfaces.ntfy.token')).toBe(reference);
+        if (rejects) fail(new Error('synthetic-daemon-clear-refusal'));
+        else finish();
+        expect(await completion).toBe(!rejects);
+        // The remote owner commits its own config; no local fallback is fabricated.
+        expect(cm.get('surfaces.ntfy.token')).toBe(reference);
+        if (rejects) expect(modal.lastSettingEffectMessage).toMatch(/failed/i);
+      } finally { installAgentDaemonCredentialsClient(null); }
+    });
+  }
 
   test('close() deactivates modal and clears editing state', () => {
     modal.open(cm, ffm, subscriptionManager, serviceRegistry, mcpRegistry);

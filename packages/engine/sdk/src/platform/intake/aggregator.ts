@@ -380,6 +380,8 @@ function wireState(
   status: ProviderStatus,
   storedCount: number,
 ): ChannelInboxProviderStatus['state'] {
+  // An admission owner can prove absence without ever polling a source.
+  if (status.state === 'unavailable' && status.configured === false) return 'unconfigured';
   if (!status.polled || status.state === 'pending') return 'pending';
   if (status.state === 'unavailable') {
     return status.configured === false ? 'unconfigured' : 'error';

@@ -20,3 +20,5 @@ export * from './single-flight.js';
 export * from './terminal-width.js';
 export * from './url-safety.js';
 export * from './walk-dir.js';
+export { readWalkDirectories } from './directory-reading.js';
+export type { WalkDirectoryCandidate } from './directory-reading.js';

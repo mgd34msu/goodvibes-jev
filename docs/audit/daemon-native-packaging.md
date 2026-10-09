@@ -126,3 +126,12 @@ now restores persisted-provider boot registration; see `daemon-provider-preload.
 for its source-level HTTP and ownership proof. Complete compiled-hosting acceptance
 remains pending. Local artifact success does not satisfy the remaining
 runtime/release contracts.
+
+## October 9 verifier update
+
+The production-bootstrap integration replaces the former default-serve refusal
+checks with a real source-free unconfigured-inbox startup, authenticated read and
+SIGTERM/shutdown check. Service activation refusals remain. Earlier exact-source
+receipts above retain their historical scope; the updated verifier needs a new
+native build/run receipt and does not establish compiled hosted-model streaming.
+See [production bootstrap](daemon-production-bootstrap.md).

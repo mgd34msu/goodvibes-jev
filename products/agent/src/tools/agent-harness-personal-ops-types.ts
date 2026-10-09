@@ -1,3 +1,4 @@
+import type { Ranked } from '@goodvibes-jev/judgment';
 export type PersonalOpsLaneId =
   | 'inbox'
   | 'calendar'
@@ -185,6 +186,7 @@ export interface McpSchemaSummary {
 }
 
 export interface PersonalOpsIntakeCandidate {
+  readonly judgment?: Ranked;
   readonly id: string;
   readonly label: string;
   readonly laneId: PersonalOpsLaneId;
@@ -223,6 +225,7 @@ export interface PersonalOpsExecutionStep {
 }
 
 export type PersonalOpsLaneResolution =
+  | { readonly status: 'deferred'; readonly reason: 'uncertain_lane_reading'; readonly judgments: readonly Ranked[] }
   | { readonly status: 'found'; readonly lane: Record<string, unknown> }
   | { readonly status: 'ambiguous'; readonly input: string; readonly candidates: readonly Record<string, unknown>[] }
   | { readonly status: 'missing_lookup'; readonly usage: string };

@@ -45,33 +45,33 @@ describe('resolveGithubToken', () => {
     }
   });
 
-  test('extracts token from Bearer Authorization header', () => {
+  test('extracts token from Bearer Authorization header', async () => {
     const headers = { Authorization: 'Bearer ghp_test12345' };
-    expect(resolveGithubToken(headers)).toBe('ghp_test12345');
+    expect(await resolveGithubToken(headers)).toBe('ghp_test12345');
   });
 
-  test('extracts token from lowercase authorization header', () => {
+  test('extracts token from lowercase authorization header', async () => {
     const headers = { authorization: 'Bearer ghp_lower' };
-    expect(resolveGithubToken(headers)).toBe('ghp_lower');
+    expect(await resolveGithubToken(headers)).toBe('ghp_lower');
   });
 
-  test('falls back to GITHUB_TOKEN env var when headers are null', () => {
+  test('falls back to GITHUB_TOKEN env var when headers are null', async () => {
     process.env['GITHUB_TOKEN'] = 'ghp_env_token';
-    expect(resolveGithubToken(null)).toBe('ghp_env_token');
+    expect(await resolveGithubToken(null)).toBe('ghp_env_token');
   });
 
-  test('falls back to GITHUB_TOKEN env var when headers have no token', () => {
+  test('falls back to GITHUB_TOKEN env var when headers have no token', async () => {
     process.env['GITHUB_TOKEN'] = 'ghp_fallback';
-    expect(resolveGithubToken({})).toBe('ghp_fallback');
+    expect(await resolveGithubToken({})).toBe('ghp_fallback');
   });
 
-  test('returns undefined when no header and no env var', () => {
-    expect(resolveGithubToken(null)).toBeUndefined();
+  test('returns undefined when no header and no env var', async () => {
+    expect(await resolveGithubToken(null)).toBeUndefined();
   });
 
-  test('returns undefined when env var is empty string', () => {
+  test('returns undefined when env var is empty string', async () => {
     process.env['GITHUB_TOKEN'] = '';
-    expect(resolveGithubToken(null)).toBeUndefined();
+    expect(await resolveGithubToken(null)).toBeUndefined();
   });
 });
 

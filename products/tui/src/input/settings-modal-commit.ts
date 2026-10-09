@@ -41,6 +41,9 @@ export interface CommitEditContext {
   getSelectedMcp(): McpEntry | null;
   getSelected(): SettingEntry | null;
   setValue(key: ConfigKey, value: unknown): void;
+  /** Captured owner: completion must never target a subsequently reopened modal. */
+  setSecretConfigValue?(key: ConfigKey, value: unknown): void | Promise<void>;
+  trackSecretWrite?(write: Promise<boolean>): void;
   setEditingMode(value: boolean): void;
   setEditBuffer(value: string): void;
   setMcpEntries(entries: McpEntry[]): void;
@@ -48,7 +51,7 @@ export interface CommitEditContext {
 }
 
 /**
- * Commit the current editBuffer to the config. Returns true on success,
+ * Commit the current editBuffer to the config. Returns true when accepted,
  * false if validation failed (the caller always clears editingMode/editBuffer
  * regardless, a failed commit never leaves stale edit state behind).
  */
@@ -140,15 +143,16 @@ export function commitEditValue(ctx: CommitEditContext): boolean {
     //, see exec-env-scrub-config.ts.
     ctx.setValue(setting.key, parseExecEnvScrubAllowlistInput(ctx.editBuffer));
   } else if (setting.type === 'string' && isSecretConfigKey(setting.key)) {
-    setSecretBackedSettingValue({
+    const write = setSecretBackedSettingValue({
       key: setting.key,
       value: String(parsed ?? ''),
       configManager: ctx.configManager,
       secretsManager: ctx.secretsManager,
       daemonCredentials: ctx.daemonCredentials ?? null,
-      setConfigValue: (key, value) => ctx.setValue(key, value),
+      setConfigValue: (key, value) => ctx.setSecretConfigValue ? ctx.setSecretConfigValue(key, value) : ctx.setValue(key, value),
       ...(ctx.reportError ? { onError: ctx.reportError } : {}),
     });
+    ctx.trackSecretWrite?.(write);
   } else {
     ctx.setValue(setting.key as ConfigKey, parsed);
   }

@@ -301,6 +301,7 @@ export function handlePromptKeyToken(state: KeyRouteState, token: InputToken): {
         cursorPos = 0;
         if (!args) {
           state.commandContext.scheduleReading?.cancel();
+          state.commandContext.shareReading?.cancel();
           state.commandContext.print('Invalid schedule command quoting.'); state.requestRender();
           return { handled: true, prompt, cursorPos, inputScrollTop, commandMode, indicatorFocused };
         }

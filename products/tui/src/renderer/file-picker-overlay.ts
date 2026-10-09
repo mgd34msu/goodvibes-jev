@@ -63,7 +63,7 @@ export function renderFilePickerOverlay(
   };
   const rows: KitRow[] = [];
   if (picker.results.length === 0) {
-    rows.push({ label: picker.query ? 'No matching files' : 'Loading files…', muted: true });
+    rows.push({ label: picker.loadError ?? (picker.query ? 'No matching files' : 'Loading files…'), muted: true });
   } else {
     picker.results.forEach((file, index) => {
       const selected = index === picker.selectedIndex;

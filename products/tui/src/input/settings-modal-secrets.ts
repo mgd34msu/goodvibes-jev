@@ -1,7 +1,6 @@
 import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { SecretsManager } from '../config/secrets.ts';
 import {
   buildSecretBackedConfigUpdate,
@@ -26,57 +25,57 @@ export interface SettingsDaemonCredentialWriter {
   clear(configKey: string): Promise<void>;
 }
 
-export function setSecretBackedSettingValue(args: {
+export async function setSecretBackedSettingValue(args: {
   key: ConfigKey;
   value: string;
   configManager: ConfigManager;
   secretsManager: SettingsSecretsManager | null;
   /** Present when a daemon is adopted; absent leaves the historical local path. */
   daemonCredentials?: SettingsDaemonCredentialWriter | null;
-  setConfigValue: (key: ConfigKey, value: unknown) => void;
+  setConfigValue: (key: ConfigKey, value: unknown) => void | Promise<void>;
   /** Surface the daemon's refusal; without it a failed write would be silent. */
   onError?: (message: string) => void;
-}): void {
+}): Promise<boolean> {
   const { key, value, configManager, secretsManager, setConfigValue } = args;
-  if (!secretsManager) {
-    setConfigValue(key, value.trim());
-    return;
+  const assertPolicyAvailable = () => {
+    // Re-read authority from the captured owner, including after storage waits.
+    // A modal opened against another owner must not supply this metadata.
+    for (const setting of configManager.getHostSettingsSchema?.() ?? []) {
+      configManager.getHostBooleanSetting(setting.key).getResolved();
+    }
+  };
+  try {
+    assertPolicyAvailable();
+    const update = buildSecretBackedConfigUpdate(key, value);
+    if ((update.secretKey || update.clearSecretKey) && defaultSecretBackedScope(key) === 'daemon' && args.daemonCredentials) {
+      const writer = args.daemonCredentials;
+      if (value.trim().length === 0) await writer.clear(key);
+      else await writer.set(key, value);
+      return true;
+    }
+    if ((update.secretKey || update.clearSecretKey) && !secretsManager) {
+      throw new Error('Credential storage is unavailable.');
+    }
+    configManager.validateDynamic?.(key, update.configValue);
+    const scope = defaultSecretBackedScope(key);
+    const medium = getSecretWriteMedium(configManager.get('storage.secretPolicy'));
+    // Publishing a reference is the commit: readers must never see it before
+    // the cross-process secret write (or clear) has actually completed.
+    if (update.secretKey && update.secretValue !== undefined) {
+      await secretsManager!.set(update.secretKey, update.secretValue, { scope, medium });
+    }
+    if (update.clearSecretKey) {
+      await secretsManager!.delete(update.clearSecretKey, { scope });
+    }
+    assertPolicyAvailable();
+    configManager.validateDynamic?.(key, update.configValue);
+    await setConfigValue(key, update.configValue);
+    return true;
+  } catch {
+    // Store/transport errors may echo credential material. Never display or log them.
+    const message = 'The credential could not be saved. Check storage access and settings policy, then retry.';
+    logger.error('SettingsModal: failed to save secret config value', { key });
+    args.onError?.(`Saving that credential failed: ${message}`);
+    return false;
   }
-
-  // A daemon-scoped credential never lands in this surface's own tree: the
-  // daemon is the process that spends it, and a copy here would be a credential
-  // sitting somewhere nothing reads it from.
-  if (defaultSecretBackedScope(key) === 'daemon' && args.daemonCredentials) {
-    const writer = args.daemonCredentials;
-    const trimmed = value.trim();
-    const done = trimmed.length === 0 ? writer.clear(key) : writer.set(key, value);
-    void done.catch((error) => {
-      const message = summarizeError(error);
-      logger.error('SettingsModal: the daemon refused the credential write', { key, error: message });
-      args.onError?.(`Saving that credential failed: ${message}`);
-    });
-    return;
-  }
-
-  const update = buildSecretBackedConfigUpdate(key, value);
-  // A daemon-owned key (surfaces.*, payments.*, controlPlane.*, ...) names a
-  // credential the daemon itself executes with, so its secret material lands in
-  // the daemon tier, the one the daemon reads with every surface closed,
-  // regardless of which client edited it. Everything else stays at user scope.
-  // See secret-config.ts's defaultSecretBackedScope.
-  const scope = defaultSecretBackedScope(key);
-  if (update.secretKey && update.secretValue !== undefined) {
-    void secretsManager.set(update.secretKey, update.secretValue, {
-      scope,
-      medium: getSecretWriteMedium(configManager.get('storage.secretPolicy')),
-    }).catch((error) => {
-      logger.error('SettingsModal: failed to store secret config value', { key, error: summarizeError(error) });
-    });
-  }
-  if (update.clearSecretKey) {
-    void secretsManager.delete(update.clearSecretKey, { scope }).catch((error) => {
-      logger.error('SettingsModal: failed to clear secret config value', { key, error: summarizeError(error) });
-    });
-  }
-  setConfigValue(key, update.configValue);
 }

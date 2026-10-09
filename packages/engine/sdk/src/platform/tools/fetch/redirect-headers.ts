@@ -12,8 +12,7 @@
  * its value (`engine.tools.credential-header`), and follows only on a no that
  * acts. A failed reading throws, and the fetch reports it as that URL's error.
  */
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { credentialHeader } from '../batteries/credential-header.js';
+import { readCredentialHeader } from '../credential-header-reading.js';
 
 const CREDENTIAL_HEADER_SITE = 'tools.fetch.redirect-header';
 
@@ -22,11 +21,7 @@ const PROTOCOL_CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(['authorization
 
 /** Whether a header the caller set may follow a redirect to another origin. */
 async function followsToOtherOrigin(name: string): Promise<boolean> {
-  const run = await credentialHeader.run(judgmentPort(CREDENTIAL_HEADER_SITE), { header: name }, { site: CREDENTIAL_HEADER_SITE });
-  const { verdict, outcome } = run.readings.credential;
-  const follows = verdict === 'no' && outcome === 'act';
-  run.recordAction(follows ? 'sent to the redirected origin' : 'dropped at the cross-origin redirect');
-  return follows;
+  return await readCredentialHeader(name, { site: CREDENTIAL_HEADER_SITE }) === false;
 }
 
 /**

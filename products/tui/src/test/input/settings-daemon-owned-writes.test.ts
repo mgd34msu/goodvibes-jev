@@ -179,10 +179,10 @@ describe('a credential the daemon spends is stored by the daemon, in one call', 
     expect(cleared).toEqual(['surfaces.telegram.botToken']);
   });
 
-  test('without a daemon writer the historical local path is unchanged', () => {
+  test('without a daemon writer the local path publishes only after completion', async () => {
     const configManager = stubConfigManager();
     const localWrites: string[] = [];
-    setSecretBackedSettingValue({
+    await setSecretBackedSettingValue({
       key: 'surfaces.telegram.botToken' as ConfigKey,
       value: 'not-a-real-token',
       configManager,

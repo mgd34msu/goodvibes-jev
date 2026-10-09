@@ -194,6 +194,7 @@ export { cancelAllAgentRuns, type CancellableAgentRuns } from './agent/index.js'
 export { createChannelTool } from './channel/index.js';
 export { registerChannelAgentTools } from './channel/agent-tools.js';
 export { controlTool } from './control/index.js';
+export { readCredentialHeader } from './credential-header-reading.js';
 export { createFetchTool } from './fetch/index.js';
 export { applySanitizer, resolveSanitizeMode } from './fetch/sanitizer.js';
 export type { SanitizeMode } from './fetch/sanitizer.js';

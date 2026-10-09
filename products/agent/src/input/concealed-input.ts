@@ -30,7 +30,7 @@ export interface ConcealedInputRequest {
    */
   readonly label?: string;
   /** Receives the entered plaintext exactly once, when the user submits. */
-  readonly onSubmit: (value: string) => void;
+  readonly onSubmit: ((value: string) => void) | ((value: string) => Promise<void>);
   /** Invoked if the user cancels (Escape) instead of submitting. */
   readonly onCancel?: () => void;
 }
@@ -73,21 +73,54 @@ export function beginConcealedInputFor(host: ConcealedInputHost, request: Concea
   host.requestRender();
 }
 
+const pendingSubmissions = new WeakMap<ConcealedInputHost, {
+  readonly request: ConcealedInputRequest;
+  readonly completion: Promise<void>;
+}>();
+
+/** Observe the actual submission, including a chained next prompt, without polling. */
+export function waitForConcealedSubmission(host: ConcealedInputHost): Promise<void> {
+  return pendingSubmissions.get(host)?.completion ?? Promise.resolve();
+}
+
 /**
- * Deliver a concealed submission. Returns true when concealed mode was active
- * and consumed the value; false when not concealed (the caller then uses the
- * normal submit path). The value is passed IN by the caller (the live feed
- * snapshot) rather than read back from host.prompt, to avoid mid-feed
- * staleness. Concealed state and the buffer are cleared BEFORE onSubmit runs,
- * so the secret does not linger on the host if the callback throws.
+ * Consume a submission synchronously so it cannot reach ordinary chat/history.
+ * Clear plaintext before the callback; an asynchronous callback retains a
+ * masked waiting slot until completion, cancellation, or a replacement prompt.
+ * Repeated Enter while waiting is consumed without invoking the callback again.
  */
 export function submitConcealedInputFor(host: ConcealedInputHost, value: string): boolean {
   const request = host.concealedInput;
   if (!request) return false;
-  host.concealedInput = null;
   host.prompt = '';
   host.cursorPos = 0;
-  request.onSubmit(value);
+  // A second Enter while storage is pending must never escape to ordinary
+  // chat/history, submit the first field twice, or unmask subsequent typing.
+  if (pendingSubmissions.get(host)?.request === request) return true;
+  host.concealedInput = null;
+  const result = request.onSubmit(value);
+  if (result && typeof result.then === 'function') {
+    const pending: ConcealedInputRequest = {
+      label: 'Saving concealed input',
+      onSubmit: () => {},
+      onCancel: () => request.onCancel?.(),
+    };
+    if (host.concealedInput === null) host.concealedInput = pending;
+    const completion = Promise.resolve(result).catch(() => {
+      // The owner reports storage failures; never echo a callback error that
+      // may contain the submitted material. Stop a failed chain safely.
+      if (host.concealedInput === pending) request.onCancel?.();
+    }).finally(() => {
+      if (host.concealedInput === pending) {
+        host.concealedInput = null;
+        host.prompt = '';
+        host.cursorPos = 0;
+      }
+      if (pendingSubmissions.get(host)?.request === pending) pendingSubmissions.delete(host);
+      host.requestRender();
+    });
+    pendingSubmissions.set(host, { request: pending, completion });
+  }
   return true;
 }
 

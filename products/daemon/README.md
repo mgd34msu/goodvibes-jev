@@ -9,8 +9,12 @@ completion, help and version adapters. Standalone `send` uses the canonical
 channel router and requires no running daemon. Its service inspection, stop and removal
 commands retain the existing guarded service adapters.
 
-Default `serve` is still unavailable: built-in inbox composition is unfinished.
-A bare invocation fails before acquiring runtime resources or changing files.
+The shipped `serve` (or bare invocation) admits a genuinely unconfigured inbox:
+Slack, Discord and email are all reported explicitly as `unconfigured`, with no
+source polling or mirror storage. Configured sources require established account
+and trusted-local screening authority; missing or unreadable authority refuses
+startup and rolls back owned resources. An unavailable credential store is not
+reported as a fresh install.
 Service install/start/restart/migrate requires a
 launcher that supplies both real inbox composition and its installed executable
 path and canonical (non-overridden) homes, so this package cannot install an
@@ -53,8 +57,12 @@ host power and wake-model provisioning through the same runtime object. Serving
 then constructs the real `createDaemonHost` and runs its signal/deadline owner;
 shutdown awaits admitted work and complete owned-resource drainage. There is no
 empty production inbox, dynamic composition-module loader or detached server.
-The caller remains responsible for complete provider membership and trusted
-preview mapping. No fixture factory is installed in the executable.
+`createProductionDaemonRuntime({ slack?, email? })` supplies the pinned complete
+membership with canonical protected Slack/email account owners when explicitly
+admitted. The shipped executable uses it without inferred account grants. No
+fixture factory is installed. A configured Discord account remains refused until
+a supported complete catalog and trusted screening owner are supplied. See
+`docs/audit/daemon-production-bootstrap.md` for the configured deployment boundary.
 
 `createEmailDaemonInboxFactory({ account, screening })` supplies an explicit
 TLS mailbox inbox for single-node or account-eligible clustered operation, with
@@ -64,7 +72,7 @@ constructor and, in cluster mode, awaitable election gates. First polling record
 a typed history boundary; content starts on the next ordinary cadence. Omitted history
 and remaining backlog are disclosed separately from provider failures. See
 `docs/audit/daemon-email-inbox-composition.md` for prerequisites and limits. This
-does not remove default serving's all-provider refusal.
+does not infer a grant for configured standalone accounts.
 
 Before constructing its server, the explicit host awaits initial custom-provider
 loading and preloads the validated discovery cache from the runtime's selected
@@ -173,6 +181,6 @@ Trusted launchers can combine `createSlackDaemonInboxSourceFactory` and
 boundary. The composite registers one canonical `channels.inbox.list` timeline;
 each source retains its own account database, lock, read proof and cluster gate.
 Duplicate wire provider IDs are rejected. Explicit provider membership is still
-required: this does not supply a Discord adapter or enable default all-provider
-serving. See `docs/audit/daemon-multiowner-inbox-composition.md` for lifecycle,
+required for custom composition. The production constructor includes explicit
+unconfigured membership, but does not supply an active Discord adapter. See `docs/audit/daemon-multiowner-inbox-composition.md` for lifecycle,
 pagination and protected-read contracts.

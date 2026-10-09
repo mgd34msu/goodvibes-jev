@@ -21,7 +21,7 @@ import type { ModelPickerTarget } from './model-picker.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ServiceInspectionQuery } from '@/runtime/index.ts';
-import type { SettingsDaemonCredentialWriter, SettingsSecretsManager } from './settings-modal-secrets.ts';
+import { setSecretBackedSettingValue, type SettingsDaemonCredentialWriter, type SettingsSecretsManager } from './settings-modal-secrets.ts';
 import { CVV_PROMPT_TRADEOFF_WARNING } from '@goodvibes-jev/engine/sdk/platform/payments';
 import { PAYMENTS_CVV_HANDLING_CONFIG_KEY } from './payments-config.ts';
 import type { FeatureFlagManager } from '@/runtime/index.ts';
@@ -208,6 +208,9 @@ export class SettingsModal {
    */
   public lastSaveTriggeredRestart: 'control-plane' | 'http-listener' | 'web' | null = null;
   public lastSettingEffectMessage: string | null = null;
+  /** Accepted secret edits finish here; commitEdit remains a synchronous keystroke API. */
+  public pendingSecretWrite: Promise<boolean> | null = null;
+  private secretWriteSession = 0;
 
   private configManager: ConfigManager | null = null;
   private unsubscribeHostSetting: (() => void) | null = null;
@@ -236,6 +239,7 @@ export class SettingsModal {
     secretsManager?: SettingsSecretsManager,
     options?: SettingsModalOpenOptions,
   ): void {
+    this.secretWriteSession++;
     this.unsubscribeHostSetting?.();
     this.unsubscribeHostSetting = null;
     this.configManager = configManager;
@@ -286,6 +290,7 @@ export class SettingsModal {
   }
 
   close(): void {
+    this.secretWriteSession++;
     this.unsubscribeHostSetting?.();
     this.unsubscribeHostSetting = null;
     this.active = false;
@@ -588,9 +593,10 @@ export class SettingsModal {
 
   /**
    * Commit the current editBuffer to the config.
-   * Returns true on success, false if validation failed.
+   * Returns true when accepted, false if validation failed or a secret write is pending.
    */
   commitEdit(): boolean {
+    if (this.pendingSecretWrite) return false;
     this._refreshPolicyAvailability();
     return _commitEditValue({
       editingMode: this.editingMode,
@@ -599,7 +605,7 @@ export class SettingsModal {
       configManager: this.configManager,
       secretsManager: this.secretsManager,
       daemonCredentials: this.daemonCredentials,
-      ...(this.reportError ? { reportError: this.reportError } : {}),
+      ...this._secretWriteContext(),
       mcpRegistry: this.mcpRegistry,
       mcpAllowAllConfirmationTarget: this.mcpAllowAllConfirmationTarget,
       getSelectedMcp: () => this.getSelectedMcp(),
@@ -612,6 +618,62 @@ export class SettingsModal {
     });
   }
 
+  private _secretWriteContext() {
+    const configManager = this.configManager;
+    const onApplied = this.onSettingApplied;
+    const daemonConfig = this.daemonConfig;
+    const groups = this.groups;
+    let effectMessage: string | null = null;
+    let secretWriteError: string | null = null;
+    const session = this.secretWriteSession;
+    return {
+      reportError: (message: string) => {
+        secretWriteError = message;
+        if (session !== this.secretWriteSession) return;
+        this.lastSettingEffectMessage = message;
+        this.reportError?.(message);
+      },
+      setSecretConfigValue: async (key: ConfigKey, value: unknown) => {
+        if (!configManager) throw new Error('Settings owner unavailable.');
+        if (daemonConfig?.ownsKey(key)) await daemonConfig.set(key, value);
+        configManager.validateDynamic?.(key, value);
+        const result = applySettingValue({ key, value, configManager, groups,
+          onSettingApplied: onApplied, refreshGroups: () => refreshEntryValues(groups, configManager) });
+        if (result.effectMessage?.startsWith('Save failed:')) throw new Error(result.effectMessage);
+        effectMessage = result.effectMessage;
+      },
+      trackSecretWrite: (write: Promise<boolean>) => {
+        if (session === this.secretWriteSession) this.lastSettingEffectMessage = 'Saving credential…';
+        this.pendingSecretWrite = write.then((ok) => {
+          if (session === this.secretWriteSession) {
+            if (ok) {
+              this.lastSettingEffectMessage = effectMessage ?? 'Credential saved.';
+              if (configManager) refreshEntryValues(this.groups, configManager);
+            } else this.lastSettingEffectMessage = secretWriteError ?? 'Saving that credential failed.';
+            this.requestRender?.();
+          }
+          return ok;
+        }).finally(() => { this.pendingSecretWrite = null; });
+      },
+    };
+  }
+
+  private _createSecretResetter(): (entries: ReadonlyArray<{ key: ConfigKey; value: unknown }>) => void {
+    const configManager = this.configManager;
+    const context = this._secretWriteContext();
+    const secretsManager = this.secretsManager;
+    const daemonCredentials = this.daemonCredentials;
+    return (entries) => {
+      if (!configManager || entries.length === 0) return;
+      const writes = entries.map(({ key, value }) => setSecretBackedSettingValue({
+        key, value: String(value ?? ''), configManager, secretsManager,
+        daemonCredentials, setConfigValue: context.setSecretConfigValue,
+        onError: context.reportError,
+      }));
+      context.trackSecretWrite(Promise.all(writes).then((results) => results.every(Boolean)));
+    };
+  }
+
   /** Cancel inline edit without saving. */
   cancelEdit(): void {
     this.editingMode = false;
@@ -620,12 +682,14 @@ export class SettingsModal {
   }
 
   resetSelected(): { key: string; value: unknown } | null {
+    if (this.pendingSecretWrite) return null;
     this._refreshPolicyAvailability();
     return _resetSelected({
       editingMode: this.editingMode,
       hasConfigManager: this.configManager !== null,
       selected: this.getSelected(),
       secretsManager: this.secretsManager,
+      resetSecrets: this._createSecretResetter(),
       setValue: (key, value) => this._setValue(key, value),
       setHostValue: (key, value) => this._setHostValue(key, value),
     });
@@ -633,6 +697,7 @@ export class SettingsModal {
 
   /** Arm a category-reset confirmation gate for the current category. */
   initiateResetCategory(): void {
+    if (this.pendingSecretWrite) return;
     _initiateResetCategory({
       hasConfigManager: this.configManager !== null,
       currentCategory: this.currentCategory,
@@ -643,6 +708,7 @@ export class SettingsModal {
 
   /** Arm a reset-all confirmation gate. */
   initiateResetAll(): void {
+    if (this.pendingSecretWrite) return;
     _initiateResetAll({
       hasConfigManager: this.configManager !== null,
       setResetCategoryConfirm: (v) => { this.resetCategoryConfirm = v; },
@@ -652,6 +718,8 @@ export class SettingsModal {
 
   /** Route a key through the active reset confirm gate. See ResetConfirmKeyResult for the return contract. */
   handleResetConfirmKey(key: string): ResetConfirmKeyResult {
+    if (this.pendingSecretWrite && (this.resetCategoryConfirm || this.resetAllConfirm)
+      && (key === 'enter' || key === 'y')) return 'absorbed';
     if (this.resetCategoryConfirm || this.resetAllConfirm) this._refreshPolicyAvailability();
     return _handleResetConfirmKey({
       key,
@@ -660,6 +728,7 @@ export class SettingsModal {
       hasConfigManager: this.configManager !== null,
       currentItems: () => this._currentItems(),
       groups: this.groups,
+      resetSecrets: this._createSecretResetter(),
       setValue: (k, value) => this._setValue(k, value),
       setHostValue: (key, value) => this._setHostValue(key, value),
       setResetCategoryConfirm: (v) => { this.resetCategoryConfirm = v; },

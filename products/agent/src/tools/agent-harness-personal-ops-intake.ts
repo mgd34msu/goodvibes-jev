@@ -1,37 +1,42 @@
-import { previewHarnessText } from './agent-harness-text.ts';
-import { hasAny } from './agent-harness-personal-ops-discovery.ts';
+import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import type { Ranked } from '@goodvibes-jev/judgment';
 import { laneById, liveRecordById, operationSummary, recordOperationSummary, workflowById, workflowExecutionPlan, workflowMissingFields } from './agent-harness-personal-ops-runner.ts';
 import type { PersonalOpsConnectorSignal, PersonalOpsConnectorTool, PersonalOpsIntakeCandidate, PersonalOpsLane, PersonalOpsLiveRecord, PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
 
-export function toolPreferenceScore(tool: PersonalOpsConnectorTool, preferredTokens: readonly string[]): number {
-  const text = [tool.name, tool.description ?? '', tool.capability].join('\n').toLowerCase();
-  const preferred = preferredTokens.findIndex((token) => text.includes(token));
-  const preferredScore = preferred >= 0 ? 1_000 - preferred * 50 : 0;
-  const schemaScore = tool.schemaRoute ? 100 : 0;
-  const requiredFieldPenalty = (tool.requiredFields?.length ?? 0) * 5;
-  return preferredScore + schemaScore - requiredFieldPenalty;
-}
-
-export function selectConnectorTool(
+/** Structural effect/capability scoping precedes canonical semantic ranking. */
+export async function selectConnectorTool(
   lane: PersonalOpsLane,
   effect: PersonalOpsConnectorTool['effect'],
   capability: string,
-  preferredTokens: readonly string[],
-): { readonly signal: PersonalOpsConnectorSignal; readonly tool: PersonalOpsConnectorTool } | undefined {
+  request: string,
+  options: CatalogRankingOptions = {},
+): Promise<{ readonly signal: PersonalOpsConnectorSignal; readonly tool: PersonalOpsConnectorTool; readonly judgment: Ranked } | undefined> {
   const candidates = (lane.connectorSignals ?? []).flatMap((signal) => {
     const tools = effect === 'read-only' ? signal.readTools ?? [] : signal.writeTools ?? [];
-    return tools
-      .filter((tool) => tool.capability === capability)
+    return tools.filter((tool) => tool.capability === capability && tool.effect === effect)
       .map((tool) => ({ signal, tool }));
   });
-  return candidates
-    .sort((left, right) => {
-      const statusDelta = (right.signal.status === 'ready' ? 1 : 0) - (left.signal.status === 'ready' ? 1 : 0);
-      if (statusDelta !== 0) return statusDelta;
-      return toolPreferenceScore(right.tool, preferredTokens) - toolPreferenceScore(left.tool, preferredTokens)
-        || left.tool.name.localeCompare(right.tool.name);
-    })[0];
+  const ranked = await rankHarnessCatalog(candidates, request, ({ signal, tool }) => ({
+    id: `${signal.id}:${tool.qualifiedName ?? tool.name}`,
+    description: `${tool.description ?? tool.name}. Capability: ${tool.capability}. Effect: ${tool.effect}. Connector: ${signal.status}.`,
+  }), 'agent.personal-ops.connector', options);
+  // An uncertain match is not an operation selection. Readiness does not invent relevance.
+  const selected = ranked.matches.find(({ judgment }) => judgment.reading.verdict === 'yes');
+  return selected ? { ...selected.entry, judgment: selected.judgment } : undefined;
 }
+
+const INTAKE_ROUTES = [
+  { id: 'inbox-draft-reply', description: 'Read an email conversation and draft a reply locally without sending it.' },
+  { id: 'inbox-triage-briefing', description: 'Search and review inbox messages; summarize priorities and suggested next actions.' },
+  { id: 'calendar-agenda-briefing', description: 'Read a calendar window and summarize upcoming appointments and meeting preparation.' },
+  { id: 'calendar-conflict-scan', description: 'Read a calendar window to inspect availability, overlapping appointments and scheduling conflicts.' },
+  { id: 'confirmed-reminder-request', description: 'Prepare one reminder for the user with an explicit title, time, cadence and delivery scope.' },
+  { id: 'host-task-review', description: 'Inspect existing connected-host task execution state and running work.' },
+  { id: 'visible-work-item', description: 'Create a local visible task or work-plan item to track work.' },
+  { id: 'capture-scratchpad-note', description: 'Capture working context in a local scratchpad note, without promoting it to durable memory.' },
+  { id: 'routine-review-or-promotion', description: 'Inspect, create or review a reusable routine or checklist before separately confirming a schedule.' },
+  { id: 'delivery-channel-review', description: 'Inspect configured communication channels before sending a reviewed message to an explicit recipient.' },
+] as const;
 
 export function workflowCandidate(options: {
   readonly lane: PersonalOpsLane;
@@ -40,8 +45,8 @@ export function workflowCandidate(options: {
   readonly label: string;
   readonly confidence: PersonalOpsIntakeCandidate['confidence'];
   readonly why: string;
-  readonly operation?: { readonly signal: PersonalOpsConnectorSignal; readonly tool: PersonalOpsConnectorTool };
-  readonly followUpOperation?: { readonly signal: PersonalOpsConnectorSignal; readonly tool: PersonalOpsConnectorTool };
+  readonly operation?: { readonly signal: PersonalOpsConnectorSignal; readonly tool: PersonalOpsConnectorTool; readonly judgment?: Ranked };
+  readonly followUpOperation?: { readonly signal: PersonalOpsConnectorSignal; readonly tool: PersonalOpsConnectorTool; readonly judgment?: Ranked };
   readonly includeParameters: boolean;
   readonly readOnlyNext: string;
   readonly mutationBoundary: string;
@@ -83,8 +88,8 @@ export function workflowCandidate(options: {
     requiresConfirmation: false,
     safetyBoundary: workflow.runBoundary,
     nextSteps,
-    ...(operation ? { operation: operationSummary(operation, options.operation?.signal, options.includeParameters) } : {}),
-    ...(options.followUpOperation ? { followUpOperation: operationSummary(options.followUpOperation.tool, options.followUpOperation.signal, options.includeParameters) } : {}),
+    ...(operation ? { operation: { ...operationSummary(operation, options.operation?.signal, options.includeParameters), judgment: options.operation?.judgment } } : {}),
+    ...(options.followUpOperation ? { followUpOperation: { ...operationSummary(options.followUpOperation.tool, options.followUpOperation.signal, options.includeParameters), judgment: options.followUpOperation.judgment } } : {}),
     executionPlan: workflowExecutionPlan({
       lane: options.lane,
       workflow,
@@ -141,40 +146,15 @@ export function recordCandidate(options: {
   };
 }
 
-export function setupCandidate(lane: PersonalOpsLane, request: string): PersonalOpsIntakeCandidate {
-  return {
-    id: 'personal-ops-map-first',
-    label: 'Map Personal Ops readiness first',
-    laneId: lane.id,
-    status: lane.status === 'gap' || lane.status === 'needs-setup' ? 'needs-setup' : lane.status === 'ready' ? 'ready' : 'attention',
-    confidence: 'low',
-    why: `The request "${previewHarnessText(request, 80)}" does not clearly name one personal operation, so the safest next step is a readiness map.`,
-    modelRoute: 'personal_ops action:"status"',
-    inspectRoutes: ['personal_ops action:"status"'],
-    requiresConfirmation: false,
-    safetyBoundary: 'Readiness inspection is read-only; personal-data reads and all sends or mutations remain on their owning routes.',
-    nextSteps: [
-      'Inspect Personal Ops readiness.',
-      'Choose one lane: inbox, calendar, notes, tasks, reminders, routines, or delivery.',
-      'Re-run personal_ops action:"intake" with the specific user request.',
-    ],
-    missingFields: ['specific personal operation goal'],
-    userQuestion: 'Should this be inbox, calendar, notes, tasks, reminders, routines, or delivery work?',
-  };
-}
-
-export function candidatePriority(candidate: PersonalOpsIntakeCandidate): number {
-  const confidence = candidate.confidence === 'high' ? 300 : candidate.confidence === 'medium' ? 200 : 100;
-  const readiness = candidate.status === 'ready' ? 30 : candidate.status === 'attention' ? 15 : 0;
-  return confidence + readiness;
-}
-
-export function buildPersonalOpsIntakeCandidates(
+export async function buildPersonalOpsIntakeCandidates(
   request: string,
   lanes: readonly PersonalOpsLane[],
   includeParameters: boolean,
-): readonly PersonalOpsIntakeCandidate[] {
-  const lower = request.toLowerCase();
+  options: CatalogRankingOptions = {},
+): Promise<{ readonly candidates: readonly PersonalOpsIntakeCandidate[]; readonly judgments: readonly Ranked[] }> {
+  const ranking = await rankHarnessCatalog(INTAKE_ROUTES, request, (route) => route, 'agent.personal-ops.intake', options);
+  const selected = new Set(ranking.matches.map(({ entry }) => entry.id));
+  const confirmed = new Set(ranking.matches.filter(({ judgment }) => judgment.reading.verdict === 'yes').map(({ entry }) => entry.id));
   const inboxLane = laneById(lanes, 'inbox');
   const calendarLane = laneById(lanes, 'calendar');
   const taskLane = laneById(lanes, 'tasks');
@@ -183,19 +163,9 @@ export function buildPersonalOpsIntakeCandidates(
   const deliveryLane = laneById(lanes, 'delivery');
   const candidates: PersonalOpsIntakeCandidate[] = [];
 
-  const asksInbox = hasAny(lower, ['inbox', 'email', 'mail', 'gmail', 'imap', 'message', 'thread']);
-  const asksReply = hasAny(lower, ['draft', 'reply', 'respond', 'compose']);
-  const asksCalendar = hasAny(lower, ['calendar', 'agenda', 'caldav', 'event', 'meeting', 'availability', 'freebusy', 'free busy']);
-  const asksConflict = hasAny(lower, ['conflict', 'overlap', 'double-book', 'double booked', 'availability', 'freebusy', 'free busy']);
-  const asksReminder = hasAny(lower, ['remind', 'reminder', 'follow up', 'follow-up', 'ping me', 'notify me']);
-  const asksTask = hasAny(lower, ['task', 'todo', 'to-do', 'work item', 'work plan', 'host task']);
-  const asksNote = hasAny(lower, ['note', 'scratchpad', 'capture', 'jot down']);
-  const asksRoutine = hasAny(lower, ['routine', 'checklist', 'repeatable']);
-  const asksDelivery = !asksReminder && hasAny(lower, ['deliver', 'send', 'channel', 'slack', 'discord', 'telegram', 'sms', 'notification']);
-
-  if (asksInbox && asksReply) {
-    const readTool = selectConnectorTool(inboxLane, 'read-only', 'inbox-read', ['get_thread', 'thread', 'read', 'message', 'fetch', 'get']);
-    const writeTool = selectConnectorTool(inboxLane, 'confirmed-effect', 'inbox-write', ['send_reply', 'reply', 'draft', 'compose', 'send']);
+  if (selected.has('inbox-draft-reply')) {
+    const readTool = confirmed.has('inbox-draft-reply') ? await selectConnectorTool(inboxLane, 'read-only', 'inbox-read', `Read the selected email conversation to draft a reply. User request: ${request}`, options) : undefined;
+    const writeTool = confirmed.has('inbox-draft-reply') ? await selectConnectorTool(inboxLane, 'confirmed-effect', 'inbox-write', `Send the reviewed reply only after separate confirmation. User request: ${request}`, options) : undefined;
     const candidate = workflowCandidate({
       lane: inboxLane,
       workflowId: 'inbox-draft-reply',
@@ -212,14 +182,14 @@ export function buildPersonalOpsIntakeCandidates(
     if (candidate) candidates.push(candidate);
   }
 
-  if (asksInbox) {
-    const readTool = selectConnectorTool(inboxLane, 'read-only', 'inbox-read', ['search', 'list', 'unread', 'query', 'find', 'messages', 'inbox']);
+  if (selected.has('inbox-triage-briefing')) {
+    const readTool = confirmed.has('inbox-triage-briefing') ? await selectConnectorTool(inboxLane, 'read-only', 'inbox-read', `Search and list email messages for triage. User request: ${request}`, options) : undefined;
     const candidate = workflowCandidate({
       lane: inboxLane,
       workflowId: 'inbox-triage-briefing',
       id: 'inbox-triage-briefing',
       label: 'Triage inbox messages',
-      confidence: asksReply ? 'medium' : 'high',
+      confidence: 'high',
       why: 'The request asks for inbox, email, message, or thread triage.',
       operation: readTool,
       includeParameters,
@@ -229,12 +199,11 @@ export function buildPersonalOpsIntakeCandidates(
     if (candidate) candidates.push(candidate);
   }
 
-  if (asksCalendar) {
-    const workflowId = asksConflict ? 'calendar-conflict-scan' : 'calendar-agenda-briefing';
-    const readTool = selectConnectorTool(calendarLane, 'read-only', 'calendar-read', asksConflict
-      ? ['freebusy', 'availability', 'list', 'events', 'upcoming']
-      : ['list', 'upcoming', 'agenda', 'events', 'search']);
-    const writeTool = selectConnectorTool(calendarLane, 'confirmed-effect', 'calendar-write', ['create', 'update', 'reschedule', 'edit', 'delete']);
+  for (const workflowId of ['calendar-agenda-briefing', 'calendar-conflict-scan'] as const) {
+    if (!selected.has(workflowId)) continue;
+    const asksConflict = workflowId === 'calendar-conflict-scan';
+    const readTool = confirmed.has(workflowId) ? await selectConnectorTool(calendarLane, 'read-only', 'calendar-read', `${asksConflict ? 'Inspect scheduling conflicts and availability' : 'Read upcoming agenda events'}. User request: ${request}`, options) : undefined;
+    const writeTool = confirmed.has(workflowId) ? await selectConnectorTool(calendarLane, 'confirmed-effect', 'calendar-write', `Edit the selected calendar event only after separate confirmation. User request: ${request}`, options) : undefined;
     const candidate = workflowCandidate({
       lane: calendarLane,
       workflowId,
@@ -253,7 +222,7 @@ export function buildPersonalOpsIntakeCandidates(
     if (candidate) candidates.push(candidate);
   }
 
-  if (asksReminder) {
+  if (selected.has('confirmed-reminder-request')) {
     const candidate = recordCandidate({
       lane: reminderLane,
       recordId: 'reminder-create',
@@ -275,8 +244,9 @@ export function buildPersonalOpsIntakeCandidates(
     if (candidate) candidates.push(candidate);
   }
 
-  if (asksTask) {
-    const recordId = hasAny(lower, ['host task', 'running task', 'task status', 'inspect task']) ? 'host-tasks-list' : 'workplan-add';
+  for (const routeId of ['host-task-review', 'visible-work-item'] as const) {
+    if (!selected.has(routeId)) continue;
+    const recordId = routeId === 'host-task-review' ? 'host-tasks-list' : 'workplan-add';
     const candidate = recordCandidate({
       lane: taskLane,
       recordId,
@@ -298,7 +268,7 @@ export function buildPersonalOpsIntakeCandidates(
     if (candidate) candidates.push(candidate);
   }
 
-  if (asksNote) {
+  if (selected.has('capture-scratchpad-note')) {
     const candidate: PersonalOpsIntakeCandidate = {
       id: 'capture-scratchpad-note',
       label: 'Capture a scratchpad note',
@@ -318,7 +288,7 @@ export function buildPersonalOpsIntakeCandidates(
     candidates.push(candidate);
   }
 
-  if (asksRoutine) {
+  if (selected.has('routine-review-or-promotion')) {
     candidates.push({
       id: 'routine-review-or-promotion',
       label: 'Review routines before reuse',
@@ -343,7 +313,7 @@ export function buildPersonalOpsIntakeCandidates(
     });
   }
 
-  if (asksDelivery) {
+  if (selected.has('delivery-channel-review')) {
     candidates.push({
       id: 'delivery-channel-review',
       label: 'Review delivery channels before sending',
@@ -369,9 +339,17 @@ export function buildPersonalOpsIntakeCandidates(
     });
   }
 
-  if (candidates.length === 0) candidates.push(setupCandidate(laneById(lanes, 'tasks'), request));
-  return candidates
-    .sort((left, right) => candidatePriority(right) - candidatePriority(left) || left.id.localeCompare(right.id));
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const ordered = ranking.matches.flatMap(({ entry, judgment }) => {
+    const candidate = byId.get(entry.id);
+    return candidate ? [{ ...candidate,
+      confidence: judgment.reading.verdict === 'yes' ? 'high' as const : 'low' as const,
+      why: `Canonical engine.tools.registry-rank reading: ${judgment.reading.verdict}.`,
+      judgment,
+    }] : [];
+  });
+  options.signal?.throwIfAborted();
+  return { candidates: ordered, judgments: ranking.judgments };
 }
 
 export function nextActions(lanes: readonly PersonalOpsLane[]): readonly string[] {

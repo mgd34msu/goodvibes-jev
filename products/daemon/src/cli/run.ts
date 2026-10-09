@@ -7,6 +7,7 @@ import { isDeclaredSecretBearingConfigKey } from '@goodvibes-jev/engine/sdk/plat
 import { createNetworkFetch } from '@goodvibes-jev/engine/sdk/platform/runtime/transport';
 import { runConfigCommand } from '../daemon/config-command.js';
 import { runPairCommand } from '../daemon/pair-command.js';
+import { createDaemonCommandSocketFactory } from '../daemon/remote-transport.js';
 import { runSessionsCommand } from '../daemon/sessions-command.js';
 import { runStatusCommand, runUpdateCommand, type DaemonCommandResult } from '../daemon/status-command.js';
 import { runWebuiCommand } from '../daemon/webui-command.js';
@@ -35,7 +36,7 @@ export interface DaemonCliOptions {
   readonly pairingOutput?: (line: string) => void;
 }
 
-const PARTIAL = 'This partial daemon package requires an explicit inbox composition for serving. Built-in provider wiring is not complete.';
+const PARTIAL = 'Serving requires an explicit production inbox composition. Configured providers require trusted local account admission.';
 
 /** Returns a command exit code; serving remains owned until shutdown completes. */
 export async function runDaemonCli(argv: readonly string[], options: DaemonCliOptions = {}): Promise<number> {
@@ -90,22 +91,24 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       // a nonzero status carries a degraded/absent state.
       return result(await runProvisionWakeModelCommand(cli.commandArgs, { homeDirectory, env }), stdout);
     }
-    const configuration = createDaemonCliConfiguration(cli.flags, env, options.cwd);
+    const configuration = createDaemonCliConfiguration(cli.flags, env, options.cwd,
+      cli.command === 'serve' ? { diagnosticMode: 'structural' } : {});
     const { config, homeDirectory, daemonHomeDirectory, workingDirectory } = configuration;
     const remoteFlags = { host: cli.flags.host, port: cli.flags.port, token: cli.flags.token, json: cli.flags.json };
     const remote = { configManager: config, daemonHomeDir: daemonHomeDirectory, controlPlaneConfigDir: config.getControlPlaneConfigDir() };
-    const httpRemote = { ...remote, fetchImpl: createNetworkFetch(globalThis.fetch, config) };
+    const httpRemote = { ...remote, fetchImpl: createNetworkFetch(globalThis.fetch, config),
+      socketFactory: createDaemonCommandSocketFactory(remote) };
     switch (cli.command) {
       case 'config': return result(await runConfigCommand(cli.commandArgs, { configManager: config, json: cli.flags.json }));
       case 'status': return result(await runStatusCommand({ ...httpRemote, flags: remoteFlags }));
       case 'update': return result(await runUpdateCommand({ ...httpRemote, flags: { ...remoteFlags, check: cli.flags.check } }));
-      case 'sessions': return result(await runSessionsCommand({ ...remote, flags: { ...remoteFlags, all: cli.flags.all }, args: cli.commandArgs }));
+      case 'sessions': return result(await runSessionsCommand({ ...httpRemote, flags: { ...remoteFlags, all: cli.flags.all }, args: cli.commandArgs }));
       case 'pair': return result(await runPairCommand({ configManager: config, daemonHomeDir: daemonHomeDirectory,
         version: VERSION, readToken: readOperatorTokenFile, operatorToken: env.GOODVIBES_DAEMON_TOKEN,
         flags: { ...remoteFlags, yes: cli.flags.yes } }));
       case 'webui': return result(runWebuiCommand(cli.commandArgs, { configManager: config, baseDirectory: workingDirectory }));
       case 'cluster': {
-        const answer = await runClusterCommand({ argv: cli.commandArgs, configManager: config, daemonHomeDir: daemonHomeDirectory });
+        const answer = await runClusterCommand({ argv: cli.commandArgs, configManager: config, daemonHomeDir: daemonHomeDirectory, fetchImpl: httpRemote.fetchImpl });
         if (answer.rawOutput) stdout(answer.rawOutput);
         return result(answer);
       }

@@ -31,7 +31,18 @@ remain unchanged. Original dated audits retain their checkpoint results.
   neither authenticates that artifact nor activates updates. The whole
   `src/daemon/cli.ts` and `src/daemon/handlers/inbox/index.ts` remain unmapped.
 
-## Remaining acceptance A–G
+## October 9 production integration update
+
+The original dated checkpoint above remains historical. The current production
+bootstrap and its bounded acceptance are documented in
+[the production integration audit](daemon-production-bootstrap.md). Fresh-install
+serving now supplies all three built-in memberships; configured local-service
+admission and Discord activation remain open. PR215 completed the explicit
+owned triage score API and read enrichment, without automatic poll scoring or
+provider tags/writes. The historical D obligation below is superseded for that
+bounded integration and retained for provenance.
+
+## Remaining acceptance A–G (preserved October 8 checkpoint)
 
 These are bounded existing obligations, not new feature requirements or an
 exhaustive claim that every unupdated inventory row lacks implementation.

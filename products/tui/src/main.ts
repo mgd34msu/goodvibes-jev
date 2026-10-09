@@ -273,6 +273,9 @@ async function main() {
   commandContext.exit = exitApp;
   const scheduleReading = new ScheduleReadingLifetime(() => runtime.sessionId, () => !lifecycle.isTerminalRestored());
   commandContext.scheduleReading = scheduleReading;
+  const shareReading = new ScheduleReadingLifetime(() => runtime.sessionId, () => !lifecycle.isTerminalRestored());
+  commandContext.shareReading = shareReading;
+  unsubs.push(() => shareReading.dispose());
   unsubs.push(() => scheduleReading.dispose());
 
   // In-terminal (OSC 9) notifier (approval-wait/turn-end/agent-blocked); writes
@@ -310,6 +313,7 @@ async function main() {
 
   const submitInput = (text: string, content?: ContentPart[], options: ProductInputContext = {}) => {
     scheduleReading.cancel();
+    shareReading.cancel();
     hostPairing?.cancelForTakeover();
     const original = options.source ?? { text, unsupportedSources: [{ kind: 'context' as const, label: 'derived-input' }] };
     input.clearModalStack();
@@ -341,9 +345,9 @@ async function main() {
     }
   };
 
-  const cancelGeneration = scheduleReading.withCancellation(
+  const cancelGeneration = shareReading.withCancellation(scheduleReading.withCancellation(
     createCancelGeneration(orchestrator, spokenTurns, () => streamResult.cancelPendingRecovery()),
-  );
+  ));
 
   const jumpToBookmark = (key: string) => {
     conversation.getDisplayBlocks();
@@ -374,7 +378,7 @@ async function main() {
   // Late-patched: bootstrap.ts populates uiServices.platform.externalServices AFTER commandContext is built.
   commandContext.platform.externalServices = uiServices.platform.externalServices;
   commandContext.cancelGeneration = cancelGeneration;
-  commandContext.cancelPendingRecovery = () => { scheduleReading.cancel(); return streamResult.cancelPendingRecovery(); };
+  commandContext.cancelPendingRecovery = () => { scheduleReading.cancel(); shareReading.cancel(); return streamResult.cancelPendingRecovery(); };
   wireInteractionSeams(commandContext, {
     orchestrator, powerManager: ctx.services.powerManager, readPowerSurface: () => powerChipSource.get(), render: () => render(), notify: (m) => systemMessageRouter.high(m),
     getActiveToolCallId: () => streamMetrics.activeToolCallId, toggleMemoryProvenance: () => memoryProvenanceUi.toggle(),

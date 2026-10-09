@@ -1,3 +1,6 @@
+import { writeJsonFileAtomic } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
+import { getSharedNotificationFeed } from '../../views/notifications-feed.ts';
+import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import type { CommandRegistry } from '../command-registry.ts';
 import {
@@ -13,6 +16,7 @@ import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { calcSessionCost, isModelPriced } from '@goodvibes-jev/engine/sdk/platform/providers';
 import {
   GistUploadTarget,
+  captureGithubAuthHeaders,
   NO_TOKEN_GUIDANCE,
   resolveGithubToken,
 } from '../../export/gist-uploader.ts';
@@ -56,6 +60,17 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
       const pathArgs = remainingArgs.filter(
         (a) => a !== '--redact' && a !== '--upload' && a !== '--copy' && a !== '--open',
       );
+      const reading = upload ? ctx.shareReading?.begin(JSON.stringify(args)) : undefined;
+      if (upload && !reading) {
+        ctx.print('Gist upload is unavailable or this submission is already pending.');
+        return;
+      }
+      const conversation = ctx.session.conversationManager;
+      const generation = conversation.getReplacementGeneration();
+      const current = () => (!reading || reading.current())
+        && ctx.session.conversationManager === conversation
+        && conversation.getReplacementGeneration() === generation;
+      try {
       const outputPath = pathArgs.length > 0
         ? shellPaths.resolveWorkspacePath(pathArgs[0])
         : defaultExportPath(format, shellPaths.homeDirectory);
@@ -141,6 +156,7 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
 
       const { mkdirSync } = await import('node:fs');
       const { dirname, basename } = await import('node:path');
+      if (!current()) return;
       try {
         mkdirSync(dirname(outputPath), { recursive: true });
       } catch (mkdirErr) {
@@ -151,18 +167,23 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
       }
 
       try {
-        await writeFile(outputPath, outputContent, 'utf-8');
+        await writeFile(outputPath, outputContent, { encoding: 'utf-8', signal: reading?.signal });
       } catch (err) {
         ctx.print(`Failed to write export: ${summarizeError(err)}`);
         return;
       }
 
+      if (!current()) return;
+
       // Optional Gist upload: resolve auth token then push content as a secret gist.
       let shareLink: string | undefined;
+      let uploadReceipt: string | undefined;
       if (upload) {
+        const serviceRegistry = ctx.platform.serviceRegistry;
+        const envToken = process.env['GITHUB_TOKEN'];
         let authHeaders: Record<string, string> | null = null;
         try {
-          const svcRegistry = ctx.platform.serviceRegistry;
+          const svcRegistry = serviceRegistry;
           if (svcRegistry) {
             authHeaders = await svcRegistry.resolveAuth('github').catch(() => null);
           }
@@ -170,21 +191,61 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
           // serviceRegistry absent or resolveAuth threw, fall through to env var
         }
 
-        const token = resolveGithubToken(authHeaders ?? undefined);
-        if (!token) {
-          ctx.print(NO_TOKEN_GUIDANCE);
-        } else {
-          const gistFilename = basename(outputPath);
-          const description = metadata.title
-            ? `GoodVibes session: ${metadata.title}`
-            : 'GoodVibes session export';
-          const uploader = new GistUploadTarget(token, description);
-          const result = await uploader.upload(outputContent, gistFilename);
-          if (result.ok) {
-            shareLink = result.url;
-          } else {
-            ctx.print(`Upload failed: ${result.error}`);
+        try {
+          if (!current()) return;
+          const captured = captureGithubAuthHeaders(authHeaders);
+          const token = await resolveGithubToken(captured, { signal: reading?.signal, beforeAttempt: () => { if (!current()) { reading?.assertCurrent(); throw new Error('Share is no longer current'); } } });
+          if (!current()) return;
+          // Re-resolve the same configured authority after the async reading.
+          // A changed/revoked credential must never be sent from a stale snapshot.
+          const refreshed = captureGithubAuthHeaders(serviceRegistry ? await serviceRegistry.resolveAuth('github') : null);
+          if (!current()) return;
+          if (ctx.platform.serviceRegistry !== serviceRegistry || process.env['GITHUB_TOKEN'] !== envToken
+            || JSON.stringify(Object.entries(captured).sort()) !== JSON.stringify(Object.entries(refreshed).sort())) {
+            ctx.print('Upload canceled: GitHub credentials changed. Run /share again.');
+            return;
           }
+          if (!token) {
+            ctx.print(NO_TOKEN_GUIDANCE);
+          } else {
+            const gistFilename = basename(outputPath);
+            const description = metadata.title
+              ? `GoodVibes session: ${metadata.title}`
+              : 'GoodVibes session export';
+            const uploader = new GistUploadTarget(token, description);
+            const result = await uploader.upload(outputContent, gistFilename, reading?.signal);
+            // A revoked UI owner does not revoke a request GitHub already saw.
+            // Preserve the outcome under the original export/session identity,
+            // without writing an old session's URL into the replacement UI.
+            const receiptPath = `${outputPath}.gist-${randomUUID()}.json`;
+            try {
+              writeJsonFileAtomic(receiptPath, {
+                version: 1, sessionId: metadata.sessionId, exportedPath: outputPath,
+                recordedAt: new Date().toISOString(),
+                ...(result.ok ? { status: 'accepted', url: result.url } : { status: 'unconfirmed' }),
+              }, { durable: true, mode: 0o600, cleanupStaleTemps: false });
+              uploadReceipt = receiptPath;
+            } catch {
+              // The global notification history can retain an explicitly
+              // source-labelled receipt without mutating a replacement chat.
+              getSharedNotificationFeed().recordNotice({
+                domain: 'share', level: 'warning', timestamp: Date.now(),
+                title: `Gist ${result.ok ? 'accepted' : 'unconfirmed'} for session ${metadata.sessionId}; receipt not saved`,
+                body: result.ok ? result.url : 'GitHub may have received the upload. Check before retrying.',
+              });
+            }
+            if (!current()) return;
+            if (result.ok) {
+              shareLink = result.url;
+            } else {
+              ctx.print(`Upload unconfirmed: ${result.error}. GitHub may have received it; check before retrying.`);
+            }
+          }
+        } catch {
+          if (!current()) return;
+          // Reading failures are operational, never a guessed token or a reason
+          // to discard the already-written local export. Do not echo auth data.
+          ctx.print('Upload failed: credential-header reading unavailable. Local export saved.');
         }
       }
 
@@ -202,12 +263,14 @@ export function registerShareRuntimeCommands(registry: CommandRegistry): void {
       const hints: string[] = [];
       if (redact) hints.push('(sensitive data redacted)');
       if (shareLink) hints.push(`Share link: ${shareLink}`);
+      if (uploadReceipt) hints.push(`Upload receipt: ${uploadReceipt}`);
       if (doCopy) hints.push('(path copied to clipboard)');
       if (doOpen && format === 'html') hints.push('(opened in browser)');
       if (doOpen && format !== 'html') hints.push('(--open ignored: only applies to html)');
 
       const hint = hints.length > 0 ? '  ' + hints.join('  ') : '';
       ctx.print(`Exported ${format.toUpperCase()} session to ${outputPath}${hint}`);
+      } finally { reading?.finish(); }
     },
   });
 }

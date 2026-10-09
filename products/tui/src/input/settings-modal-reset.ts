@@ -14,8 +14,7 @@
  */
 
 import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
-import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { buildGoodVibesSecretKey, defaultSecretBackedScope, isSecretConfigKey } from '../config/secret-config.ts';
+import { isSecretConfigKey } from '../config/secret-config.ts';
 import type { SettingEntry, SettingsCategory } from './settings-modal-types.ts';
 import type { SettingsSecretsManager } from './settings-modal-secrets.ts';
 
@@ -27,7 +26,7 @@ export function resetSelected({
   editingMode,
   hasConfigManager,
   selected,
-  secretsManager,
+  resetSecrets,
   setValue,
   setHostValue,
 }: {
@@ -35,6 +34,8 @@ export function resetSelected({
   hasConfigManager: boolean;
   selected: SettingEntry | null;
   secretsManager: SettingsSecretsManager | null;
+  /** Starts captured-owner async resets; pending secrets are not reported as completed. */
+  resetSecrets?: (entries: ReadonlyArray<{ key: ConfigKey; value: unknown }>) => void;
   setValue: (key: ConfigKey, value: unknown) => void;
   setHostValue?: (key: string, value: boolean) => void;
 }): { key: string; value: unknown } | null {
@@ -48,16 +49,11 @@ export function resetSelected({
   }
   if (selected.metadataUnavailable) return null;
   const key = selected.setting.key;
-  setValue(key, selected.setting.default);
-  if (isSecretConfigKey(key) && secretsManager) {
-    // Delete from the tier the write went to. A daemon-owned key was stored in
-    // the daemon tier (defaultSecretBackedScope), so a delete narrowed to 'user'
-    // would report a cleared setting while the daemon kept using the live
-    // credential, the reset that isn't one.
-    void secretsManager.delete(buildGoodVibesSecretKey(key), { scope: defaultSecretBackedScope(key) }).catch((error) => {
-      logger.error('SettingsModal: failed to clear secret while resetting setting', { key, error: summarizeError(error) });
-    });
+  if (isSecretConfigKey(key)) {
+    resetSecrets?.([{ key, value: selected.setting.default }]);
+    return null;
   }
+  setValue(key, selected.setting.default);
   return { key, value: selected.setting.default };
 }
 
@@ -117,6 +113,7 @@ export function handleResetConfirmKey({
   currentItems,
   groups,
   setValue,
+  resetSecrets,
   setHostValue,
   setResetCategoryConfirm,
   setResetAllConfirm,
@@ -128,6 +125,7 @@ export function handleResetConfirmKey({
   currentItems: () => SettingEntry[];
   groups: Map<SettingsCategory, SettingEntry[]>;
   setValue: (key: ConfigKey, value: unknown) => void;
+  resetSecrets?: (entries: ReadonlyArray<{ key: ConfigKey; value: unknown }>) => void;
   setHostValue?: (key: string, value: boolean) => void;
   setResetCategoryConfirm: (value: { readonly subject: string } | null) => void;
   setResetAllConfirm: (value: { readonly subject: 'all' } | null) => void;
@@ -137,11 +135,16 @@ export function handleResetConfirmKey({
 
   if (key === 'enter' || key === 'y') {
     const entries: Array<{ key: string; value: unknown }> = [];
+    const secretEntries = new Map<ConfigKey, { key: ConfigKey; value: unknown }>();
     if (resetCategoryConfirm) {
       // Reset all settings in the current category to defaults.
       const items = currentItems();
       for (const item of items) {
         if (item.kind === 'host' ? !setHostValue : item.metadataUnavailable) continue;
+        if (item.kind !== 'host' && isSecretConfigKey(item.setting.key)) {
+          secretEntries.set(item.setting.key, { key: item.setting.key, value: item.setting.default });
+          continue;
+        }
         if (item.kind === 'host') setHostValue?.(item.setting.key, item.setting.default);
         else setValue(item.setting.key, item.setting.default);
         entries.push({ key: item.setting.key, value: item.setting.default });
@@ -152,6 +155,10 @@ export function handleResetConfirmKey({
       for (const [, items] of groups) {
         for (const item of items) {
           if (item.kind === 'host' ? !setHostValue : item.metadataUnavailable) continue;
+          if (item.kind !== 'host' && isSecretConfigKey(item.setting.key)) {
+            secretEntries.set(item.setting.key, { key: item.setting.key, value: item.setting.default });
+            continue;
+          }
           if (item.kind === 'host') setHostValue?.(item.setting.key, item.setting.default);
           else setValue(item.setting.key, item.setting.default);
           entries.push({ key: item.setting.key, value: item.setting.default });
@@ -159,6 +166,7 @@ export function handleResetConfirmKey({
       }
       setResetAllConfirm(null);
     }
+    if (secretEntries.size > 0) resetSecrets?.([...secretEntries.values()]);
     return { result: 'confirmed', entries };
   }
 

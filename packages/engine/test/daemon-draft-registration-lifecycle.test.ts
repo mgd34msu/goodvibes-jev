@@ -16,6 +16,7 @@ function fixture() {
     credentials: {
       async resolveRef(key) { return values.get(key) ?? null; }, async resolveConfigSecret() { return null; },
       async put(key, value) { values.set(key, value); }, async has(key) { return values.has(key); },
+      async getOrCreateDaemonSecret(key, create) { if (!values.has(key)) values.set(key, create()); return values.get(key)!; },
     },
     logger: { info() {}, error() {}, warn(...args) { warnings.push(args); } },
   };

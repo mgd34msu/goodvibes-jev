@@ -508,8 +508,13 @@
       "source": "src/export/gist-uploader.ts",
       "disposition": "JEV",
       "targets": [
-        "products/tui/src/export/gist-uploader.ts"
-      ]
+        "products/tui/src/export/gist-uploader.ts",
+        "packages/engine/sdk/src/platform/tools/credential-header-reading.ts",
+        "packages/engine/sdk/src/platform/tools/batteries/credential-header.ts"
+      ],
+      "provenance": {
+        "verification": "Canonical semantic owner and actual TUI caller adoption; see docs/audit/tui-file-picker-gist-reading-adoption.md. Synthetic behavior tests are not live classification proof."
+      }
     },
     {
       "source": "src/main.ts",
@@ -4428,8 +4433,12 @@
       "source": "src/input/file-picker.ts",
       "disposition": "JEV",
       "targets": [
-        "products/tui/src/input/file-picker.ts"
-      ]
+        "products/tui/src/input/file-picker.ts",
+        "packages/engine/sdk/src/platform/utils/directory-reading.ts"
+      ],
+      "provenance": {
+        "verification": "Canonical semantic owner and actual TUI caller adoption; see docs/audit/tui-file-picker-gist-reading-adoption.md. Synthetic behavior tests are not live classification proof."
+      }
     },
     {
       "source": "src/input/handler-command-route.ts",
