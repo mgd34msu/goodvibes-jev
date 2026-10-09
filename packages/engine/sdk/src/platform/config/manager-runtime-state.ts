@@ -1,9 +1,9 @@
 /** Owned, nonpersistent inputs and the working persisted view of one manager. */
 import { CONFIG_SCHEMA, type ConfigKey, type ConfigValue, type GoodVibesConfig } from './schema.js';
 import { ConfigError } from '../types/errors.js';
-import { coerceSchemaValue } from './manager-bootstrap.js';
+import { DEFAULT_CONFIG_SNAPSHOT, coerceSchemaValue } from './manager-bootstrap.js';
 import { readDotPath } from './shared-config-tier.js';
-import { stripFrozenDefaults, writeRawDotPath } from './settings-io.js';
+import { deleteRawDotPath, stripFrozenDefaults, writeRawDotPath } from './settings-io.js';
 import type { ConfigKeyTier } from './manager-key-source.js';
 
 /** Dot-segment ancestry, never an arbitrary string prefix. */
@@ -75,10 +75,14 @@ export class ConfigRuntimeState {
   /** Origin of the accepted/post-write non-runtime working value. */
   readonly sources = new Map<string, ConfigKeyTier>();
 
+  /** Accepted global values retained beneath project overrides; never reread during save. */
+  globalLayer: Record<string, unknown> = {};
+
   constructor(public nonRuntime: GoodVibesConfig) {}
 
   fork(): ConfigRuntimeState {
     const result = new ConfigRuntimeState(structuredClone(this.nonRuntime));
+    result.globalLayer = structuredClone(this.globalLayer);
     for (const [key, value] of this.defaults) result.defaults.set(key, structuredClone(value));
     for (const [key, value] of this.overrides) result.overrides.set(key, structuredClone(value));
     for (const [key, tier] of this.sources) result.sources.set(key, tier);
@@ -86,6 +90,7 @@ export class ConfigRuntimeState {
   }
 
   recordLayer(raw: Record<string, unknown>, tier: ConfigKeyTier, prefix = ''): void {
+    if (tier === 'global' && !prefix) this.globalLayer = structuredClone(raw);
     for (const [field, value] of Object.entries(raw)) {
       const path = prefix ? `${prefix}.${field}` : field;
       this.sources.set(path, tier);
@@ -109,6 +114,11 @@ export class ConfigRuntimeState {
   }
 
   mark(path: string, tier?: ConfigKeyTier): void {
+    if (!tier) deleteRawDotPath(this.globalLayer, path);
+    if (tier === 'global') {
+      const found = readDotPath(this.nonRuntime, path);
+      if (found.present) writeRawDotPath(this.globalLayer, path, structuredClone(found.value));
+    }
     for (const key of this.sources.keys()) if (withinConfigPath(key, path)) this.sources.delete(key);
     if (tier) {
       const found = readDotPath(this.nonRuntime, path);
@@ -117,6 +127,31 @@ export class ConfigRuntimeState {
       if (found.value !== null && typeof found.value === 'object' && !Array.isArray(found.value)) {
         this.recordLayer(found.value as Record<string, unknown>, tier, path);
       }
+    }
+  }
+
+  /** Reconcile only the accepted destination; runtime inputs and higher tiers survive. */
+  acceptBulkSnapshot(raw: Record<string, unknown>, tier: 'global' | 'project', hostKeyNames: Iterable<string>): void {
+    const hostKeys = new Set(hostKeyNames);
+    const written = new ConfigRuntimeState(this.nonRuntime);
+    written.recordLayer(raw, tier);
+    const previous = new Map(this.sources);
+    const higher = (source: ConfigKeyTier | undefined) => source === 'daemon' || source === 'shared'
+      || (tier === 'global' && source === 'project');
+    if (tier === 'global') this.globalLayer = structuredClone(raw);
+    for (const [key, source] of previous) {
+      if (source !== tier || written.sources.has(key) || hostKeys.has(key)) continue;
+      const fallback = tier === 'project' ? readDotPath(this.globalLayer, key) : { present: false, value: undefined };
+      if (fallback.present) this.sources.set(key, 'global'); else this.sources.delete(key);
+      // Parents describe provenance too, but replacing one wholesale would
+      // clobber accepted higher-tier descendants. Restore the leaves instead.
+      if ([...previous.keys()].some(child => child.startsWith(`${key}.`))) continue;
+      const value = fallback.present ? fallback : readDotPath(DEFAULT_CONFIG_SNAPSHOT, key);
+      if (value.present) writeRawDotPath(this.nonRuntime as unknown as Record<string, unknown>, key, structuredClone(value.value));
+      else deleteRawDotPath(this.nonRuntime as unknown as Record<string, unknown>, key);
+    }
+    for (const key of written.sources.keys()) {
+      if (!hostKeys.has(key) && !higher(previous.get(key))) this.sources.set(key, tier);
     }
   }
 

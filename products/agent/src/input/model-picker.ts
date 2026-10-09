@@ -550,7 +550,7 @@ export class ModelPickerModal {
           return this._getSyntheticSubgroup(model) === 'top' ? 'Top Models' : 'All Synthetic';
         }
         return model.provider;
-      case 'family':      return detectFamily(model);
+      case 'family':      return detectFamily(model) ?? 'Ungrouped';
       case 'pricingTier': return tierToCategoryFilter(model.tier);
       case 'qualityTier': {
         if (model.provider === 'synthetic') {

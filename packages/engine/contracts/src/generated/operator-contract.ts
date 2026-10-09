@@ -105698,6 +105698,24 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "contextWindow": {
                     "type": "number"
                   },
+                  "family": {
+                    "type": "string",
+                    "enum": [
+                      "Claude",
+                      "GPT",
+                      "Gemini",
+                      "Llama",
+                      "Qwen",
+                      "GLM",
+                      "MiniMax",
+                      "DeepSeek",
+                      "Mistral",
+                      "Command",
+                      "Grok",
+                      "Kimi",
+                      "Other"
+                    ]
+                  },
                   "tier": {
                     "type": "string"
                   },
@@ -106048,6 +106066,24 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "contextWindow": {
                           "type": "number"
                         },
+                        "family": {
+                          "type": "string",
+                          "enum": [
+                            "Claude",
+                            "GPT",
+                            "Gemini",
+                            "Llama",
+                            "Qwen",
+                            "GLM",
+                            "MiniMax",
+                            "DeepSeek",
+                            "Mistral",
+                            "Command",
+                            "Grok",
+                            "Kimi",
+                            "Other"
+                          ]
+                        },
                         "tier": {
                           "type": "string"
                         },
@@ -106190,6 +106226,24 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   },
                   "contextWindow": {
                     "type": "number"
+                  },
+                  "family": {
+                    "type": "string",
+                    "enum": [
+                      "Claude",
+                      "GPT",
+                      "Gemini",
+                      "Llama",
+                      "Qwen",
+                      "GLM",
+                      "MiniMax",
+                      "DeepSeek",
+                      "Mistral",
+                      "Command",
+                      "Grok",
+                      "Kimi",
+                      "Other"
+                    ]
                   },
                   "tier": {
                     "type": "string"

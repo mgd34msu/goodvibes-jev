@@ -173,6 +173,24 @@
         "packages/engine/sdk/src/platform/email/reply-subject-source.ts",
         "packages/engine/sdk/src/platform/judgment-browser/batteries/webui-readers.ts"
       ]
+    },
+    {
+      "source": "src/lib/model-catalog.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/model-catalog.ts",
+        "packages/engine/sdk/src/platform/providers/model-family.ts",
+        "packages/engine/sdk/src/platform/providers/batteries/model-family.ts",
+        "packages/engine/sdk/src/platform/providers/runtime-snapshot.ts"
+      ]
+    },
+    {
+      "source": "src/lib/model-catalog.test.ts",
+      "disposition": "JEV",
+      "targets": [
+        "products/webui/src/lib/model-catalog.test.ts",
+        "packages/engine/test/provider-model-family-snapshot.test.ts"
+      ]
     }
   ],
   "pending": [

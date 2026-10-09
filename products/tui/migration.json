@@ -4603,7 +4603,10 @@
       "source": "src/input/model-picker-types.ts",
       "disposition": "JEV",
       "targets": [
-        "products/tui/src/input/model-picker-types.ts"
+        "products/tui/src/input/model-picker-types.ts",
+        "packages/engine/sdk/src/platform/providers/model-family.ts",
+        "packages/engine/sdk/src/platform/providers/batteries/model-family.ts",
+        "products/tui/src/input/model-picker-open.ts"
       ]
     },
     {

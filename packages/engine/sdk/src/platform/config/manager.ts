@@ -909,7 +909,11 @@ export class ConfigManager {
     this.permissionIncarnation++;
     const minimal = this.runtimeState.bulkSnapshot();
     this.preserveHostSettingsForBulkSave(minimal, this.configPath);
-    this.writeRawGlobal(this.withoutDaemonOwned(minimal));
+    const staged = this.runtimeState.fork();
+    staged.acceptBulkSnapshot(this.withoutDaemonOwned(minimal), 'global', this.hostSettings.keys());
+    const effective = staged.compose();
+    this.writeRawGlobal(minimal);
+    this.publishState(staged, effective);
   }
 
   /**
@@ -933,7 +937,11 @@ export class ConfigManager {
     }
     const minimal = this.runtimeState.bulkSnapshot();
     this.preserveHostSettingsForBulkSave(minimal, this.projectConfigPath);
-    writeJsonFileAtomic(this.projectConfigPath, this.withoutDaemonOwned(minimal));
+    const staged = this.runtimeState.fork();
+    staged.acceptBulkSnapshot(this.withoutDaemonOwned(minimal), 'project', this.hostSettings.keys());
+    const effective = staged.compose();
+    writeJsonFileAtomic(this.projectConfigPath, minimal);
+    this.publishState(staged, effective);
   }
 
   /**
@@ -989,6 +997,7 @@ export class ConfigManager {
     const staged = this.runtimeState.fork();
     staged.nonRuntime = cloneDefaultConfig();
     staged.sources.clear();
+    staged.globalLayer = {};
     this.hostLoadValues = this.hostSettings.active ? this.hostSettings.defaults() : null;
     this.hostLoadSources = this.hostSettings.active ? new Map() : null;
     try {
@@ -1255,6 +1264,7 @@ export class ConfigManager {
       staged.nonRuntime = cloneDefaultConfig();
       this.hostSettings.apply(staged.nonRuntime, this.hostSettings.defaults());
       staged.sources.clear();
+      staged.globalLayer = {};
       for (const hostKey of this.hostSettings.keys()) {
         if (this.runtimeState.sources.get(hostKey) === 'project') staged.sources.set(hostKey, 'project');
       }

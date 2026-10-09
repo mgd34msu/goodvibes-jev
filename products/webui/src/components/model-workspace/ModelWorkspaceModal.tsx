@@ -99,6 +99,9 @@ export function ModelWorkspaceModal({ open, onClose }: ModelWorkspaceModalProps)
     queryKey: ['providers'],
     queryFn: () => sdk.operator.providers.list(),
     enabled: open,
+    // Families arrive as optional server enrichment; never block catalog access
+    // on judgment. React Query owns/stops refreshes with the visible grouping.
+    refetchInterval: open && groupBy === 'family' ? 5_000 : false,
   });
   const currentModel = useQuery({
     queryKey: ['models', 'current'],

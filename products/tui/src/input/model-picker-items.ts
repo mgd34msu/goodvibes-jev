@@ -40,7 +40,7 @@ export function getModelGroupKey(
       }
       return model.provider;
     case 'family':
-      return detectFamily(model);
+      return detectFamily(model) ?? 'Ungrouped';
     case 'pricingTier':
       return tierToCategoryFilter(model.tier);
     case 'qualityTier': {

@@ -1,3 +1,4 @@
+import { modelFamilyReadings, type ModelFamily } from './model-family.js';
 import type { ProviderRuntimeMetadata } from './interface.js';
 import type { ModelDefinition, ProviderRegistry } from './registry.js';
 import type { LLMProvider } from './interface.js';
@@ -8,6 +9,8 @@ export interface ProviderModelSnapshot {
   readonly displayName: string;
   readonly selectable: boolean;
   readonly contextWindow: number;
+  /** Settled picker family; omitted when the canonical reading is unavailable. */
+  readonly family?: ModelFamily | undefined;
   readonly tier?: string | undefined;
   readonly pricing?: {
     readonly inputPerMillionTokens: number;
@@ -53,12 +56,14 @@ function toModelSnapshot(
   // catalog -> honest unknown), so the price a surface renders here is the
   // price the platform actually charges with, carrying its provenance.
   const resolved = providerRegistry.resolveModelPricing(model.id, model.provider);
+  const family = modelFamilyReadings.known(model);
   return {
     id: model.id,
     registryKey: model.registryKey,
     displayName: model.displayName,
     selectable: model.selectable,
     contextWindow: model.contextWindow,
+    ...(family !== undefined ? { family } : {}),
     ...(model.tier ? { tier: model.tier } : {}),
     ...(resolved.status === 'priced'
       ? {
@@ -105,10 +110,14 @@ async function buildSnapshotForProvider(
   } catch {
     currentModel = null;
   }
-  const models = providerRegistry
-    .listModels()
+  const catalog = providerRegistry.listModels()
     .filter((model) => model.provider === providerId)
-    .map((model) => toModelSnapshot(model, providerRegistry));
+    .map((model) => ({ ...model }));
+  // Optional display enrichment never delays catalog, auth or usage responses.
+  // Judgment transport may keep retrying an outage; later snapshots pick up
+  // settled readings for this exact evidence and current installed port.
+  void modelFamilyReadings.read(catalog).catch(() => {});
+  const models = catalog.map((model) => toModelSnapshot(model, providerRegistry));
   return {
     providerId,
     active: currentModel?.provider === providerId,

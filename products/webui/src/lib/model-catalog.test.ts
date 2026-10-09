@@ -83,14 +83,35 @@ describe('providerIdsFromProvidersResponse / configuredProviderIdsFromProvidersR
   });
 });
 
-describe('detectFamily: mirrors the TUI FAMILY_PATTERNS regex list', () => {
-  test('classifies known families', () => {
-    const model = (id: string, label: string): CatalogModel => ({ id, registryKey: `p:${id}`, provider: 'p', label });
-    expect(detectFamily(model('claude-opus-4', 'Claude Opus 4'))).toBe('Claude');
-    expect(detectFamily(model('gpt-5', 'GPT-5'))).toBe('GPT');
-    expect(detectFamily(model('o3-mini', 'o3 mini'))).toBe('GPT');
-    expect(detectFamily(model('gemini-3', 'Gemini 3'))).toBe('Gemini');
-    expect(detectFamily(model('unknown-thing', 'Unknown Thing'))).toBe('Other');
+describe('detectFamily: consumes the exact server projection without guessing', () => {
+  test('old servers and invalid family values stay ungrouped, even for familiar names', () => {
+    for (const family of [undefined, null, 'claude', 'Invented', 42]) {
+      const models = modelsFromProvidersResponse({ providerId: 'anthropic', models: [
+        { id: 'claude-opus-4', displayName: 'Claude Opus 4', family },
+      ] });
+      expect(detectFamily(models[0]!)).toBeUndefined();
+      expect(groupModels(models, 'family')[0]?.key).toBe('Ungrouped');
+    }
+  });
+
+  test('settled Other is distinct from absent readings and refreshed catalogs do not retain old families', () => {
+    const response = (family?: string) => ({ providerId: 'local', models: [
+      { id: 'commandline-helper', displayName: 'Commandline Helper', family },
+    ] });
+    const settled = modelsFromProvidersResponse(response('Other'));
+    expect(detectFamily(settled[0]!)).toBe('Other');
+    expect(groupModels(settled, 'family')[0]?.key).toBe('Other');
+    const replaced = modelsFromProvidersResponse(response());
+    expect(detectFamily(replaced[0]!)).toBeUndefined();
+    expect(groupModels(replaced, 'family')[0]?.key).toBe('Ungrouped');
+  });
+
+  test('groups by authoritative values even when model names suggest a different family', () => {
+    const models = modelsFromProvidersResponse({ providerId: 'gateway', models: [
+      { id: 'gpt-alias', displayName: 'Alias', family: 'Llama' },
+      { id: 'opaque', displayName: 'Opaque', family: 'Claude' },
+    ] });
+    expect(groupModels(models, 'family').map((group) => group.key)).toEqual(['Llama', 'Claude']);
   });
 });
 

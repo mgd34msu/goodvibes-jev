@@ -469,6 +469,7 @@ const PROVIDER_MODEL_SNAPSHOT_SCHEMA = objectSchema({
   displayName: STRING_SCHEMA,
   selectable: BOOLEAN_SCHEMA,
   contextWindow: NUMBER_SCHEMA,
+  family: enumSchema(['Claude', 'GPT', 'Gemini', 'Llama', 'Qwen', 'GLM', 'MiniMax', 'DeepSeek', 'Mistral', 'Command', 'Grok', 'Kimi', 'Other']),
   tier: STRING_SCHEMA,
   pricing: objectSchema({
     inputPerMillionTokens: NUMBER_SCHEMA,

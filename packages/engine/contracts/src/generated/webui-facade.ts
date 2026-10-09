@@ -21688,6 +21688,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "displayName": "sample",
           "selectable": false,
           "contextWindow": 0,
+          "family": "Claude",
           "tier": "sample",
           "pricing": {
             "inputPerMillionTokens": 0,
@@ -21794,6 +21795,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "displayName": "sample",
               "selectable": false,
               "contextWindow": 0,
+              "family": "Claude",
               "tier": "sample",
               "pricing": {
                 "inputPerMillionTokens": 0,
@@ -21825,6 +21827,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "displayName": "sample",
           "selectable": false,
           "contextWindow": 0,
+          "family": "Claude",
           "tier": "sample",
           "pricing": {
             "inputPerMillionTokens": 0,
