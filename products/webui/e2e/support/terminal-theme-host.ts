@@ -51,6 +51,9 @@ export function createTerminalThemeHost(savedTheme?: string) {
   // Only /config is admitted below. Fail closed if the fixture accidentally
   // starts depending on another host service rather than inventing its result.
   const context = new Proxy({
+    // This manual-config host has no admitted SETTINGS owner. Envelopes must
+    // receive the real route's unsupported-owner refusal without legacy writes.
+    settingsPrecondition: undefined,
     configManager: {
       get: (key: string) => {
         if (!isValidConfigKey(key)) throw new Error(`Unknown config key: ${key}`);

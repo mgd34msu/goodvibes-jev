@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { UserAuthManager } from './user-auth.js';
-import type { AuthenticatedNativePairingToken } from '../pairing/pairing-token-store.js';
+import type { AuthenticatedNativePairingToken, SettingsPairingAuthority } from '../pairing/pairing-token-store.js';
 
 export const OPERATOR_SESSION_COOKIE_NAME = 'goodvibes_session';
 
@@ -42,6 +42,11 @@ export interface NativeExecutionAuthority {
  * tokens are configured (only the shared token / user sessions authenticate).
  */
 export interface PairingTokenAuthenticator {
+  /** Additive strict SETTINGS path; never substituted with native authority. */
+  captureSettingsAuthority?(input: { readonly kind: 'shared-token' }
+    | { readonly kind: 'pairing-token'; readonly token: string }): SettingsPairingAuthority | null;
+  withSettingsAuthority?<T>(authority: SettingsPairingAuthority,
+    operation: (assertCurrent: () => void) => T): T;
   /** Optional for legacy authenticators; absence explicitly refuses native execution. */
   authenticateNative?(token: string): AuthenticatedNativePairingToken | null;
   withNativeAuthority?<T>(token: string, expected: AuthenticatedNativePairingToken,
@@ -109,7 +114,7 @@ export function extractOperatorAuthToken(
  * plain Buffer.from(token).length check or early-return on length mismatch
  * would have exposed.
  */
-function matchesSharedToken(token: string, sharedToken: string): boolean {
+export function matchesSharedToken(token: string, sharedToken: string): boolean {
   const aHash = createHash('sha256').update(token).digest();
   const bHash = createHash('sha256').update(sharedToken).digest();
   return timingSafeEqual(aHash, bHash);

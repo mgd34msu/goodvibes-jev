@@ -116,6 +116,7 @@ export interface CreateDaemonFacadeCollaboratorsOptions {
   readonly runtime: ResolvedDaemonFacadeRuntime;
   readonly pendingSurfaceReplies: Map<string, PendingSurfaceReply>;
   readonly authToken: () => string | null;
+  readonly settingsLifetime?: (() => object | null) | undefined;
   readonly trustProxyEnabled: () => boolean;
   readonly dispatchApiRoutes: (req: Request) => Promise<Response | null>;
   readonly parseJsonBody: (req: Request) => Promise<JsonBody | Response>;

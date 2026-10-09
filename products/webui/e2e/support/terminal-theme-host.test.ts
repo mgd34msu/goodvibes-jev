@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort } from '@goodvibes-jev/judgment/testing';
@@ -16,6 +16,39 @@ afterEach(() => { for (const item of hosts.splice(0)) item.cleanup(); });
 const themeSchema = CONFIG_SCHEMA_ENTRIES.find(entry => entry.key === 'display.theme')!;
 
 describe('terminal theme through real config dispatcher, handler and storage', () => {
+  test('an absent settings precondition owner refuses admitted and mixed envelopes without writes', async () => {
+    const fixture = host('vaporwave');
+    const before = readFileSync(fixture.settingsPath, 'utf8');
+    const write = spyOn(fixture.manager, 'setDynamic');
+    try {
+      for (const settingsPrecondition of [
+        { version: 1, action: 'capture', operation: 'set', key: 'display.theme', value: 'nord' },
+        { version: 1, action: 'apply', reference: 'unissued-terminal-theme-reference' },
+      ]) {
+        for (const legacy of [{}, { key: 'display.theme', value: 'nord' }]) {
+          const response = await fixture.dispatch(themeConfigRequest('POST', { ...legacy, settingsPrecondition }));
+          expect(response.status).toBe(409);
+          expect(await response.json()).toMatchObject({ code: 'SETTINGS_PRECONDITION_UNSUPPORTED' });
+          expect(write).not.toHaveBeenCalled();
+          expect(fixture.manager.get('display.theme')).toBe('vaporwave');
+          expect(readFileSync(fixture.settingsPath, 'utf8')).toBe(before);
+          expect(existsSync(fixture.daemonTierPath)).toBe(false);
+        }
+      }
+    } finally { write.mockRestore(); }
+    fixture.reload();
+    expect(fixture.manager.get('display.theme')).toBe('vaporwave');
+  });
+
+  test('unrelated undeclared host services still fail closed', async () => {
+    const fixture = host('vaporwave');
+    const before = readFileSync(fixture.settingsPath, 'utf8');
+    await expect(fixture.dispatch(themeConfigRequest('POST', { key: 'runtime.workingDir', value: fixture.root })))
+      .rejects.toThrow('Unexpected terminal-theme fixture service: swapManager');
+    expect(readFileSync(fixture.settingsPath, 'utf8')).toBe(before);
+    expect(fixture.manager.get('display.theme')).toBe('vaporwave');
+  });
+
   test('fresh default and every generated option round-trip in the host-local file', async () => {
     const fixture = host();
     expect(themeSchema.type).toBe('enum');

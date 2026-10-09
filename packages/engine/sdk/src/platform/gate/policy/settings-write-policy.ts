@@ -60,6 +60,8 @@ import { executePolicyCheck } from '../execute-policy-check.js';
 import { snapshotJudgmentInput } from '../judgment-input.js';
 import type { Tool } from '../../types/tools.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { isValidConfigKey } from '../../config/schema.js';
+import { assertAdmittedAgentSettings } from '../../tools/goodvibes-runtime/settings-admission.js';
 import type { SettingsHazard } from '../batteries/settings-hazard.js';
 import {
   AGENT_SETTINGS_CONFIRMATION_PROPERTY, SETTINGS_HAZARD_SITE, readSettingsWriteEvidence, type SettingsToolArgs,
@@ -157,5 +159,35 @@ export function wrapSettingsToolForAgentPolicy(tool: Tool): void {
     if (denial) return { success: false, error: denial };
     options?.signal?.throwIfAborted();
     return originalExecute(invocation, options);
+  };
+}
+
+/** Mechanical explanation only. Passing it never authorizes a settings effect. */
+export function validateAgentSettingsMechanics(args: SettingsToolArgs): string | null {
+  if (args.mode !== 'set' && args.mode !== 'reset') return 'Settings accepts only set or reset.';
+  if (typeof args.key !== 'string' || !isValidConfigKey(args.key.trim())) return 'Settings requires a registered key.';
+  if (args['confirm'] !== true) return 'Settings requires confirm=true.';
+  return null;
+}
+
+/** Adopted Agent surface: the same recorded admission owns hazard/request judgment. */
+export function wrapSettingsToolForAdmittedAgentPolicy(tool: Tool): void {
+  tool.definition.description = [
+    'Apply or reset a GoodVibes setting through its actual owning runtime.',
+    'The original host request and exact resolved effect are evaluated by the recorded autonomous decision before execution.',
+    'Raw credentials are refused; use an existing goodvibes:// secret reference or clear the setting.',
+  ].join(' ');
+  const properties = tool.definition.parameters.properties;
+  if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+    (properties as Record<string, unknown>)[AGENT_SETTINGS_CONFIRMATION_PROPERTY] = {
+      type: 'string', description: 'Optional request context. This text is not authority and does not replace the original host request.',
+    };
+  }
+  const original = tool.execute.bind(tool);
+  tool.execute = async (args, options) => {
+    const problem = validateAgentSettingsMechanics(args);
+    if (problem) return { success: false, error: problem };
+    assertAdmittedAgentSettings(args, options);
+    return original(args, options);
   };
 }

@@ -82,6 +82,7 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
     resolveSessionId,
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
     readAdmissionPolicy: 'agent-main-conversation',
+    settingsAdmissionPolicy: 'agent-main-conversation',
     // ONE file cache and ONE project index for the process. registerAllTools
     // built its own pair when none was passed, so the tools read one index while
     // `services.rerootStores` re-rooted a different one on a workspace swap,

@@ -202,22 +202,27 @@ describe('no denial is ever silent', () => {
     expect((result.error ?? '').length).toBeGreaterThan(80);
   });
 
-  test('the policy explanation reports the same reason the caller would get', () => {
+  test('the main-conversation explanation checks mechanics without deciding settings authority', () => {
     const denied = explainAgentToolPolicyInvocation('goodvibes_settings', {
       mode: 'set',
       key: 'behavior.autoApprove',
       value: true,
+      confirm: true,
     });
-    expect(denied.status).toBe('denied');
-    expect(denied.reason).toContain('behavior.autoApprove');
-    expect(denied.reason).toContain('requires your confirmation because');
+    expect(denied.status).toBe('allowed');
+    expect(denied.reason).toContain('recorded admission');
+    expect(denied.reason).toContain('grants no authority');
 
     const allowed = explainAgentToolPolicyInvocation('goodvibes_settings', {
       mode: 'set',
       key: 'surfaces.telegram.botUsername',
       value: 'goodvibes_agent_bot',
+      confirm: true,
     });
     expect(allowed.status).toBe('allowed');
+    expect(explainAgentToolPolicyInvocation('goodvibes_settings', {
+      mode: 'set', key: 'display.theme', value: 'nord', confirm: false,
+    }).status).toBe('denied');
   });
 
   test('a guarded registry surfaces the denial through execute()', async () => {

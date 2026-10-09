@@ -1,12 +1,15 @@
 import type { AgentManager } from '../tools/agent/index.js';
 import { startTurnForOwnerRequest } from '../security/turn-boundary.js';
-import type { UserAuthManager } from '../security/user-auth.js';
+import type { UserAuthManager, SettingsSessionAuthority } from '../security/user-auth.js';
+import type { SettingsPairingAuthority } from '../pairing/pairing-token-store.js';
+import { SettingsAuthorityUnavailableError, runSynchronousSettingsOperation } from '../security/settings-authority.js';
 import { pairingPrincipalId } from '../pairing/pairing-token-store.js';
 import {
   authenticateOperatorRequest,
   authenticateOperatorToken,
   extractOperatorAuthToken,
   isOperatorAdmin,
+  matchesSharedToken,
   type PairingTokenAuthenticator,
   type NativeExecutionAuthority,
   type NativePairedSnapshot,
@@ -63,6 +66,8 @@ export interface ControlPlaneWebSocketData {
 
 export interface DaemonControlPlaneContext {
   readonly authToken: () => string | null;
+  /** Actual facade's private serving lifetime/token epoch. Missing means hold. */
+  readonly settingsLifetime?: (() => object | null) | undefined;
   /**
    * Per-pairing token authenticator. When present, a named per-device token is
    * checked (and its revocation honored) before the legacy shared token; absent
@@ -114,6 +119,22 @@ function refusalBody(message: string, code: string, status: number): ReturnType<
   return buildErrorResponseBody({ message, code, status });
 }
 
+declare const settingsAdminAuthorityBrand: unique symbol;
+/** Opaque current HTTP-admin precondition; not a Jev/execution grant. */
+export interface SettingsAdminAuthority {
+  readonly kind: 'shared-token' | 'pairing-token' | 'session';
+  readonly [settingsAdminAuthorityBrand]: true;
+}
+interface SettingsAdminAuthorityRecord {
+  readonly token: string;
+  readonly transport: 'header' | 'cookie';
+  readonly lifetime: object;
+  readonly pairingOwner: PairingTokenAuthenticator | undefined;
+  readonly userOwner: UserAuthManager;
+  readonly paired?: SettingsPairingAuthority;
+  readonly session?: SettingsSessionAuthority;
+}
+
 export class DaemonControlPlaneHelper {
   /** Live WS 'call' invocations (full lifetime incl. response buffering). */
   private wsCallsInFlight = 0;
@@ -122,7 +143,13 @@ export class DaemonControlPlaneHelper {
   /** Events dropped to stalled WS consumers (cumulative). */
   private wsEventsDropped = 0;
 
-  constructor(private readonly context: DaemonControlPlaneContext) {}
+  private readonly settingsLifetime: (() => object | null) | undefined;
+  private readonly settingsAuthorities = new WeakMap<SettingsAdminAuthority, SettingsAdminAuthorityRecord>();
+
+  constructor(private readonly context: DaemonControlPlaneContext) {
+    // Capture the construction-owned accessor, never a request-provided callback.
+    this.settingsLifetime = context.settingsLifetime;
+  }
 
   /** Retained-context footprint of the WS call path, for tests and ops output. */
   wsCallStats(): { inFlight: number; refused: number; eventsDropped: number } {
@@ -170,6 +197,91 @@ export class DaemonControlPlaneHelper {
       return Response.json({ error: 'Admin role required' }, { status: 403 });
     }
     return null;
+  }
+
+  /** Capture after request-body awaits, using only actual auth owners. */
+  captureSettingsAdminAuthority(req: Request): SettingsAdminAuthority | null {
+    const lifetime = this.settingsLifetime?.();
+    if (!lifetime) return null;
+    const token = extractOperatorAuthToken(req);
+    if (!token) return null;
+    const pairingOwner = this.context.pairingTokens;
+    const userOwner = this.context.userAuth;
+    let paired: SettingsPairingAuthority | null = null;
+    let session: SettingsSessionAuthority | null = null;
+    let kind: SettingsAdminAuthority['kind'];
+    try {
+      // Preserve the operator credential precedence, without ordinary auth's
+      // cached shared fallback or last-seen persistence side effects.
+      paired = pairingOwner?.captureSettingsAuthority?.({ kind: 'pairing-token', token }) ?? null;
+      if (paired) {
+        if (!pairingOwner?.withSettingsAuthority) return null;
+        kind = 'pairing-token';
+      } else {
+        const shared = this.context.authToken();
+        if (shared && matchesSharedToken(token, shared)) {
+          paired = pairingOwner?.captureSettingsAuthority?.({ kind: 'shared-token' }) ?? null;
+          if (!paired || !pairingOwner?.withSettingsAuthority) return null;
+          kind = 'shared-token';
+        } else {
+          session = userOwner.captureSettingsAuthority(token);
+          if (!session?.roles.includes('admin')) return null;
+          kind = 'session';
+        }
+      }
+      if (this.settingsLifetime?.() !== lifetime || this.context.pairingTokens !== pairingOwner
+        || this.context.userAuth !== userOwner) return null;
+      const handle = Object.freeze({ kind }) as SettingsAdminAuthority;
+      this.settingsAuthorities.set(handle, { token, lifetime, pairingOwner, userOwner,
+        transport: req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim() ? 'header' : 'cookie',
+        ...(paired ? { paired } : {}), ...(session ? { session } : {}) });
+      return handle;
+    } catch { return null; }
+  }
+
+  /**
+   * Consume one captured request authority. The owner callback is synchronous
+   * and must assertCurrent AFTER reentrant config preparation and immediately
+   * BEFORE its effect. It is deterministic auth protection, never a Jev grant.
+   * No check runs after the effect, so a truthful receipt remains truthful.
+   */
+  withSettingsAdminAuthority<T>(req: Request, authority: SettingsAdminAuthority,
+    operation: (assertCurrent: () => void) => T): T {
+    const expected = this.settingsAuthorities.get(authority);
+    this.settingsAuthorities.delete(authority);
+    if (!expected) throw new SettingsAuthorityUnavailableError();
+    let active = true;
+    const assertOwner = () => {
+      const transport = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim() ? 'header' : 'cookie';
+      if (!active || transport !== expected.transport
+        || !matchesSharedToken(extractOperatorAuthToken(req), expected.token)
+        || this.settingsLifetime?.() !== expected.lifetime
+        || this.context.pairingTokens !== expected.pairingOwner || this.context.userAuth !== expected.userOwner) {
+        throw new SettingsAuthorityUnavailableError();
+      }
+      if (authority.kind === 'shared-token') {
+        const shared = this.context.authToken();
+        if (!shared || !matchesSharedToken(expected.token, shared)) throw new SettingsAuthorityUnavailableError();
+      }
+    };
+    try {
+      assertOwner();
+      if (expected.paired) {
+        if (!expected.pairingOwner?.withSettingsAuthority) throw new SettingsAuthorityUnavailableError();
+        return expected.pairingOwner.withSettingsAuthority(expected.paired, assertPaired => {
+          const assertCurrent = () => { assertOwner(); assertPaired(); };
+          assertCurrent();
+          return runSynchronousSettingsOperation(operation, assertCurrent);
+        });
+      }
+      if (!expected.session) throw new SettingsAuthorityUnavailableError();
+      const assertCurrent = () => {
+        assertOwner();
+        expected.userOwner.assertSettingsAuthorityCurrent(expected.session!);
+      };
+      assertCurrent();
+      return runSynchronousSettingsOperation(operation, assertCurrent);
+    } finally { active = false; }
   }
 
   async requireRemotePeer(req: Request, scope?: string): Promise<import('../runtime/remote/index.js').DistributedPeerAuth | Response> {
