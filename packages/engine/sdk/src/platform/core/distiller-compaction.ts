@@ -145,6 +145,7 @@ export async function distillConversation(
   ctx: CompactionContext,
   registry: ProviderRegistry,
 ): Promise<CompactionResult> {
+  ctx.signal?.throwIfAborted();
   const tokensBeforeEstimate = estimateConversationTokens(ctx.messages);
   const transcript = buildTranscript(ctx.messages);
 
@@ -166,9 +167,12 @@ export async function distillConversation(
     const response = await resolved.provider.chat({
       messages: [{ role: 'user', content: prompt }],
       model: resolved.providerModelId,
+      signal: ctx.signal,
     });
+    ctx.signal?.throwIfAborted();
     brief = response.content?.trim() ?? '';
   } catch (err) {
+    ctx.signal?.throwIfAborted();
     throw new DistillerUnavailableError(`Distiller model call failed: ${summarizeError(err)}`);
   }
 

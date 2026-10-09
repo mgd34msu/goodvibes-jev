@@ -161,6 +161,7 @@ async function buildAutoCompactionContext(
     instructionChain,
     activeSkillFrontmatter,
     strategy: deps.getCompactionStrategy?.() ?? 'structured',
+    signal: deps.signal,
   };
 }
 

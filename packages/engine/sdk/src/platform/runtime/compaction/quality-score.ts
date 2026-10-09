@@ -111,6 +111,8 @@ export interface CompactionQualityScore {
 /** Options for one scoring. */
 export interface QualityScoreOptions {
   readonly signal?: AbortSignal | undefined;
+  /** Existing caller/composition fence, checked before each shared retry attempt. */
+  readonly beforeAttempt?: (() => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,12 +140,17 @@ async function readRetention(
 
   const views = compactionViews(input.messages, output.messages);
   const port = judgmentPort(COMPACTION_QUALITY_SITE);
-  const run = { site: COMPACTION_QUALITY_SITE, ...(options.signal ? { signal: options.signal } : {}) };
+  const run = { site: COMPACTION_QUALITY_SITE, ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.beforeAttempt ? { beforeAttempt: options.beforeAttempt } : {}) };
+  options.signal?.throwIfAborted();
+  options.beforeAttempt?.();
   const [retention, fidelity] = await Promise.all([
     compactionRetention.run(port, { source: views.source, compacted: views.compacted }, run),
     views.written.length > 0 ? compactionFidelity.check(port, views.written, views.source, undefined, run) : undefined,
   ]);
 
+  options.signal?.throwIfAborted();
+  options.beforeAttempt?.();
   const substance = Math.min(1, Math.max(0, retention.readings.substance.normalized));
   const contradictionProbability = fidelity?.reading?.probabilities.contradicts ?? 0;
   return {

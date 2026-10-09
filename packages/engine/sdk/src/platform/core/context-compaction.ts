@@ -53,6 +53,8 @@ import {
   stripReinjectedInstructions,
   extractText,
 } from './compaction-sections.js';
+import { captureCompactionJudgment } from './compaction-judgment-binding.js';
+import { reportsResolvedProblems } from '../runtime/compaction/batteries/resolved-problems.js';
 import { isActiveAgent } from '../tools/agent/predicates.js';
 
 export type { CompactionEvent, CompactionResult, CompactionContext } from './compaction-types.js';
@@ -259,8 +261,9 @@ export function compactSmallWindow(
 // ---------------------------------------------------------------------------
 
 /**
- * Call the LLM with a prompt and return the trimmed response text.
- * Returns null on any failure (compaction should degrade gracefully).
+ * Call the LLM with a prompt. The resolved-problems reply stays verbatim;
+ * other summaries are trimmed. Generation failures return null; cancellation
+ * propagates so an abandoned compaction cannot continue.
  */
 async function llmExtract(
   registry: ProviderRegistry,
@@ -268,7 +271,9 @@ async function llmExtract(
   providerName: string | undefined,
   prompt: string,
   label: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
+  signal?.throwIfAborted();
   if (!prompt.trim()) return null;
 
   let provider: LLMProvider;
@@ -293,17 +298,22 @@ async function llmExtract(
   }
 
   try {
+    signal?.throwIfAborted();
     const response = await provider.chat({
       messages: [{ role: 'user', content: prompt }],
       model: providerModelId,
+      signal,
     });
-    const text = response.content?.trim() ?? '';
-    if (!text) {
+    signal?.throwIfAborted();
+    const text = response.content ?? '';
+    if (!text.trim()) {
       logger.warn(`Compaction: LLM returned empty response for ${label}`);
       return null;
     }
-    return text;
+    // The reply reading must see and preserve the generator's exact words.
+    return label === 'resolved-problems' ? text : text.trim();
   } catch (err) {
+    signal?.throwIfAborted();
     logger.warn(`Compaction: LLM extraction failed for ${label}`, {
       err: summarizeError(err),
     });
@@ -380,15 +390,10 @@ export function resolveLineageOriginalTask(
 // ---------------------------------------------------------------------------
 
 function assembleSections(sections: CompactionSection[]): string {
-  const parts: string[] = [];
-  for (const section of sections) {
-    if (section.header) {
-      parts.push(section.header);
-    }
-    parts.push(section.content);
-    parts.push(''); // blank line between sections
-  }
-  return parts.join('\n').trimEnd();
+  // Join only our separators. Trimming the finished handoff would change a
+  // generated resolved-problems reply when it is the final section.
+  return sections.map((section) => section.header
+    ? `${section.header}\n${section.content}` : section.content).join('\n\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +421,8 @@ async function runCompaction(
   ctx: CompactionContext,
   registry: ProviderRegistry,
 ): Promise<CompactionResult> {
+  ctx.signal?.throwIfAborted();
+  const assertJudgmentCurrent = captureCompactionJudgment();
   const config = DEFAULT_COMPACTION_CONFIG;
   const tokensBeforeEstimate = estimateConversationTokens(ctx.messages);
 
@@ -529,10 +536,10 @@ async function runCompaction(
   // Parallelize all 4 independent LLM extraction calls
   // ---------------------------------------------------------------------------
   const [filteredText, toolSummary, olderSummary, problemsText] = await Promise.all([
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, filterPrompt, 'conversation-filter'),
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, toolPrompt, 'tool-results'),
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, olderPrompt, 'older-agent-summary'),
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, problemsPrompt, 'resolved-problems'),
+    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, filterPrompt, 'conversation-filter', ctx.signal),
+    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, toolPrompt, 'tool-results', ctx.signal),
+    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, olderPrompt, 'older-agent-summary', ctx.signal),
+    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, problemsPrompt, 'resolved-problems', ctx.signal),
   ]);
 
   // ---------------------------------------------------------------------------
@@ -585,8 +592,9 @@ async function runCompaction(
   }
 
   // Resolved problems
-  if (problemsText && problemsText.toLowerCase().trim() !== 'empty'
-      && !problemsText.toLowerCase().includes('no resolved problems')) {
+  if (problemsText && await reportsResolvedProblems(problemsText, {
+    beforeAttempt: assertJudgmentCurrent, ...(ctx.signal ? { signal: ctx.signal } : {}),
+  })) {
     sections.push({
       id: 'resolved-problems',
       header: '## Resolved Problems',
@@ -610,6 +618,8 @@ async function runCompaction(
   // ---------------------------------------------------------------------------
   // Assemble and validate
   // ---------------------------------------------------------------------------
+  ctx.signal?.throwIfAborted();
+  assertJudgmentCurrent();
   const compactedText = assembleSections(sections);
   // The re-injected standing-instruction block is mandatory content, not
   // summarized history, so it is excluded from the summary token-ceiling check

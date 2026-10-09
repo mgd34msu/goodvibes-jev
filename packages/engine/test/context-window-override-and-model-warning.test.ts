@@ -585,6 +585,7 @@ describe('compaction awaits system-prompt reads', () => {
       pending.resolve('  fresh reviewed instruction chain  ');
       await operation;
       expect(f.stub.lastContext?.instructionChain).toBe('fresh reviewed instruction chain');
+      expect(f.stub.lastContext?.signal).toBe(controller.signal);
       expect(f.stub.compactCalls).toBe(1);
       expect(f.compacting.at(-1)).toBe(false);
     });

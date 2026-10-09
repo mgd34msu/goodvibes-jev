@@ -400,7 +400,23 @@ export class ConversationManager {
     provider?: string,
     context?: CompactionContext,
   ): Promise<CompactionReceipt | undefined> {
-    return compactConversation(this, registry, modelId, trigger, provider, context);
+    // Use this store's existing revision as the commit fence. A reading can
+    // wait through new messages, branch changes or another compaction; none
+    // may be replaced by a summary of an older revision (even after undo).
+    const revision = this._messagesRevision;
+    return compactConversation({
+      getMessageCount: () => this.getMessageCount(),
+      getMessagesForLLM: () => this.getMessagesForLLM(),
+      getSessionMemoryStore: () => this.getSessionMemoryStore(),
+      getSessionLineageTracker: () => this.getSessionLineageTracker(),
+      replaceMessagesForLLM: (messages) => {
+        context?.signal?.throwIfAborted();
+        if (this._messagesRevision !== revision) {
+          throw new Error('Conversation changed during compaction; current conversation retained.');
+        }
+        this.replaceMessagesForLLM(messages);
+      },
+    }, registry, modelId, trigger, provider, context);
   }
 
   public get title(): string {

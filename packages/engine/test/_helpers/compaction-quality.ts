@@ -16,6 +16,8 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 export interface CompactionReadings {
   /** The retention level read (0 none to 3 all); default 3. */
   readonly substance?: number;
+  /** Whether the generated reply reports resolved work; default 0.95. */
+  readonly resolved?: number;
   /** How the written text relates to the source; default 'supports'. */
   readonly relation?: 'supports' | 'contradicts' | 'says_nothing';
   /** The keep probability for message number `n` of a collapsed conversation; default 0.05 (not kept). */
@@ -25,6 +27,7 @@ export interface CompactionReadings {
 /** A port answering both compaction readings from `readings`, recording every request. */
 export function compactionQualityPort(readings: CompactionReadings = {}) {
   return fakePort((name: string, question: Question) => {
+    if (name === 'resolved') return noulAnswer(readings.resolved ?? 0.95);
     if (name === 'substance') return scoreAnswer(question, readings.substance ?? 3, 0.95);
     if (name === 'relation') return choiceAnswer(question, readings.relation ?? 'supports', 0.95);
     if (name.startsWith('keep_')) return noulAnswer(readings.keep?.(Number(name.slice('keep_'.length))) ?? 0.05);
