@@ -354,7 +354,7 @@ export async function executeToolCalls(
             // mints no strict-body proof. Any genuine brand (even stale) keeps
             // exact registry/call validation rather than downgrading to legacy.
             const preparedAdmission = isAuthenticAutonomousAdmission(admission)
-              || deps.toolRegistry.readPreparedAdmissionEvidence(prepared) !== undefined
+              || deps.toolRegistry.readPreparedOwnedAdmissionEvidence(prepared) !== undefined
               ? admission : admission.claim;
             return deps.toolRegistry.executePrepared(prepared, preparedAdmission, callSignal ? { signal: callSignal } : undefined);
           },

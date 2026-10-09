@@ -80,3 +80,16 @@ test('live invocation scope revocation after drafting cannot reach synthetic sen
     expect(await work).toMatchObject({ outcome: 'error' }); expect(h.sent).toEqual([]);
   } finally { h.scope.dispose(); }
 });
+test('merged prepared-setting mutation invalidates a pending check-in before the committed change', async () => {
+  const entered = Promise.withResolvers<void>(); const held = Promise.withResolvers<{ content: string }>();
+  const h = compose(0.99, async () => { entered.resolve(); return held.promise; });
+  try {
+    await enable(h.catalog);
+    const work = h.catalog.invoke('checkin.run', { context: {} }); await entered.promise;
+    const mutation = h.configManager.prepareSettingMutation({ operation: 'set', key: 'provider.model', value: 'openai:synthetic-other' });
+    const transition = h.configManager.beginPreparedMutation(mutation);
+    expect(h.configManager.finishPreparedMutation(mutation, transition).status).toBe('committed');
+    held.resolve({ content: 'The release needs your deployment-window choice.' });
+    expect(await work).toMatchObject({ outcome: 'skipped' }); expect(h.sent).toEqual([]);
+  } finally { h.scope.dispose(); }
+});

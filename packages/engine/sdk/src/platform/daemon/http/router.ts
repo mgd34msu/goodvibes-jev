@@ -1,3 +1,4 @@
+import { createServingSettingsPrecondition } from './settings-precondition.js';
 import type { ConfigManager } from '../../config/manager.js';
 import { deriveControlPlaneBaseUrl, readControlPlaneBinding } from '../../config/control-plane-base-url.js';
 import { createBrowserJudgmentHttpHandler, type BrowserJudgmentCapability } from '@goodvibes-jev/engine/daemon-sdk';
@@ -148,6 +149,7 @@ interface DaemonHttpRouterContext {
   readonly browserJudgment?: BrowserJudgmentCapability | undefined;
   readonly githubWebhookSecret: string | null;
   readonly authToken: () => string | null;
+  readonly settingsAuthority?: import('./settings-precondition.js').ServingSettingsAuthority | undefined;
   readonly buildSurfaceAdapterContext: () => SurfaceAdapterContext;
   readonly buildGenericWebhookAdapterContext: () => GenericWebhookAdapterContext;
   readonly checkAuth: (req: Request) => boolean;
@@ -215,6 +217,8 @@ interface DaemonHttpRouterContext {
 }
 
 export class DaemonHttpRouter {
+  /** Stateful owner references must survive per-request handler reconstruction. */
+  private readonly settingsPrecondition: ReturnType<typeof createServingSettingsPrecondition> | undefined;
   private readonly telemetryApi: TelemetryApiService | null;
   private homeAssistantRoutes: HomeAssistantConversationRoutes | null = null;
   private homeGraphRoutes: HomeGraphRoutes | null = null;
@@ -232,6 +236,7 @@ export class DaemonHttpRouter {
   setClusterGroupVerbs(verbs: ClusterGroupVerbs): void { this.clusterGroupVerbs = verbs; }
 
   constructor(private readonly context: DaemonHttpRouterContext) {
+    this.settingsPrecondition = context.settingsAuthority ? createServingSettingsPrecondition(context.configManager, context.settingsAuthority) : undefined;
     this.telemetryApi = context.runtimeStore
       ? new TelemetryApiService({
         runtimeBus: context.runtimeBus,
@@ -532,6 +537,7 @@ export class DaemonHttpRouter {
       }),
       ...createDaemonSystemRouteHandlers({
         ...buildSystemRouteContext({
+          settingsPrecondition: this.settingsPrecondition,
           approvalBroker: this.context.approvalBroker,
           configManager: this.context.configManager,
           credentialStatus: this.context.secretsManager

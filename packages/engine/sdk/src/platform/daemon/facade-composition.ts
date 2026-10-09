@@ -604,6 +604,7 @@ export function createDaemonFacadeCollaborators(
   });
   const controlPlaneHelper = new DaemonControlPlaneHelper({
     authToken: options.authToken,
+    settingsLifetime: options.settingsLifetime,
     pairingTokens: runtime.runtimeServices.pairingTokens,
     userAuth: runtime.userAuth,
     agentManager: runtime.agentManager,
@@ -630,6 +631,11 @@ export function createDaemonFacadeCollaborators(
   });
   batchManager.start();
   const httpRouter = new DaemonHttpRouter({
+    settingsAuthority: {
+      settingsLifetime: options.settingsLifetime ?? (() => null),
+      captureSettingsAdminAuthority: (req) => controlPlaneHelper.captureSettingsAdminAuthority(req),
+      withSettingsAdminAuthority: (req, authority, callback) => controlPlaneHelper.withSettingsAdminAuthority(req, authority, callback),
+    },
     browserJudgment: runtime.runtimeServices.browserJudgment,
     configManager: runtime.configManager,
     serviceRegistry: runtime.serviceRegistry,
