@@ -940,6 +940,11 @@ export class ConfigManager {
   load(): void {
     this.invalidateLifetimes();
     const previousHost = this.hostSettings.snapshot(this.config);
+    const previousConfig = this.config;
+    const previousSharedKeys = new Set(this.sharedKeysPresent);
+    const previousDaemonKeys = new Set(this.daemonKeysPresent);
+    // Stage overlays separately even when no global/project file is present.
+    this.config = structuredClone(previousConfig);
     this.hostLoadValues = this.hostSettings.active ? this.hostSettings.defaults() : null;
     try {
       this.ingestionNotices = [];
@@ -983,6 +988,11 @@ export class ConfigManager {
       this.loadDaemonTier();
       if (this.hostLoadValues) this.applyHostValues(this.hostLoadValues, previousHost, true);
     } catch (error) {
+      // A later tier can refuse after earlier tiers have loaded successfully.
+      // Retain the last complete configuration, but never undo invalidation.
+      this.config = previousConfig;
+      this.sharedKeysPresent.clear(); for (const key of previousSharedKeys) this.sharedKeysPresent.add(key);
+      this.daemonKeysPresent.clear(); for (const key of previousDaemonKeys) this.daemonKeysPresent.add(key);
       this.applyHostValues(this.hostSettings.defaults(), previousHost, true);
       throw error instanceof HostSettingsReadError ? this.loadFailure('Host', error.file, error) : error;
     } finally {
