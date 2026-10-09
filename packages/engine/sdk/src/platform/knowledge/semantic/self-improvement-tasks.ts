@@ -1,3 +1,4 @@
+import { guardKnowledgeRefinementTaskInput } from '../store-refinement.js';
 import type {
   KnowledgeNodeRecord,
   KnowledgeRefinementTaskRecord,
@@ -64,12 +65,14 @@ export async function updateRefinementTask(
   state: KnowledgeRefinementTaskState,
   message: string,
   data: Record<string, unknown> = {},
+  assertCurrent?: () => void,
 ): Promise<KnowledgeRefinementTaskRecord> {
+  assertCurrent?.();
   const latest = store.getRefinementTask(task.id);
   if (latest && isTerminalRefinementState(latest.state)) return latest;
   const nextRepairAttemptAt = readNumber(data.nextRepairAttemptAt) ?? task.nextRepairAttemptAt;
   const metadata = refinementTaskMetadata(task, data, nextRepairAttemptAt);
-  return store.upsertRefinementTask({
+  const input = {
     id: task.id,
     spaceId: task.spaceId,
     subjectKind: task.subjectKind,
@@ -92,7 +95,8 @@ export async function updateRefinementTask(
     sourceAssessments: readSourceAssessments(metadata.sourceAssessments),
     appendTrace: [trace(state, message, data)],
     metadata,
-  });
+  };
+  return store.upsertRefinementTask(assertCurrent ? guardKnowledgeRefinementTaskInput(input, assertCurrent) : input);
 }
 
 function refinementTaskMetadata(

@@ -1,3 +1,4 @@
+import { KnowledgeRepairBudgetError } from '../sdk/src/platform/knowledge/semantic/self-improvement-budget.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
@@ -174,7 +175,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store, {
       gapRepairer: async () => {
-        throw new Error('Semantic gap repair exceeded its run budget.');
+        throw new KnowledgeRepairBudgetError();
       },
     });
     const device = await seedHomeAssistantObservation(store, {
