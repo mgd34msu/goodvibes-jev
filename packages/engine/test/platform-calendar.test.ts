@@ -436,8 +436,13 @@ describe('maskFeedUrl', () => {
 });
 
 describe('purity', () => {
-  test('no calendar module reaches fs/net/tty/process/crypto/path/os/child_process, Buffer, or a bare (non-relative) import', () => {
-    const files = readdirSync(CALENDAR_DIR).filter((f) => f.endsWith('.ts'));
+  test('the complete public calendar graph bundles for a browser without Node IO', async () => {
+    const built = await Bun.build({ entrypoints: [resolve(CALENDAR_DIR, 'index.ts')], target: 'browser' });
+    expect(built.success).toBe(true);
+    expect(built.logs).toHaveLength(0);
+  });
+  test('calendar source stays IO-free with only the canonical runtime-neutral judgment entries', () => {
+    const files = readdirSync(CALENDAR_DIR, { recursive: true }).filter((f): f is string => typeof f === 'string' && f.endsWith('.ts'));
     const banned: { readonly name: string; readonly pattern: RegExp }[] = [
       { name: 'node:fs', pattern: /from ['"]node:fs['"]/ },
       { name: 'node:net', pattern: /from ['"]node:net['"]/ },
@@ -451,15 +456,18 @@ describe('purity', () => {
       { name: 'process.stdout/stderr/env', pattern: /process\.(stdout|stderr|env)/ },
       { name: 'global fetch(...)', pattern: /\bfetch\s*\(/ },
       { name: 'Buffer', pattern: /\bBuffer\b/ },
-      // Any import specifier that is neither relative ('./'/'../') nor a type-only
-      // re-export of a relative path, i.e. a bare package/builtin specifier. Every
-      // real import in this module is (and must stay) relative; this catches any
-      // new bare specifier (a builtin this list doesn't yet name explicitly, or an
-      // npm dependency) the moment it is introduced.
-      { name: 'bare (non-relative) import specifier', pattern: /from\s+['"](?!\.{1,2}\/)[^'"]+['"]/ },
     ];
     for (const f of files) {
       const src = readFileSync(resolve(CALENDAR_DIR, f), 'utf8');
+      // Registry discovery runs only in tooling; runtime code imports the
+      // transport-free decisions entry and installed engine port. No registry
+      // is imported by the public calendar module (also bundled below).
+      const allowed = new Set(f === 'judgment-registry.ts'
+        ? ['@goodvibes-jev/judgment']
+        : ['@goodvibes-jev/judgment/decisions', '@goodvibes-jev/engine/errors']);
+      for (const match of src.matchAll(/from\s+['"](?!\.{1,2}\/)([^'"]+)['"]/g)) {
+        expect({ file: f, import: match[1], allowed: allowed.has(match[1]!) }).toMatchObject({ allowed: true });
+      }
       for (const { name, pattern } of banned) {
         expect({ file: f, banned: name, matched: pattern.test(src) }).toEqual({ file: f, banned: name, matched: false });
       }
