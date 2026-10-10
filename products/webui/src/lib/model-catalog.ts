@@ -90,6 +90,7 @@ export interface CatalogModel {
   readonly provider: string;
   readonly label: string;
   readonly contextWindow?: number;
+  readonly family?: ModelFamily;
   readonly tier?: string;
   readonly pricing?: ModelPricing;
 }
@@ -118,6 +119,7 @@ function normalizeCatalogModel(providerId: string, raw: unknown): CatalogModel |
     provider: providerId,
     label: firstString(record, ['displayName', 'label', 'name']) || id,
     contextWindow: typeof contextWindowRaw === 'number' ? contextWindowRaw : undefined,
+    family: readModelFamily(record.family),
     tier: firstString(record, ['tier']) || undefined,
     pricing: readPricing(record.pricing),
   };
@@ -173,9 +175,7 @@ export function configuredProviderIdsFromProvidersResponse(value: unknown): Set<
 }
 
 // ---------------------------------------------------------------------------
-// Family detection, mirrors the TUI's model-picker-types.ts FAMILY_PATTERNS
-// exactly, for cross-surface grouping parity. Purely a label/id heuristic,
-// no wire dependency, so it works with whatever this client build already has.
+// Family is a server-owned settled judgment. Old servers may omit it.
 // ---------------------------------------------------------------------------
 
 export type ModelFamily =
@@ -193,27 +193,17 @@ export type ModelFamily =
   | 'Kimi'
   | 'Other';
 
-const FAMILY_PATTERNS: readonly { pattern: RegExp; family: ModelFamily }[] = [
-  { pattern: /claude/i, family: 'Claude' },
-  { pattern: /gpt|\bo1\b|\bo3\b|\bo4\b/i, family: 'GPT' },
-  { pattern: /gemini/i, family: 'Gemini' },
-  { pattern: /llama/i, family: 'Llama' },
-  { pattern: /qwen/i, family: 'Qwen' },
-  { pattern: /glm|chatglm/i, family: 'GLM' },
-  { pattern: /minimax|abab/i, family: 'MiniMax' },
-  { pattern: /deepseek/i, family: 'DeepSeek' },
-  { pattern: /mistral|mixtral/i, family: 'Mistral' },
-  { pattern: /command|cohere/i, family: 'Command' },
-  { pattern: /grok/i, family: 'Grok' },
-  { pattern: /kimi|moonshot/i, family: 'Kimi' },
-];
+const MODEL_FAMILIES: ReadonlySet<string> = new Set<ModelFamily>([
+  'Claude', 'GPT', 'Gemini', 'Llama', 'Qwen', 'GLM', 'MiniMax', 'DeepSeek',
+  'Mistral', 'Command', 'Grok', 'Kimi', 'Other',
+]);
 
-export function detectFamily(model: CatalogModel): ModelFamily {
-  const haystack = `${model.id} ${model.label}`;
-  for (const { pattern, family } of FAMILY_PATTERNS) {
-    if (pattern.test(haystack)) return family;
-  }
-  return 'Other';
+function readModelFamily(value: unknown): ModelFamily | undefined {
+  return typeof value === 'string' && MODEL_FAMILIES.has(value) ? value as ModelFamily : undefined;
+}
+
+export function detectFamily(model: CatalogModel): ModelFamily | undefined {
+  return readModelFamily(model.family);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +277,7 @@ export function groupModels(models: readonly CatalogModel[], groupBy: GroupByMod
   const order: string[] = [];
   const keyFor = (model: CatalogModel): string => {
     if (groupBy === 'provider') return model.provider;
-    if (groupBy === 'family') return detectFamily(model);
+    if (groupBy === 'family') return detectFamily(model) ?? 'Ungrouped';
     if (groupBy === 'pricingTier') return model.tier ?? 'unreported';
     return 'Ungrouped';
   };

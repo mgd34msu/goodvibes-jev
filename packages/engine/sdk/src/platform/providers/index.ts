@@ -289,3 +289,6 @@ export type {
 
 export { ProviderSetupReadings, classifyProviderSetup, describeProviderSetup, providerSetupFrom, providerSetupState } from './provider-setup.js';
 export type { ProviderSetupClass, ProviderSetupClassification, ProviderSetupFacts, ProviderSetupReadOptions } from './provider-setup.js';
+
+export { ModelFamilyReadings, modelFamilyReadings } from './model-family.js';
+export type { ModelFamily, ModelFamilyInput } from './model-family.js';

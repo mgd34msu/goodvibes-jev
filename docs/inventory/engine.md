@@ -4075,3 +4075,34 @@ The pinned answer-gaps decisions at 1826 (generic subject-token removal) and 184
 | `test/plugin-delivery-lifetime.test.ts` | PORT | Synthetic plugin membrane tests verify explicit own-data guarded-delivery capability, no accessor/inherited opt-in, captured capability stability and revocation during pending delivery. |
 | `test/checkin-job-lifetime.test.ts` | PORT | Scheduled pending evaluations reject disabled, removed, changed-owner and stale job revisions; successful and throwing terminal bookkeeping cannot resurrect old jobs. Synthetic transports only. |
 | `test/checkin-delivery-receipt.test.ts` | PORT | Synthetic delivery-entry tests preserve confirmed receipts after revocation and report interrupted responses as unconfirmed errors instead of claiming no send. |
+
+
+## Shared picker family adoption (2026-10-09)
+
+The existing `engine.runtime.model-family` battery now lives in
+`packages/engine/sdk/src/platform/providers/batteries/model-family.ts`; its
+reader lives in `providers/model-family.ts` and is exported on the public
+providers seam. Original runtime UI imports remain compatibility re-exports.
+TUI and Agent consume this owner through their ticketed catalog-open flows;
+WebUI receives its optional settled family through the existing providers
+runtime snapshots. No new family vocabulary, routing behavior or browser
+judgment is introduced.
+
+Cache and in-flight identity include the installed judgment-port instance and
+exact registry key, id, display name and provider evidence. Snapshots copy model
+metadata before starting background judgment and return without waiting for
+it. WebUI refreshes its existing providers query every five seconds only while
+the modal is open and family-grouped; close, regroup and unmount stop polling.
+Unread, failed and unsettled outcomes have
+no family; `Other` is only a settled judgment. Matching concurrent reads join;
+failed reads retry. The existing display-only reader has no per-caller abort
+signal, so closing a UI drops its completion rather than canceling another
+surface's shared read. Changes inside one unchanged port instance are outside
+this reader's authority contract; composition replaces the installed port when
+that authority changes.
+
+Proof: engine `model-picker-family.test.ts` and
+`provider-model-family-snapshot.test.ts`; TUI/Agent production picker and
+`openModelPickerNow` tests; WebUI production `model-catalog.test.ts` parser and
+grouping tests plus `ModelWorkspaceModal.test.tsx` polling close/reopen and
+regroup/unmount coverage. Live calibration and wider product migration remain separate.

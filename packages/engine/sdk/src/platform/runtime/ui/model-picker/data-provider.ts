@@ -150,7 +150,10 @@ export class ModelPickerDataProvider {
     const models = this._models;
     void modelFamilyReadings.read(models).then(
       (changed) => { if (changed && !this._disposed && this._models === models) this._rebuild(); },
-      (error: unknown) => { logger.warn('model picker: model family readings did not complete', { error: summarizeError(error) }); },
+      (error: unknown) => {
+        logger.warn('model picker: model family readings did not complete', { error: summarizeError(error) });
+        if (!this._disposed && this._models === models) this._rebuild();
+      },
     );
   }
 

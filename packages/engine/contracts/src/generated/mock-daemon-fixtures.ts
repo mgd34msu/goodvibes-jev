@@ -18949,6 +18949,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "displayName": "sample",
           "selectable": false,
           "contextWindow": 0,
+          "family": "Claude",
           "tier": "sample",
           "pricing": {
             "inputPerMillionTokens": 0,
@@ -19060,6 +19061,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "displayName": "sample",
               "selectable": false,
               "contextWindow": 0,
+              "family": "Claude",
               "tier": "sample",
               "pricing": {
                 "inputPerMillionTokens": 0,
@@ -19094,6 +19096,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "displayName": "sample",
           "selectable": false,
           "contextWindow": 0,
+          "family": "Claude",
           "tier": "sample",
           "pricing": {
             "inputPerMillionTokens": 0,

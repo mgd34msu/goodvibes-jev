@@ -2,7 +2,8 @@
  * model-picker-family.test.ts
  *
  * The model picker files each model under a family read by
- * `engine.runtime.model-family`, once per registry key. A model has no family
+ * `engine.runtime.model-family`, once per exact evidence and installed port.
+ * A model has no family
  * until its reading lands; a reading that does not settle leaves it without
  * one and is not asked again; a read that throws leaves the model unread so a
  * later read asks again.
@@ -62,5 +63,84 @@ describe('ModelFamilyReadings', () => {
     installJudgmentPort(familyPort({ 'gpt-5': ['GPT', 0.95] }, asked));
     expect(await readings.read([model('gpt-5')])).toBe(true);
     expect(readings.known(model('gpt-5'))).toBe('GPT');
+  });
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe('shared family evidence ownership', () => {
+  test('concurrent callers join the same judgment and repeated calls reuse it', async () => {
+    const gate = deferred();
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'Llama', 0.99));
+    installJudgmentPort({ ...fixture.port, async ask(request) { await gate.promise; return fixture.port.ask(request); } });
+    const readings = new ModelFamilyReadings();
+    const evidence = model('opaque');
+    const first = readings.read([evidence]);
+    const second = readings.read([evidence]);
+    gate.resolve();
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(fixture.requests).toHaveLength(1);
+    expect(await readings.read([evidence])).toBe(false);
+  });
+
+  test('replacement metadata under a registry key cannot inherit or be overwritten by an old judgment', async () => {
+    const gate = deferred();
+    const fixture = fakePort((_name, question, state) => choiceAnswer(question,
+      (state as unknown as { displayName: string }).displayName === 'Old' ? 'GPT' : 'Llama', 0.99));
+    installJudgmentPort({ ...fixture.port, async ask(request) {
+      if ((request.state as unknown as { displayName: string }).displayName === 'Old') await gate.promise;
+      return fixture.port.ask(request);
+    } });
+    const readings = new ModelFamilyReadings();
+    const old = { ...model('alias'), displayName: 'Old' };
+    const replacement = { ...old, displayName: 'New' };
+    const pending = readings.read([old]);
+    expect(readings.known(replacement)).toBeUndefined();
+    await readings.read([replacement]);
+    expect(readings.known(replacement)).toBe('Llama');
+    gate.resolve();
+    await pending;
+    expect(readings.known(replacement)).toBe('Llama');
+    expect(readings.known(old)).toBe('GPT');
+    expect(fixture.requests).toHaveLength(2);
+  });
+
+  test('installed-port replacement isolates cached and in-flight judgments', async () => {
+    const readings = new ModelFamilyReadings();
+    const evidence = model('authority');
+    const gate = deferred();
+    const oldPort = fakePort((_name, question) => choiceAnswer(question, 'GPT', 0.99)).port;
+    installJudgmentPort({ ...oldPort, async ask(request) { await gate.promise; return oldPort.ask(request); } });
+    const oldRead = readings.read([evidence]);
+    installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'Claude', 0.99)).port);
+    expect(readings.known(evidence)).toBeUndefined();
+    await readings.read([evidence]);
+    gate.resolve();
+    await oldRead;
+    expect(readings.known(evidence)).toBe('Claude');
+    installJudgmentPort(undefined);
+    expect(readings.known(evidence)).toBeUndefined();
+  });
+
+  test('a failed judgment retries without creating an Other verdict', async () => {
+    let fails = true;
+    const fixture = fakePort((_name, question) => {
+      if (fails) throw new Error('offline');
+      return choiceAnswer(question, 'Other', 0.99);
+    });
+    installJudgmentPort(fixture.port);
+    const readings = new ModelFamilyReadings();
+    const evidence = model('commandline-helper');
+    await expect(readings.read([evidence])).rejects.toThrow('offline');
+    expect(readings.known(evidence)).toBeUndefined();
+    fails = false;
+    await readings.read([evidence]);
+    expect(readings.known(evidence)).toBe('Other');
+    expect(fixture.requests).toHaveLength(2);
   });
 });

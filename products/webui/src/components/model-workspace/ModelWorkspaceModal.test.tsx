@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, jest, mock, test } from 'bun:test';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -26,13 +26,15 @@ const PROVIDERS_RESPONSE = {
   ],
 };
 
+let providerCalls = 0;
+let providersResponse = PROVIDERS_RESPONSE;
 const selectCalls: string[] = [];
 const configSetCalls: [string, unknown][] = [];
 
 mock.module('../../lib/goodvibes', () => ({
   sdk: {
     operator: {
-      providers: { list: () => Promise.resolve(PROVIDERS_RESPONSE) },
+      providers: { list: () => { providerCalls += 1; return Promise.resolve(providersResponse); } },
       models: {
         current: {
           get: () => Promise.resolve({ model: { registryKey: 'anthropic:claude-opus-4', provider: 'anthropic', id: 'claude-opus-4' } }),
@@ -60,20 +62,23 @@ function render() {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
-  flushSync(() => {
+  const setOpen = (open: boolean) => flushSync(() => {
     root.render(
       React.createElement(
         QueryClientProvider,
         { client },
-        React.createElement(ToastProvider, null, React.createElement(ModelWorkspaceModal, { open: true, onClose: () => {} })),
+        React.createElement(ToastProvider, null, React.createElement(ModelWorkspaceModal, { open, onClose: () => {} })),
       ),
     );
   });
+  setOpen(true);
   return {
+    setOpen,
     // document.body: kit overlays (dialogs, drawers, menus) portal there.
     el: document.body,
     unmount: () => {
       flushSync(() => root.unmount());
+      client.clear();
       if (container.parentNode) container.parentNode.removeChild(container);
     },
   };
@@ -95,6 +100,9 @@ function click(el: Element | null | undefined) {
 }
 
 afterEach(() => {
+  jest.useRealTimers();
+  providerCalls = 0;
+  providersResponse = PROVIDERS_RESPONSE;
   selectCalls.length = 0;
   configSetCalls.length = 0;
 });
@@ -180,5 +188,85 @@ describe('ModelWorkspaceModal: multi-target routing', () => {
     await waitFor(() => configSetCalls.length > 0);
     expect(configSetCalls).toEqual([['provider.embeddingProvider', 'openai']]);
     unmount();
+  });
+});
+
+
+// Exercise the actual modal and QueryObserver timers, without waiting five seconds.
+const realSetImmediate = globalThis.setImmediate;
+async function pump(): Promise<void> {
+  for (let turn = 0; turn < 5; turn += 1) {
+    jest.advanceTimersByTime(0);
+    await new Promise<void>((resolve) => realSetImmediate(resolve));
+    flushSync(() => {});
+  }
+}
+
+function chooseGroup(el: HTMLElement, label: string): void {
+  click(el.querySelector('[aria-label="Group"]'));
+  const option = [...el.querySelectorAll('[role="option"]')].find((item) => item.textContent === label);
+  expect(option).toBeDefined();
+  click(option);
+}
+
+describe('ModelWorkspaceModal: family enrichment lifecycle', () => {
+  test('polls only while open and family-grouped, resumes on reopen, and stops on unmount', async () => {
+    jest.useFakeTimers();
+    providersResponse = { providers: PROVIDERS_RESPONSE.providers.map((provider) => ({
+      ...provider,
+      models: provider.models.map((model) => ({ ...model, family: provider.providerId === 'anthropic' ? 'Claude' : undefined })),
+    })) };
+    const { el, setOpen, unmount } = render();
+    try {
+      await pump();
+      expect(providerCalls).toBe(1);
+      jest.advanceTimersByTime(15_000);
+      await pump();
+      expect(providerCalls).toBe(1);
+
+      chooseGroup(el, 'Family');
+      await pump();
+      expect(el.textContent).toContain('Ungrouped');
+      providersResponse = {
+        providers: PROVIDERS_RESPONSE.providers.map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => ({ ...model, family: provider.providerId === 'anthropic' ? 'Claude' : 'Other' })),
+        })),
+      };
+      jest.advanceTimersByTime(5_000);
+      await pump();
+      expect(providerCalls).toBe(2);
+      expect(el.textContent).toContain('Other');
+      expect(el.textContent).not.toContain('Ungrouped');
+
+      setOpen(false);
+      await pump();
+      const closedCalls = providerCalls;
+      jest.advanceTimersByTime(15_000);
+      await pump();
+      expect(providerCalls).toBe(closedCalls);
+      expect(el.querySelector('[role="dialog"]')).toBeNull();
+
+      setOpen(true);
+      await pump();
+      expect(providerCalls).toBe(closedCalls + 1);
+      jest.advanceTimersByTime(5_000);
+      await pump();
+      expect(providerCalls).toBe(closedCalls + 2);
+      chooseGroup(el, 'Provider');
+      await pump();
+      const regroupedCalls = providerCalls;
+      jest.advanceTimersByTime(15_000);
+      await pump();
+      expect(providerCalls).toBe(regroupedCalls);
+      chooseGroup(el, 'Family');
+      await pump();
+    } finally {
+      unmount();
+    }
+    const unmountedCalls = providerCalls;
+    jest.advanceTimersByTime(15_000);
+    await pump();
+    expect(providerCalls).toBe(unmountedCalls);
   });
 });

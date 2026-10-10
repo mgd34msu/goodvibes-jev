@@ -51,7 +51,11 @@ for (const [key, args] of [['inspect', ['providers', 'inspect', 'cloud', '--json
   answer.requests.length = 0;
   if ((await handleGoodVibesCliCommand(runtime(args))).exitCode !== 0) throw new Error(key + ' failed');
   outputs[key] = JSON.parse(printed.pop());
-  if (key === 'models') outputs.modelReads = answer.requests.length;
+  if (key === 'models') {
+    // Model-family presentation has its own reads; count the setup battery only.
+    const setupReads = answer.requests.filter(request => request.context?.battery === 'providers.setup-presentation');
+    outputs.modelReads = setupReads.map(request => JSON.parse(String(request.state)).provider.id);
+  }
 }
 const bundlePath = join(home, 'bundle.json');
 const exported = await handleBundleCommand(runtime(['support-bundle', 'export', bundlePath, '--json']));
@@ -78,7 +82,7 @@ test('actual providers, models and support-bundle callers await shared setup fac
     expect(output.inspect.setup.setupClass).toBe('cloud-account');
     expect(output.current.setup.setupClass).toBe('self-hosted');
     expect(output.models.map((row: { setupClass: string }) => row.setupClass)).toEqual(['self-hosted', 'self-hosted', 'cloud-account', 'cloud-account', 'unknown', 'unknown']);
-    expect(output.modelReads).toBe(3);
+    expect(output.modelReads.sort()).toEqual(['cloud', 'gateway', 'missing']);
     expect(output.bundle.map((row: { setup: { setupClass: string } }) => row.setup.setupClass)).toEqual(['self-hosted', 'cloud-account', 'unknown']);
     expect(output.unavailable.setup.setupClass).toBe('unknown');
     expect(output.disposed).toBe(6); expect(output.stopped).toBe(6);

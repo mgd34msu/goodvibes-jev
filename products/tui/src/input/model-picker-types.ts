@@ -1,3 +1,4 @@
+import { modelFamilyReadings, type ModelFamily } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ModelDefinition } from '@goodvibes-jev/engine/sdk/platform/providers';
 
 export type PickerMode = 'model' | 'provider' | 'effort' | 'contextCap' | 'embeddingProvider';
@@ -48,46 +49,15 @@ export interface EmbeddingProviderPickerEntry {
  */
 export type CategoryFilter = 'all' | 'free' | 'paid' | 'subscription';
 
-export type ModelFamily =
-  | 'GPT'
-  | 'Claude'
-  | 'Gemini'
-  | 'Llama'
-  | 'Qwen'
-  | 'GLM'
-  | 'MiniMax'
-  | 'DeepSeek'
-  | 'Mistral'
-  | 'Command'
-  | 'Grok'
-  | 'Kimi'
-  | 'Other';
+export type { ModelFamily };
 
 export type CapabilityFilter = 'reasoning' | 'toolUse' | 'multimodal' | 'none';
 export type BenchmarkSort = 'none' | 'composite' | 'swe' | 'gpqa';
 export type GroupByMode = 'provider' | 'family' | 'pricingTier' | 'qualityTier';
 
-const FAMILY_PATTERNS: Array<{ pattern: RegExp; family: ModelFamily }> = [
-  { pattern: /claude/i,          family: 'Claude' },
-  { pattern: /gpt|\bo1\b|\bo3\b|\bo4\b/i, family: 'GPT' },
-  { pattern: /gemini/i,          family: 'Gemini' },
-  { pattern: /llama/i,           family: 'Llama' },
-  { pattern: /qwen/i,            family: 'Qwen' },
-  { pattern: /glm|chatglm/i,     family: 'GLM' },
-  { pattern: /minimax|abab/i,    family: 'MiniMax' },
-  { pattern: /deepseek/i,        family: 'DeepSeek' },
-  { pattern: /mistral|mixtral/i, family: 'Mistral' },
-  { pattern: /command|cohere/i,  family: 'Command' },
-  { pattern: /grok/i,            family: 'Grok' },
-  { pattern: /kimi|moonshot/i,   family: 'Kimi' },
-];
-
-export function detectFamily(model: ModelDefinition): ModelFamily {
-  const haystack = `${model.id} ${model.displayName}`;
-  for (const { pattern, family } of FAMILY_PATTERNS) {
-    if (pattern.test(haystack)) return family;
-  }
-  return 'Other';
+/** Render only the canonical settled family for this exact catalog evidence. */
+export function detectFamily(model: ModelDefinition): ModelFamily | undefined {
+  return modelFamilyReadings.known(model);
 }
 
 export function tierToCategoryFilter(tier: string | undefined): CategoryFilter {

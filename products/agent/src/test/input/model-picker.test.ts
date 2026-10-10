@@ -1,3 +1,6 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { modelFamilyReadings } from '@goodvibes-jev/engine/sdk/platform/providers';
 /**
  * Tests for ModelPickerModal state class.
  */
@@ -734,42 +737,74 @@ describe('ModelPickerModal', () => {
   // ── Stage 5: Family grouping ──────────────────────────────────────────────
 
   describe('family grouping (Stage 5)', () => {
-    test('detectFamily identifies Claude family', () => {
+    let previousPort: ReturnType<typeof installJudgmentPort>;
+    beforeEach(() => {
+      const answers: Record<string, string> = {
+        'claude-3-sonnet': 'Claude', 'claude-opus': 'Claude', 'gpt-4o': 'GPT',
+        'gemini-2.5-pro': 'Gemini', 'deepseek-v3': 'DeepSeek',
+        'some-random-model': 'Other', 'commandline-helper': 'Other',
+      };
+      previousPort = installJudgmentPort(fakePort((_name, question, state) => {
+        const id = (state as unknown as { id: string }).id;
+        return choiceAnswer(question, answers[id] ?? 'Other', id === 'unsettled' ? 0.1 : 0.99);
+      }).port);
+    });
+    afterEach(() => { installJudgmentPort(previousPort); });
+
+    test('detectFamily identifies Claude family', async () => {
       const m = makeModel({ id: 'claude-3-sonnet', displayName: 'Claude 3 Sonnet' });
+      await modelFamilyReadings.read([m]);
       expect(detectFamily(m)).toBe('Claude');
     });
 
-    test('detectFamily identifies GPT family', () => {
+    test('detectFamily identifies GPT family', async () => {
       const m = makeModel({ id: 'gpt-4o', displayName: 'GPT-4o' });
+      await modelFamilyReadings.read([m]);
       expect(detectFamily(m)).toBe('GPT');
     });
 
-    test('detectFamily identifies Gemini family', () => {
+    test('detectFamily identifies Gemini family', async () => {
       const m = makeModel({ id: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' });
+      await modelFamilyReadings.read([m]);
       expect(detectFamily(m)).toBe('Gemini');
     });
 
-    test('detectFamily identifies DeepSeek family', () => {
+    test('detectFamily identifies DeepSeek family', async () => {
       const m = makeModel({ id: 'deepseek-v3', displayName: 'DeepSeek V3' });
+      await modelFamilyReadings.read([m]);
       expect(detectFamily(m)).toBe('DeepSeek');
     });
 
-    test('detectFamily returns Other for unknown model', () => {
+    test('detectFamily returns Other for unknown model', async () => {
       const m = makeModel({ id: 'some-random-model', displayName: 'Random Model' });
+      await modelFamilyReadings.read([m]);
       expect(detectFamily(m)).toBe('Other');
     });
 
-    test('family grouping produces correct group headers in getItems()', () => {
+    test('family grouping produces correct group headers in getItems()', async () => {
       const claudeM = makeModel({ id: 'claude-opus', displayName: 'Claude Opus', provider: 'anthropic' });
       const gptM = makeModel({ id: 'gpt-4o', displayName: 'GPT-4o', provider: 'openai' });
       const deepseekM = makeModel({ id: 'deepseek-v3', displayName: 'DeepSeek V3', provider: 'deepseek' });
       picker.models = [claudeM, gptM, deepseekM];
+      await modelFamilyReadings.read(picker.models);
       picker.groupBy = 'family';
       const items = picker.getItems();
       const headers = items.filter(i => i.isGroupHeader).map(i => i.label);
       expect(headers).toContain('Claude');
       expect(headers).toContain('GPT');
       expect(headers).toContain('DeepSeek');
+    });
+    test('unsettled and unread names remain ungrouped, while an explicit Other stays Other', async () => {
+      const unread = makeModel({ id: 'claude-unread' });
+      const unsettled = makeModel({ id: 'unsettled' });
+      const other = makeModel({ id: 'commandline-helper' });
+      await modelFamilyReadings.read([unsettled, other]);
+      expect(detectFamily(unread)).toBeUndefined();
+      expect(detectFamily(unsettled)).toBeUndefined();
+      expect(detectFamily(other)).toBe('Other');
+      picker.models = [unread, unsettled, other];
+      picker.groupBy = 'family';
+      expect(picker.getItems().filter((item) => item.isGroupHeader).map((item) => item.label).sort()).toEqual(['Other', 'Ungrouped']);
     });
   });
 

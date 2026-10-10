@@ -25467,6 +25467,7 @@ export interface OperatorMethodOutputMap {
             displayName: string;
             selectable: boolean;
             contextWindow: number;
+            family?: "Claude" | "Command" | "DeepSeek" | "GLM" | "GPT" | "Gemini" | "Grok" | "Kimi" | "Llama" | "MiniMax" | "Mistral" | "Other" | "Qwen";
             tier?: string;
             pricing?: {
                 inputPerMillionTokens: number;
@@ -25558,6 +25559,7 @@ export interface OperatorMethodOutputMap {
                 displayName: string;
                 selectable: boolean;
                 contextWindow: number;
+                family?: "Claude" | "Command" | "DeepSeek" | "GLM" | "GPT" | "Gemini" | "Grok" | "Kimi" | "Llama" | "MiniMax" | "Mistral" | "Other" | "Qwen";
                 tier?: string;
                 pricing?: {
                     inputPerMillionTokens: number;
@@ -25584,6 +25586,7 @@ export interface OperatorMethodOutputMap {
             displayName: string;
             selectable: boolean;
             contextWindow: number;
+            family?: "Claude" | "Command" | "DeepSeek" | "GLM" | "GPT" | "Gemini" | "Grok" | "Kimi" | "Llama" | "MiniMax" | "Mistral" | "Other" | "Qwen";
             tier?: string;
             pricing?: {
                 inputPerMillionTokens: number;

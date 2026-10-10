@@ -398,6 +398,11 @@ export class ModelPickerModal {
     this.scrollOffset = 0;
   }
 
+  /** Whether an asynchronous catalog completion still belongs to this open. */
+  isCatalogLoadCurrent(ticket: number): boolean {
+    return this.active && ticket === this.catalogTicket;
+  }
+
   /** Mark the catalog as loading; the returned ticket lets fillCatalog drop a load that a close or a newer open overtook. */
   beginCatalogLoad(): number {
     this.catalogLoading = true;
@@ -411,7 +416,7 @@ export class ModelPickerModal {
    * started since `ticket` was issued.
    */
   fillCatalog(ticket: number, fill: ModelPickerCatalogFill, done = true): boolean {
-    if (!this.active || ticket !== this.catalogTicket) return false;
+    if (!this.isCatalogLoadCurrent(ticket)) return false;
     const selectedId = this.selectedItemId();
     if (fill.models) this.models = fill.models;
     if (fill.providers) this.providers = fill.providers;

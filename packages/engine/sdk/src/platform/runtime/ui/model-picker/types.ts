@@ -12,20 +12,8 @@ export type { ProviderStatus };
 
 export type CategoryFilter = 'all' | 'free' | 'paid' | 'subscription';
 
-export type ModelFamily =
-  | 'GPT'
-  | 'Claude'
-  | 'Gemini'
-  | 'Llama'
-  | 'Qwen'
-  | 'GLM'
-  | 'MiniMax'
-  | 'DeepSeek'
-  | 'Mistral'
-  | 'Command'
-  | 'Grok'
-  | 'Kimi'
-  | 'Other';
+import type { ModelFamily } from '../../../providers/model-family.js';
+export type { ModelFamily };
 
 /**
  * Capability flags indicating what a model can do.
