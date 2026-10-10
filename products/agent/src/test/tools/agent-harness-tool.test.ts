@@ -771,10 +771,33 @@ describe('agent_harness tool', () => {
       'Edit the selected calendar event only after separate confirmation. User request: Brief my calendar for today.': '',
       'Read upcoming agenda events. User request: Brief my calendar for today.': 'mcp:caldav-agenda:mcp:caldav-agenda:caldav.list_events',
     };
+    // Scripted P11 catalog readings keep discovery independent of local keyword matching.
+    const catalogPicks: Readonly<Record<string, readonly string[]>> = {
+      settings: ['settings', 'get_setting', 'set_setting', 'reset_setting'],
+      'personal operations': ['personal_ops'],
+      'ongoing-work': ['autonomy_intake'],
+      'local shell execution': ['execution_posture'],
+      'file edit undo recovery': ['file_recovery'],
+      'execution history record': ['execution_history'],
+      'blind model comparison documents uploads': ['document_ops'],
+      'set setting': ['set_setting'],
+      'automation.schedules.create': ['automation.schedules.create'],
+      custom: ['agent_custom_action', 'agent_custom_report'],
+      'confirmed custom Agent action': ['agent_custom_action'],
+      'send notice': ['agent_z_send_notice'],
+      'target id': ['agent_custom_action'],
+      'custom Agent': ['agent_custom_action', 'agent_custom_report'],
+      knowledge: ['knowledge.map', 'knowledge.connector.doctor', 'knowledge.ingest.url'],
+      'Test briefing command': ['brief'],
+      'Agent-local memory records': ['memory', 'memory-review'],
+      'not-a-command': [],
+    };
     const personalOps = fakePort((_name, _question, rawState) => {
       const state = rawState as unknown as { query: string; candidate: { name: string } };
+      const catalogPick = catalogPicks[state.query];
+      if (catalogPick !== undefined) return noulAnswer(catalogPick.includes(state.candidate.name) ? 0.95 : 0.01);
       const pick = personalOpsPicks[state.query];
-      if (pick === undefined) throw new Error(`Unscripted PersonalOps fixture ${state.query}`);
+      if (pick === undefined) throw new Error(`Unscripted catalog fixture ${state.query}`);
       return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
     });
     const lifetime = fakePort(() => noulAnswer(0.01));
@@ -12280,6 +12303,12 @@ describe('agent_harness tool', () => {
       expect(byCommandName.output).toContain('Resolved by commandName case-insensitive-name.');
       expect(byCommandName.output).toContain('args:one|two');
 
+      let briefingRuns = 0;
+      fixture.commandRegistry.unregister('brief');
+      fixture.commandRegistry.register({
+        name: 'brief', description: 'Test briefing command',
+        handler: (_args, ctx) => { briefingRuns++; ctx.print('briefing output'); },
+      });
       const byQuery = await fixture.tool.execute({
         mode: 'run_command',
         query: 'Test briefing command',
@@ -12287,9 +12316,12 @@ describe('agent_harness tool', () => {
         explicitUserRequest: 'Show the briefing.',
       });
       expect(byQuery.success).toBe(true);
-      expect(byQuery.output).toContain('Command /brief completed.');
-      expect(byQuery.output).toContain('Resolved by query description.');
-      expect(byQuery.output).toContain('briefing output');
+      expect(JSON.parse(byQuery.output!)).toMatchObject({
+        status: 'selection_required', reason: 'exact_command_identity_required',
+        candidates: [{ commandName: 'brief', inspectRoute: 'workspace action:"command" commandName:"brief"' }],
+      });
+      expect(briefingRuns).toBe(0);
+      expect(byQuery.output).not.toContain('briefing output');
 
       const ambiguous = await fixture.tool.execute({
         mode: 'run_command',
@@ -14166,6 +14198,20 @@ interface CatalogPage {
 }
 
 describe('agent_harness catalogs: an empty page states its cause', () => {
+  let previousPort: JudgmentPort | undefined;
+  beforeEach(() => {
+    const readings: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+      'zzz-no-such-tool': {}, 'zzz-no-such-command': {},
+    };
+    previousPort = installJudgmentPort(fakePort((_name, _question, rawState) => {
+      const state = rawState as unknown as { query: string; candidate: { name: string } };
+      const probabilities = readings[state.query];
+      if (!probabilities) throw new Error(`Unscripted empty-catalog fixture ${state.query}`);
+      return noulAnswer(probabilities[state.candidate.name] ?? 0.01);
+    }).port);
+  });
+  afterEach(() => { installJudgmentPort(previousPort); });
+
   test('an unqualified call returns the whole catalog for every discovery mode', async () => {
     const fixture = makeFixture({ builtinCommands: true });
     try {

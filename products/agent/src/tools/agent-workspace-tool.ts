@@ -1,3 +1,4 @@
+import { catalogRoutingInput, createHarnessCatalogInputProjector, forwardHarnessCatalogCall, protectHarnessCatalogTool } from './agent-harness-catalog-ingress.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool, isResearchReportEditor } from './agent-research-ingress.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -196,6 +197,12 @@ function isWorkspaceReport(args: Record<string, unknown>): boolean {
   return isResearchReportEditor({ fields: args.fields });
 }
 
+function isWorkspaceCatalogQuery(input: Record<string, unknown>): boolean {
+  const routing = catalogRoutingInput(input);
+  return ['commands', 'command', 'run_command'].includes(readAction(routing))
+    && [routing.query, routing.target].some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
 export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
   const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
     commandRegistry: deps.commandRegistry,
@@ -243,7 +250,8 @@ export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown, options) => {
+    execute: async (rawArgs, options) => {
+      const dispatch = (input: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, input, options);
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentWorkspaceToolArgs;
       const action = readAction(args);
 
@@ -260,16 +268,16 @@ export function createAgentWorkspaceTool(deps: AgentWorkspaceToolDeps): Tool {
       if (action === 'run_keybinding') return harnessTool.execute(keybindingArgs('run_keybinding', args));
       if (action === 'set_keybinding') return harnessTool.execute(keybindingArgs('set_keybinding', args));
       if (action === 'reset_keybinding') return harnessTool.execute(keybindingArgs('reset_keybinding', args));
-      if (action === 'commands') return harnessTool.execute(compactArgs({ mode: 'commands', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
-      if (action === 'command') return harnessTool.execute(commandArgs('command', args));
-      if (action === 'run_command') return harnessTool.execute(commandArgs('run_command', args));
+      if (action === 'commands') return dispatch(compactArgs({ mode: 'commands', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
+      if (action === 'command') return dispatch(commandArgs('command', args));
+      if (action === 'run_command') return dispatch(commandArgs('run_command', args));
       if (action === 'cli_commands') return harnessTool.execute(compactArgs({ mode: 'cli_commands', target: args.target, query: args.query, limit: args.limit, includeParameters: args.includeParameters }));
       if (action === 'cli_command') return harnessTool.execute(commandArgs('cli_command', args));
 
       return error('Unknown workspace action. Use action:"status" or action:"actions" to inspect the workspace.');
     },
   };
-  return protectAgentHarnessResearchTool(tool, deps.toolRegistry, isWorkspaceReport);
+  return protectHarnessCatalogTool(protectAgentHarnessResearchTool(tool, deps.toolRegistry, isWorkspaceReport), deps.toolRegistry, isWorkspaceCatalogQuery, deps.commandContext);
 }
 
 export function registerAgentWorkspaceTool(
@@ -278,6 +286,6 @@ export function registerAgentWorkspaceTool(
   commandContext: CommandContext,
 ): void {
   if (!registry.has('workspace')) registry.register(createAgentWorkspaceTool({ commandRegistry, commandContext, toolRegistry: registry }), {
-    inputProjection: createAgentHarnessResearchProjector(registry, isWorkspaceReport),
+    inputProjection: createHarnessCatalogInputProjector(registry, createAgentHarnessResearchProjector(registry, isWorkspaceReport), isWorkspaceCatalogQuery, commandContext),
   });
 }

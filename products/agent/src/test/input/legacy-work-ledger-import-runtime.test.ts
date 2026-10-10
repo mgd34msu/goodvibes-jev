@@ -17,7 +17,7 @@ test('actual Agent model harness reads without confirmation claims; forged flags
     prepare: async () => { calls.push('prepare'); return prepared; }, status: async () => { calls.push('status'); return null; },
     submit: forbidden, reconsider: forbidden, recover: forbidden, cancel: forbidden, restart: forbidden, dispose() {},
   }));
-  const catalog = describeHarnessCommand(registry, { commandName: 'work-import' });
+  const catalog = await describeHarnessCommand(registry, { commandName: 'work-import' });
   expect(catalog).toMatchObject({ policy: { effect: 'mixed', requiresConfirmation: false }, modelAccess: {
     run: 'agent_harness mode:"run_command" commandName:"work-import"',
     directRun: 'workspace action:"run_command" commandName:"work-import"',

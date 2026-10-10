@@ -87,9 +87,10 @@ function makeConfigManager(overrides: Record<string, unknown> = {}) {
 }
 
 describe('capability-advertisement honesty (agent side)', () => {
-  test('discovery: a ws-only method with no REST binding is never advertised as a live capability', () => {
+  test('discovery: a ws-only method with no REST binding is never advertised as a live capability', async () => {
     const unavailableMethodId = firstWsOnlyMethodId();
-    const summary = operatorMethodSummary({ query: unavailableMethodId });
+    const summary = await operatorMethodSummary({ limit: 500 });
+    expect(summary.returned).toBe(summary.total);
     const methods = summary.methods as readonly Record<string, unknown>[];
     const match = methods.find((method) => method.id === unavailableMethodId);
     // The discovery catalog is built only from contract methods that carry
@@ -100,17 +101,17 @@ describe('capability-advertisement honesty (agent side)', () => {
     expect(match).toBeUndefined();
   });
 
-  test('discovery: operator_method lookup for a ws-only method reports it unknown rather than offering a false route', () => {
+  test('discovery: operator_method lookup for a ws-only method reports it unknown rather than offering a false route', async () => {
     const unavailableMethodId = firstWsOnlyMethodId();
-    const resolution = describeHarnessOperatorMethod({ methodId: unavailableMethodId });
+    const resolution = await describeHarnessOperatorMethod({ methodId: unavailableMethodId });
     expect(resolution.status).toBe('missing_lookup');
     if (resolution.status !== 'missing_lookup') throw new Error('expected missing_lookup');
     expect(resolution.usage).toContain(unavailableMethodId);
     expect(resolution.usage).toContain('host action:"methods"');
   });
 
-  test('discovery: a genuinely-served method (automation.schedules.create) still renders as available', () => {
-    const resolution = describeHarnessOperatorMethod({ methodId: 'automation.schedules.create' });
+  test('discovery: a genuinely-served method (automation.schedules.create) still renders as available', async () => {
+    const resolution = await describeHarnessOperatorMethod({ methodId: 'automation.schedules.create' });
     expect(resolution.status).toBe('found');
     if (resolution.status !== 'found') throw new Error('expected found');
     expect(resolution.method.available).toBe(true);
@@ -167,9 +168,9 @@ describe('capability-advertisement honesty (agent side)', () => {
    * live routes. Asserting that here is what stops the degradation logic from
    * quietly going on describing them as broken after they were fixed.
    */
-  test('discovery: the email methods the daemon now serves render as live, not degraded', () => {
+  test('discovery: the email methods the daemon now serves render as live, not degraded', async () => {
     for (const methodId of ['email.inbox.list', 'email.inbox.read', 'email.send', 'email.draft.create']) {
-      const resolution = describeHarnessOperatorMethod({ methodId });
+      const resolution = await describeHarnessOperatorMethod({ methodId });
       expect(resolution.status, `${methodId} should be catalogued`).toBe('found');
       if (resolution.status !== 'found') throw new Error('expected found');
       expect(resolution.method.available, `${methodId} is served by the daemon now`).toBe(true);
@@ -184,9 +185,9 @@ describe('capability-advertisement honesty (agent side)', () => {
    * without a served route (see the file header), so it carries that role now.
    * Asserting the drafts family here catches the same staleness if it recurs.
    */
-  test('discovery: the channels drafts methods the daemon now serves render as live, not degraded', () => {
+  test('discovery: the channels drafts methods the daemon now serves render as live, not degraded', async () => {
     for (const methodId of ['channels.drafts.save', 'channels.drafts.get', 'channels.drafts.list', 'channels.drafts.delete']) {
-      const resolution = describeHarnessOperatorMethod({ methodId });
+      const resolution = await describeHarnessOperatorMethod({ methodId });
       expect(resolution.status, `${methodId} should be catalogued`).toBe('found');
       if (resolution.status !== 'found') throw new Error('expected found');
       expect(resolution.method.available, `${methodId} is served by the daemon now`).toBe(true);

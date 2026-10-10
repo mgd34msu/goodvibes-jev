@@ -67,7 +67,7 @@ export async function planAgentTaskRoute(
   const memory = externalMemoryProviderCatalog(await externalMemoryLiveProviderRecords(context, options), externalMemoryReceiptEvidence(context));
   options.signal?.throwIfAborted();
   const matchLimit = args.includeParameters === true ? 6 : 3;
-  const modes = listHarnessModes({ limit: 1000 }).modes as readonly Record<string, unknown>[];
+  const modes = (await listHarnessModes({ limit: 1000 })).modes as readonly Record<string, unknown>[];
   // List the whole catalog, with no local substring shortlist or hand-scored ranking.
   const workspace = rankCatalog(request, listWorkspaceActions(context, { limit: 1000 }), matchLimit, options.signal);
   const harness = rankCatalog(request, modes, matchLimit, options.signal);

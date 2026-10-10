@@ -23,6 +23,47 @@ Files: 1602. PORT 1119, JEV 252, HOIST 229, DROP 2. Decision points: 443.
 | Tools: other agent tools (route planner, policy, registries-facing tools) | 181 | 72 | 37 | 72 | 0 | 138 |
 | Test: cross-cutting miscellany | 167 | 133 | 28 | 5 | 1 | 1 |
 
+## P11 bounded catalog adoption — 2026-10-10
+
+Current source replaces lexical selection/ranking in `agent-harness-mode-catalog.ts`,
+`agent-harness-model-tool-catalog.ts`, `agent-harness-operator-methods.ts`, and
+`agent-harness-command-catalog.ts` with the existing protected `rankHarnessCatalog`
+and canonical `engine.tools.registry-rank`. Actual `agent_harness`, `host`, and
+`workspace` callers propagate asynchronous cancellation/current authority and
+retain original admitted args/options across translation. The operator category
+vocabulary module is retired into the canonical ranking owner, as its original
+JEV row required; no category alias table decides relevance. Exact ids/aliases,
+HTTP method eligibility, no-query catalogs, page limits and metadata stay code.
+Uncertain/multiple results stay candidates, and a semantic command reading cannot
+execute: `run_command` requires a separately named command after selection.
+
+Complete original invocation and candidate semantic evidence is screened before
+projection, generic readers, hosted port access and output. Full model/operator
+schemas are preflighted before flattening. New callers hold rather than returning
+original semantic fields when local protection redacts any part. Source/handler/
+registration/session/admission changes fence late reads and nested command effects.
+Existing opaque Personal Ops receipt metadata remains captured locally but unsent;
+that distinct return-only contract is preserved, not used to exempt new semantic
+catalog fields. [Contract and source-to-caller evidence](../design/agent-harness-catalog-ranking.md).
+
+The real operator catalog is 470 HTTP-bearing entries from 542 contract methods:
+one query uses all 470 canonical pair readings (maximum eight in flight) and
+approximately 59 bounded sequential local screening batches, plus ingress. Tests
+exercise cancellation/backpressure on that complete catalog; synthetic fixture
+latency does not qualify live cost, latency or classification quality. Final
+exact-source types/aggregate evidence and independent review remain separately
+required. THE-35 live proofs and THE-15 integrated acceptance remain open.
+
+This credits original catalog mode/model-tool/operator/command rows (including
+operator vocabulary, description and fuzzy command lookup) only. Existing Personal
+Ops canonical intake is not redone. `agent/harness-control.ts` still uses the shared
+lexical settings helper and other semantic inventory rows remain separately open.
+One separately tested generated-input repair replaces only the Personal Ops
+review filename's epoch suffix with an alphabetic UUID: filenames are semantic
+labels, and some epochs trigger unchanged card screening. Metadata/ID-based reads
+retain old-file compatibility; user title material receives no new exemption.
+Original inventory rationale and historical row locations below are retained.
+
 ## Entry, renderer and shared utils
 
 This slice covers the agent's main entry point (composition root, CLI flags, version, provider auth route display), the full terminal renderer (theme, escapes, status glyphs, primitives, layout, progress, thinking, compositor, conversation surface, overlays, markdown, code blocks, tool calls, diffs, modals), `src/utils`, and the matching tests under `src/test/renderer` and `src/test/utils`.
