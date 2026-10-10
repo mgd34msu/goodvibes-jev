@@ -11,6 +11,7 @@ import { localHardwareProfile, modelReadinessScore } from './agent-harness-model
 import { contextWindowFor, loadModels, listProviderIds, modelBenchmarkCompositeScore, modelBenchmarkQualityTier, modelAvailable, modelConfigured, modelCapabilities, modelCurrent, modelDisplayName, modelModelId, modelProviderId, modelReasoning, modelRegistryKey, modelTier, readConfig, readProviderApi } from './agent-harness-model-catalog.ts';
 import type { AgentHarnessModelRoutingArgs, LocalModelServerEndpoint, ModelCandidate, ModelProviderHealthSignal, ModelRouteLookupSource, ModelRouteResolution, RouteCandidate } from './agent-harness-model-routing-types.ts';
 import type { ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { rankHarnessCatalog } from './agent-harness-catalog-ranking.ts';
 import { readLimit, readString } from './agent-harness-model-routing-utils.ts';
 export type { AgentHarnessModelRoutingArgs } from './agent-harness-model-routing-types.ts';
 export { localModelCookbook } from './agent-harness-local-model-cookbook.ts';
@@ -153,44 +154,16 @@ function lookupFromArgs(args: AgentHarnessModelRoutingArgs): { readonly source: 
   return query ? { source: 'query', input: query } : null;
 }
 
-function routeSearchText(route: RouteCandidate): string {
-  return [
-    route.id,
-    route.label,
-    route.detail,
-    ...route.settingKeys,
-    ...route.commands,
-    ...route.uiSurfaces,
-    JSON.stringify(route.currentValue),
-  ].join('\n').toLowerCase();
-}
+type ModelCatalogCandidate = RouteCandidate | ModelCandidate | LocalModelServerEndpoint;
 
-function modelSearchText(model: ModelCandidate): string {
-  return [
-    model.registryKey,
-    model.modelId,
-    model.providerId,
-    model.displayName,
-    model.current ? 'current selected active' : '',
-    model.pinned ? 'pinned favorite' : '',
-    ...model.reasoningEffort,
-    JSON.stringify(model.capabilities),
-  ].join('\n').toLowerCase();
-}
-
-function localEndpointSearchText(endpoint: LocalModelServerEndpoint): string {
-  return [
-    endpoint.id,
-    endpoint.providerId ?? '',
-    endpoint.stack ?? '',
-    endpoint.baseUrl,
-    endpoint.modelsUrl,
-    endpoint.diagnosticStatus,
-    ...endpoint.sources,
-    ...endpoint.sourceDetails,
-    ...endpoint.modelRoutes,
-    ...endpoint.notes,
-  ].join('\n').toLowerCase();
+/** Candidate identity is structural. All candidates reach the canonical reader;
+ * original source protection precedes this bounded descriptive projection. */
+function rankModelCatalog<T extends ModelCatalogCandidate>(entries: readonly T[], query: string, reading: ModelReadingOptions) {
+  return rankHarnessCatalog(entries, query, entry => ({
+    id: `${entry.kind}:${entry.kind === 'model' ? entry.registryKey : entry.id}`,
+    description: JSON.stringify(entry),
+    evidence: entry,
+  }), 'agent.harness.model-routing', { ...reading, requirePreservedSource: true });
 }
 
 function describeLocalServerEndpointRoute(endpoint: LocalModelServerEndpoint, lookup?: Record<string, unknown>): Record<string, unknown> {
@@ -370,7 +343,7 @@ export async function modelRoutingCatalogStatus(context: CommandContext): Promis
 }
 
 export async function modelRoutingSummary(context: CommandContext, args: AgentHarnessModelRoutingArgs, reading: ModelReadingOptions = {}): Promise<Record<string, unknown>> {
-  const query = readString(args.query).toLowerCase();
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const [rawModels, providerIds, currentModel] = await Promise.all([
     loadModels(context),
@@ -380,8 +353,12 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
   reading.assertCurrent?.();
   const models = attachLocalBenchmarkLatencies(context, rawModels);
   const routes = routeCandidates(context);
-  const filteredRoutes = routes.filter((route) => !query || routeSearchText(route).includes(query));
-  const filteredModels = models.filter((model) => !query || modelSearchText(model).includes(query));
+  const ranked = query ? await rankModelCatalog([...routes, ...models], query, reading) : undefined;
+  reading.assertCurrent?.();
+  const routeMatches = ranked ? ranked.matches.flatMap(({ entry, judgment }) => entry.kind === 'route' ? [{ entry, judgment }] : [])
+    : routes.map(entry => ({ entry, judgment: undefined }));
+  const modelMatches = ranked ? ranked.matches.flatMap(({ entry, judgment }) => entry.kind === 'model' ? [{ entry, judgment }] : [])
+    : models.map(entry => ({ entry, judgment: undefined }));
   const limit = readLimit(args.limit, 100);
   const currentRegistryKey = currentModel ? modelRegistryKey(currentModel) : '';
   const listedCurrentModel = currentRegistryKey
@@ -395,11 +372,14 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
   reading.assertCurrent?.();
   const cookbook = reading.sourceOwner ? await readLocalModelCookbook(context, includeParameters, reading) : localModelCookbook(context, includeParameters);
   reading.assertCurrent?.();
-  const descriptions = new Map<ModelCandidate, Promise<Record<string, unknown>>>();
+  // Ranking snapshots entries. Equal captured facts still share enrichment;
+  // an unavailable current-model override has distinct facts and stays separate.
+  const descriptions = new Map<string, Promise<Record<string, unknown>>>();
   const describe = (model: ModelCandidate) => {
-    const existing = descriptions.get(model);
+    const key = JSON.stringify(model);
+    const existing = descriptions.get(key);
     if (existing) return existing;
-    const result = describeModel(model, { context, includeParameters, reading }); descriptions.set(model, result); return result;
+    const result = describeModel(model, { context, includeParameters, reading }); descriptions.set(key, result); return result;
   };
   return {
     status: readProviderApi(context) ? 'available' : 'degraded',
@@ -429,11 +409,15 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
     },
     providers: providerIds,
     localCookbook: cookbook,
-    routes: await Promise.all(filteredRoutes.slice(0, limit).map((route) => describeRoute(route, { context, includeParameters, reading, cookbook }))),
-    models: await Promise.all(filteredModels.slice(0, limit).map((model) => describe(model))),
+    routes: await Promise.all(routeMatches.slice(0, limit).map(async ({ entry, judgment }) => ({
+      ...await describeRoute(entry, { context, includeParameters, reading, cookbook }), ...(judgment ? { judgment } : {}),
+    }))),
+    models: await Promise.all(modelMatches.slice(0, limit).map(async ({ entry, judgment }) => ({
+      ...await describe(entry), ...(judgment ? { judgment } : {}),
+    }))),
     returned: {
-      routes: Math.min(filteredRoutes.length, limit),
-      models: Math.min(filteredModels.length, limit),
+      routes: Math.min(routeMatches.length, limit),
+      models: Math.min(modelMatches.length, limit),
     },
     total: {
       routes: routes.length,
@@ -474,34 +458,22 @@ export async function describeHarnessModelRoute(context: CommandContext, args: A
   if (insensitiveModel) return { status: 'found', route: await describeModel(insensitiveModel, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'case-insensitive-model-id' } }) };
   const insensitiveEndpoint = endpoints.find((endpoint) => endpoint.id.toLowerCase() === normalized || endpoint.baseUrl.toLowerCase() === normalized || endpoint.modelsUrl.toLowerCase() === normalized);
   if (insensitiveEndpoint) return { status: 'found', route: describeLocalServerEndpointRoute(insensitiveEndpoint, { ...lookup, resolvedBy: 'case-insensitive-local-endpoint-id' }) };
-  const searched = [
-    ...routes.filter((route) => routeSearchText(route).includes(normalized)),
-    ...models.filter((model) => modelSearchText(model).includes(normalized)),
-  ];
-  const searchedEndpoints = endpoints.filter((endpoint) => localEndpointSearchText(endpoint).includes(normalized));
-  if (searched.length === 0 && searchedEndpoints.length === 1) {
-    return {
-      status: 'found',
-      route: describeLocalServerEndpointRoute(searchedEndpoints[0]!, { ...lookup, resolvedBy: 'local-endpoint-search' }),
-    };
+  const searched = await rankModelCatalog<ModelCatalogCandidate>([...routes, ...models, ...endpoints], lookup.input, reading);
+  reading.assertCurrent?.();
+  if (searched.matches.length === 1 && searched.matches[0]!.judgment.reading.verdict === 'yes') {
+    const { entry, judgment } = searched.matches[0]!;
+    const resolved = { ...lookup, resolvedBy: entry.kind === 'local-server-endpoint' ? 'local-endpoint-search' : 'search' };
+    const route = entry.kind === 'route' ? await describeRoute(entry, { context, includeParameters: true, reading, lookup: resolved })
+      : entry.kind === 'model' ? await describeModel(entry, { context, includeParameters: true, reading, lookup: resolved })
+      : describeLocalServerEndpointRoute(entry, resolved);
+    reading.assertCurrent?.();
+    return { status: 'found', route: { ...route, judgment } };
   }
-  if (searched.length === 1 && searchedEndpoints.length === 0) {
-    const found = searched[0]!;
-    return {
-      status: 'found',
-      route: found.kind === 'route'
-        ? await describeRoute(found, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'search' } })
-        : await describeModel(found, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'search' } }),
-    };
-  }
-  if (searched.length + searchedEndpoints.length > 1) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: [
-        ...searched.slice(0, 8).map(describeCandidate),
-        ...searchedEndpoints.slice(0, Math.max(0, 8 - searched.length)).map(describeEndpointCandidate),
-      ],
+  if (searched.matches.length > 0) {
+    return { status: 'ambiguous', input: lookup.input,
+      candidates: searched.matches.slice(0, 8).map(({ entry, judgment }) => ({
+        ...(entry.kind === 'local-server-endpoint' ? describeEndpointCandidate(entry) : describeCandidate(entry)), judgment,
+      })),
     };
   }
   return {

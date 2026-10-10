@@ -103,7 +103,10 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
     let released = false;
     const assertCurrent = () => {
       if (released) throw new ToolInputProjectionError('stale');
-      guarded.assertCurrent(); result.assertCurrent?.();
+      // The trusted selected projector already checks guarded.assertCurrent
+      // before and after owner.project. Do not repeat that complete registry
+      // proof a third time in this same synchronous boundary.
+      if (result.assertCurrent) result.assertCurrent(); else guarded.assertCurrent();
     };
     return { ...result, ...(modelInspection ? { resultPublication: 'read-only' as const } : {}),
       assertRepairedArgs(candidate) {
@@ -156,13 +159,16 @@ export function protectHarnessCatalogTool(tool: Tool, registry: ToolRegistry, se
     const guard = harnessCatalogExecutionGuard(input, options);
     const registration = registeredTool(registry, tool.definition.name);
     const assertContext = catalogContextGuard(registry, context);
-    const assertCurrent = () => {
-      guard(); assertContext();
+    const assertRegistrationCurrent = () => {
+      assertContext();
       if (registeredTool(registry, tool.definition.name) !== registration) throw new ToolInputProjectionError('stale');
     };
+    const assertCurrent = () => { guard(); assertRegistrationCurrent(); };
     assertCurrent();
     if (projectionGuards.has(input)) {
-      return forwardHarnessCatalogCall(tool, input, input, options, assertCurrent);
+      // Forwarding already invokes this exact input's execution/projection
+      // guard. The additional check owns only context and registration.
+      return forwardHarnessCatalogCall(tool, input, input, options, assertRegistrationCurrent);
     }
     const projected = await projector.project({ callId: 'catalog-direct', name: tool.definition.name, args: input,
       signal: options?.signal, assertCurrent });

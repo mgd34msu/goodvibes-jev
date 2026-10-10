@@ -64,6 +64,8 @@ function fixture(owner: ProtectedSourceOwner = ordinaryResearchOwner(), registry
 
 function readings(options: { route?: number; confidence?: number; transfer?: number; fits?: Record<string, number>; memory?: number } = {}) {
   return fakePort((name, question, state) => {
+    // Explicit catalog result keeps this readiness control independent of search semantics.
+    if (name === 'match') return noulAnswer(record(record(state).candidate).name === `model:${routeId}` ? 0.99 : 0.01);
     if (question.type === 'score') {
       const recipe = record(record(state).recipe).id;
       const level = name === 'memoryAdequacy' ? options.memory ?? 2 : name === 'fit' ? (typeof recipe === 'string' ? options.fits?.[recipe] : undefined) ?? 4 : options.route ?? 4;

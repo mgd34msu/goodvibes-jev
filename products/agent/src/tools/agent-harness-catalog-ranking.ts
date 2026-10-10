@@ -6,9 +6,11 @@ import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/too
 import type { Ranked, Rerank } from '@goodvibes-jev/judgment';
 
 export interface CatalogRankingOptions {
-  readonly signal?: AbortSignal;
-  readonly sourceOwner?: ProtectedSourceOwner;
-  readonly assertCurrent?: () => void;
+  readonly signal?: AbortSignal | undefined;
+  readonly sourceOwner?: ProtectedSourceOwner | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+  /** Retain only acquired backend identities, never a released source receipt. */
+  readonly retainCurrent?: ((guard: () => void, key?: string) => void) | undefined;
   /** Callers returning original semantic fields must hold if any source was redacted. */
   readonly requirePreservedSource?: boolean;
 }
@@ -48,6 +50,53 @@ export function captureCatalogData<T>(value: T, budget = { nodes: 0, characters:
     } finally { ancestors.delete(entry); }
   };
   return capture(value, 0) as T;
+}
+
+/** Compare descriptors before touching a previously acquired backend again.
+ * The installed recording port's stable model getter is the sole accessor. */
+function catalogBackendSlots(subject: object, keys: readonly string[], modelGetter = false) {
+  const chain: object[] = [];
+  let owner: object | null = subject;
+  while (owner) {
+    if (nodeTypes.isProxy(owner) || chain.length >= 64) throw new ToolInputProjectionError('held');
+    chain.push(owner); owner = Object.getPrototypeOf(owner) as object | null;
+  }
+  return { chain, fields: keys.map(key => {
+    for (const owner of chain) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (descriptor) {
+        if (!('value' in descriptor) && (!modelGetter || key !== 'model' || typeof descriptor.get !== 'function' || descriptor.set)) throw new ToolInputProjectionError('held');
+        return { owner, descriptor };
+      }
+    }
+    return undefined;
+  }) };
+}
+function assertCatalogBackendSlots(before: ReturnType<typeof catalogBackendSlots>, after: ReturnType<typeof catalogBackendSlots>): void {
+  if (after.chain.length !== before.chain.length || after.chain.some((owner, index) => owner !== before.chain[index])) throw new ToolInputProjectionError('held');
+  for (const [index, field] of before.fields.entries()) {
+    const current = after.fields[index];
+    if (field?.owner !== current?.owner || field?.descriptor.value !== current?.descriptor.value
+      || field?.descriptor.get !== current?.descriptor.get || field?.descriptor.set !== current?.descriptor.set
+      || field?.descriptor.enumerable !== current?.descriptor.enumerable || field?.descriptor.configurable !== current?.descriptor.configurable
+      || field?.descriptor.writable !== current?.descriptor.writable) throw new ToolInputProjectionError('held');
+  }
+}
+function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: Rerank) {
+  const decisionKeys = ['name', 'version', 'description', 'accuracyFloor', 'model', 'fixtureCount', 'checkFixtures', 'rerank'];
+  const definition = catalogBackendSlots(decision, decisionKeys);
+  const portKeys = ['model', 'ask', 'recorder'];
+  const slots = catalogBackendSlots(port, portKeys, true);
+  const model = port.model, ask = port.ask, recorder = port.recorder, rerank = decision.rerank;
+  if (typeof ask !== 'function' || typeof rerank !== 'function') throw new ToolInputProjectionError('unavailable');
+  const recorderKeys = ['recordReadings', 'recordAction'];
+  const recording = recorder ? catalogBackendSlots(recorder, recorderKeys) : undefined;
+  return { model, recorder, rerank, assertCurrent() {
+    assertCatalogBackendSlots(definition, catalogBackendSlots(decision, decisionKeys));
+    assertCatalogBackendSlots(slots, catalogBackendSlots(port, portKeys, true));
+    if (recorder && recording) assertCatalogBackendSlots(recording, catalogBackendSlots(recorder, recorderKeys));
+    if (port.model !== model || port.ask !== ask || port.recorder !== recorder) throw new ToolInputProjectionError('held');
+  } };
 }
 
 /** Product data is locally screened in full before the canonical public engine reader. */
@@ -100,35 +149,43 @@ export async function rankHarnessCatalog<T>(
     batch.push(part);
   }
   if (batches.length > SOURCE_SCREENING_LIMITS.sources) throw new ToolInputProjectionError('held');
-  let port: ReturnType<typeof judgmentPort> | undefined;
-  let portModel: string | undefined;
-  let portAsk: ReturnType<typeof judgmentPort>['ask'] | undefined;
-  let decision: ReturnType<typeof gateJudgmentRegistry.get>;
+  const signal = options.signal, originalAssert = options.assertCurrent, retainCurrent = options.retainCurrent;
+  const requirePreservedSource = options.requirePreservedSource;
+  let assertBackend: (() => void) | undefined;
   const handles: ProtectedSource[] = [];
-  const receipts: SourceScreeningReceipt[] = [];
+  const receipts: { readonly receipt: SourceScreeningReceipt; readonly projection: readonly string[] }[] = [];
   let released = false;
   let releasing: Promise<void> | undefined;
   const release = (): Promise<void> => {
     if (releasing) return releasing;
     released = true;
-    options.signal?.removeEventListener('abort', abort);
-    releasing = Promise.all(handles.map((handle) => owner.release(handle))).then(() => {});
+    signal?.removeEventListener('abort', abort);
+    releasing = Promise.resolve().then(async () => { await Promise.all(handles.map(handle => Promise.resolve().then(() => owner.release(handle)))); });
     return releasing;
   };
   const abort = () => { void release().catch(() => {}); };
+  // This guard deliberately survives source cleanup. Outer readers retain it
+  // through subsequent enrichment and the final tool publication/release.
+  const assertPublicationCurrent = () => {
+    if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== originalAssert
+      || options.retainCurrent !== retainCurrent || options.requirePreservedSource !== requirePreservedSource) throw new ToolInputProjectionError('held');
+    signal?.throwIfAborted(); originalAssert?.(); assertBackend?.();
+  };
   const assertCurrent = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
-    if (released || (port && (judgmentPort(site) !== port || port.model !== portModel || port.ask !== portAsk))
-      || (decision && gateJudgmentRegistry.get('engine.tools.registry-rank') !== decision)) throw new ToolInputProjectionError('held');
-    for (const receipt of receipts) owner.project(receipt);
-    options.signal?.throwIfAborted();
+    assertPublicationCurrent();
+    if (released) throw new ToolInputProjectionError('held');
+    for (const { receipt, projection } of receipts) {
+      const current = owner.project(receipt);
+      if (current.length !== projection.length || current.some((part, index) => part !== projection[index])) throw new ToolInputProjectionError('held');
+    }
+    signal?.throwIfAborted();
   };
   try {
     assertCurrent();
     for (const batch of batches) {
       assertCurrent(); handles.push(owner.capture(batch));
     }
-    options.signal?.addEventListener('abort', abort, { once: true });
+    signal?.addEventListener('abort', abort, { once: true });
     assertCurrent();
     const projected: string[] = [];
     for (const handle of handles) {
@@ -136,10 +193,11 @@ export async function rankHarnessCatalog<T>(
       const result = await owner.screen(handle);
       assertCurrent();
       if (result.status !== 'settled') throw new ToolInputProjectionError('held');
-      receipts.push(result.receipt); projected.push(...owner.project(result.receipt));
+      const projection = owner.project(result.receipt);
+      receipts.push({ receipt: result.receipt, projection }); projected.push(...projection);
     }
     assertCurrent();
-    if (projected.length !== parts.length || (options.requirePreservedSource && projected.some((part, index) => part !== parts[index]))) throw new ToolInputProjectionError('held');
+    if (projected.length !== parts.length || (requirePreservedSource && projected.some((part, index) => part !== parts[index]))) throw new ToolInputProjectionError('held');
     const projectedCatalog = projected.slice(1).map((part) => {
       let value: unknown;
       try { value = JSON.parse(part); } catch { throw new ToolInputProjectionError('held'); }
@@ -147,27 +205,38 @@ export async function rankHarnessCatalog<T>(
       return value as [string, string, unknown];
     });
     // No hosted port lookup, log, cache, or request precedes full screening.
-    port = judgmentPort(site); portModel = port.model; portAsk = port.ask;
-    const capturedPort = port;
-    decision = gateJudgmentRegistry.get('engine.tools.registry-rank');
-    if (!decision || !('rerank' in decision) || typeof decision.rerank !== 'function') throw new ToolInputProjectionError('unavailable');
-    const guardedPort: typeof port = { model: port.model, ...(port.recorder ? { recorder: port.recorder } : {}), ...(port.health ? { health: port.health } : {}), ask: async (request) => {
+    const port = judgmentPort(site);
+    const decision = gateJudgmentRegistry.get('engine.tools.registry-rank');
+    if (!decision) throw new ToolInputProjectionError('unavailable');
+    const backend = captureCatalogBackend(port, decision as Rerank);
+    const { model, recorder, rerank } = backend;
+    assertBackend = () => {
+      backend.assertCurrent();
+      if (judgmentPort(site) !== port || gateJudgmentRegistry.get('engine.tools.registry-rank') !== decision) throw new ToolInputProjectionError('held');
+    };
+    retainCurrent?.(assertBackend, `engine.tools.registry-rank:${site}`);
+    assertCurrent();
+    const guardedPort: typeof port = { model, ...(recorder ? { recorder: {
+      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
+      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
+    } } : {}), ask: async (request) => {
       assertCurrent();
-      const result = await capturedPort.ask({ ...request,
+      const result = await port.ask({ ...request,
         beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); },
         assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); },
       });
       assertCurrent(); return result;
     } };
     // Opaque request ids prevent catalog identity from bypassing source screening in logs.
-    const { ranked } = await (decision as Rerank).rerank(guardedPort, projected[0]!, source.catalog.map((_entry, index) => ({
+    const { ranked } = await rerank.call(decision, guardedPort, projected[0]!, source.catalog.map((_entry, index) => ({
       id: String(index), content: { type: 'tool', name: projectedCatalog[index]![0], description: projectedCatalog[index]![1].slice(0, 600) },
-    })), { site, ...(options.signal ? { signal: options.signal } : {}) });
+    })), { site, ...(signal ? { signal } : {}) });
     assertCurrent();
     if (ranked.length !== catalog.length || new Set(ranked.map(({ id }) => id)).size !== ranked.length
       || ranked.some(({ id }) => !/^(0|[1-9][0-9]*)$/.test(id) || Number(id) >= catalog.length)) throw new ToolInputProjectionError('held');
     for (const judgment of ranked) {
-      if (judgment.decisionId) port.recorder?.recordAction(judgment.decisionId,
+      assertCurrent();
+      if (judgment.decisionId) guardedPort.recorder?.recordAction(judgment.decisionId,
         judgment.reading.verdict === 'yes' ? 'catalog candidate matched'
           : judgment.reading.verdict === 'no' ? 'catalog candidate rejected' : 'catalog candidate held: uncertain');
     }
@@ -176,5 +245,5 @@ export async function rankHarnessCatalog<T>(
       matches: ranked.flatMap((judgment, index) => judgment.reading.verdict === 'no' ? [] : [{ entry: catalog[Number(judgment.id)]!.entry, judgment: judgments[index]! }]),
       judgments,
     };
-  } finally { await release(); }
+  } finally { await release(); assertPublicationCurrent(); }
 }

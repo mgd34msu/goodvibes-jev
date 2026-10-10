@@ -1,4 +1,5 @@
 import { types as nodeTypes } from 'node:util';
+import { createHash } from 'node:crypto';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   ToolInputProjectionError, assertProjectionSignal, captureProjectionArgs,
@@ -11,8 +12,8 @@ import {
   type ToolAdmissionEvidence, type ToolOwnedAdmissionEvidence, type ToolInputProjectionResult, type ToolInputProjectionOptions,
   type ToolPreparedSettingsMutation,
 } from './input-projection.js';
-import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { canonicalJson, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { autonomousRevision } from '../permissions/autonomous.js';
 import { assertAutonomousConfigTransition, readAutonomousSettingsPresentation, consumeAutonomousAdmission, type AutonomousPermissionAdmission, type PermissionManager } from '../permissions/manager.js';
 import type { PreparedConfigMutationReceipt, PreparedConfigMutationTransition } from '../config/manager.js';
@@ -165,12 +166,17 @@ function plainMetadata(value: unknown, name: string, seen = new Set<object>()): 
   }
 }
 
-function preparationData(tool: Tool, name: string): { executor: Tool['execute']; definition: ToolDefinition } {
+function preparationData(tool: Tool, name: string, freshness = false): { executor: Tool['execute']; definition: ToolDefinition } {
   const definition = dataProperty(tool, 'definition', name);
   const execute = dataProperty(tool, 'execute', name);
   if (typeof execute !== 'function' || nodeTypes.isProxy(execute)) throw new ToolError('Autonomous executor must be a data-backed function', name);
   plainMetadata(definition, name);
-  return { executor: execute as Tool['execute'], definition: snapshotJudgmentInput(definition) as unknown as ToolDefinition };
+  // Acquisition screens the definition. Freshness needs a new bounded
+  // structural capture of its current canonical data, not another privacy decision on
+  // the same bytes. The caller must compare it to that screened revision before
+  // use; the complete descriptor walk above still rejects hidden accessors/proxies.
+  return { executor: execute as Tool['execute'], definition: (freshness
+    ? captureOwnedJson(definition, nodeTypes.isProxy) : snapshotJudgmentInput(definition)) as unknown as ToolDefinition };
 }
 
 export class ToolRegistry {
@@ -427,8 +433,11 @@ export class ToolRegistry {
     if (this.registrations.get(call.name) !== registration || this.tools.get(call.name) !== record.tool) {
       throw new ToolInputProjectionError('stale');
     }
-    const current = preparationData(record.tool, call.name);
-    if (current.executor !== record.executor || autonomousRevision(current.definition) !== record.definitionRevision) {
+    const current = preparationData(record.tool, call.name, true);
+    // Exact autonomousRevision bytes over this freshly captured owned snapshot.
+    // Never cache a successful check or refresh the already-screened baseline.
+    const currentRevision = createHash('sha256').update(canonicalJson(current.definition as unknown as EntryType)).digest('hex');
+    if (current.executor !== record.executor || currentRevision !== record.definitionRevision) {
       throw new ToolInputProjectionError('stale');
     }
     if (registration.projector && (projectionProperty(registration.projector, 'project') !== registration.project

@@ -791,6 +791,7 @@ describe('agent_harness tool', () => {
       'Test briefing command': ['brief'],
       'Agent-local memory records': ['memory', 'memory-review'],
       'not-a-command': [],
+      local: ['route:local-model-cookbook', 'model:ollama-local:qwen2.5-coder:7b'],
     };
     const personalOps = fakePort((_name, _question, rawState) => {
       const state = rawState as unknown as { query: string; candidate: { name: string } };
