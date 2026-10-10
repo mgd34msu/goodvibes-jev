@@ -19,14 +19,15 @@ function makeTarget(over: {
   indexedChunks?: number;
 } = {}) {
   const calls: string[] = [];
+  const modes: Array<{ automatic?: boolean } | undefined> = [];
   const target: CodeIndexReindexTarget = {
-    reindexFile: async (abs) => {
-      calls.push(abs);
+    reindexFile: async (abs, options) => {
+      calls.push(abs); modes.push(options);
       return over.reindex ? over.reindex(abs) : { indexed: true, mode: 'symbols' as CodeChunkMode };
     },
     stats: () => ({ available: over.available ?? true, indexedChunks: over.indexedChunks ?? 5 }),
   };
-  return { target, calls };
+  return { target, calls, modes };
 }
 
 const ROOT = '/repo';
@@ -58,12 +59,13 @@ describe('extractReindexPaths', () => {
 
 describe('scheduler: edit→reindex fires, debounced and coalesced', () => {
   test('a successful write schedules a reindex of the resolved absolute path', async () => {
-    const { target, calls } = makeTarget();
+    const { target, calls, modes } = makeTarget();
     const s = new CodeIndexReindexScheduler({ target, workingDirectory: ROOT, debounceMs: 1 });
     s.onToolExecuted('write', { files: [{ path: 'src/a.ts', content: 'x' }] }, true);
     expect(s.pendingCount()).toBe(1);
     await s.flush();
     expect(calls).toEqual(['/repo/src/a.ts']);
+    expect(modes).toEqual([{ automatic: true }]);
     expect(s.lastActivity()).toMatchObject({ path: '/repo/src/a.ts', status: 'indexed', mode: 'symbols' });
   });
 

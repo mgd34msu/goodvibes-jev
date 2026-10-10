@@ -1,9 +1,11 @@
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
  * Repo code index (Stage A), CodeIndexStore unit suite: chunking
  * determinism, incremental reindex (unchanged/changed/deleted files), and
  * the "never silently drop a file" fallback contract.
  */
-import { describe, expect, test, afterEach } from 'bun:test';
+import { beforeEach, describe, expect, test, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -241,3 +243,8 @@ describe('CodeIndexStore: chunk shape', () => {
     expect(fooChunk.chunkId).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+// These filesystem fixtures contain authored directories; directory meaning is supplied explicitly.
+let previousDirectoryPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previousDirectoryPort); });

@@ -777,9 +777,11 @@ describe('agent_harness tool', () => {
       if (pick === undefined) throw new Error(`Unscripted PersonalOps fixture ${state.query}`);
       return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
     });
+    const lifetime = fakePort(() => noulAnswer(0.01));
     const port: JudgmentPort = {
       model: security.port.model,
-      ask: request => request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
+      ask: request => request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
+        : request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
         : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
         ? credentials.port.ask(request) : security.port.ask(request),
     };

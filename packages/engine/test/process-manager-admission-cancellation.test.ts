@@ -122,3 +122,42 @@ test('after successful spawn the admission signal leaves the detached lifetime a
     expect(manager.getStatus(result.process_id!)?.done).toBe(true);
   } finally { finish(0); await manager.close(); launches.mockRestore(); }
 });
+
+
+test.each(['removed', 'replaced'])('captured admission currentness cannot be bypassed when its callback is %s during preparation', async mutation => {
+  const fixture = deferredScrub(); const manager = new ProcessManager(); let current = true;
+  const options: SpawnOptions = { assertCurrent: () => { if (!current) throw new Error('synthetic stale admission'); } };
+  const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected synthetic launch'); });
+  const pending = manager.spawn('synthetic-command', '/tmp', undefined, options);
+  const result = pending.then(() => undefined, (error: unknown) => error);
+  try {
+    await fixture.started; current = false;
+    options.assertCurrent = mutation === 'removed' ? undefined : () => {};
+    fixture.release(); expect(await bounded(result)).toMatchObject({ message: 'synthetic stale admission' });
+    expect(launches).not.toHaveBeenCalled(); expect(manager.list()).toEqual([]);
+  } finally { fixture.release(); await manager.close(); launches.mockRestore(); fixture.scrub.mockRestore(); }
+});
+
+test('reentrant stdin preparation cannot invalidate authority after the final callback', async () => {
+  const manager = new ProcessManager(); let current = true;
+  const options: SpawnOptions = { assertCurrent: () => { if (!current) throw new Error('synthetic stale admission'); },
+    credentialEnvScrub: { enabled: false, allowlist: new Set() } };
+  Object.defineProperty(options, 'stdin', { get() { current = false; return 'ignore'; } });
+  const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected synthetic launch'); });
+  try {
+    await expect(manager.spawnArgv('synthetic-command', [], '/tmp', undefined, options)).rejects.toThrow('synthetic stale admission');
+    expect(launches).not.toHaveBeenCalled(); expect(manager.list()).toEqual([]);
+  } finally { await manager.close(); launches.mockRestore(); }
+});
+
+
+test.each(['async', 'thenable'])('an %s admission assertion cannot authorize a spawn', async kind => {
+  const manager = new ProcessManager();
+  const check = kind === 'async' ? async () => { throw new Error('late denial'); } : () => ({ then() {} });
+  const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('Unexpected synthetic launch'); });
+  const scrub = spyOn(credentialEnv, 'scrubCredentialEnv');
+  try {
+    await expect(manager.spawn('synthetic-command', '/tmp', undefined, { assertCurrent: check })).rejects.toThrow('must be synchronous');
+    expect(scrub).not.toHaveBeenCalled(); expect(launches).not.toHaveBeenCalled(); expect(manager.list()).toEqual([]);
+  } finally { await manager.close(); launches.mockRestore(); scrub.mockRestore(); }
+});

@@ -1,3 +1,4 @@
+import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { CodeIntelligence } from '../../intelligence/index.js';
 import type { OutputOptions, SymbolsQuery, SymbolKind } from './shared.js';
 import {
@@ -29,6 +30,7 @@ export async function executeSymbolsQuery(
   query: SymbolsQuery,
   output: OutputOptions,
   projectRoot: string,
+  walkOptions: WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
@@ -54,7 +56,7 @@ export async function executeSymbolsQuery(
   ];
 
   const activePatterns = kindFilter ? linePatterns.filter((p) => kindFilter.has(p.kind)) : linePatterns;
-  const files = await collectTextFiles(basePath, diagnostics);
+  const files = await collectTextFiles(basePath, diagnostics, walkOptions);
   const symbols: SymbolResult[] = [];
 
   let queryRegex: RegExp | null = null;

@@ -1,5 +1,7 @@
+import { processClassificationOptions } from './agent-harness-process-launch.ts';
+import { createProcessInputProjector } from './agent-process-ingress.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolExecution, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { backgroundProcessSummary, describeBackgroundProcess, runBackgroundProcessAction } from './agent-harness-background-processes.ts';
 
@@ -68,7 +70,7 @@ function isReadOnlyProcessAction(action: string): boolean {
   return READ_ONLY_PROCESS_ACTIONS.has(action);
 }
 
-export function createAgentTerminalTool(commandContext: CommandContext): Tool {
+export function createAgentTerminalTool(commandContext: CommandContext, registry?: ToolRegistry): Tool {
   return {
     definition: {
       name: 'terminal',
@@ -83,7 +85,7 @@ export function createAgentTerminalTool(commandContext: CommandContext): Tool {
           processClass: {
             type: 'string',
             enum: ['command', 'long_lived'],
-            description: 'command: an ordinary job, terminated when timeoutMs expires. long_lived: an interactive application or a server whose lifetime is the user\'s, it keeps running past timeoutMs and must be stopped explicitly. Inferred from the program name when omitted.',
+            description: 'command: an ordinary job, terminated when timeoutMs expires. long_lived: an interactive application or a server whose lifetime is the user\'s, it keeps running past timeoutMs and must be stopped explicitly. Read from the complete command by Jev when omitted; an unsettled reading prevents launch.',
           },
           killOnTimeout: { type: 'boolean', description: 'Overrides processClass: true terminates this process when timeoutMs expires, false leaves it running. Set true deliberately before a timeout may destroy something the user is using.' },
           pty: { type: 'boolean', description: 'Request PTY mode; returns unsupported until the SDK publishes a typed PTY contract.' },
@@ -98,7 +100,7 @@ export function createAgentTerminalTool(commandContext: CommandContext): Tool {
       supportsProgress: true,
       supportsStreamingOutput: true,
     },
-    execute: async (args: Record<string, unknown>) => {
+    execute: async (args: Record<string, unknown>, options) => {
       const input = args as AgentTerminalToolArgs;
       if (!readBoolean(input.background)) {
         return error('terminal is the tracked-background adapter. Use exec for bounded foreground shell commands, or call terminal with background:true, confirm:true, and explicitUserRequest.');
@@ -106,12 +108,12 @@ export function createAgentTerminalTool(commandContext: CommandContext): Tool {
       return output(await runBackgroundProcessAction(commandContext, {
         ...input,
         processAction: 'start',
-      }));
+      }, processClassificationOptions(commandContext, registry, options?.signal, () => { assertCurrentToolExecution(args, options); })));
     },
   };
 }
 
-export function createAgentProcessTool(commandContext: CommandContext): Tool {
+export function createAgentProcessTool(commandContext: CommandContext, registry?: ToolRegistry): Tool {
   return {
     definition: {
       name: 'process',
@@ -132,6 +134,8 @@ export function createAgentProcessTool(commandContext: CommandContext): Tool {
           command: { type: 'string', description: 'Shell command for action:start.' },
           cwd: { type: 'string', description: 'Working directory for action:start.' },
           timeoutMs: { type: 'number', description: 'Wait or background timeout in milliseconds.' },
+          processClass: { type: 'string', enum: ['command', 'long_lived'], description: 'Explicit lifetime class for action:start; otherwise Jev reads the complete command.' },
+          killOnTimeout: { type: 'boolean', description: 'Explicit timeout termination override for action:start.' },
           pty: { type: 'boolean', description: 'Request PTY mode; reports unsupported until a typed contract exists.' },
           data: { type: 'string', description: 'Input data for confirmed action:write when supported by the SDK.' },
           query: { type: 'string', description: 'Search text for list or process lookup.' },
@@ -148,7 +152,7 @@ export function createAgentProcessTool(commandContext: CommandContext): Tool {
       supportsProgress: true,
       supportsStreamingOutput: true,
     },
-    execute: async (args: Record<string, unknown>) => {
+    execute: async (args: Record<string, unknown>, options) => {
       const input = args as AgentProcessToolArgs;
       const action = readProcessAction(input);
 
@@ -166,12 +170,12 @@ export function createAgentProcessTool(commandContext: CommandContext): Tool {
       return output(await runBackgroundProcessAction(commandContext, {
         ...input,
         processAction: action,
-      }));
+      }, processClassificationOptions(commandContext, registry, options?.signal, () => { assertCurrentToolExecution(args, options); })));
     },
   };
 }
 
 export function registerAgentTerminalProcessTools(registry: ToolRegistry, commandContext: CommandContext): void {
-  if (!registry.has('terminal')) registry.register(createAgentTerminalTool(commandContext));
-  if (!registry.has('process')) registry.register(createAgentProcessTool(commandContext));
+  if (!registry.has('terminal')) registry.register(createAgentTerminalTool(commandContext, registry), { inputProjection: createProcessInputProjector(registry, 'terminal') });
+  if (!registry.has('process')) registry.register(createAgentProcessTool(commandContext, registry), { inputProjection: createProcessInputProjector(registry, 'process') });
 }

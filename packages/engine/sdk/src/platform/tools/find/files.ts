@@ -1,4 +1,5 @@
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
+import { DirectoryWalk, type WalkDirOptions } from '../../utils/walk-dir.js';
 import { join, relative } from 'node:path';
 import { statSync, lstatSync } from 'node:fs';
 import type { FilesQuery, OutputOptions } from './shared.js';
@@ -24,10 +25,12 @@ export async function executeFilesQuery(
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
   capturedReadAccess?: ReadAccessFilter,
+  walkOptions: WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
+  const walk = new DirectoryWalk(basePath);
   const patterns = query.patterns ?? ['**/*'];
   const excludePatterns = query.exclude ?? [];
   const maxResults = output.max_results ?? 100;
@@ -61,7 +64,7 @@ export async function executeFilesQuery(
     : null;
   if (respectGitignore) {
     const rootGitignorePath = join(projectRoot, '.gitignore');
-    const nestedGitignores = findNestedGitignoreFiles(basePath, rootGitignorePath);
+    const nestedGitignores = await findNestedGitignoreFiles(basePath, rootGitignorePath, walk, walkOptions);
     if (nestedGitignores.length > 0) {
       addFindWarning(
         diagnostics,
@@ -80,7 +83,7 @@ export async function executeFilesQuery(
   }
 
   const SCAN_CEILING = 50_000;
-  const scannedFiles = await collectGlobFiles(basePath, patterns, includeHidden, followSymlinks, diagnostics);
+  const scannedFiles = await collectGlobFiles(basePath, patterns, includeHidden, followSymlinks, diagnostics, walk, walkOptions);
   const matchedFiles = new Set<string>();
   for (const file of scannedFiles) {
     if (matchedFiles.size >= SCAN_CEILING) {

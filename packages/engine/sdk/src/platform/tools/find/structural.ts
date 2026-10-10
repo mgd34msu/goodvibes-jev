@@ -1,3 +1,4 @@
+import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { extname } from 'node:path';
 import type { OutputOptions, StructuralQuery } from './shared.js';
 import { collectFilesForSearch, makeCountResult, makeFilesResult, makeLocationsResult, readTextFile, validateSearchPath } from './shared.js';
@@ -34,6 +35,7 @@ export async function executeStructuralQuery(
   query: StructuralQuery,
   output: OutputOptions,
   projectRoot: string,
+  walkOptions: WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
@@ -54,7 +56,7 @@ export async function executeStructuralQuery(
   const format = output.format ?? 'matches';
   const maxPerFile = output.max_per_item ?? 10;
   const maxTotal = output.max_total_matches ?? output.max_results ?? 100;
-  const files = await collectFilesForSearch(basePath, query.glob);
+  const files = await collectFilesForSearch(basePath, query.glob, undefined, walkOptions);
 
   interface StructuralMatch { file: string; line: number; text: string }
   const allMatches: StructuralMatch[] = [];

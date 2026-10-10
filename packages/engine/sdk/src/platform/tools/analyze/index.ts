@@ -1,4 +1,5 @@
-import type { Tool } from '../../types/tools.js';
+import { assertCurrentToolExecution } from '../registry.js';
+import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
 import { resolve } from 'node:path';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import { analyzeSchema } from './schema.js';
@@ -40,8 +41,14 @@ export function createAnalyzeTool(
   return {
     definition: analyzeSchema,
 
-    async execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string }> {
+    async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
       try {
+        const assertCurrent = (): void => {
+          options?.signal?.throwIfAborted();
+          assertCurrentToolExecution(args, options);
+        };
+        assertCurrent();
+        const walkOptions = { ...(options?.signal ? { signal: options.signal } : {}), beforeAttempt: assertCurrent };
         if (!args.mode || typeof args.mode !== 'string') {
           return { success: false, error: 'Missing required "mode" field' };
         }
@@ -59,17 +66,17 @@ export function createAnalyzeTool(
 
         switch (input.mode) {
           case 'impact':
-            result = await runImpact(input, resolvedProjectRoot);
+            result = await runImpact(input, resolvedProjectRoot, walkOptions);
             break;
 
           case 'dependencies':
-            result = await runDependencies(input, resolvedProjectRoot);
+            result = await runDependencies(input, resolvedProjectRoot, walkOptions);
             break;
           case 'dead_code':
-            result = await runDeadCode(input, resolvedProjectRoot);
+            result = await runDeadCode(input, resolvedProjectRoot, walkOptions);
             break;
           case 'security':
-            result = await runSecurity(input, resolvedProjectRoot);
+            result = await runSecurity(input, resolvedProjectRoot, walkOptions);
             break;
           case 'coverage':
             result = await runCoverage(input, resolvedProjectRoot);
@@ -96,13 +103,13 @@ export function createAnalyzeTool(
             result = await runUpgrade(input, resolvedProjectRoot);
             break;
           case 'permissions':
-            result = await runPermissions(input, resolvedProjectRoot);
+            result = await runPermissions(input, resolvedProjectRoot, walkOptions);
             break;
           case 'env_audit':
             result = await runEnvAudit(input, resolvedProjectRoot);
             break;
           case 'test_find':
-            result = await runTestFind(input, resolvedProjectRoot);
+            result = await runTestFind(input, resolvedProjectRoot, walkOptions);
             break;
           default: {
             const exhaustive: never = input.mode;
@@ -110,6 +117,7 @@ export function createAnalyzeTool(
           }
         }
 
+        assertCurrent();
         const fingerprinted = appendSchemaFingerprint(result, 'analyze', input.mode, { featureFlags });
         const shaped = outputFormat === 'summary'
           ? summarizeAnalyzeResult(input.mode, fingerprinted)

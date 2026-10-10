@@ -1,3 +1,6 @@
+import { assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { processClassificationOptions } from './agent-harness-process-launch.ts';
+import { createProcessInputProjector } from './agent-process-ingress.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
@@ -177,6 +180,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
+      if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args, processClassificationOptions(deps.commandContext, deps.toolRegistry, signal, () => { assertCurrentToolExecution(rawArgs, options); })));
       const personalOpsOwner = agentResearchSourceOwner(deps.toolRegistry);
       const personalOpsSession = deps.commandContext.session?.runtime;
       const personalOpsSessionId = personalOpsSession?.sessionId;
@@ -490,7 +494,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous background process ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args));
         if (dispatchMode === 'execution_history') return output(executionHistorySummary(deps.commandContext, args));
         if (dispatchMode === 'execution_history_item') {
           const resolved = describeExecutionHistoryItem(deps.commandContext, args);
@@ -825,5 +828,5 @@ export function registerAgentHarnessTool(
   commandContext: CommandContext,
   taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources,
 ): void {
-  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry)) });
+  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createProcessInputProjector(registry, 'agent_harness', createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry))) });
 }

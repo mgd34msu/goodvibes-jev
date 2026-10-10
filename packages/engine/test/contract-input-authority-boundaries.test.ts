@@ -113,7 +113,7 @@ test('independent cloned receipt is not the admitted generation', async () =>
     contract.inputSnapshot = structuredClone(contract.inputSnapshot);
     await expect(assertContractInputAuthority(token)).rejects.toThrow();
   }));
-import { capturedInputTool, capturedInputReadFilter } from '../sdk/src/platform/tools/shared/captured-input-tools.js';
+import { capturedInputTool, capturedInputReadFilter, assertCapturedToolInvocationCurrent } from '../sdk/src/platform/tools/shared/captured-input-tools.js';
 import { ReadTool } from '../sdk/src/platform/tools/read/index.js';
 import { ProjectIndex } from '../sdk/src/platform/state/project-index.js';
 import { FileStateCache } from '../sdk/src/platform/state/file-cache.js';
@@ -633,3 +633,31 @@ test('per-call cancellation during final delivery reauthorization withholds actu
       await index.dispose();
     }
   }, true));
+
+for (const control of ['wrapper-abort', 'call-abort', 'token-revoke', 'receipt-replace'] as const) {
+  test(`cheap captured traversal checkpoint rejects ${control} without replaying reads`, async () =>
+    fixture(async ({ view, token, contract }) => {
+      const wrapperAbort = new AbortController(); const callAbort = new AbortController();
+      let reached = false; let stopped = false;
+      const index = new ProjectIndex(view);
+      const raw = new ReadTool(index, new FileStateCache());
+      const wrapped = capturedInputTool({
+        definition: raw.definition,
+        async execute() {
+          reached = true;
+          assertCapturedToolInvocationCurrent();
+          if (control === 'wrapper-abort') wrapperAbort.abort();
+          if (control === 'call-abort') callAbort.abort();
+          if (control === 'token-revoke') revokeContractInputAuthority(token);
+          if (control === 'receipt-replace') contract.inputSnapshot = structuredClone(contract.inputSnapshot);
+          try { assertCapturedToolInvocationCurrent(); } catch { stopped = true; }
+          return { success: true, output: 'stale checkpoint output' };
+        },
+      }, token, view, async () => true, wrapperAbort.signal);
+      try {
+        const result = await wrapped.execute({ files: [{ path: 'a.txt' }] }, { signal: callAbort.signal });
+        expect(reached).toBe(true); expect(stopped).toBe(true);
+        expect(result.success).toBe(false); expect(result.output).toBeUndefined();
+      } finally { await index.dispose(); }
+    }));
+}

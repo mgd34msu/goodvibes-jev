@@ -364,7 +364,35 @@ export type ChatStopReason =
   | 'error'            // Generation aborted due to error
   | 'unknown';         // Default for unmapped provider values
 
+/** One bounded provider-reported identity field from the successful attempt. */
+export type ProviderResponseIdentityField =
+  | { readonly status: 'missing' }
+  | { readonly status: 'observed'; readonly value: string }
+  | { readonly status: 'rejected'; readonly reasons: readonly ('invalid' | 'conflicting')[] };
+
+/**
+ * Response provenance, not independent model/hosting attestation or routing authority.
+ * Covers only the successful adapter attempt, not failed attempts or a whole run.
+ */
+export interface ProviderResponseIdentity {
+  /** The actual adapter request, kept separate from provider-reported evidence. */
+  readonly requested: {
+    readonly provider: string;
+    readonly adapterKind: ProviderAdapterKind;
+    readonly model: string;
+  };
+  readonly source: 'provider-reported';
+  /** At least one SSE data chunk failed JSON parsing; consistency across that gap is unknown. */
+  readonly hasUnparsedDataChunks: boolean;
+  /** Provider's modelVersion, never filled from the requested model. */
+  readonly modelVersion: ProviderResponseIdentityField;
+  /** Opaque response correlation identifier; not evidence of model identity. */
+  readonly responseId: ProviderResponseIdentityField;
+}
+
 export interface ChatResponse {
+  /** Optional bounded response provenance. Absence means the adapter did not capture it. */
+  responseIdentity?: ProviderResponseIdentity | undefined;
   content: string;
   toolCalls: ToolCall[];
   usage: {

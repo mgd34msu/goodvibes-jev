@@ -1,9 +1,9 @@
-import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
+import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent, assertCapturedToolInvocationCurrent } from '../shared/captured-input-tools.js';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
-import { resolve, relative, join } from 'node:path';
+import { resolve, relative, basename, sep } from 'node:path';
 import { stat as statAsync } from 'node:fs/promises';
-import { statSync, lstatSync, existsSync, readFileSync, realpathSync, readdirSync, type Dirent } from 'node:fs';
-import { walkDir, WALK_SKIP_DIRS as SKIP_DIRS } from '../../utils/walk-dir.js';
+import { statSync, lstatSync, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { walkDir, DirectoryWalk, type WalkDirOptions } from '../../utils/walk-dir.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 
@@ -190,14 +190,6 @@ export function makeLocationsResult<TLocation>(
 export const VALID_SYMBOL_KINDS = new Set(['function', 'class', 'interface', 'type', 'variable', 'constant', 'enum']);
 const BINARY_CHECK_BYTES = 8192;
 
-export function isHiddenOrSkippedSegment(segment: string, includeHidden: boolean): boolean {
-  return SKIP_DIRS.has(segment) || (!includeHidden && segment.startsWith('.') && segment !== '.');
-}
-
-export function shouldSkipRelativePath(relativePath: string, includeHidden: boolean): boolean {
-  return relativePath.split('/').some((segment) => isHiddenOrSkippedSegment(segment, includeHidden));
-}
-
 export async function isBinary(filePath: string, diagnostics?: FindDiagnostics): Promise<boolean> {
   try {
     await assertCapturedToolReadAccess(filePath);
@@ -216,10 +208,23 @@ export async function isBinary(filePath: string, diagnostics?: FindDiagnostics):
   }
 }
 
-export async function collectTextFiles(dirPath: string, diagnostics?: FindDiagnostics): Promise<string[]> {
+export async function collectTextFiles(dirPath: string, diagnostics?: FindDiagnostics, walkOptions: WalkDirOptions = {}): Promise<string[]> {
   const files: string[] = [];
-  for await (const filePath of walkDir(dirPath)) {
-    if (!(await isBinary(filePath, diagnostics))) {
+  for await (const filePath of walkDir(dirPath, {
+    ...walkOptions, beforeAttempt: () => {
+      assertCapturedToolInvocationCurrent();
+      walkOptions.beforeAttempt?.();
+    }, beforeAsyncAttempt: async () => {
+      await assertCapturedToolAccessCurrent();
+      await walkOptions.beforeAsyncAttempt?.();
+    }, assertPath: assertCapturedInputPathContext,
+    site: 'tools.find.skip-directory',
+  })) {
+    const binary = await isBinary(filePath, diagnostics);
+    await assertCapturedToolAccessCurrent();
+    walkOptions.signal?.throwIfAborted();
+    walkOptions.beforeAttempt?.();
+    if (!binary) {
       files.push(filePath);
     }
   }
@@ -242,46 +247,60 @@ export async function collectGlobFiles(
   includeHidden: boolean,
   followSymlinks: boolean,
   diagnostics?: FindDiagnostics,
+  walk = new DirectoryWalk(basePath),
+  walkOptions: WalkDirOptions = {},
 ): Promise<Set<string>> {
   const matchedFiles = new Set<string>();
   const visitedRealPaths = new Set<string>();
-
+  const globs: Array<InstanceType<typeof Bun.Glob>> = [];
   for (const pattern of patterns) {
-    let glob: InstanceType<typeof Bun.Glob>;
     try {
-      glob = new Bun.Glob(pattern);
+      globs.push(new Bun.Glob(pattern));
     } catch (err) {
       addFindWarning(diagnostics, `Skipped invalid glob pattern '${pattern}': ${summarizeError(err)}`);
-      continue;
-    }
-
-    try {
-      for await (const file of glob.scan({ cwd: basePath, onlyFiles: true, absolute: true, followSymlinks })) {
-        if (followSymlinks) {
-          try {
-            const real = realpathSync(file);
-            if (visitedRealPaths.has(real)) continue;
-            visitedRealPaths.add(real);
-          } catch (err) {
-            addFindWarning(diagnostics, `Skipped '${file}' because symlink resolution failed: ${summarizeError(err)}`);
-            continue;
-          }
-        }
-
-        try {
-          assertCapturedInputPathContext(file);
-        } catch {
-          continue;
-        }
-        const rel = relative(basePath, file);
-        if (shouldSkipRelativePath(rel, includeHidden)) continue;
-        matchedFiles.add(file);
-      }
-    } catch (err) {
-      addFindWarning(diagnostics, `Glob scan failed for pattern '${pattern}': ${summarizeError(err)}`);
     }
   }
+  if (!globs.length) return matchedFiles;
 
+  // Prove a narrow literal subset only. Unknown glob syntax (including
+  // escapes and negation) must remain traversable. File matching below always
+  // uses Bun.Glob, so this proof can only remove irrelevant directory work.
+  const literalPaths = patterns.every(pattern => /^[A-Za-z0-9_./ -]+$/.test(pattern)
+    && !pattern.split('/').some(part => part === '.' || part === '..'))
+    ? patterns.map(pattern => resolve(basePath, pattern)) : undefined;
+  const selectedFile = (file: string): boolean => globs.some(glob => matchesGlob(glob, file, basePath))
+    && walkOptions.selectFile?.(file) !== false;
+  const selectedDirectory = (directory: string): boolean => walkOptions.selectDirectory?.(directory) !== false
+    && (literalPaths === undefined || literalPaths.some(file => file.startsWith(`${directory}${sep}`)));
+
+  // Scan once for all explicit patterns. Directory meaning is settled before
+  // descent, rather than filtering after Bun.Glob has already traversed it.
+  for await (const file of walk.files({
+    ...walkOptions, includeHidden, followSymlinks, maxFileSize: Number.POSITIVE_INFINITY,
+    selectFile: selectedFile, selectDirectory: selectedDirectory,
+    beforeAttempt: () => {
+      assertCapturedToolInvocationCurrent();
+      walkOptions.beforeAttempt?.();
+    },
+    beforeAsyncAttempt: async () => {
+      await assertCapturedToolAccessCurrent();
+      await walkOptions.beforeAsyncAttempt?.();
+    },
+    assertPath: assertCapturedInputPathContext, site: 'tools.find.glob.skip-directory',
+  })) {
+    if (!selectedFile(file)) continue;
+    if (followSymlinks) {
+      try {
+        const real = realpathSync(file);
+        if (visitedRealPaths.has(real)) continue;
+        visitedRealPaths.add(real);
+      } catch (err) {
+        addFindWarning(diagnostics, `Skipped '${file}' because symlink resolution failed: ${summarizeError(err)}`);
+        continue;
+      }
+    }
+    matchedFiles.add(file);
+  }
   return matchedFiles;
 }
 
@@ -390,34 +409,29 @@ export function buildGitignoreMatcher(
   };
 }
 
-export function findNestedGitignoreFiles(basePath: string, rootGitignorePath: string): string[] {
+export async function findNestedGitignoreFiles(
+  basePath: string, rootGitignorePath: string, walk = new DirectoryWalk(basePath), walkOptions: WalkDirOptions = {},
+): Promise<string[]> {
   const nested: string[] = [];
   const maxNested = 5;
-
-  const visit = (dir: string): void => {
-    if (nested.length >= maxNested) return;
-
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
+  for await (const file of walk.files({
+    ...walkOptions, includeHidden: true, maxFileSize: Number.POSITIVE_INFINITY,
+    selectFile: file => basename(file) === '.gitignore' && file !== rootGitignorePath && walkOptions.selectFile?.(file) !== false,
+    beforeAttempt: () => {
+      assertCapturedToolInvocationCurrent();
+      walkOptions.beforeAttempt?.();
+    },
+    beforeAsyncAttempt: async () => {
+      await assertCapturedToolAccessCurrent();
+      await walkOptions.beforeAsyncAttempt?.();
+    },
+    assertPath: assertCapturedInputPathContext, site: 'tools.find.gitignore.skip-directory',
+  })) {
+    if (basename(file) === '.gitignore' && file !== rootGitignorePath) {
+      nested.push(file);
+      if (nested.length >= maxNested) break;
     }
-
-    for (const entry of entries) {
-      if (nested.length >= maxNested) return;
-      if (SKIP_DIRS.has(entry.name)) continue;
-
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        visit(full);
-      } else if (entry.isFile() && entry.name === '.gitignore' && full !== rootGitignorePath) {
-        nested.push(full);
-      }
-    }
-  };
-
-  visit(basePath);
+  }
   return nested;
 }
 
@@ -425,11 +439,12 @@ export async function collectFilesForSearch(
   basePath: string,
   queryGlob: string | undefined,
   diagnostics?: FindDiagnostics,
+  walkOptions: WalkDirOptions = {},
 ): Promise<string[]> {
   if (!queryGlob) {
-    return collectTextFiles(basePath, diagnostics);
+    return collectTextFiles(basePath, diagnostics, walkOptions);
   }
-  return Array.from(await collectGlobFiles(basePath, [queryGlob], false, false, diagnostics));
+  return Array.from(await collectGlobFiles(basePath, [queryGlob], false, false, diagnostics, new DirectoryWalk(basePath), walkOptions));
 }
 
 const SEARCH_CACHE_MAX = 50;

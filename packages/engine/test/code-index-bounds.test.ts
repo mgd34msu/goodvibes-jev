@@ -1,9 +1,11 @@
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
  * Repo code index (Stage A), CodeIndexStore bounds + honest skip
  * reporting: maxFiles/maxFileBytes/binary/gitignore exclusions all appear in
  * the skip report with honest counts, and .gitignore'd paths are never indexed.
  */
-import { describe, expect, test, afterEach } from 'bun:test';
+import { beforeEach, describe, expect, test, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -149,3 +151,8 @@ describe('CodeIndexStore: bounds honesty', () => {
     }
   });
 });
+
+// These filesystem fixtures contain authored directories; directory meaning is supplied explicitly.
+let previousDirectoryPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previousDirectoryPort); });

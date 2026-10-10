@@ -7,6 +7,8 @@
  * "when does this process stop, and what do we call the way it stopped".
  */
 import type { BackgroundProcess } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { withLongLivedProcessReading, type ProcessClassificationOptions } from './agent-harness-process-classification.ts';
 import type { AgentHarnessBackgroundProcessArgs } from './agent-harness-background-processes-types.ts';
 
 export const DEFAULT_BACKGROUND_TIMEOUT_MS = 30 * 60 * 1000;
@@ -35,45 +37,33 @@ export function clampTimeout(value: unknown, fallback: number): number {
   return Math.max(1_000, Math.min(MAX_BACKGROUND_TIMEOUT_MS, readNumber(value, fallback)));
 }
 
-/**
- * Commands that launch something the user interacts with, or a server meant to
- * outlive the call that started it. Matched on the leading program name, so an
- * argument that merely mentions a browser does not reclassify the command.
- */
-const LONG_LIVED_PROGRAMS = new Set([
-  'brave', 'brave-browser', 'chrome', 'chromium', 'chromium-browser', 'firefox',
-  'google-chrome', 'microsoft-edge', 'msedge', 'opera', 'safari', 'vivaldi',
-  'code', 'codium', 'emacs', 'gedit', 'gimp', 'gvim', 'kate', 'nautilus',
-  'thunar', 'xdg-open', 'open', 'gnome-open', 'kde-open',
-]);
-
 /** How a started process is treated when its timeout expires. */
 export type BackgroundProcessClass = 'command' | 'long_lived';
 
-/**
- * Classifies a command for timeout purposes.
- *
- * `terminal` is documented as "start visible tracked background shell
- * commands", and its `timeoutMs` used to SIGKILL whatever it had started. A
- * routine 120s value therefore destroyed a running browser, a user-facing
- * application torn down as the ordinary outcome of a normal parameter. A
- * long-lived process now keeps running past its deadline unless the caller
- * explicitly opts in to being killed.
- */
-export function resolveBackgroundProcessClass(
+/** Explicit declarations stay first; only omitted/invalid classes need a reading. */
+export async function withBackgroundProcessClass<T>(
   args: AgentHarnessBackgroundProcessArgs,
   command: string,
-): BackgroundProcessClass {
-  const explicit = readString(args.processClass) || readField(args, 'processClass');
-  if (explicit === 'long_lived' || explicit === 'command') return explicit;
+  options: ProcessClassificationOptions,
+  consume: (processClass: BackgroundProcessClass, assertCurrent: () => void) => T | Promise<T>,
+): Promise<T> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const captured = snapshotJudgmentInput(args) as AgentHarnessBackgroundProcessArgs;
+  const explicit = readString(captured.processClass) || readField(captured, 'processClass');
+  if (explicit === 'long_lived' || explicit === 'command') {
+    const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); };
+    assertCurrent(); return await consume(explicit, assertCurrent);
+  }
+  return withLongLivedProcessReading(command, options, (longLived, assertCurrent) => consume(longLived ? 'long_lived' : 'command', assertCurrent));
+}
 
-  const program = command
-    .trim()
-    .split(/\s+/)[0]
-    ?.split('/')
-    .pop()
-    ?.toLowerCase() ?? '';
-  return LONG_LIVED_PROGRAMS.has(program) ? 'long_lived' : 'command';
+/** Classify without a side effect; launching uses the same reading's live lease. */
+export async function resolveBackgroundProcessClass(
+  args: AgentHarnessBackgroundProcessArgs,
+  command: string,
+  options: ProcessClassificationOptions = {},
+): Promise<BackgroundProcessClass> {
+  return withBackgroundProcessClass(args, command, options, (processClass) => processClass);
 }
 
 /**
