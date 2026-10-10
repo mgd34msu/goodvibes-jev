@@ -7263,7 +7263,7 @@ describe('agent_harness tool', () => {
     }
   });
 
-  test('exposes terminal and process adapters for tracked background process UX', async () => {
+  test('generated handles at a PAN-shaped epoch support registered terminal and process adapters', async () => {
     const fixture = makeFixture();
     try {
       const foreground = await fixture.toolRegistry.execute('terminal-foreground', 'terminal', {
@@ -7272,11 +7272,10 @@ describe('agent_harness tool', () => {
       expect(foreground.success).toBe(false);
       expect(foreground.error).toContain('background:true');
 
-      // Keep this adapter-wiring fixture independent of the global PAN floor:
-      // legacy process IDs include the clock. A separate readiness regression
-      // deliberately proves PAN-shaped epochs still hold without disclosure.
+      // This epoch matches the PAN shape when written as decimal.
+      // The ordinary producer must make an opaque handle that remains usable.
       const started = await (async () => {
-        const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+        const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_004);
         try {
           return await fixture.toolRegistry.execute('terminal-start', 'terminal', {
             command: 'printf "adapter-output"',
@@ -7295,7 +7294,13 @@ describe('agent_harness tool', () => {
         readonly routes: { readonly log: string; readonly poll: string; readonly stop: string };
       };
       expect(startedJson.status).toBe('started');
-      expect(startedJson.processId).toMatch(/^bg_/);
+      expect(startedJson.processId).toBe('bg_b_bhaaaaaaaaaae');
+      const polled = await fixture.toolRegistry.execute('process-poll', 'process', {
+        action: 'poll', processId: startedJson.processId,
+      });
+      expect(polled.success).toBe(true);
+      if (!polled.success) throw new Error(polled.error);
+      expect(polled.output).toContain(startedJson.processId);
       expect(startedJson.routes.log).toContain('process action:"log"');
       expect(startedJson.routes.poll).toContain('process action:"poll"');
 
@@ -7359,22 +7364,11 @@ describe('agent_harness tool', () => {
     }
   });
 
-  test('a PAN-shaped generated legacy process ID remains held at registered process ingress', async () => {
+  test('a literal legacy PAN-shaped process ID remains held at registered process ingress', async () => {
     const fixture = makeFixture();
     try {
-      const started = await (async () => {
-        const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_004);
-        try {
-          return await fixture.toolRegistry.execute('terminal-pan-id', 'terminal', {
-            command: 'printf "fixture"', background: true, confirm: true,
-            explicitUserRequest: 'Start a tracked adapter fixture command.',
-          });
-        } finally { clock.mockRestore(); }
-      })();
-      expect(started.success).toBe(true);
-      if (!started.success) throw new Error(started.error);
-      const { processId } = JSON.parse(started.output ?? '{}') as { processId: string };
-      expect(processId).toBe('bg_1_1700000000004');
+      // Previously allocated handles are opaque inputs, never decoded or exempted.
+      const processId = 'bg_1_1700000000004';
       let held: unknown;
       try { await fixture.toolRegistry.execute('process-pan-id', 'process', { action: 'poll', processId }); }
       catch (error) { held = error; }

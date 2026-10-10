@@ -20,18 +20,37 @@ export interface CalibrateOptions {
 /** How far back to look for one decision's calibration calls; one decision's fixtures never come near it. */
 const RECENT_CALLS = 100_000;
 
-/** The id of the newest entry in the log, or '' when it is empty. Entry ids are UUIDv7, so later entries sort after it. */
-const newestId = (log: DecisionLog): string => log.query({ limit: 1 })[0]?.id ?? '';
+/** The same bounded, deterministic window on both sides of fixture execution. */
+const recentCalls = (log: DecisionLog): readonly DecisionEntry[] =>
+  log.query({ site: CALIBRATION_SITE, status: 'answered', limit: RECENT_CALLS });
+
+/** Capture only IDs returned by this execution, even when other calibrations share the log. */
+function fixturePort(port: JudgmentPort, returned: Set<string>): JudgmentPort {
+  return {
+    get model() { return port.model; },
+    ...(port.recorder === undefined ? {} : { recorder: port.recorder }),
+    ...(port.health === undefined ? {} : { health: () => port.health!() }),
+    async ask(request) {
+      const result = await port.ask(request);
+      if (result.decisionId !== undefined) returned.add(result.decisionId);
+      return result;
+    },
+  };
+}
 
 /**
  * Attaches each fixture's checks to the newest calibration call recorded for
- * it since `after`, preferring the decision's own calls over any it delegated
- * to. Returns how many fixtures had a call to attach to.
+ * it during this execution, preferring the decision's own calls over any it
+ * delegated to. Opaque IDs carry no chronology, including mixed legacy keys.
+ * Requires append-only immutable entries and stable query ordering, so entries
+ * outside the prior window cannot enter the later window. Calls displaced by
+ * its cap receive no truth rather than an unscoped fallback. Returns how many fixtures had a call to attach to.
  */
-function recordFixtureTruth(log: DecisionLog, decision: NamedDecision, checks: readonly FixtureCheck[], after: string): number {
-  const calls = log
-    .query({ site: CALIBRATION_SITE, status: 'answered', limit: RECENT_CALLS })
-    .filter((entry) => entry.id > after && entry.context.fixture !== undefined);
+function recordFixtureTruth(
+  log: DecisionLog, decision: NamedDecision, checks: readonly FixtureCheck[], before: ReadonlySet<string>, returned: ReadonlySet<string>,
+): number {
+  const calls = recentCalls(log)
+    .filter((entry) => !before.has(entry.id) && returned.has(entry.id) && entry.context.fixture !== undefined);
   const fixtures = [...new Set(checks.map((check) => check.fixture))];
   let recorded = 0;
   for (const fixture of fixtures) {
@@ -64,11 +83,12 @@ export async function calibrate(
   const reports: DecisionReport[] = [];
   for (const decision of selected) {
     const model = decision.model ?? port.model;
-    const after = log === undefined ? '' : newestId(log);
+    const before = new Set(log === undefined ? [] : recentCalls(log).map((entry) => entry.id));
+    const returned = new Set<string>();
     try {
-      const checks = await decision.checkFixtures(port, options.signal === undefined ? {} : { signal: options.signal });
+      const checks = await decision.checkFixtures(log === undefined ? port : fixturePort(port, returned), options.signal === undefined ? {} : { signal: options.signal });
       const report = summarize(decision, model, checks);
-      reports.push(log === undefined ? report : { ...report, truthRecorded: recordFixtureTruth(log, decision, checks, after) });
+      reports.push(log === undefined ? report : { ...report, truthRecorded: recordFixtureTruth(log, decision, checks, before, returned) });
     } catch (error) {
       reports.push({
         ...summarize(decision, model, []),

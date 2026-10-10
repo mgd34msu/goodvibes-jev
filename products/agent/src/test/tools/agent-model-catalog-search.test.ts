@@ -1,3 +1,7 @@
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
@@ -54,22 +58,34 @@ function readings(fits: Readonly<Record<string, number>> = {}) {
     return noulAnswer(name === 'cloudTransfer' ? 0.99 : 0.001);
   });
 }
-// Real SQLite recording with deterministic fixture-only opaque IDs. Production
-// UUIDv7 digit runs can hit the global PAN floor; the refusal control below
-// preserves that unresolved producer limitation without weakening screening.
+// Real SQLite recording with deterministic UUID inputs, including a known
+// PAN-shaped UUID. The producer encodes it; a separate old-row control proves
+// that genuine sensitive provenance still meets the unchanged screening floor.
 const collisionId = '01a126ad-991e-7023-9665-055983b11cdd';
 class FixtureDecisionLog extends SqliteDecisionLog {
   private sequence = 0;
-  constructor(private readonly collide = false) { super(':memory:'); }
+  private collided = false;
+  constructor(private readonly collide = false, private readonly legacyPath?: string) { super(legacyPath ?? ':memory:'); }
   override record(entry: Parameters<SqliteDecisionLog['record']>[0]): ReturnType<SqliteDecisionLog['record']> {
     const suffix = (++this.sequence).toString(6).padStart(12, '0').replace(/[0-5]/g, digit => 'abcdef'[Number(digit)]!);
-    const id = this.collide && entry.context.battery === 'agent.models.local-recipe-fit'
+    const id = this.collide && !this.collided && entry.context.battery === 'agent.models.local-recipe-fit'
       ? collisionId : `aaaaaaaa-aaaa-7aaa-aaaa-${suffix}`;
+    if (id === collisionId) this.collided = true;
     const original = Bun.randomUUIDv7;
     // SqliteDecisionLog.record is synchronous; no callback or await can observe
     // this fixture generator, and the real generator is always restored.
     Bun.randomUUIDv7 = (() => id) as typeof Bun.randomUUIDv7;
-    try { return super.record(entry); } finally { Bun.randomUUIDv7 = original; }
+    try {
+      const generated = super.record(entry);
+      if (this.legacyPath !== undefined && id === collisionId) {
+        // Emulate an existing schema-v3 row with its original raw UUID key.
+        // Production never rewrites or exempts these keys.
+        using db = new Database(this.legacyPath);
+        db.query('UPDATE decisions SET id = ? WHERE id = ?').run(collisionId, generated);
+        return collisionId as ReturnType<SqliteDecisionLog['record']>;
+      }
+      return generated;
+    } finally { Bun.randomUUIDv7 = original; }
   }
 }
 const ranks = (fake: ReturnType<typeof readings>) => fake.requests.filter(request => request.context?.battery === battery);
@@ -594,12 +610,36 @@ test.each(['recordReadings', 'recordAction'] as const)('revocation inside the fi
 });
 
 
-test('PAN-shaped generated decision provenance remains refused before later cookbook readiness', async () => {
+test('a generated collision UUID records and reaches later cookbook readiness with exact encoded provenance', async () => {
   const f = fixture(), fake = readings({ [`model:${winner}`]: 0.99 });
   using log = new FixtureDecisionLog(true); installJudgmentPort(withDecisionLog(fake.port, log));
-  await expect(f.tools.models.execute({ action: 'status', query })).rejects.toMatchObject({ problem: 'card-material' });
-  expect(log.get(collisionId)?.context.battery).toBe('agent.models.local-recipe-fit');
-  expect(fake.requests.some(request => request.context?.site === 'agent.models.route-readiness'
-    && record(request.state).localFit !== undefined)).toBe(false);
+  const result = await f.tools.models.execute({ action: 'status', query });
+  expect(result.success).toBe(true);
+  const fit = log.query({ battery: 'agent.models.local-recipe-fit' }).find(entry => entry.id === 'abkbcgkn-jjbo-hacd-jggf-affjidlbbmnn')!;
+  expect<string>(fit.id).toBe('abkbcgkn-jjbo-hacd-jggf-affjidlbbmnn');
+  expect(log.get(collisionId)).toBeUndefined();
+  expect(log.get(fit.id)?.context.battery).toBe('agent.models.local-recipe-fit');
+  const later = fake.requests.filter(request => request.context?.site === 'agent.models.route-readiness'
+    && record(request.state).localFit !== undefined);
+  expect(later.length).toBeGreaterThan(0);
+  expect(JSON.stringify(later)).toContain(fit.id);
+  expect(JSON.stringify(later)).not.toContain(collisionId);
   expect(f.effects).toEqual([]);
+});
+
+test('an existing raw legacy PAN-shaped SQLite provenance key remains refused before cookbook readiness', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'legacy-decision-key-'));
+  try {
+    const f = fixture(), fake = readings({ [`model:${winner}`]: 0.99 });
+    using log = new FixtureDecisionLog(true, join(dir, 'decisions.sqlite')); installJudgmentPort(withDecisionLog(fake.port, log));
+    let held: unknown;
+    try { await f.tools.models.execute({ action: 'status', query }); } catch (error) { held = error; }
+    expect(held).toMatchObject({ problem: 'card-material' });
+    expect(String(held)).not.toContain(collisionId);
+    expect(JSON.stringify(fake.requests)).not.toContain(collisionId);
+    expect(log.get(collisionId)?.context.battery).toBe('agent.models.local-recipe-fit');
+    expect(fake.requests.some(request => request.context?.site === 'agent.models.route-readiness'
+      && record(request.state).localFit !== undefined)).toBe(false);
+    expect(f.effects).toEqual([]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

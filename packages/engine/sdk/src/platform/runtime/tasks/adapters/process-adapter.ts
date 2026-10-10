@@ -37,7 +37,7 @@ export interface ProcessOwner {
  * ```
  */
 export class ProcessTaskAdapter {
-  /** Maps process internal ID (bg_N_ts) → task ID. */
+  /** Maps opaque ProcessManager handle (bg_ prefix) → task ID. */
   private readonly _idToTask = new Map<string, string>();
   /** Maps task ID → process internal ID. */
   private readonly _taskToId = new Map<string, string>();

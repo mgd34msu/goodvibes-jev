@@ -91,7 +91,10 @@ export class SqliteDecisionLog implements DecisionLog, Disposable {
   }
 
   record(entry: NewDecisionEntry): DecisionId {
-    const id = Bun.randomUUIDv7() as DecisionId;
+    // Preserve all UUID entropy while keeping opaque generated keys free of
+    // decimal runs that can resemble card material. Map every hex nibble,
+    // including a–f, bijectively; existing stored keys remain unchanged.
+    const id = Bun.randomUUIDv7().replace(/[0-9a-f]/g, (nibble) => String.fromCharCode(97 + Number.parseInt(nibble, 16))) as DecisionId;
     this.#insert.run(toParams(id, entry));
     return id;
   }

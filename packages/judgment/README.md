@@ -61,6 +61,22 @@ Each check is read for what it actually decides: a check whose answer is its own
 
 The decision log keeps every call with what the decision concluded (a `readings` note), what code did with it (an `action` note) and, once known, what was right (a `truth` note). Calibration records each fixture's expectations as truth on that fixture's call; an owner correction or an observed outcome is attached the same way. The engine's observe subsystem reads accuracy against confidence, threshold sweeps, drift and historical questions stuck in `confirm` or `escalate` from the log alone. Those log values do not prescribe human approval in the autonomous contract.
 
+Decision IDs are opaque exact keys, not timestamps or a UUID-format contract.
+New SQLite IDs preserve every UUIDv7 hex nibble through a one-to-one a–p
+encoding, preventing generated decimal runs from resembling payment-card
+material. Existing keys stay untouched and remain readable and attachable;
+there is no schema change or privacy-screening exemption. Sort by the entry's
+`at` field; equal timestamps have a deterministic ID tie-break, not a promised
+cross-format chronology.
+
+Calibration attributes truth only to newly observed, answered calibration rows
+whose IDs were returned through that fixture execution's port. It compares the
+same newest 100,000-row window before and after, keeping fixture matching and
+preferring the named decision's own calls over delegated calls. Custom logs
+must retain append-only immutable entries and stable query ordering. Calls
+outside the window or without a returned recorded ID receive no fixture truth;
+concurrent calls and previously returned IDs are not a fallback source.
+
 ## License
 
 MIT
