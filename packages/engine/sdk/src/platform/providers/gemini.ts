@@ -18,6 +18,7 @@ import {
   type LiveModelDiscoveryResult,
 } from './live-model-discovery.js';
 
+import { createGeminiResponseIdentityAccumulator } from './gemini-response-identity.js';
 import { mapGeminiStopReason } from './stop-reason-maps.js';
 import { parseRateLimitHeaders } from './rate-limit-headers.js';
 import { ProviderError } from '../types/errors.js';
@@ -379,6 +380,11 @@ export class GeminiProvider implements LLMProvider {
 
       const rateLimit = parseRateLimitHeaders(res.headers) ?? undefined;
 
+      // Attempt-local: never retain identity from a failed partial stream or another call.
+      const responseIdentity = createGeminiResponseIdentityAccumulator({
+        provider: this.name, adapterKind: this.adapterKind, model,
+      });
+
       // Accumulate state from streaming chunks
       const allParts: GeminiPart[] = [];
       let inputTokens = 0;
@@ -408,6 +414,7 @@ export class GeminiProvider implements LLMProvider {
         try {
           chunk = JSON.parse(data) as GeminiResponseBody;
         } catch {
+          responseIdentity.markUnparsedDataChunk();
           logger.warn('Gemini SSE: failed to parse JSON chunk', {
             chunkPreview: data.slice(0, 200),
             chunkLength: data.length,
@@ -415,6 +422,8 @@ export class GeminiProvider implements LLMProvider {
           return;
         }
 
+        // Observe every parsed chunk, including metadata-only chunks and the final flush.
+        responseIdentity.observe(chunk);
         const candidate = chunk.candidates?.[0];
         if (candidate) {
           const parts = candidate.content?.parts ?? [];
@@ -479,6 +488,7 @@ export class GeminiProvider implements LLMProvider {
 
       return {
         content: text,
+        responseIdentity: responseIdentity.snapshot(),
         toolCalls,
         usage: {
           inputTokens,
