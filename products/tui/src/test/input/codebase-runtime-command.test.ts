@@ -13,6 +13,7 @@
 
 import { describe, expect, test, afterEach, beforeEach } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,9 +28,29 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 const tempDirs: string[] = [];
 let previousPort: ReturnType<typeof installJudgmentPort>;
+let directoryJudgment: ReturnType<typeof directoryPort>;
+
+type DirectoryState = { readonly directories: readonly { readonly id: string; readonly name: string; readonly relativePath: string }[] };
+
+/** Fixture decisions are about exclusion: yes skips, no keeps authored source. */
+function directoryPort(srcSkipProbability = 0.01) {
+  const fake = fakePort((key, _question, state) => {
+    const candidate = (state as unknown as DirectoryState).directories.find((directory) => directory.id === key);
+    if (candidate?.name === 'src' && candidate.relativePath === 'src') return noulAnswer(srcSkipProbability);
+    if (candidate?.name === '.goodvibes' && candidate.relativePath === '.goodvibes') return noulAnswer(0.99);
+    throw new Error(`Unexpected directory fixture: ${key}`);
+  });
+  const port: JudgmentPort = { ...fake.port, async ask(request) {
+    // An unrelated decision must never inherit a generic yes/no answer.
+    expect(request.context?.battery).toBe('engine.walk.skip-directory');
+    return fake.port.ask(request);
+  } };
+  return { requests: fake.requests, port };
+}
 
 beforeEach(() => {
-  previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.95)).port);
+  directoryJudgment = directoryPort();
+  previousPort = installJudgmentPort(directoryJudgment.port);
 });
 
 afterEach(() => {
@@ -99,12 +120,13 @@ describe('codebase-runtime command registration', () => {
 
 describe('/codebase: store-absent guard', () => {
   test('prints an honest "not available" message when ctx.session.codeIndexStore is missing', async () => {
-    const { configManager } = await makeRealStore();
+    const { store, configManager } = await makeRealStore();
     const registry = new CommandRegistry();
     registerCodebaseRuntimeCommands(registry);
     const { ctx, printed } = makeCtx(undefined, configManager);
     await registry.get('codebase')!.handler([], ctx);
     expect(printed[0]).toMatch(/not available in this session/);
+    store.close();
   });
 });
 
@@ -229,8 +251,107 @@ describe('/codebase build', () => {
     expect(output).toMatch(/indexed: [1-9]\d* file\(s\), [1-9]\d* chunk\(s\)/);
     expect(output).toMatch(/last build: \d+ indexed/);
     expect(output).toMatch(/skipped: (none|.+)/);
+    expect(store.stats().indexedFiles).toBe(2);
+    expect(directoryJudgment.requests).toHaveLength(1);
+    const request = directoryJudgment.requests[0]!;
+    expect(request.context?.site).toBe('tools.find.gitignore.skip-directory');
+    const directories = (request.state as unknown as DirectoryState).directories;
+    // The real runtime asks only about exact root-relative directory identities,
+    // never the absolute scratch path or the fixture's source contents.
+    expect(request.state).toEqual({ directories: directories.map(({ id, name, relativePath }) => ({ id, name, relativePath })) });
+    expect(directories.map(({ name, relativePath }) => ({ name, relativePath })).sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: '.goodvibes', relativePath: '.goodvibes' }, { name: 'src', relativePath: 'src' },
+    ]);
+    expect(Object.keys(request.questions).sort()).toEqual(directories.map(({ id }) => id).sort());
+    expect(request.beforeAttempt).toBeFunction();
 
     store.close();
+  });
+
+  test('an explicit exclusion leaves the command index empty without a source-name fallback', async () => {
+    directoryJudgment = directoryPort(0.99);
+    installJudgmentPort(directoryJudgment.port);
+    const { store, configManager } = await makeRealStore();
+    const registry = new CommandRegistry();
+    registerCodebaseRuntimeCommands(registry);
+    const { ctx, printed } = makeCtx(store, configManager);
+    try {
+      await registry.get('codebase')!.handler(['build'], ctx);
+      await waitUntilNotBuilding(store);
+      expect(directoryJudgment.requests).toHaveLength(1);
+      expect(store.stats().lastBuild?.filesIndexed).toBe(0);
+      expect(store.stats().indexedChunks).toBe(0);
+      await registry.get('codebase')!.handler(['search', 'greet'], ctx);
+      expect(printed.at(-1)).toMatch(/index is empty/);
+    } finally { store.close(); }
+  });
+
+  test('a held directory reading does not publish a successful build or bypass the decision', async () => {
+    directoryJudgment = directoryPort(0.5);
+    installJudgmentPort(directoryJudgment.port);
+    const { store, configManager } = await makeRealStore();
+    const registry = new CommandRegistry();
+    registerCodebaseRuntimeCommands(registry);
+    const { ctx, printed } = makeCtx(store, configManager);
+    try {
+      await registry.get('codebase')!.handler(['build'], ctx);
+      await waitUntilNotBuilding(store);
+      expect(directoryJudgment.requests).toHaveLength(1);
+      expect(store.stats().lastBuild).toBeNull();
+      expect(store.stats().indexedChunks).toBe(0);
+      await registry.get('codebase')!.handler(['status'], ctx);
+      expect(printed.at(-1)).toContain('last build: never; run /codebase build');
+    } finally { store.close(); }
+  });
+
+  test.each(['close', 'reroot'] as const)('%s during a scheduled directory reading invalidates the old build owner', async (change) => {
+    const { store, configManager } = await makeRealStore();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const port = directoryJudgment.port;
+    let paused = false;
+    installJudgmentPort({ ...port, async ask(request) {
+      if (!paused) {
+        paused = true;
+        started.resolve();
+        await release.promise;
+      }
+      return port.ask(request);
+    } });
+    const registry = new CommandRegistry();
+    registerCodebaseRuntimeCommands(registry);
+    const { ctx } = makeCtx(store, configManager);
+    let building: ReturnType<CodeIndexStore['buildFull']> | undefined;
+    try {
+      await registry.get('codebase')!.handler(['build'], ctx);
+      building = store.buildFull(); // Coalesces with the command-owned build.
+      await started.promise;
+      if (change === 'close') store.close();
+      else {
+        const nextRoot = makeScratchWorkingDirectory();
+        rmSync(join(nextRoot, 'src', 'other.ts'));
+        writeFileSync(join(nextRoot, 'src', 'demo.ts'), 'export const newRootOnly = 1;\n');
+        await store.reroot(nextRoot, join(nextRoot, '.goodvibes', 'tui', 'code-index.sqlite'));
+        await registry.get('codebase')!.handler(['build'], ctx);
+        await waitUntilNotBuilding(store);
+        expect(store.stats().indexedFiles).toBe(1);
+      }
+      const currentBuild = store.stats().lastBuild;
+      release.resolve();
+      expect((await building).abortReason).toBeDefined();
+      expect(store.stats().lastBuild).toEqual(currentBuild);
+      expect(store.stats().indexedFiles).toBe(change === 'close' ? 0 : 1);
+      if (change === 'close') expect(store.stats().available).toBe(false);
+      else {
+        expect(store.isBuilding()).toBe(false);
+        expect((await store.search('newRootOnly')).map((result) => result.chunk.symbol)).toEqual(['newRootOnly']);
+      }
+      expect(directoryJudgment.requests).toHaveLength(change === 'close' ? 1 : 2);
+    } finally {
+      release.resolve();
+      await building;
+      store.close();
+    }
   });
 
   test('a build already in progress is reported, not silently re-triggered', async () => {
