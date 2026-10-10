@@ -422,3 +422,24 @@ test('an unbound raw registry accepts a genuine admission for its exact handle f
   expect(await raw.registry.executePrepared(call, admission)).toMatchObject({ success: true });
   expect(effects).toBe(1);
 });
+
+
+test.each(['unchanged', 'cancel', 'authority', 'registration'])('registered read publication is current through final cleanup: %s', async change => {
+  let revoked = false, bodyArgs!: Record<string, unknown>, bodyOptions!: ToolExecuteOptions;
+  const started = deferred<void>(), finish = deferred<void>(), controller = new AbortController();
+  const config = { getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: revoked, directory: '/synthetic/project' }),
+    isAutoApproveEnabled: () => revoked, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => '/synthetic/project' } as PermissionConfigReader;
+  const { registry, admit } = fixture(async (args, options) => { bodyArgs = args; bodyOptions = options!; return { success: true }; },
+    { async project(request) { return { status: 'projected', args: request.args, resultPublication: 'read-only', async release() { started.resolve(); await finish.promise; } }; } }, config);
+  const { call, admission } = await admit('publication', controller.signal);
+  const pending = registry.executePrepared(call, admission);
+  await started.promise;
+  expect(() => assertCurrentToolExecution(bodyArgs, bodyOptions)).toThrow();
+  if (change === 'cancel') controller.abort();
+  else if (change === 'authority') revoked = true;
+  else if (change === 'registration') registry.unregister('exec');
+  finish.resolve();
+  if (change === 'unchanged') expect(await pending).toMatchObject({ success: true });
+  else await expect(pending).rejects.toThrow();
+  await expect(registry.executePrepared(call, admission)).rejects.toThrow();
+});

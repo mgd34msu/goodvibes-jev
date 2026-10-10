@@ -71,7 +71,7 @@ export function describeLocalBenchmarkJudgment(artifact: ArtifactDescriptor): Re
 }
 
 function readLatencyMs(value: unknown): number | null {
-  const numberValue = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+  const numberValue = typeof value === 'number' ? value : Number.NaN;
   return Number.isFinite(numberValue) && numberValue >= 0 ? Math.round(numberValue) : null;
 }
 
@@ -93,7 +93,7 @@ export function localBenchmarkRouteLatenciesForArtifact(artifact: ArtifactDescri
       displayName: readString(record.displayName) || registryKey,
       blindId,
       latencyMs,
-      status: readString(record.status) || 'completed',
+      status: readString(record.status) || 'unknown',
       artifactId: artifact.id,
       comparisonId,
       createdAt,

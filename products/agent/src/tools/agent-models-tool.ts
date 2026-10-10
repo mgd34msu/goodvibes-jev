@@ -1,6 +1,8 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
+import { captureModelReadingInput } from './agent-harness-model-reading-source.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, forwardHarnessCatalogCall } from './agent-harness-catalog-ingress.ts';
 import { createAgentHarnessTool } from './agent-harness-tool.ts';
 
 type AgentModelsAction =
@@ -153,7 +155,7 @@ export function createAgentModelsTool(deps: AgentModelsToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'models',
       description: 'Inspect model routes, providers, cookbook, and checks.',
@@ -183,20 +185,28 @@ export function createAgentModelsTool(deps: AgentModelsToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
-      const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentModelsToolArgs;
+    execute: async (rawArgs, options) => {
+      const args = captureModelReadingInput(rawArgs) as AgentModelsToolArgs;
+      const forward = (translated: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, translated, options);
       const action = readAction(args);
 
-      if (action === 'status') return harnessTool.execute(statusArgs(args));
-      if (action === 'route') return harnessTool.execute(routeArgs(args));
-      if (action === 'local') return harnessTool.execute(localArgs(args));
-      if (action === 'providers') return harnessTool.execute(providersArgs(args));
-      if (action === 'provider') return harnessTool.execute(providerArgs(args));
-      if (action === 'smoke') return harnessTool.execute(smokeArgs(args));
+      if (action === 'status') return forward(statusArgs(args));
+      if (action === 'route') return forward(routeArgs(args));
+      if (action === 'local') return forward(localArgs(args));
+      if (action === 'providers') return forward(providersArgs(args));
+      if (action === 'provider') return forward(providerArgs(args));
+      if (action === 'smoke') return forward(smokeArgs(args));
 
       return error('Unknown models action. Use action:"status" for model routing readiness.');
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isModelsReadinessCall, deps.commandContext);
+}
+
+export function isModelsReadinessCall(input: Record<string, unknown>): boolean {
+  const args = captureModelReadingInput(input) as AgentModelsToolArgs;
+  const action = readAction(args);
+  return action === 'status' || action === 'route' || action === 'local';
 }
 
 export function registerAgentModelsTool(
@@ -204,5 +214,5 @@ export function registerAgentModelsTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('models')) registry.register(createAgentModelsTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('models')) registry.register(createAgentModelsTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isModelsReadinessCall, commandContext) });
 }

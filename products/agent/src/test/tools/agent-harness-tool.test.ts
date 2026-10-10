@@ -2,10 +2,10 @@ import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../help
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { buildTestModelDefinition } from '../helpers/test-managers.ts';
 import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engine/sdk/platform/routing';
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { securityPort } from '../helpers/security-readings.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type AddressInfo } from 'node:net';
@@ -801,9 +801,11 @@ describe('agent_harness tool', () => {
       return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
     });
     const lifetime = fakePort(() => noulAnswer(0.01));
+    const readiness = fakePort((name, question) => question.type === 'score' ? scoreAnswer(question, name === 'memoryAdequacy' ? 2 : 3) : noulAnswer(0.95));
     const port: JudgmentPort = {
       model: security.port.model,
-      ask: request => request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
+      ask: request => request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
+        : request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
         : request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
         : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
         ? credentials.port.ask(request) : security.port.ask(request),
@@ -1296,8 +1298,10 @@ describe('agent_harness tool', () => {
       expect(localModels?.localModelReadiness?.cookbookStatus).toBe('recommendations-only');
       expect(localModels?.localModelReadiness?.inspectRoute).toContain('models action:"local"');
       expect(localModels?.localModelReadiness?.inspectRecipeRoute).toContain('local-model-cookbook');
-      expect(localModels?.localModelReadiness?.topRecipe?.id).toBeTruthy();
-      expect(localModels?.localModelReadiness?.topRecipe?.readinessScore).toBeGreaterThan(0);
+      // Startup is a facts-only snapshot: no model judgment or fabricated winner.
+      expect(localModels?.localModelReadiness?.topRecipe?.id).toBe('');
+      expect(localModels?.localModelReadiness?.topRecipe?.readinessScore).toBeNull();
+      expect(localModels?.signals?.join('\n')).toContain('top recipe: unknown readiness=unknown fit=unknown');
       expect(localModels?.localModelReadiness?.readinessRubric?.dimensions.map((dimension) => dimension.id)).toEqual([
         'latency',
         'context-window',
@@ -1410,7 +1414,7 @@ describe('agent_harness tool', () => {
       expect(localModelItem.status).toBe('recommended');
       expect(localModelItem.lookup?.resolvedBy).toBe('plan-id');
       expect(localModelItem.modelRoute).toContain('models action:"local"');
-      expect(localModelItem.localModelReadiness?.topRecipe?.readinessScore).toBeGreaterThan(0);
+      expect(localModelItem.localModelReadiness?.topRecipe?.readinessScore).toBeNull();
       expect(localModelItem.localModelReadiness?.readinessRubric?.dimensions.map((dimension) => dimension.id)).toContain('privacy');
 
       const installSmokeItem = await executeHarnessJson<{
@@ -7267,12 +7271,20 @@ describe('agent_harness tool', () => {
       expect(foreground.success).toBe(false);
       expect(foreground.error).toContain('background:true');
 
-      const started = await fixture.toolRegistry.execute('terminal-start', 'terminal', {
-        command: 'printf "adapter-output"',
-        background: true,
-        confirm: true,
-        explicitUserRequest: 'Start a tracked adapter smoke command.',
-      });
+      // Keep this adapter-wiring fixture independent of the global PAN floor:
+      // legacy process IDs include the clock. A separate readiness regression
+      // deliberately proves PAN-shaped epochs still hold without disclosure.
+      const started = await (async () => {
+        const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+        try {
+          return await fixture.toolRegistry.execute('terminal-start', 'terminal', {
+            command: 'printf "adapter-output"',
+            background: true,
+            confirm: true,
+            explicitUserRequest: 'Start a tracked adapter smoke command.',
+          });
+        } finally { clock.mockRestore(); }
+      })();
       expect(started.success).toBe(true);
       if (!started.success) throw new Error(started.error);
       const startedJson = JSON.parse(started.output ?? '{}') as {
@@ -7344,6 +7356,32 @@ describe('agent_harness tool', () => {
     } finally {
       fixture.cleanup();
     }
+  });
+
+  test('a PAN-shaped generated legacy process ID remains held at registered process ingress', async () => {
+    const fixture = makeFixture();
+    try {
+      const started = await (async () => {
+        const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_004);
+        try {
+          return await fixture.toolRegistry.execute('terminal-pan-id', 'terminal', {
+            command: 'printf "fixture"', background: true, confirm: true,
+            explicitUserRequest: 'Start a tracked adapter fixture command.',
+          });
+        } finally { clock.mockRestore(); }
+      })();
+      expect(started.success).toBe(true);
+      if (!started.success) throw new Error(started.error);
+      const { processId } = JSON.parse(started.output ?? '{}') as { processId: string };
+      expect(processId).toBe('bg_1_1700000000004');
+      let held: unknown;
+      try { await fixture.toolRegistry.execute('process-pan-id', 'process', { action: 'poll', processId }); }
+      catch (error) { held = error; }
+      expect(held).toBeInstanceOf(Error);
+      expect(String(held)).toContain('payment card material');
+      expect(String(held)).not.toContain(processId);
+      expect(String(held)).not.toContain('1700000000004');
+    } finally { fixture.cleanup(); }
   });
 
   test('reports unsupported PTY/stdin and blocks background sudo prompts', async () => {
@@ -9632,47 +9670,56 @@ describe('agent_harness tool', () => {
         contextWindow: 8192,
         capabilities: { toolCalling: true, multimodal: false },
       }];
-      registry.listProviders = () => [{
+      const publishedProviders = [{
         name: 'ollama-local',
         baseURL: 'http://127.0.0.1:11434/v1',
         models: ['qwen2.5-coder:7b'],
       }];
-      (fixture.context.platform as unknown as { readModels: Record<string, unknown> }).readModels = {
-        ...((fixture.context.platform as unknown as { readModels?: Record<string, unknown> }).readModels ?? {}),
-        models: {
-          servingDiagnostics: {
-            getSnapshot: () => ({
-              servers: {
-                ollama: {
-                  providerId: 'ollama-local',
-                  baseUrl: 'http://127.0.0.1:11434/v1',
-                  stack: 'ollama',
-                  status: 'ready',
-                  schemaStatus: 'certified',
-                  schemaVersion: 'goodvibes.local-serving.v1',
-                  sourceTool: 'models.local.servingDiagnostics',
-                  provenance: ['daemon:local-serving', 'method:models.local.servingDiagnostics'],
-                  publicationGuarantee: 'daemon publishes local serving diagnostics after start/repair receipts token=serving-secret',
-                  publisher: 'goodvibes-daemon',
-                  serverVersion: 'ollama 0.3.2',
-                  loadedModels: ['qwen2.5-coder:7b'],
-                  contextWindowTokens: 8192,
-                  toolSupport: true,
-                  resourcePressure: 'low',
-                  memoryUsagePercent: 42,
-                  startReceiptId: 'ollama-start-receipt',
-                  repairReceiptId: 'ollama-repair-receipt',
-                  receiptStatus: 'ready',
-                  startRoute: 'agent_operator_method methodId:"models.local.start" confirm:true explicitUserRequest:"Start the published Ollama server."',
-                  repairRoute: 'agent_operator_method methodId:"models.local.repair" confirm:true explicitUserRequest:"Repair the published Ollama server."',
-                  lastCheckedAt: '2026-06-07T10:00:00.000Z',
-                  summary: 'Ollama token=raw-secret is ready with one loaded model.',
-                },
-              },
-            }),
+      registry.listProviders = () => publishedProviders;
+      const servingSnapshot = {
+        servers: {
+          ollama: {
+            providerId: 'ollama-local',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+            stack: 'ollama',
+            status: 'ready',
+            schemaStatus: 'certified',
+            schemaVersion: 'goodvibes.local-serving.v1',
+            sourceTool: 'models.local.servingDiagnostics',
+            provenance: ['daemon:local-serving', 'method:models.local.servingDiagnostics'],
+            publicationGuarantee: 'daemon publishes local serving diagnostics after start/repair receipts Authorization: Bearer serving-secret',
+            publisher: 'goodvibes-daemon',
+            serverVersion: 'ollama 0.3.2',
+            loadedModels: ['qwen2.5-coder:7b'],
+            contextWindowTokens: 8192,
+            toolSupport: true,
+            resourcePressure: 'low',
+            memoryUsagePercent: 42,
+            startReceiptId: 'ollama-start-receipt',
+            repairReceiptId: 'ollama-repair-receipt',
+            receiptStatus: 'ready',
+            startRoute: 'agent_operator_method methodId:"models.local.start" confirm:true explicitUserRequest:"Start the published Ollama server."',
+            repairRoute: 'agent_operator_method methodId:"models.local.repair" confirm:true explicitUserRequest:"Repair the published Ollama server."',
+            lastCheckedAt: '2026-06-07T10:00:00.000Z',
+            summary: 'Ollama Authorization: Bearer raw-secret is ready with one loaded model.',
           },
         },
       };
+      (fixture.context.platform as unknown as { readModels: Record<string, unknown> }).readModels = {
+        ...((fixture.context.platform as unknown as { readModels?: Record<string, unknown> }).readModels ?? {}),
+        models: { servingDiagnostics: { getSnapshot: () => servingSnapshot } },
+      };
+
+      // The complete original diagnostic is screened before any redacted display
+      // preview can be used as evidence. Credentials hold the entire read.
+      let heldDiagnostic: unknown;
+      try { await fixture.tool.execute({ mode: 'model_routing', query: 'local', includeParameters: true }); }
+      catch (error) { heldDiagnostic = error; }
+      expect(heldDiagnostic).toBeInstanceOf(Error);
+      expect(String(heldDiagnostic)).not.toContain('serving-secret');
+      expect(String(heldDiagnostic)).not.toContain('raw-secret');
+      servingSnapshot.servers.ollama.publicationGuarantee = 'daemon publishes local serving diagnostics after start/repair receipts';
+      servingSnapshot.servers.ollama.summary = 'Ollama is ready with one loaded model.';
 
       const cookbook = await executeHarnessJson<{
         readonly localCookbook: {
@@ -9779,7 +9826,7 @@ describe('agent_harness tool', () => {
       expect(endpoint?.servingDiagnostics?.schemaStatus).toBe('certified');
       expect(endpoint?.servingDiagnostics?.schemaVersion).toBe('goodvibes.local-serving.v1');
       expect(endpoint?.servingDiagnostics?.provenance?.join('\n')).toContain('models.local.servingDiagnostics');
-      expect(endpoint?.servingDiagnostics?.publicationGuarantee).toContain('token=<redacted>');
+      expect(endpoint?.servingDiagnostics?.publicationGuarantee).toBe(servingSnapshot.servers.ollama.publicationGuarantee);
       expect(endpoint?.servingDiagnostics?.publicationGuarantee).not.toContain('serving-secret');
       expect(endpoint?.servingDiagnostics?.publisher).toBe('goodvibes-daemon');
       expect(endpoint?.servingDiagnostics?.serverVersion).toBe('ollama 0.3.2');
@@ -9795,7 +9842,7 @@ describe('agent_harness tool', () => {
       expect(endpoint?.servingDiagnostics?.startRoute).toContain('agent_operator_method methodId:"models.local.start"');
       expect(endpoint?.servingDiagnostics?.repairRoute).toContain('agent_operator_method methodId:"models.local.repair"');
       expect(endpoint?.servingDiagnostics?.lastCheckedAt).toBe('2026-06-07T10:00:00.000Z');
-      expect(endpoint?.servingDiagnostics?.summary).toContain('token=<redacted>');
+      expect(endpoint?.servingDiagnostics?.summary).toBe(servingSnapshot.servers.ollama.summary);
       expect(endpoint?.servingDiagnostics?.summary).not.toContain('raw-secret');
       expect(endpoint?.servingDiagnostics?.missingSignals).toEqual([]);
       expect(endpoint?.servingDiagnostics?.policy).toContain('exact confirmed routes');
@@ -10061,6 +10108,7 @@ describe('agent_harness tool', () => {
         winnerModel: 'ollama:qwen2.5-coder:7b',
       },
     });
+    for (const artifact of artifacts.records) Object.assign(artifact, { createdAt: 1700000000000 });
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
       const cookbook = await executeHarnessJson<{
@@ -10132,9 +10180,10 @@ describe('agent_harness tool', () => {
       expect(cookbook.localCookbook.benchmarkHistory?.analyticsRoute).toContain('agent_model_compare analytics');
       expect(cookbook.localCookbook.benchmarkHistory?.analyticsRoute).toContain('benchmarkKind:"local-model-route"');
       const ollamaRecipe = cookbook.localCookbook.recipes?.find((recipe) => recipe.id === 'ollama');
-      expect(ollamaRecipe?.readiness?.confidence).toBe('measured');
+      expect(ollamaRecipe?.readiness?.confidence).toBeNull();
       expect(ollamaRecipe?.readiness?.missingSignals?.join('\n')).not.toContain('No live latency benchmark');
-      expect(ollamaRecipe?.readiness?.nextStep).toContain('saved benchmark judgment');
+      expect(ollamaRecipe?.readiness?.missingSignals?.join('\n')).toContain('exact configured route');
+      expect(ollamaRecipe?.readiness?.nextStep).toContain('separately confirmed');
 
       const setup = await executeHarnessJson<{
         readonly setupItemId: string;
@@ -10192,6 +10241,7 @@ describe('agent_harness tool', () => {
         ],
       },
     });
+    for (const artifact of artifacts.records) Object.assign(artifact, { createdAt: 1700000000000 });
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
       const cloudModel = {
@@ -10296,11 +10346,11 @@ describe('agent_harness tool', () => {
         latencyMs: 1220,
         artifactId: 'artifact-1',
       });
-      expect(cloud?.readinessScore).toBeGreaterThan(0);
-      expect(cloud?.readinessLevel).toBeTruthy();
-      expect(cloud?.readiness?.dimensions.find((dimension) => dimension.id === 'tool-support')?.score).toBe(100);
-      expect(cloud?.readiness?.dimensions.find((dimension) => dimension.id === 'vision')?.score).toBe(100);
-      expect(cloud?.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('Measured local benchmark latency is 1220 ms');
+      expect(cloud?.readinessScore).toBeNull();
+      expect(cloud?.readinessLevel).toBeNull();
+      expect(cloud?.readiness?.dimensions.find((dimension) => dimension.id === 'tool-support')?.score).toBe(75);
+      expect(cloud?.readiness?.dimensions.find((dimension) => dimension.id === 'vision')?.score).toBe(75);
+      expect(cloud?.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('rubric reading');
       expect(cloud?.readiness?.missingSignals.join('\n')).not.toContain('No live latency benchmark');
       expect(cloud?.readiness?.providerHealth.status).toBe('not-reachable-in-command-context');
       expect(cloud?.readiness?.providerHealth.sdkContract.providerHealthTypes).toBe('available');
@@ -10309,17 +10359,17 @@ describe('agent_harness tool', () => {
       expect(cloud?.readiness?.providerHealth.daemonPublication.requiredPath).toBe('context.platform.readModels.providerHealth');
       expect(cloud?.readiness?.providerHealth.agentConsumption.status).toBe('waiting-for-published-feed');
       expect(cloud?.readiness?.providerHealth.missingSignals.join('\n')).toContain('SDK provider-health types are available');
-      expect(cloud?.readiness?.nextStep).toContain('provider-health publication');
+      expect(cloud?.readiness?.nextStep).toContain('separately confirmed');
 
       const local = routing.models.find((model) => model.modelRouteId === 'ollama:qwen2.5-coder:7b');
       expect(local?.localBenchmarkLatency).toMatchObject({
         latencyMs: 642,
         artifactId: 'artifact-1',
       });
-      expect(local?.readiness?.dimensions.find((dimension) => dimension.id === 'privacy')?.score).toBe(100);
-      expect(local?.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('Measured local benchmark latency is 642 ms');
+      expect(local?.readiness?.dimensions.find((dimension) => dimension.id === 'privacy')?.score).toBeNull();
+      expect(local?.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('rubric reading');
       expect(local?.readiness?.missingSignals.join('\n')).not.toContain('No live latency benchmark');
-      expect(local?.readiness?.nextStep).toContain('artifact-1');
+      expect(local?.readiness?.nextStep).toContain('separately confirmed');
 
       const inspected = await executeHarnessJson<{
         readonly modelRouteId: string;
@@ -10341,7 +10391,7 @@ describe('agent_harness tool', () => {
         artifactId: 'artifact-1',
       });
       expect(inspected.readiness?.dimensions.map((dimension) => dimension.id)).toContain('cost');
-      expect(inspected.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('Measured local benchmark latency');
+      expect(inspected.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('rubric reading');
       expect(inspected.readiness?.missingSignals.join('\n')).not.toContain('No live latency benchmark');
       expect(inspected.readiness?.providerHealth.status).toBe('not-reachable-in-command-context');
       expect(inspected.readiness?.providerHealth.agentConsumption.status).toBe('waiting-for-published-feed');
@@ -10373,7 +10423,7 @@ describe('agent_harness tool', () => {
                 errors: {
                   errorRate: 0,
                   consecutiveErrors: 0,
-                  lastErrorMessage: 'prior transient 429 token=provider-secret',
+                  lastErrorMessage: 'prior transient 429',
                 },
               },
             ]]),
@@ -10401,7 +10451,7 @@ describe('agent_harness tool', () => {
         };
       }>(fixture, { mode: 'model_route', modelRouteId: 'openai:gpt-4.1' });
       expect(healthBacked.modelRouteId).toBe('openai:gpt-4.1');
-      expect(healthBacked.readiness?.confidence).toBe('provider-health-backed');
+      expect(healthBacked.readiness?.confidence).toBeNull();
       expect(healthBacked.readiness?.missingSignals.join('\n')).not.toContain('No live latency benchmark');
       expect(healthBacked.readiness?.providerHealth.status).toBe('record-found');
       expect(healthBacked.readiness?.providerHealth.healthStatus).toBe('healthy');
@@ -10410,12 +10460,11 @@ describe('agent_harness tool', () => {
       expect(healthBacked.readiness?.providerHealth.avgLatencyMs).toBe(321);
       expect(healthBacked.readiness?.providerHealth.rateLimitRemaining).toBe(4900);
       expect(healthBacked.readiness?.providerHealth.rateLimitResetAt).toBe('2026-01-02T04:00:00.000Z');
-      expect(healthBacked.readiness?.providerHealth.lastErrorMessage).toContain('token=<redacted>');
-      expect(healthBacked.readiness?.providerHealth.lastErrorMessage).not.toContain('provider-secret');
+      expect(healthBacked.readiness?.providerHealth.lastErrorMessage).toBeUndefined();
       expect(healthBacked.readiness?.providerHealth.agentConsumption.status).toBe('consumed');
       expect(healthBacked.readiness?.providerHealth.agentConsumption.readModelPath).toBe('context.platform.readModels.modelRouteHealth');
       expect(healthBacked.readiness?.providerHealth.daemonPublication.status).toBe('published-read-model');
-      expect(healthBacked.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('Live provider-health latency');
+      expect(healthBacked.readiness?.dimensions.find((dimension) => dimension.id === 'latency')?.summary).toContain('rubric reading');
     } finally {
       fixture.cleanup();
     }

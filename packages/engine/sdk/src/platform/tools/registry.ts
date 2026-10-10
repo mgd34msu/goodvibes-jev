@@ -76,6 +76,7 @@ interface CapturedProjection {
   readonly executionContext: object | undefined;
   readonly admissionEvidence: ToolOwnedAdmissionEvidence | undefined;
   readonly settingsMutation: ToolPreparedSettingsMutation | undefined;
+  readonly resultPublication: 'read-only' | undefined;
   released: boolean;
   claimed: boolean;
   releasePromise?: Promise<void>;
@@ -306,7 +307,7 @@ export class ToolRegistry {
     const combined = combineProjectionSignals(signal, registration.signal);
     const skeleton = { registration, tool: registration.tool, executor, definition, definitionRevision, captureCurrent, preparationGuards: { callbacks: new Set<() => void>(), revision: 0 }, ownsProjectionSlot: registration.projector !== undefined, executionStarted: false,
       signal: combined, assertCurrent: undefined, assertRepairedArgs: undefined, release: undefined,
-      executionContext: undefined, admissionEvidence: undefined, settingsMutation: undefined, released: false, claimed: false };
+      executionContext: undefined, admissionEvidence: undefined, settingsMutation: undefined, resultPublication: undefined, released: false, claimed: false };
     const provisional: CapturedProjection = { ...skeleton, call: Object.freeze({ callId, name, args: Object.freeze({}),
       schemaRevision: definitionRevision, projectionRevision: registration.revision }) };
     this.assertCaptured(provisional, true);
@@ -323,6 +324,7 @@ export class ToolRegistry {
       let executionContext: object | undefined;
       let admissionEvidence: ToolOwnedAdmissionEvidence | undefined;
       let settingsMutation: ToolPreparedSettingsMutation | undefined;
+      let resultPublication: 'read-only' | undefined;
       if (registration.projector && registration.project) {
         const result: ToolInputProjectionResult = await applyIntrinsic(registration.project, registration.projector, [Object.freeze({
           callId, name, args: captured, signal: combined, assertCurrent: () => this.assertCaptured(provisional, true),
@@ -344,18 +346,27 @@ export class ToolRegistry {
         admissionEvidence ??= settingsEvidence;
         settingsMutation = captureSettingsMutation(projectionProperty(result, 'settingsMutation'));
         if (settingsMutation && admissionEvidence?.kind !== 'agent-settings') throw new ToolInputProjectionError('invalid');
+        const publication = projectionProperty(result, 'resultPublication');
+        if (publication !== undefined && publication !== 'read-only') throw new ToolInputProjectionError('invalid');
+        if (publication === 'read-only') {
+          // Mixed state tools can resolve an invocation to a read in their
+          // trusted projector. Explicit execution/write and owned mutations cannot opt in.
+          if (settingsMutation || admissionEvidence?.kind === 'agent-settings'
+            || definition.sideEffects?.some(effect => effect !== 'read_fs' && effect !== 'network' && effect !== 'state')) throw new ToolInputProjectionError('invalid');
+          resultPublication = publication;
+        }
       }
       const call = Object.freeze({ callId, name, args: projected, schemaRevision: definitionRevision,
         projectionRevision: registration.revision });
       const record: CapturedProjection = { ...skeleton, call, signal: combineProjectionSignals(combined, resultSignal),
-        assertCurrent, assertRepairedArgs, release, executionContext, admissionEvidence, settingsMutation };
+        assertCurrent, assertRepairedArgs, release, executionContext, admissionEvidence, settingsMutation, resultPublication };
       this.assertCaptured(record, true);
       this.projections.set(call, record);
       this.projectedArgs.set(call.args, record);
       return call;
     } catch (error) {
-      if (release) await this.cleanupProjection(release);
-      if (skeleton.ownsProjectionSlot) this.liveInputProjections--;
+      try { if (release) await this.cleanupProjection(release); }
+      finally { if (skeleton.ownsProjectionSlot) this.liveInputProjections--; }
       if (error instanceof ToolInputProjectionError) throw error;
       if (registration.projector) throw new ToolInputProjectionError('unavailable');
       throw error;
@@ -392,8 +403,8 @@ export class ToolRegistry {
     record.released = true;
     // Publish the shared completion before invoking owner cleanup (which may reenter).
     record.releasePromise = Promise.resolve().then(async () => {
-      if (record.release) await this.cleanupProjection(record.release);
-      if (record.ownsProjectionSlot) this.liveInputProjections--;
+      try { if (record.release) await this.cleanupProjection(record.release); }
+      finally { if (record.ownsProjectionSlot) this.liveInputProjections--; }
     });
     return record.releasePromise;
   }
@@ -410,9 +421,9 @@ export class ToolRegistry {
   }
 
   /** Registration and owned lifetime checks also valid after the one-use claim. */
-  private assertCapturedIdentity(record: CapturedProjection): void {
+  private assertCapturedIdentity(record: CapturedProjection, afterRelease = false): void {
     const { registration, call } = record;
-    if (record.released) throw new ToolInputProjectionError('released');
+    if (record.released && !afterRelease) throw new ToolInputProjectionError('released');
     if (this.registrations.get(call.name) !== registration || this.tools.get(call.name) !== record.tool) {
       throw new ToolInputProjectionError('stale');
     }
@@ -558,6 +569,7 @@ export class ToolRegistry {
     record.projection.executionStarted = true;
     let retireExecution: (() => void) | undefined;
     let proof: CurrentToolExecution | undefined;
+    let assertReadPublication: (() => void) | undefined;
     try {
       const signal = combineProjectionSignals(record.projection.signal, record.projection.preparationSignal, opts === undefined ? undefined : projectionSignal(projectionProperty(opts, 'signal')));
       this.assertPreparationCurrent(record.projection);
@@ -570,6 +582,17 @@ export class ToolRegistry {
       // manager's consume-only identity map can authenticate this exact handle.
       const assertAdmissionCurrent = typeof admission === 'function'
         ? (admission(), undefined) : consumeAutonomousAdmission(admission, this, call, registryPermissionOwners.get(this));
+      if (record.projection.resultPublication === 'read-only') {
+        // Registration-owned read dispatch only. This check cannot revive body
+        // authority and is retained solely until this invocation's cleanup ends.
+        assertReadPublication = () => {
+          this.assertCapturedIdentity(record.projection, true);
+          assertProjectionSignal(signal);
+          assertAdmissionCurrent?.();
+          this.assertCapturedIdentity(record.projection, true);
+          assertProjectionSignal(signal);
+        };
+      }
       this.assertPrepared(call);
       if (record.projection.preparationGuards.revision !== guardRevision) throw new ToolInputProjectionError('stale');
       assertProjectionSignal(signal);
@@ -608,7 +631,12 @@ export class ToolRegistry {
       retireExecution(); retireExecution = undefined;
       return { ...result, callId: call.callId,
         ...(record.warnings.length ? { warnings: [...(result.warnings ?? []), ...record.warnings] } : {}) };
-    } finally { if (proof) proof.active = false; retireExecution?.(); await this.releaseCapture(record.projection); }
+    } finally {
+      if (proof) proof.active = false;
+      retireExecution?.();
+      try { await this.releaseCapture(record.projection); assertReadPublication?.(); }
+      finally { assertReadPublication = undefined; }
+    }
   }
 
   /**
@@ -645,6 +673,7 @@ export class ToolRegistry {
 
     let record: CapturedProjection | undefined;
     let retireExecution: (() => void) | undefined;
+    let assertReadPublication: (() => void) | undefined;
     try {
       const projected = await this.projectCall(callId, name, args, opts);
       const selected = this.projections.get(projected)!;
@@ -662,6 +691,10 @@ export class ToolRegistry {
         : opts === undefined || projectionProperty(opts, 'inputProjectionContext') === undefined ? opts : Object.freeze({ signal });
       this.assertCaptured(record, false);
       record.claimed = true;
+      if (record.resultPublication === 'read-only') {
+        const capturedRecord = record;
+        assertReadPublication = () => { this.assertCapturedIdentity(capturedRecord, true); assertProjectionSignal(signal); };
+      }
       retireExecution = activateProjectionExecution(record.executionContext, effectiveArgs, signal);
       const result = await applyIntrinsic(record.executor, record.tool, [effectiveArgs, executionOptions]);
       retireExecution(); retireExecution = undefined;
@@ -683,7 +716,11 @@ export class ToolRegistry {
       }
       const message = summarizeError(err);
       throw new ToolError(message, name, err instanceof Error ? { cause: err } : undefined);
-    } finally { retireExecution?.(); if (record) await this.releaseCapture(record); }
+    } finally {
+      retireExecution?.();
+      try { if (record) await this.releaseCapture(record); assertReadPublication?.(); }
+      finally { assertReadPublication = undefined; }
+    }
   }
 
   /** Original non-projected execute path; never used by a required projector. */

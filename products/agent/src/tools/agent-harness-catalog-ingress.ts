@@ -3,6 +3,8 @@ import { agentResearchSourceOwner } from '../agent/protected-research-report.ts'
 import { types as nodeTypes } from 'node:util';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { assertCurrentToolExecution, ToolInputProjectionError, type ToolInputProjector, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
@@ -10,6 +12,17 @@ type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
 const CATALOG_MODES = new Set(['modes', 'mode', 'commands', 'command', 'run_command', 'tools', 'tool', 'operator_methods', 'operator_method']);
 const projectionGuards = new WeakMap<object, () => void>();
 const forwardedGuards = new WeakMap<object, { readonly options: ToolExecuteOptions | undefined; readonly assertCurrent: () => void }>();
+const publicationGuards = new WeakMap<object, Map<string | (() => void), () => void>>();
+function retainedGuards(args: object): Map<string | (() => void), () => void> {
+  let guards = publicationGuards.get(args);
+  if (!guards) { guards = new Map(); publicationGuards.set(args, guards); }
+  return guards;
+}
+/** Register only already-acquired backend guards; never acquire a backend here. */
+export function retainHarnessCatalogCurrent(args: object): (guard: () => void, key?: string) => void {
+  const guards = retainedGuards(args);
+  return (guard, key) => { if (!guards.has(key ?? guard)) guards.set(key ?? guard, guard); };
+}
 
 /** Only read data routing descriptors, before screening the complete original. */
 export function catalogRoutingInput(input: Record<string, unknown>): Record<string, unknown> {
@@ -27,6 +40,7 @@ export function catalogRoutingInput(input: Record<string, unknown>): Record<stri
 
 export function isHarnessCatalogQuery(input: Record<string, unknown>): boolean {
   const routing = catalogRoutingInput(input);
+  if (routing.mode === 'model_routing' || routing.mode === 'model_route') { captureCatalogData(input); return true; }
   return typeof routing.mode === 'string' && CATALOG_MODES.has(routing.mode)
     && [routing.query, routing.target].some((value) => typeof value === 'string' && value.trim().length > 0);
 }
@@ -55,13 +69,14 @@ function registeredTool(registry: ToolRegistry, name: string): Tool | undefined 
 }
 
 function catalogContextGuard(registry: ToolRegistry, context?: CommandContext): () => void {
-  const session = context?.session?.runtime, sessionId = session?.sessionId;
+  const session = modelReadingServicePath(context, ['session', 'runtime']);
+  const sessionId = modelReadingServicePath(session, ['sessionId']);
   const owner = agentResearchSourceOwner(registry);
-  const api = context?.clients?.mcpApi ?? context?.extensions?.mcpRegistry;
+  const api = modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry']);
   return () => {
-    if (context?.session?.runtime !== session || context?.session?.runtime?.sessionId !== sessionId
+    if (modelReadingServicePath(context, ['session', 'runtime']) !== session || modelReadingServicePath(session, ['sessionId']) !== sessionId
       || agentResearchSourceOwner(registry) !== owner
-      || (context?.clients?.mcpApi ?? context?.extensions?.mcpRegistry) !== api) throw new ToolInputProjectionError('stale');
+      || (modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry'])) !== api) throw new ToolInputProjectionError('stale');
   };
 }
 
@@ -71,23 +86,33 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
   const projector = createPersonalOpsInputProjector(registry, fallback, selected);
   return { async project(request) {
     const protectedQuery = selected(request.args);
+    const retained = retainedGuards(request.args);
     const assertContext = protectedQuery ? catalogContextGuard(registry, context) : () => {};
-    const guarded = protectedQuery ? { ...request, assertCurrent: () => { request.assertCurrent(); assertContext(); } } : request;
+    const routing = catalogRoutingInput(request.args);
+    const modelInspection = routing.mode === 'model_routing' || routing.mode === 'model_route' || request.name === 'models';
+    const original = protectedQuery && modelInspection ? captureModelReadingInput(request.args) : undefined;
+    const originalJson = original && JSON.stringify(original);
+    const guarded = protectedQuery ? { ...request, ...(original ? { args: original } : {}), assertCurrent: () => {
+      request.assertCurrent(); assertContext();
+      for (const guard of retained.values()) guard();
+      if (original) assertModelReadingInputCurrent(request.args, originalJson);
+    } } : request;
     const result = await projector.project(guarded);
     if (!protectedQuery || result.status !== 'projected') return result;
+    publicationGuards.set(result.args, retained);
     let released = false;
     const assertCurrent = () => {
       if (released) throw new ToolInputProjectionError('stale');
       guarded.assertCurrent(); result.assertCurrent?.();
     };
-    return { ...result,
+    return { ...result, ...(modelInspection ? { resultPublication: 'read-only' as const } : {}),
       assertRepairedArgs(candidate) {
         result.assertRepairedArgs?.(candidate); assertCurrent();
         // The registry supplies this exact final argument object to execute.
         // A structural copy cannot inherit a protected invocation's lifetime.
-        projectionGuards.set(candidate, assertCurrent);
+        projectionGuards.set(candidate, assertCurrent); publicationGuards.set(candidate, retained);
       },
-      async release() { released = true; await result.release?.(); },
+      async release() { released = true; await result.release?.(); guarded.assertCurrent(); for (const guard of retained.values()) guard(); },
     };
   } };
 }
@@ -100,10 +125,14 @@ export function harnessCatalogExecutionGuard(args: Record<string, unknown>, opti
     return inherited.assertCurrent;
   }
   const projected = projectionGuards.get(args);
+  const retained = retainedGuards(args);
+  const signal = modelReadingServicePath(options, ['signal']) as AbortSignal | undefined;
   return () => {
-    options?.signal?.throwIfAborted();
+    if (modelReadingServicePath(options, ['signal']) !== signal) throw new ToolInputProjectionError('stale');
+    signal?.throwIfAborted();
     assertCurrentToolExecution(args, options);
     if (projected) projected();
+    for (const guard of retained.values()) guard();
   };
 }
 
@@ -112,7 +141,8 @@ export async function forwardHarnessCatalogCall(tool: Tool, original: Record<str
   additionalGuard?: () => void) {
   const originalGuard = harnessCatalogExecutionGuard(original, options);
   const assertCurrent = () => { originalGuard(); additionalGuard?.(); };
-  assertCurrent(); forwardedGuards.set(forwarded, { options, assertCurrent });
+  assertCurrent(); publicationGuards.set(forwarded, retainedGuards(original));
+  forwardedGuards.set(forwarded, { options, assertCurrent });
   try { const result = await tool.execute(forwarded, options); assertCurrent(); return result; }
   finally { forwardedGuards.delete(forwarded); }
 }
@@ -122,6 +152,7 @@ export function protectHarnessCatalogTool(tool: Tool, registry: ToolRegistry, se
   const projector = createHarnessCatalogInputProjector(registry, undefined, selected, context);
   return { ...tool, async execute(input, options) {
     if (!selected(input)) return tool.execute(input, options);
+    if (!forwardedGuards.has(input) && !projectionGuards.has(input)) { publicationGuards.set(input, new Map()); }
     const guard = harnessCatalogExecutionGuard(input, options);
     const registration = registeredTool(registry, tool.definition.name);
     const assertContext = catalogContextGuard(registry, context);
@@ -138,6 +169,6 @@ export function protectHarnessCatalogTool(tool: Tool, registry: ToolRegistry, se
     try {
       if (projected.status !== 'projected') throw new ToolInputProjectionError('held');
       return await forwardHarnessCatalogCall(tool, input, projected.args, options, projected.assertCurrent);
-    } finally { await projected.release?.(); }
+    } finally { await projected.release?.(); assertCurrent(); }
   } };
 }

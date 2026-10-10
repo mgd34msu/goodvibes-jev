@@ -96,3 +96,26 @@ export {
 } from './user-error.js';
 export * from './task-routes/index.js';
 export { registry as routingRegistry } from './judgment-registry.js';
+export { localRecipeFit, routeReadiness } from './batteries/model-readiness.js';
+export {
+  localRecipeFitFrom,
+  modelReadinessFlagFrom,
+  routeReadinessFrom,
+  type LocalRecipeFitInput,
+  type LocalRecipeFitLevel,
+  type LocalRecipeFitReading,
+  type LocalRecipeMemoryTier,
+  type ModelReadinessFlag,
+  type ModelReadinessFlagReading,
+  type ModelReadinessHeldOutcome,
+  type ModelReadinessNonAnswer,
+  type ModelReadinessOutcome,
+  type ModelReadinessProvenance,
+  type ModelReadinessRun,
+  type ModelReadinessScoreReading,
+  type RouteReadinessDimension,
+  type RouteReadinessDimensionId,
+  type RouteReadinessInput,
+  type RouteReadinessLevel,
+  type RouteReadinessReading,
+} from './model-readiness.js';

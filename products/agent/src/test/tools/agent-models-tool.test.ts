@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
@@ -18,11 +20,14 @@ function fakeTool(name: string, calls: Record<string, unknown>[]): Tool {
   };
 }
 
+afterAll(cleanupResearchScreeningFixtures);
+
 function makeTool(calls: Record<string, unknown>[] = []): Tool {
+  const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
   return createAgentModelsTool({
     commandRegistry: {} as CommandRegistry,
     commandContext: { workspace: {}, platform: {} } as CommandContext,
-    toolRegistry: new ToolRegistry(),
+    toolRegistry: registry,
     harnessTool: fakeTool('agent_harness', calls),
   });
 }

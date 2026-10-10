@@ -33,6 +33,8 @@ export interface ModelCandidate {
   readonly benchmarkQualityTier?: string;
   readonly localBenchmarkLatency?: LocalModelBenchmarkRouteLatency | null;
   readonly pinned: boolean;
+  readonly available?: boolean | null;
+  readonly configured?: boolean | null;
 }
 
 export interface RouteCandidate {
@@ -59,7 +61,6 @@ export interface LocalModelHardwareProfile {
   readonly cpuThreads: number;
   readonly ramGb: number;
   readonly freeRamGb: number;
-  readonly memoryTier: 'constrained' | 'starter' | 'comfortable' | 'large';
   readonly acceleratorHint: 'apple-silicon' | 'cuda-env' | 'none-detected';
   readonly privacy: 'local-only';
   readonly caveat: string;
@@ -77,15 +78,24 @@ export interface LocalModelRecipe {
 }
 
 export interface LocalModelRecipeFit {
-  readonly score: number;
-  readonly level: 'weak' | 'usable' | 'good' | 'strong';
+  readonly score: number | null;
+  readonly level: 'weak' | 'usable' | 'good' | 'strong' | null;
+  readonly outcome: ModelReadingOutcome;
+  readonly confidence: number | null;
+  readonly decisionId: string | null;
+  readonly memoryTier: 'constrained' | 'starter' | 'comfortable' | 'large' | null;
+  readonly provenance: unknown;
   readonly reasons: readonly string[];
 }
+
+export type ModelReadingOutcome = 'ready' | 'held' | 'rejected' | 'deferred' | 'unavailable';
 
 export interface ModelReadinessDimension {
   readonly id: 'latency' | 'context-window' | 'tool-support' | 'vision' | 'cost' | 'privacy';
   readonly label: string;
-  readonly score: number;
+  readonly score: number | null;
+  readonly confidence: number | null;
+  readonly outcome: ModelReadingOutcome;
   readonly weight: number;
   readonly summary: string;
 }
@@ -95,6 +105,9 @@ export interface ModelProviderHealthSignal {
   readonly providerId: string;
   readonly modelRouteId?: string;
   readonly sourceRecordId?: string;
+  readonly measuredRouteId?: string;
+  readonly measuredProviderId?: string;
+  readonly measurementRecordedAt?: string | null;
   readonly sdkContract: {
     readonly providerHealthTypes: 'available';
     readonly importSurface: string;
@@ -130,9 +143,15 @@ export interface ModelProviderHealthSignal {
 }
 
 export interface ModelReadinessScore {
-  readonly score: number;
-  readonly level: 'risky' | 'usable' | 'good' | 'excellent';
-  readonly confidence: 'estimated' | 'metadata-backed' | 'provider-health-backed' | 'measured';
+  readonly score: number | null;
+  readonly normalized?: number | null;
+  readonly level: 'risky' | 'usable' | 'good' | 'excellent' | null;
+  readonly outcome: ModelReadingOutcome;
+  readonly confidence: number | null;
+  readonly decisionId: string | null;
+  readonly provenance: unknown;
+  readonly cloudTransfer: unknown;
+  readonly exampleVision?: readonly unknown[];
   readonly dimensions: readonly ModelReadinessDimension[];
   readonly missingSignals: readonly string[];
   readonly providerHealth?: ModelProviderHealthSignal;
@@ -307,8 +326,8 @@ export interface MutableLocalModelServerEndpoint {
 }
 
 export interface LocalModelSetupPlan {
-  readonly status: 'detected' | 'ready-to-try' | 'needs-hardware-review';
-  readonly priority: number;
+  readonly status: 'detected' | 'ready-to-try' | 'needs-hardware-review' | 'unknown';
+  readonly priority: number | null;
   readonly downloadGuidance: readonly string[];
   readonly providerRoutes: readonly string[];
   readonly benchmarkPlan: LocalModelBenchmarkPlan;

@@ -205,6 +205,9 @@ export function readProviderHealthSignal(context: CommandContext, providerId: st
       return {
         ...base,
         status: 'record-found',
+        measuredRouteId: providerHealthCandidateRouteId(candidate),
+        measuredProviderId: providerHealthCandidateProviderId(candidate),
+        measurementRecordedAt: providerHealthTimestamp(candidate, stats, 'lastCheckedAt') ?? providerHealthTimestamp(candidate, stats, 'lastSuccessAt'),
         daemonPublication: {
           status: 'published-read-model',
           requiredPath: entry.path,

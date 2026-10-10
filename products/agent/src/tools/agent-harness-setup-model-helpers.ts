@@ -36,7 +36,7 @@ export function settingsImportSignals(preview: ReturnType<typeof previewAgentWor
 
 export function topLocalModelRecipe(cookbook: Record<string, unknown>): Record<string, unknown> {
   const recipes = Array.isArray(cookbook.recipes) ? cookbook.recipes.map(readRecord) : [];
-  return recipes[0] ?? {};
+  return recipes.find(recipe => readRecord(recipe.fitReading).outcome === 'ready' && readRecord(recipe.readiness).outcome === 'ready') ?? {};
 }
 
 export function localModelSetupReadiness(cookbook: Record<string, unknown>): Record<string, unknown> {
@@ -97,6 +97,7 @@ export function localModelSetupNextAction(cookbook: Record<string, unknown>): st
   if (readString(cookbook.status) === 'detected-local-route') {
     return 'Inspect detected local model readiness, then run the benchmark prompt before making a local route the default.';
   }
-  const topLabel = readString(topRecipe.label) || 'the top local recipe';
+  const topLabel = readString(topRecipe.label);
+  if (!topLabel) return 'Local model readiness is unknown. Inspect recipe requirements and exact route evidence before selecting or installing a model.';
   return `Review ${topLabel} setupPlan, start the local server outside Agent, refresh models, then run the benchmark prompt before changing the default route.`;
 }

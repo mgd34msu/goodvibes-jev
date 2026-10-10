@@ -1,7 +1,8 @@
 import { assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { modelReadingOptions, modelReadingServicePath, withModelReadingContext } from './agent-harness-model-reading-source.ts';
 import { processClassificationOptions } from './agent-harness-process-launch.ts';
 import { createProcessInputProjector } from './agent-process-ingress.ts';
-import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, harnessCatalogExecutionGuard } from './agent-harness-catalog-ingress.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
@@ -155,8 +156,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       concurrency: 'serial',
     },
     execute: async (rawArgs, options) => {
-      const signal = options?.signal;
       const assertCatalogExecution = harnessCatalogExecutionGuard(rawArgs, options);
+      const signal = modelReadingServicePath(options, ['signal']) as AbortSignal | undefined;
       // Inspect the routing descriptor without invoking a caller accessor. Full
       // judgment validation belongs to explanation input, not unrelated local
       // harness routes (which retain their own credential/redaction handling).
@@ -183,6 +184,19 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         return error(resolved.usage);
       }
       if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args, processClassificationOptions(deps.commandContext, deps.toolRegistry, signal, () => { assertCurrentToolExecution(rawArgs, options); })));
+      if (dispatchMode === 'model_routing' || dispatchMode === 'model_route') {
+        const reading = modelReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, retainHarnessCatalogCurrent(rawArgs));
+        return withModelReadingContext(deps.commandContext, rawArgs, reading, async (context, scoped) => {
+          if (dispatchMode === 'model_routing') {
+            const result = await modelRoutingSummary(context, args, scoped); scoped.assertCurrent?.(); return output(result);
+          }
+          const resolved = await describeHarnessModelRoute(context, args, scoped); scoped.assertCurrent?.();
+          if (resolved.status === 'found') return output(resolved.route);
+          if (resolved.status === 'ambiguous') return error(`Ambiguous model route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
+          return error(resolved.usage);
+        });
+      }
+
       const personalOpsOwner = agentResearchSourceOwner(deps.toolRegistry);
       const personalOpsSession = deps.commandContext.session?.runtime;
       const personalOpsSessionId = personalOpsSession?.sessionId;
@@ -488,13 +502,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const setupItemId = readString(args.setupItemId);
           if (setupItemId && setupItemId !== 'install-smoke') return error('run_setup_smoke currently supports setupItemId:"install-smoke" only.');
           return output(await runSetupInstallSmoke(deps.commandContext, args));
-        }
-        if (dispatchMode === 'model_routing') return output(await modelRoutingSummary(deps.commandContext, args));
-        if (dispatchMode === 'model_route') {
-          const resolved = await describeHarnessModelRoute(deps.commandContext, args);
-          if (resolved.status === 'found') return output(resolved.route);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous model route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
         }
         if (dispatchMode === 'run_local_model_smoke') {
           const confirmationError = requireConfirmedAction(args, 'Local model smoke');

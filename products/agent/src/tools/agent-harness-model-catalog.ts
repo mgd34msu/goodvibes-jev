@@ -73,6 +73,15 @@ export function modelDisplayName(model: unknown): string {
   return readString(record.displayName) || readString(record.name) || modelRegistryKey(model);
 }
 
+export function modelAvailable(model: unknown): boolean | null {
+  const record = readRecord(model);
+  return typeof record.available === 'boolean' ? record.available : typeof record.isAvailable === 'boolean' ? record.isAvailable : null;
+}
+export function modelConfigured(model: unknown): boolean | null {
+  const record = readRecord(model);
+  return typeof record.isConfigured === 'boolean' ? record.isConfigured : typeof record.configured === 'boolean' ? record.configured : null;
+}
+
 export function modelCurrent(model: unknown): boolean {
   const record = readRecord(model);
   return record.current === true;
@@ -148,6 +157,8 @@ export async function loadModels(context: CommandContext): Promise<readonly Mode
       benchmarkCompositeScore: modelBenchmarkCompositeScore(model),
       benchmarkQualityTier: modelBenchmarkQualityTier(model),
       pinned: pinned.has(registryKey) || pinned.has(modelId),
+      available: modelAvailable(model),
+      configured: modelConfigured(model),
     };
   });
 }

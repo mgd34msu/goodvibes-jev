@@ -429,3 +429,62 @@ test('ordinary legacy execution preserves input and option identity without a pr
   expect(bodies[0]?.opts).toBe(options);
   expect(Object.isFrozen(args)).toBe(false);
 });
+
+
+test.each(['hidden', 'hidden-nested', 'array-property', 'hidden-array-index', 'sparse-array'])('complete registered JSON input rejects %s before projection', async kind => {
+  const { registry, tool, bodies } = fixture(); let projects = 0;
+  registry.register(tool, { inputProjection: { async project() { projects++; return { status: 'projected', args: safe() }; } } });
+  const args: Record<string, unknown> = raw();
+  if (kind === 'hidden') Object.defineProperty(args, 'privateContext', { value: 'ordinary undisplayed source' });
+  if (kind === 'hidden-nested') args.nested = Object.defineProperty({}, 'privateContext', { value: 'ordinary undisplayed source' });
+  if (kind === 'array-property') args.nested = Object.assign(['entry'], { privateContext: 'ordinary undisplayed source' });
+  if (kind === 'hidden-array-index') args.nested = Object.defineProperty(['entry'], '0', { enumerable: false });
+  if (kind === 'sparse-array') args.nested = new Array(3);
+  await expect(registry.projectCall('complete', tool.definition.name, args)).rejects.toBeInstanceOf(ToolInputProjectionError);
+  expect(projects).toBe(0); expect(bodies).toHaveLength(0);
+});
+
+test('failed cleanup releases its bounded projection slot exactly once', async () => {
+  const { registry, tool } = fixture(); let releases = 0;
+  registry.register(tool, { inputProjection: { async project(request) { return { status: 'projected', args: request.args,
+    async release() { releases++; throw new Error('synthetic late invalidation'); } }; } } });
+  for (let index = 0; index < 140; index++) {
+    const projected = await registry.projectCall(`capacity-${index}`, tool.definition.name, raw());
+    await expect(registry.releaseProjected(projected)).rejects.toThrow(ToolInputProjectionError);
+    await expect(registry.releaseProjected(projected)).rejects.toThrow(ToolInputProjectionError);
+  }
+  expect(releases).toBe(140);
+});
+
+test.each(['write_fs', 'exec', 'agent', 'workflow'])('explicit %s tools cannot opt into read-only publication', async effect => {
+  const { registry, tool, bodies } = fixture();
+  tool.definition.sideEffects = [effect as 'write_fs' | 'exec' | 'agent' | 'workflow'];
+  registry.register(tool, { inputProjection: { async project(request) { return { status: 'projected', args: request.args, resultPublication: 'read-only' }; } } });
+  await expect(registry.prepareCall('effect', tool.definition.name, raw())).rejects.toThrow(ToolInputProjectionError);
+  expect(bodies).toHaveLength(0);
+});
+
+test('caller args cannot supply the registration-owned read-publication marker', async () => {
+  const { registry, tool } = fixture(); let projectedMarker: unknown;
+  registry.register(tool, { inputProjection: { async project(request) { projectedMarker = request.args.resultPublication; return { status: 'projected', args: safe() }; } } });
+  const call = await registry.prepareCall('caller-marker', tool.definition.name, { ...raw(), resultPublication: 'read-only' });
+  expect(projectedMarker).toBe('read-only');
+  expect(await registry.executePrepared(call, () => {})).toMatchObject({ success: true });
+});
+
+
+test('failed preparation cleanup also releases its bounded projection slot', async () => {
+  const { registry, tool } = fixture(); let projects = 0, releases = 0;
+  registry.register(tool, { inputProjection: { async project() { projects++; return { status: 'held',
+    async release() { releases++; throw new Error('synthetic held cleanup'); } }; } } });
+  for (let index = 0; index < 140; index++) await expect(registry.projectCall(`held-${index}`, tool.definition.name, raw())).rejects.toThrow(ToolInputProjectionError);
+  expect(projects).toBe(140); expect(releases).toBe(140);
+});
+
+test('settings admission evidence cannot opt into read-result publication', async () => {
+  const { registry, tool, bodies } = fixture();
+  registry.register(tool, { inputProjection: { async project(request) { return { status: 'projected', args: request.args, resultPublication: 'read-only',
+    settingsAdmissionEvidence: { kind: 'agent-settings', operation: 'set', key: 'synthetic', effect: { changesState: true }, revision: 'a'.repeat(64) } }; } } });
+  await expect(registry.projectCall('settings-marker', tool.definition.name, raw())).rejects.toThrow(ToolInputProjectionError);
+  expect(bodies).toHaveLength(0);
+});

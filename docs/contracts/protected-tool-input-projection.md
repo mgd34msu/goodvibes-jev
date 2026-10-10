@@ -118,3 +118,23 @@ partially screened report.
 All verification uses synthetic data, intercepted bodies and owned local
 fixtures. No live calibration, private source transfer, release or deployment
 is implied.
+
+
+## Read-only result publication
+
+A trusted projector may declare `resultPublication: 'read-only'` for its resolved
+invocation. This marker never grants admission and cannot be supplied through
+caller arguments or execution options. Mixed state-labelled tools resolve their
+read dispatch in the projector; explicit write/execution/workflow/agent effects,
+settings mutation bindings and settings admission evidence cannot opt in.
+For an authenticated prepared read, the registry retains the consumed admission
+check through the final awaited projection release, rechecks signal and exact
+registration identity, and discards a late stale result. The body proof is already
+retired during cleanup and cannot be reused. The registry owns this bounded check;
+no reusable publication callback is exposed. Authorized mutation transitions keep
+their existing owner semantics.
+
+The complete JSON preflight rejects hidden object data, hidden array indices,
+non-index array properties and sparse arrays rather than silently omitting source
+before screening. Cleanup returns its bounded projection-capacity slot exactly
+once even when a late lifetime guard rejects after resources have been released.

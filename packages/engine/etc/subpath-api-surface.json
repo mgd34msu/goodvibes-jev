@@ -46873,6 +46873,34 @@
       "text": "LANGUAGES: { readonly english: \"English\"; readonly chinese: \"Chinese\"; readonly japanese: \"Japanese\"; readonly korean: \"Korean\"; readonly spanish: \"Spanish\"; readonly french: \"French\"; readonly german: \"German\"; readonly portuguese: \"Portuguese\"; readonly russian: \"Russian\"; readonly other: \"Another language\"; }"
     },
     {
+      "name": "LocalRecipeFitInput",
+      "kind": "type",
+      "text": "export type LocalRecipeFitInput = ModelReadinessRun<typeof localRecipeFit.items> | ModelReadinessNonAnswer | null | undefined;"
+    },
+    {
+      "name": "LocalRecipeFitLevel",
+      "kind": "type",
+      "text": "export type LocalRecipeFitLevel = typeof localRecipeFit.composite.levels[number]['level'];"
+    },
+    {
+      "name": "LocalRecipeFitReading",
+      "kind": "interface",
+      "required": [
+        "decisionId",
+        "fit",
+        "level",
+        "memoryAdequacy",
+        "memoryTier",
+        "provenance"
+      ],
+      "text": "export interface LocalRecipeFitReading extends ModelReadinessScoreReading { readonly level: LocalRecipeFitLevel | null; readonly fit: ModelReadinessScoreReading; readonly memoryAdequacy: ModelReadinessScoreReading; readonly memoryTier: LocalRecipeMemoryTier | null; readonly decisionId: string | null; readonly provenance: ModelReadinessProvenance; }"
+    },
+    {
+      "name": "LocalRecipeMemoryTier",
+      "kind": "type",
+      "text": "export type LocalRecipeMemoryTier = typeof localRecipeFit.composite.memoryTiers[number];"
+    },
+    {
       "name": "LocalServerSoftware",
       "kind": "type",
       "text": "export type LocalServerSoftware = typeof localServerIdentity.routes[number];"
@@ -46928,6 +46956,73 @@
         "universe"
       ],
       "text": "export interface ModelIdentityResolverOptions { readonly universe: string; readonly candidates: () => readonly IdentityCandidate[]; readonly path?: string | undefined; }"
+    },
+    {
+      "name": "ModelReadinessFlag",
+      "kind": "type",
+      "text": "export type ModelReadinessFlag = 'cloudTransfer' | 'exampleVision';"
+    },
+    {
+      "name": "ModelReadinessFlagReading",
+      "kind": "interface",
+      "required": [
+        "confidence",
+        "decisionId",
+        "outcome",
+        "probability",
+        "provenance",
+        "reason",
+        "value"
+      ],
+      "text": "export interface ModelReadinessFlagReading { readonly value: boolean | null; readonly probability: number | null; readonly confidence: number | null; readonly outcome: ModelReadinessOutcome; readonly reason: string | null; readonly decisionId: string | null; readonly provenance: ModelReadinessProvenance; }"
+    },
+    {
+      "name": "ModelReadinessHeldOutcome",
+      "kind": "type",
+      "text": "export type ModelReadinessHeldOutcome = Exclude<ModelReadinessOutcome, 'ready'>; ;; via Exclude = type Exclude<T, U> = T extends U ? never : T;"
+    },
+    {
+      "name": "ModelReadinessNonAnswer",
+      "kind": "interface",
+      "required": [
+        "outcome"
+      ],
+      "text": "export interface ModelReadinessNonAnswer { readonly outcome: ModelReadinessHeldOutcome; readonly decisionId?: string; readonly reason?: string; }"
+    },
+    {
+      "name": "ModelReadinessOutcome",
+      "kind": "type",
+      "text": "export type ModelReadinessOutcome = 'ready' | 'held' | 'rejected' | 'deferred' | 'unavailable';"
+    },
+    {
+      "name": "ModelReadinessProvenance",
+      "kind": "interface",
+      "required": [
+        "battery",
+        "decisionId",
+        "model",
+        "requestId",
+        "requestedModel",
+        "version"
+      ],
+      "text": "export interface ModelReadinessProvenance { readonly battery: string; readonly version: number; readonly decisionId: string | null; readonly requestedModel: string | null; readonly model: string | null; readonly requestId: string | null; }"
+    },
+    {
+      "name": "ModelReadinessRun",
+      "kind": "type",
+      "text": "export type ModelReadinessRun<Items extends BatteryItems> = Pick<BatteryRun<Items>, 'result'> & { readonly readings: Partial<BatteryRun<Items>['readings']>; }; ;; via BatteryItems = export type BatteryItems = Readonly<Record<string, BatteryItem>>; ;; BatteryRun = export interface BatteryRun<Items extends BatteryItems> { readonly readings: { readonly [K in keyof Items]: ReadingFor<Items[K]>; }; readonly result: Omit<JudgmentResult<Questions>, 'answers'>; recordAction(action: string): void; } ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+    },
+    {
+      "name": "ModelReadinessScoreReading",
+      "kind": "interface",
+      "required": [
+        "confidence",
+        "normalized",
+        "outcome",
+        "reason",
+        "score"
+      ],
+      "text": "export interface ModelReadinessScoreReading { readonly score: number | null; readonly normalized: number | null; readonly confidence: number | null; readonly outcome: ModelReadinessOutcome; readonly reason: string | null; }"
     },
     {
       "name": "ModelTierStore",
@@ -47145,6 +47240,43 @@
         "tiers"
       ],
       "text": "export interface RoutePlannerDeps { readonly catalog: RoutePlannerCatalog; readonly tiers: ModelTierStore; readonly providerHealth?: (() => ReadonlyMap<string, { readonly status: ProviderStatus; }>) | undefined; readonly benchmarkFor?: ((model: ModelDefinition) => number | null | undefined) | undefined; readonly prepareBenchmarks?: ((models: readonly ModelDefinition[], signal?: AbortSignal) => Promise<void>) | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; ModelDefinition = export interface ModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; contextWindowOrigin?: ContextWindowOrigin | undefined; contextWindowAcceptedFloor?: number | undefined; selectable: boolean; reasoningEffort?: ReasoningEffortSpec | undefined; tier?: ModelTier | undefined; tokenLimits?: TokenLimits | undefined; pricing?: ManualModelPrice | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProviderStatus = export type ProviderStatus = 'unknown' | 'healthy' | 'degraded' | 'rate_limited' | 'auth_error' | 'unavailable'; ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "RouteReadinessDimension",
+      "kind": "interface",
+      "required": [
+        "id",
+        "label",
+        "weight"
+      ],
+      "text": "export interface RouteReadinessDimension extends ModelReadinessScoreReading { readonly id: RouteReadinessDimensionId; readonly label: string; readonly weight: number; }"
+    },
+    {
+      "name": "RouteReadinessDimensionId",
+      "kind": "type",
+      "text": "export type RouteReadinessDimensionId = typeof routeReadiness.composite.dimensions[number]['id'];"
+    },
+    {
+      "name": "RouteReadinessInput",
+      "kind": "type",
+      "text": "export type RouteReadinessInput = ModelReadinessRun<typeof routeReadiness.items> | ModelReadinessNonAnswer | null | undefined;"
+    },
+    {
+      "name": "RouteReadinessLevel",
+      "kind": "type",
+      "text": "export type RouteReadinessLevel = typeof routeReadiness.composite.levels[number]['level'];"
+    },
+    {
+      "name": "RouteReadinessReading",
+      "kind": "interface",
+      "required": [
+        "cloudTransfer",
+        "decisionId",
+        "dimensions",
+        "level",
+        "provenance"
+      ],
+      "text": "export interface RouteReadinessReading extends ModelReadinessScoreReading { readonly level: RouteReadinessLevel | null; readonly dimensions: readonly RouteReadinessDimension[]; readonly cloudTransfer: ModelReadinessFlagReading; readonly decisionId: string | null; readonly provenance: ModelReadinessProvenance; }"
     },
     {
       "name": "RouteRequirements",
@@ -47475,6 +47607,16 @@
       "text": "export declare function knownReasoningFamily(modelId: string): ReasoningFamily | null | undefined;"
     },
     {
+      "name": "localRecipeFit",
+      "kind": "const",
+      "text": "localRecipeFit: import(\"@goodvibes-jev/judgment\").Battery<{ readonly fit: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly memoryAdequacy: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Constrained: demonstrated memory limits prevent the intended model/workload or require substantial reductions.\", \"Starter: evidence supports a small, constrained local workload with little spare memory.\", \"Comfortable: evidence supports the intended local workload with useful headroom.\", \"Large: evidence establishes abundant headroom for larger models or workloads beyond those intended.\"]>; }> & { composite: { readonly levels: readonly [{ readonly at: 0.85; readonly level: \"strong\"; }, { readonly at: 0.7; readonly level: \"good\"; }, { readonly at: 0.5; readonly level: \"usable\"; }, { readonly at: 0; readonly level: \"weak\"; }]; readonly memoryTiers: readonly [\"constrained\", \"starter\", \"comfortable\", \"large\"]; }; }"
+    },
+    {
+      "name": "localRecipeFitFrom",
+      "kind": "function",
+      "text": "export declare function localRecipeFitFrom(input: LocalRecipeFitInput): LocalRecipeFitReading;"
+    },
+    {
       "name": "localServerIdentity",
       "kind": "const",
       "text": "localServerIdentity: import(\"@goodvibes-jev/judgment/decisions\").Dispatch<\"unknown\" | \"lm-studio\" | \"vllm\" | \"llamacpp\" | \"localai\" | \"tgi\" | \"ollama\">"
@@ -47503,6 +47645,11 @@
       "name": "modelProviderNamedIds",
       "kind": "function",
       "text": "export declare function modelProviderNamedIds(registry: ProviderListing): NamedId[];"
+    },
+    {
+      "name": "modelReadinessFlagFrom",
+      "kind": "function",
+      "text": "export declare function modelReadinessFlagFrom(input: RouteReadinessInput, flag: ModelReadinessFlag): ModelReadinessFlagReading;"
     },
     {
       "name": "modelTier",
@@ -47658,6 +47805,16 @@
       "name": "routeCandidates",
       "kind": "function",
       "text": "export declare function routeCandidates(): readonly Candidate[]; ;; via Candidate = export interface Candidate { readonly id: string; readonly content: JsonValue; }"
+    },
+    {
+      "name": "routeReadiness",
+      "kind": "const",
+      "text": "routeReadiness: import(\"@goodvibes-jev/judgment\").Battery<{ readonly latency: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly contextWindow: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly toolSupport: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly vision: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly cost: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly privacy: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Inadequate: the evidence establishes that this dimension prevents the intended work.\", \"Limited: the evidence establishes substantial limitations or costly workarounds.\", \"Usable: the evidence supports the work with meaningful constraints.\", \"Good: the evidence supports the work well with only minor limitations.\", \"Excellent: the evidence supports the work fully with substantial headroom.\"]>; readonly cloudTransfer: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly exampleVision: import(\"@goodvibes-jev/judgment\").YesNoItem; }> & { composite: { readonly dimensions: readonly [{ readonly reading: \"latency\"; readonly id: \"latency\"; readonly label: \"Latency\"; readonly weight: 20; }, { readonly reading: \"contextWindow\"; readonly id: \"context-window\"; readonly label: \"Context window\"; readonly weight: 20; }, { readonly reading: \"toolSupport\"; readonly id: \"tool-support\"; readonly label: \"Tool support\"; readonly weight: 20; }, { readonly reading: \"vision\"; readonly id: \"vision\"; readonly label: \"Vision\"; readonly weight: 10; }, { readonly reading: \"cost\"; readonly id: \"cost\"; readonly label: \"Cost\"; readonly weight: 15; }, { readonly reading: \"privacy\"; readonly id: \"privacy\"; readonly label: \"Privacy\"; readonly weight: 15; }]; readonly levels: readonly [{ readonly at: 0.85; readonly level: \"excellent\"; }, { readonly at: 0.7; readonly level: \"good\"; }, { readonly at: 0.5; readonly level: \"usable\"; }, { readonly at: 0; readonly level: \"risky\"; }]; }; }"
+    },
+    {
+      "name": "routeReadinessFrom",
+      "kind": "function",
+      "text": "export declare function routeReadinessFrom(input: RouteReadinessInput): RouteReadinessReading;"
     },
     {
       "name": "routingRegistry",
@@ -70180,7 +70337,7 @@
     {
       "name": "ToolInputProjectionResult",
       "kind": "type",
-      "text": "export type ToolInputProjectionResult = { readonly status: 'held'; readonly release?: (() => Promise<void>) | undefined; } | { readonly status: 'projected'; readonly args: Record<string, unknown>; readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined; readonly release?: (() => Promise<void>) | undefined; readonly executionContext?: object | undefined; readonly admissionEvidence?: ToolAdmissionEvidence | undefined; readonly settingsAdmissionEvidence?: AgentSettingsAdmissionEvidence | undefined; readonly settingsMutation?: ToolPreparedSettingsMutation | undefined; readonly assertRepairedArgs?: ((args: Record<string, unknown>) => void) | undefined; }; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; AgentSettingsAdmissionEvidence = export interface AgentSettingsAdmissionEvidence { readonly kind: 'agent-settings'; readonly operation: 'set' | 'reset'; readonly key: string; readonly effect: Readonly<Record<string, unknown>>; readonly revision: string; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; ToolPreparedSettingsMutation = export interface ToolPreparedSettingsMutation { readonly owner: ConfigManager; readonly mutation: PreparedConfigMutation; readonly route?: ConfigWriteRoute | undefined; }"
+      "text": "export type ToolInputProjectionResult = { readonly status: 'held'; readonly release?: (() => Promise<void>) | undefined; } | { readonly status: 'projected'; readonly args: Record<string, unknown>; readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined; readonly release?: (() => Promise<void>) | undefined; readonly executionContext?: object | undefined; readonly admissionEvidence?: ToolAdmissionEvidence | undefined; readonly settingsAdmissionEvidence?: AgentSettingsAdmissionEvidence | undefined; readonly settingsMutation?: ToolPreparedSettingsMutation | undefined; readonly resultPublication?: 'read-only' | undefined; readonly assertRepairedArgs?: ((args: Record<string, unknown>) => void) | undefined; }; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; AgentSettingsAdmissionEvidence = export interface AgentSettingsAdmissionEvidence { readonly kind: 'agent-settings'; readonly operation: 'set' | 'reset'; readonly key: string; readonly effect: Readonly<Record<string, unknown>>; readonly revision: string; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; ToolPreparedSettingsMutation = export interface ToolPreparedSettingsMutation { readonly owner: ConfigManager; readonly mutation: PreparedConfigMutation; readonly route?: ConfigWriteRoute | undefined; }"
     },
     {
       "name": "ToolInputProjector",
