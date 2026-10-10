@@ -37,7 +37,7 @@ function fakeContext(values: Record<string, unknown> = {}): CommandContext {
   } as CommandContext;
 }
 
-function registerSettingsTool(registry: ToolRegistry): void {
+function registerSettingsTool(registry: ToolRegistry, executions?: string[]): void {
   registry.register({
     definition: {
       name: 'settings',
@@ -55,7 +55,7 @@ function registerSettingsTool(registry: ToolRegistry): void {
         additionalProperties: false,
       },
     },
-    execute: async () => ({ success: true, output: 'settings' }),
+    execute: async () => { executions?.push('settings'); return { success: true, output: 'settings' }; },
   });
 }
 
@@ -78,24 +78,35 @@ describe('security adapter', () => {
     throw new Error(`Unscripted classification fixture: ${call.tool}`);
   }).port); });
   afterEach(() => { installJudgmentPort(previous); });
-  test('harness dispatch uses its inspected mode descriptor instead of a later proxy read', async () => {
+  test('harness ingress rejects proxy routing before any trap or dispatch; plain catalogs still work', async () => {
     const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
     installJudgmentPort(fixture.port);
-    const registry = new ToolRegistry(); registerSettingsTool(registry);
+    const executions: string[] = [];
+    const registry = new ToolRegistry(); registerSettingsTool(registry, executions);
     const tool = createAgentHarnessTool({
       commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
     });
-    let modeReads = 0;
+    const traps: string[] = [];
     const input = new Proxy({ mode: 'modes', toolName: 'settings', toolArgs: { action: 'get' } }, {
       get(target, key, receiver) {
-        if (key === 'mode') { modeReads++; return 'policy_explain'; }
+        traps.push(`get:${String(key)}`);
+        if (key === 'mode') return 'policy_explain';
         return Reflect.get(target, key, receiver);
       },
+      getOwnPropertyDescriptor(target, key) { traps.push('descriptor'); return Reflect.getOwnPropertyDescriptor(target, key); },
+      getPrototypeOf(target) { traps.push('prototype'); return Reflect.getPrototypeOf(target); },
+      ownKeys(target) { traps.push('ownKeys'); return Reflect.ownKeys(target); },
     });
-    const result = await tool.execute(input);
-    expect(result.success).toBe(true);
-    expect(modeReads).toBe(0);
+    // The protected catalog ingress now owns this refusal before the harness
+    // can inspect descriptors. Never relax it to make a proxy reach dispatch.
+    await expect(tool.execute(input)).rejects.toMatchObject({ name: 'ToolInputProjectionError', problem: 'invalid' });
+    expect(traps).toEqual([]);
     expect(fixture.requests).toHaveLength(0);
+    expect(executions).toEqual([]);
+    const result = await tool.execute({ mode: 'modes' });
+    expect(result.success).toBe(true);
+    expect(fixture.requests).toHaveLength(0);
+    expect(executions).toEqual([]);
     expect(JSON.parse(result.output!)).not.toHaveProperty('preflight');
   });
 
@@ -138,7 +149,8 @@ describe('security adapter', () => {
       let reads = 0;
       const fixture = fakePort((_name, question) => choiceAnswer(question, 'read', 0.99));
       installJudgmentPort(fixture.port);
-      const registry = new ToolRegistry(); registerSettingsTool(registry);
+      const executions: string[] = [];
+      const registry = new ToolRegistry(); registerSettingsTool(registry, executions);
       const calls: Record<string, unknown>[] = [];
       const tool = caller === 'security' ? makeTool(calls, registry) : createAgentHarnessTool({
         commandRegistry: {} as CommandRegistry, commandContext: fakeContext(), toolRegistry: registry,
@@ -149,10 +161,15 @@ describe('security adapter', () => {
       Object.defineProperty(input, routingKey, {
         enumerable: true, get() { reads++; return routingKey === 'action' ? 'explain' : 'policy_explain'; },
       });
-      await expect(tool.execute(input)).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'unsupported-input' });
+      // Harness routing is refused by its outer ingress; the independent
+      // security adapter still owns its complete-input snapshot refusal.
+      await expect(tool.execute(input)).rejects.toMatchObject(caller === 'harness'
+        ? { name: 'ToolInputProjectionError', problem: 'invalid' }
+        : { name: 'JudgmentInputError', problem: 'unsupported-input' });
       expect(reads).toBe(0);
       expect(fixture.requests).toHaveLength(0);
       expect(calls).toHaveLength(0);
+      expect(executions).toEqual([]);
     });
 
     for (const location of ['input', 'toolArgs'] as const) test(`${caller} explanation refuses a ${location} getter without invoking it or Jev`, async () => {

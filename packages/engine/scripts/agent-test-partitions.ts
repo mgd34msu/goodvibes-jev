@@ -2,9 +2,13 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-export const AGENT_TEST_GROUPS = ['e2e', 'headless', 'remaining'] as const;
+export const AGENT_TEST_GROUPS = ['e2e', 'headless', 'model-catalog', 'model-readiness', 'remaining'] as const;
 export type AgentTestGroup = typeof AGENT_TEST_GROUPS[number];
 const HEADLESS = 'src/test/cli/native-headless-entrypoint.test.ts';
+// Keep the expensive full-source model suites intact on independent hosts.
+// All other/future files remain in the recursively discovered remaining group.
+const MODEL_CATALOG = 'src/test/tools/agent-model-catalog-search.test.ts';
+const MODEL_READINESS = 'src/test/tools/agent-model-readiness-judgment.test.ts';
 const IGNORED_DIRECTORIES = new Set(['node_modules', '.git', 'dist']);
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
@@ -31,7 +35,8 @@ export function groupAgentTestFiles(files: readonly string[]) {
   }
   const groups = AGENT_TEST_GROUPS.map((id) => ({ id, files: [] as string[] }));
   for (const file of [...files].sort()) {
-    const index = file.startsWith('src/test/e2e/') ? 0 : file === HEADLESS ? 1 : 2;
+    const index = file.startsWith('src/test/e2e/') ? 0 : file === HEADLESS ? 1
+      : file === MODEL_CATALOG ? 2 : file === MODEL_READINESS ? 3 : 4;
     groups[index]!.files.push(file);
   }
   if (groups.some((group) => group.files.length === 0)) throw new Error('Agent test groups must be nonempty');

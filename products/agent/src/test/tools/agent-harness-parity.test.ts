@@ -12,10 +12,12 @@
  *      (success:true with parsed output having status 'needs_confirmation').
  *   3. Command-runner output is capped at 6000 chars with '... output truncated'.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { ProcessManager, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ProcessManager, ToolInputProjectionError, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { FileUndoManager } from '@goodvibes-jev/engine/sdk/platform/state';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { ConfigManager } from '../../config/index.ts';
@@ -26,8 +28,32 @@ import { AGENT_HARNESS_MODES } from '../../tools/agent-harness-tool-schema.ts';
 import { HARNESS_MODE_DESCRIPTORS } from '../../tools/agent-harness-mode-catalog.ts';
 import { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 
-function makeParityFixture() {
+let previousPort: ReturnType<typeof installJudgmentPort>;
+let readings: ReturnType<typeof fakePort>;
+beforeEach(() => {
+  // Dispatch parity supplies the real read boundary's offline prerequisites.
+  // Unexpected decisions fail rather than receiving a blanket positive answer.
+  readings = fakePort((name, question) => {
+    if (question.type === 'score' && ['fit', 'memoryAdequacy', 'latency', 'contextWindow', 'toolSupport', 'vision', 'cost', 'privacy'].includes(name)) {
+      return scoreAnswer(question, name === 'memoryAdequacy' ? 2 : 3, 0.99);
+    }
+    if (question.type === 'noul' && ['cloudTransfer', 'exampleVision'].includes(name)) return noulAnswer(0.99);
+    throw new Error(`Unscripted parity question: ${name}`);
+  });
+  previousPort = installJudgmentPort({ model: readings.port.model, ask(request) {
+    if (!['agent.models.route-readiness', 'agent.models.local-recipe-fit'].includes(request.context?.battery ?? '')) {
+      throw new Error(`Unscripted parity battery: ${request.context?.battery}`);
+    }
+    return readings.port.ask(request);
+  } });
+});
+afterEach(() => { installJudgmentPort(previousPort); });
+afterAll(cleanupResearchScreeningFixtures);
+
+function makeParityFixture(options: { sourceOwner?: boolean } = {}) {
   const root = makeProjectTempDir('gv-parity');
   mkdirSync(join(root, '.goodvibes', 'daemon'), { recursive: true });
   const paths = createShellPathService({ workingDirectory: root, homeDirectory: root });
@@ -39,7 +65,9 @@ function makeParityFixture() {
     homeDir: paths.homeDirectory,
   });
   const toolRegistry = new ToolRegistry();
+  if (options.sourceOwner !== false) bindAgentResearchSourceOwner(toolRegistry, ordinaryResearchOwner());
   const processManager = new ProcessManager();
+  const spawn = spyOn(processManager, 'spawn').mockImplementation(async () => { throw new Error('Parity must never spawn a process.'); });
   const fileUndoManager = new FileUndoManager();
   const workPlanStore = new WorkPlanStore({ homeDirectory: root, surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT, projectId: 'parity-test', projectRoot: root });
 
@@ -137,8 +165,15 @@ function makeParityFixture() {
   return {
     tool,
     commandRegistry,
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    spawn,
+    cleanup: () => { spawn.mockRestore(); rmSync(root, { recursive: true, force: true }); },
   };
+}
+
+function parityArgs(mode: typeof AGENT_HARNESS_MODES[number]): Record<string, unknown> {
+  // Exercise the real start guard, not an invalid-action exception. No fixture
+  // grants confirmation or replaces the protected-source/process contracts.
+  return mode === 'run_background_process' ? { mode, processAction: 'start', command: 'printf parity' } : { mode };
 }
 
 describe('agent_harness parity', () => {
@@ -149,7 +184,8 @@ describe('agent_harness parity', () => {
       const failures: string[] = [];
 
       for (const mode of AGENT_HARNESS_MODES) {
-        const result = await fixture.tool.execute({ mode });
+        const result = await fixture.tool.execute(parityArgs(mode));
+        if (mode === 'model_routing') expect(result.success, result.error).toBe(true);
         // A mode may legitimately return success:false (e.g. validation error) but
         // must NOT return the literal unhandled-mode error string.
         if (!result.success && unhandledPattern.test(result.error ?? '')) {
@@ -158,6 +194,8 @@ describe('agent_harness parity', () => {
       }
 
       expect(failures).toEqual([]);
+      expect(readings.requests.length).toBeGreaterThan(0);
+      expect(fixture.spawn).not.toHaveBeenCalled();
     } finally {
       fixture.cleanup();
     }
@@ -188,7 +226,11 @@ describe('agent_harness parity', () => {
       const failures: string[] = [];
 
       for (const descriptor of effectDescriptors) {
-        const result = await fixture.tool.execute({ mode: descriptor.id });
+        const result = await fixture.tool.execute(parityArgs(descriptor.id));
+        if (descriptor.id === 'run_background_process') {
+          expect(result.success).toBe(true);
+          expect(JSON.parse(result.output ?? '{}').status).toBe('needs_confirmation');
+        }
 
         // Accepted refusal patterns:
         //   success:false , hard error/validation refusal (always acceptable)
@@ -211,9 +253,39 @@ describe('agent_harness parity', () => {
       }
 
       expect(failures).toEqual([]);
+      expect(fixture.spawn).not.toHaveBeenCalled();
     } finally {
       fixture.cleanup();
     }
+  });
+
+  test.each(['model_routing', 'model_route'] as const)('%s still refuses a missing protected-source owner before judgment', async mode => {
+    const fixture = makeParityFixture({ sourceOwner: false });
+    try {
+      await expect(fixture.tool.execute({ mode })).rejects.toBeInstanceOf(ToolInputProjectionError);
+      expect(readings.requests).toHaveLength(0);
+      expect(fixture.spawn).not.toHaveBeenCalled();
+    } finally { fixture.cleanup(); }
+  });
+
+  test('background process dispatch still rejects a missing action without spawning', async () => {
+    const fixture = makeParityFixture();
+    try {
+      await expect(fixture.tool.execute({ mode: 'run_background_process' })).rejects.toThrow('run_background_process requires processAction');
+      expect(fixture.spawn).not.toHaveBeenCalled();
+      expect(readings.requests).toHaveLength(0);
+    } finally { fixture.cleanup(); }
+  });
+
+  test.each([{ confirm: true }, { explicitUserRequest: 'Run the parity fixture command.' }])('background start requires both confirmation fields: %j', async partial => {
+    const fixture = makeParityFixture();
+    try {
+      const result = await fixture.tool.execute({ ...parityArgs('run_background_process'), ...partial });
+      expect(result.success).toBe(true);
+      expect(JSON.parse(result.output ?? '{}').status).toBe('needs_confirmation');
+      expect(fixture.spawn).not.toHaveBeenCalled();
+      expect(readings.requests).toHaveLength(0);
+    } finally { fixture.cleanup(); }
   });
 
   test('command runner caps printed output at 6000 chars with truncation suffix', async () => {

@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -7,7 +8,11 @@ import { AGENT_TEST_GROUPS, agentGroupTestArgs, agentTestFiles, agentTestManifes
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const headless = 'src/test/cli/native-headless-entrypoint.test.ts';
-const paths = ['src/test/e2e/a.test.ts', headless, 'src/test/nested/src/test/e2e/a.test.ts', 'src/test/z.spec.mjs'];
+const modelCatalog = 'src/test/tools/agent-model-catalog-search.test.ts';
+const modelReadiness = 'src/test/tools/agent-model-readiness-judgment.test.ts';
+const paths = ['src/test/e2e/a.test.ts', headless, modelCatalog, modelReadiness,
+  'src/test/nested/src/test/e2e/a.test.ts', 'src/test/z.spec.mjs',
+  `src/test/nested/${modelCatalog}`, `src/test/nested/${modelReadiness}`];
 function write(root: string, path: string, content = ''): void {
   mkdirSync(dirname(join(root, path)), { recursive: true });
   writeFileSync(join(root, path), content);
@@ -22,10 +27,11 @@ function fixture(): { root: string; agent: string } {
 test('groups a complete canonical manifest deterministically without splitting files', () => {
   const groups = groupAgentTestFiles(paths);
   expect(groups.map((group) => group.id)).toEqual([...AGENT_TEST_GROUPS]);
-  expect(groups.map((group) => group.files)).toEqual([[paths[0]!], [headless], paths.slice(2)]);
+  expect(groups.map((group) => group.files)).toEqual([[paths[0]!], [headless], [modelCatalog], [modelReadiness], paths.slice(4).sort()]);
   expect(groupAgentTestFiles([...paths].reverse())).toEqual(groups);
   expect(groups.flatMap((group) => group.files).sort()).toEqual([...paths].sort());
-  for (const files of [[], paths.slice(1), [...paths, paths[0]!], [...paths, 'src/test/../oops.test.ts'], [...paths, 'other/a.test.ts'], [...paths, 'src/test/not-a-test.ts']]) {
+  for (const files of [[], ...paths.slice(0, 4).map(isolated => paths.filter(file => file !== isolated)),
+    [...paths, paths[0]!], [...paths, 'src/test/../oops.test.ts'], [...paths, 'other/a.test.ts'], [...paths, 'src/test/not-a-test.ts']]) {
     expect(() => groupAgentTestFiles(files)).toThrow();
   }
 });
@@ -48,6 +54,24 @@ test('actual Agent inventory is an independent complete disjoint census, with no
   expect(new Set(selected).size).toBe(census.length);
   expect(manifest.groups[0]!.files).toEqual(census.filter((file) => file.startsWith('src/test/e2e/')));
   expect(manifest.groups[1]!.files).toEqual([headless]);
+  expect(manifest.groups[2]!.files).toEqual([modelCatalog]);
+  expect(manifest.groups[3]!.files).toEqual([modelReadiness]);
+  expect(manifest.groups[4]!.files).toEqual(census.filter(file => !file.startsWith('src/test/e2e/') && ![headless, modelCatalog, modelReadiness].includes(file)));
+});
+
+test('every new group rejects the old grouping digest even when the file inventory is unchanged', () => {
+  const { agent } = fixture();
+  const manifest = agentTestManifest(agent);
+  const oldGroups = [
+    { id: 'e2e', files: manifest.files.filter(file => file.startsWith('src/test/e2e/')) },
+    { id: 'headless', files: [headless] },
+    { id: 'remaining', files: manifest.files.filter(file => !file.startsWith('src/test/e2e/') && file !== headless) },
+  ];
+  const oldDigest = createHash('sha256').update(JSON.stringify({ files: manifest.files, groups: oldGroups })).digest('hex');
+  expect(manifest.sha256).not.toBe(oldDigest);
+  for (const group of AGENT_TEST_GROUPS) {
+    expect(() => agentGroupTestArgs(agent, [`--group=${group}`, `--manifest-sha256=${oldDigest}`])).toThrow('differs');
+  }
 });
 
 test('future nested tests are discovered once; stale, malformed, duplicate and mixed selectors fail closed', () => {
