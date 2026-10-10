@@ -1,7 +1,7 @@
 /**
  * find content mode with `ranked: true`: the matched files are ordered by the
  * `engine.tools.content-rank` rerank (a fake port here), every match is kept,
- * and nothing is judged when ranking is off or only one file matched.
+ * and no content ranking is requested when ranking is off or only one file matched.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -28,12 +28,15 @@ afterAll(() => {
 
 /** Probability per candidate path (relative to the project); unlisted paths read as a strong no. */
 let relevance: Map<string, number>;
-let requests: ReadonlyArray<{ readonly state: unknown }>;
+let requests: ReadonlyArray<{ readonly state: unknown; readonly context?: { readonly battery?: string } }>;
 let previous: ReturnType<typeof installJudgmentPort>;
 
 beforeEach(() => {
   relevance = new Map();
-  const fake = fakePort((_name, _question, state) => noulAnswer(relevance.get((state as { candidate: { path: string } }).candidate.path) ?? 0.03));
+  const fake = fakePort((_name, _question, state) => {
+    if ('directories' in (state as object)) return noulAnswer(0.01);
+    return noulAnswer(relevance.get((state as { candidate: { path: string } }).candidate.path) ?? 0.03);
+  });
   requests = fake.requests;
   previous = installJudgmentPort(fake.port);
 });
@@ -58,7 +61,7 @@ describe('find content ranked by engine.tools.content-rank', () => {
     relevance.set('notes.md', 0.1);
     const result = await runFind({ mode: 'content', pattern: 'parseConfig', path: '.', ranked: true }, { format: 'files_only' });
     expect(filesOf(result)).toEqual(['src/parse.ts', 'src/use.ts', 'notes.md']);
-    expect(requests).toHaveLength(3);
+    expect(requests.filter(request => request.context?.battery === 'engine.tools.content-rank')).toHaveLength(3);
   });
 
   test('the order follows the probabilities when they change', async () => {
@@ -80,7 +83,7 @@ describe('find content ranked by engine.tools.content-rank', () => {
   test('the reading sees the searched pattern, not the whole-word wrapping, and each file\'s numbered matching lines', async () => {
     relevance.set('src/parse.ts', 0.95);
     await runFind({ mode: 'content', pattern: 'parseConfig', whole_word: true, path: 'src', ranked: true });
-    const states = requests.map((request) => request.state as { query: string; candidate: { path: string; matching_lines: string } });
+    const states = requests.filter(request => request.context?.battery === 'engine.tools.content-rank').map((request) => request.state as { query: string; candidate: { path: string; matching_lines: string } });
     expect(states.every((state) => state.query === 'parseConfig')).toBe(true);
     expect(states.find((state) => state.candidate.path === 'src/parse.ts')!.candidate.matching_lines).toBe('1: export function parseConfig(raw: string) {');
     expect(states.find((state) => state.candidate.path === 'src/use.ts')!.candidate.matching_lines).toBe(
@@ -88,9 +91,9 @@ describe('find content ranked by engine.tools.content-rank', () => {
     );
   });
 
-  test('nothing is judged without ranked, or when only one file matched', async () => {
+  test('content is not ranked without ranked, or when only one file matched', async () => {
     await runFind({ mode: 'content', pattern: 'parseConfig', path: '.' });
     await runFind({ mode: 'content', pattern: 'uniqueMarkerWord', path: '.', ranked: true });
-    expect(requests).toHaveLength(0);
+    expect(requests.filter(request => request.context?.battery === 'engine.tools.content-rank')).toHaveLength(0);
   });
 });

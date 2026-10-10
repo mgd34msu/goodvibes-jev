@@ -1,3 +1,4 @@
+import { DirectoryWalk } from '../utils/walk-dir.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 /**
  * CodeIndexStore, an incremental, tree-sitter-chunked, embedding-backed index
@@ -497,8 +498,10 @@ export class CodeIndexStore {
    * read/write tool paths and from an explicit reindex command, wiring
    * those call sites is out of scope for this module (see module doc).
    * A no-op (chunks removed) if the path is gitignored or no longer exists.
+   * Scheduler-owned automatic updates also honor directory-selection/no-follow
+   * policy. Explicit single-file calls keep their existing requested-file scope.
    */
-  async reindexFile(absPath: string): Promise<{ indexed: boolean; mode: CodeChunkMode }> {
+  async reindexFile(absPath: string, options: { automatic?: boolean } = {}): Promise<{ indexed: boolean; mode: CodeChunkMode }> {
     if (this.authorizedRunUsed) throw new Error('Live-tree operations are disabled on an authorized code index');
     if (!this.db || !this.available) return { indexed: false, mode: 'empty' };
     const callEpoch = this.epoch;
@@ -506,7 +509,31 @@ export class CodeIndexStore {
     if (rel.startsWith('..')) return { indexed: false, mode: 'empty' };
 
     const diagnostics = createFindDiagnostics();
-    const isIgnored = this.buildIgnoreMatcher(diagnostics);
+    const assertCurrent = (): void => {
+      if (this.epoch !== callEpoch) throw new Error('Code index reindex superseded during directory reading');
+    };
+    const walk = new DirectoryWalk(this.rootDir);
+    let isIgnored: (absPath: string, rel: string) => boolean;
+    try {
+      if (options.automatic && await walk.excludesFile(absPath, { beforeAttempt: assertCurrent, site: 'state.code-index.reindex.skip-directory' })) {
+        assertCurrent();
+        deleteChunksForPath(this.db, rel);
+        return { indexed: false, mode: 'empty' };
+      }
+      isIgnored = await this.buildIgnoreMatcher(diagnostics, walk, assertCurrent);
+      assertCurrent();
+      // Ignore discovery can suspend on unrelated directories. Recheck the
+      // automatic path after it, without repeating cached semantic readings.
+      if (options.automatic && await walk.excludesFile(absPath, { beforeAttempt: assertCurrent, site: 'state.code-index.reindex.skip-directory' })) {
+        assertCurrent();
+        deleteChunksForPath(this.db, rel);
+        return { indexed: false, mode: 'empty' };
+      }
+      assertCurrent();
+    } catch (error) {
+      if (this.epoch !== callEpoch) return { indexed: false, mode: 'empty' };
+      throw error;
+    }
     if (isIgnored(absPath, rel)) {
       deleteChunksForPath(this.db, rel);
       return { indexed: false, mode: 'empty' };
@@ -551,8 +578,20 @@ export class CodeIndexStore {
     const storedProviderId = this.db ? getCodeIndexMeta(this.db, EMBEDDING_PROVIDER_META_KEY) : null;
     const forceReembed = storedProviderId !== null && storedProviderId !== currentProviderId;
 
-    const isIgnored = this.buildIgnoreMatcher(diagnostics);
-    const scanned = await collectGlobFiles(this.rootDir, ['**/*'], false, false, diagnostics);
+    const walk = new DirectoryWalk(this.rootDir);
+    const assertCurrent = (): void => {
+      if (this.epoch !== buildEpoch) throw new Error('Code index build superseded during directory reading');
+    };
+    let isIgnored: (absPath: string, rel: string) => boolean;
+    let scanned: Set<string>;
+    try {
+      isIgnored = await this.buildIgnoreMatcher(diagnostics, walk, assertCurrent);
+      assertCurrent();
+      scanned = await collectGlobFiles(this.rootDir, ['**/*'], false, false, diagnostics, walk, { beforeAttempt: assertCurrent });
+    } catch (error) {
+      if (this.epoch !== buildEpoch) return abortedBuildStats(startedAt, 0, skip);
+      throw error;
+    }
     if (this.epoch !== buildEpoch) return abortedBuildStats(startedAt, scanned.size, skip);
     // Deterministic order so identical trees always chunk identically (chunking determinism test).
     const candidateFiles = Array.from(scanned).sort();
@@ -670,10 +709,10 @@ export class CodeIndexStore {
    * file's patterns apply relative to its own directory, per git semantics).
    * Nested coverage is bounded by findNestedGitignoreFiles' cap (see module doc).
    */
-  private buildIgnoreMatcher(diagnostics: FindDiagnostics): (absPath: string, rel: string) => boolean {
+  private async buildIgnoreMatcher(diagnostics: FindDiagnostics, walk: DirectoryWalk, assertCurrent: () => void): Promise<(absPath: string, rel: string) => boolean> {
     const rootGitignorePath = join(this.rootDir, '.gitignore');
     const rootMatcher = buildGitignoreMatcher(rootGitignorePath, diagnostics);
-    const nested = findNestedGitignoreFiles(this.rootDir, rootGitignorePath)
+    const nested = (await findNestedGitignoreFiles(this.rootDir, rootGitignorePath, walk, { beforeAttempt: assertCurrent }))
       .map((path) => ({ dir: dirname(path), matcher: buildGitignoreMatcher(path, diagnostics) }))
       .filter((entry): entry is { dir: string; matcher: (rel: string) => boolean } => entry.matcher !== null);
     return (absPath: string, rel: string): boolean => {

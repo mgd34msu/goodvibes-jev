@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Ranked } from '@goodvibes-jev/judgment';
 import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -386,10 +387,14 @@ export async function savePersonalOpsReviewArtifact(options: {
     inputFieldKeys: Object.keys(options.inputFields).sort((left, right) => left.localeCompare(right)),
     policy: 'Saved Personal Ops review-card artifacts contain redacted review cards and bounded previews only; full raw connector output and full input values are not stored.',
   };
+  // Filenames become catalog labels: an epoch suffix can accidentally pass the
+  // payment-card guard. Encode only the generated UUID, preserving its entropy;
+  // user titles and existing filenames still face the unchanged source boundary.
+  const nonce = randomUUID().replace(/-/g, '').replace(/[0-9a-f]/g, (digit) => String.fromCharCode(97 + parseInt(digit, 16)));
   const descriptor = await store.create({
     kind: 'data',
     mimeType: 'application/json',
-    filename: `${safeTitle}-${Date.now()}.json`,
+    filename: `${safeTitle}-${nonce}.json`,
     text: `${redactedPersonalOpsText(JSON.stringify(payload, null, 2))}\n`,
     acquisitionMode: 'inline-data',
     fetchMode: 'not-applicable',

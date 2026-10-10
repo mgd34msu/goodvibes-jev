@@ -1,3 +1,5 @@
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
  * Repo code index (Stage A), no-embedding-provider degradation.
  *
@@ -13,7 +15,7 @@
  * repo code index's staging decision, so this suite does not exercise
  * selectCodeContextForTask (it does not exist yet).
  */
-import { describe, expect, test, afterEach } from 'bun:test';
+import { beforeEach, describe, expect, test, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -110,3 +112,8 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     }
   });
 });
+
+// These filesystem fixtures contain authored directories; directory meaning is supplied explicitly.
+let previousDirectoryPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previousDirectoryPort); });

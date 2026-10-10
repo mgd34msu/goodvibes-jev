@@ -1,3 +1,4 @@
+import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 /**
  * The analyze modes whose findings are read by Jev: `security` (secrets,
@@ -77,14 +78,14 @@ async function scanCandidates(
 const matchText = (candidate: ScanCandidate, max: number): string =>
   (candidate.lines[candidate.index] ?? '').trim().slice(0, max);
 
-export async function runSecurity(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
+export async function runSecurity(input: AnalyzeInput, projectRoot: string, walkOptions: WalkDirOptions = {}): Promise<Record<string, unknown>> {
   const scope = input.securityScope ?? 'all';
   const results: Record<string, unknown> = {};
   const scanRoot = resolveScanRoot(input, projectRoot);
 
   if (scope === 'secrets' || scope === 'all') {
     const scanned: ScannedFile[] = [];
-    for (const file of await collectTextFiles(scanRoot)) {
+    for (const file of await collectTextFiles(scanRoot, MAX_SCAN_FILES, undefined, walkOptions)) {
       const content = await readTextFile(file);
       if (content !== null) scanned.push({ file: relative(projectRoot, file), lines: content.split('\n') });
     }
@@ -119,7 +120,7 @@ export async function runSecurity(input: AnalyzeInput, projectRoot: string): Pro
 
   if (scope === 'permissions' || scope === 'all') {
     const suspicious: string[] = [];
-    const files = await collectTextFiles(scanRoot);
+    const files = await collectTextFiles(scanRoot, MAX_SCAN_FILES, undefined, walkOptions);
     for (const file of files) {
       try {
         const info = await stat(file);
@@ -136,10 +137,10 @@ export async function runSecurity(input: AnalyzeInput, projectRoot: string): Pro
   return results;
 }
 
-export async function runPermissions(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
+export async function runPermissions(input: AnalyzeInput, projectRoot: string, walkOptions: WalkDirOptions = {}): Promise<Record<string, unknown>> {
   const scanRoot = resolveScanRoot(input, projectRoot);
   const deadline = Date.now() + MAX_SCAN_MS;
-  const files = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline);
+  const files = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline, walkOptions);
   const scanned: ScannedFile[] = [];
 
   for (const file of files) {

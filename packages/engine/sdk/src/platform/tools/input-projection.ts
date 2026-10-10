@@ -70,6 +70,8 @@ export type ToolInputProjectionResult = {
   readonly admissionEvidence?: ToolAdmissionEvidence | undefined;
   readonly settingsAdmissionEvidence?: AgentSettingsAdmissionEvidence | undefined;
   readonly settingsMutation?: ToolPreparedSettingsMutation | undefined;
+  /** Trusted projector resolved this invocation as read-only; recheck admission after cleanup before publishing. Never a grant. */
+  readonly resultPublication?: 'read-only' | undefined;
   /** Optional validation of repaired bindings; omission refuses any changed projected input. */
   readonly assertRepairedArgs?: ((args: Record<string, unknown>) => void) | undefined;
 };
@@ -203,8 +205,18 @@ export function captureProjectionArgs(value: unknown, name: string): Record<stri
     if (!entry || typeof entry !== 'object' || seen.has(entry)) return;
     if (nodeTypes.isProxy(entry)) throw new ToolInputProjectionError('invalid');
     seen.add(entry);
-    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(entry))) {
+    const descriptors = Object.getOwnPropertyDescriptors(entry);
+    const array = Array.isArray(entry);
+    if (array && (Object.keys(descriptors).length !== entry.length + 1 || entry.length > 20_000)) throw new ToolInputProjectionError('invalid');
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key !== 'string') throw new ToolInputProjectionError('invalid');
+      const descriptor = descriptors[key]!;
       if (!('value' in descriptor)) throw new ToolInputProjectionError('invalid');
+      if (array && key === 'length') continue;
+      // JSON cannot carry hidden object fields or custom array properties. Do
+      // not silently omit an unscreened part of the complete original input.
+      if (!descriptor.enumerable || (array && (!Number.isSafeInteger(Number(key))
+        || String(Number(key)) !== key || Number(key) < 0 || Number(key) >= entry.length))) throw new ToolInputProjectionError('invalid');
       inspect(descriptor.value, depth + 1);
     }
   }

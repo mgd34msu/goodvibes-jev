@@ -40,11 +40,11 @@ The Models workspace (Agent Workspace -> Models) keeps inspection, comparison, a
 | `models action:"route"` | Exact endpoint inspection for one route, with model-list smoke commands, success criteria, and failure triage. |
 | `models action:"smoke"` | Confirmed model-list smoke checks against detected or default local endpoints. |
 
-The cookbook covers Ollama, llama.cpp, vLLM, and local OpenAI-compatible servers. It detects local-compatible provider ids and model routes when available, scans local OS CPU/RAM/platform data with safe accelerator hints, ranks recipe fit, and recommends the easiest first route. Each recipe's setup plan carries download/start guidance, local server endpoint candidates, provider-add route hints when no route exists yet, provider-refresh routes, and saved local benchmark comparison artifacts when they exist.
+The cookbook covers Ollama, llama.cpp, vLLM, and local OpenAI-compatible servers. It detects local-compatible provider ids and model routes when available, scans local OS CPU/RAM/platform data with safe accelerator hints, shows judged recipe fit when enrichment settles. Unknown or unsettled evidence produces no default recommendation. Each recipe's setup plan carries download/start guidance, local server endpoint candidates, provider-add route hints when no route exists yet, provider-refresh routes, and saved local benchmark comparison artifacts when they exist.
 
-Every selectable model and local recipe gets a 0-100 readiness score with dimensions for latency, context window, tool support, vision, cost, and privacy. Scores are estimated unless a live route benchmark has been recorded; they are intended for triage, not as hidden permission to switch the user's default model.
+Explicit inspection reads latency, context window, tool support, vision, cost, and privacy through the canonical `agent.models.route-readiness` battery. A settled score is 0-100; missing, held, rejected or unavailable evidence is represented by null rather than guessed points. Recipe fit and memory adequacy come from `agent.models.local-recipe-fit`. These advisory readings include confidence, decision IDs and provenance, and never authorize a model change. Startup and setup snapshots remain synchronous facts-only, with deferred enrichment and no judgment calls.
 
-Saved local benchmark artifacts are tagged through `agent_model_compare` with `benchmarkKind:"local-model-route"` and `taskType:"local-model-route"`; revealed winner judgments raise matching recipe confidence to measured evidence, and benchmark analytics open on that filtered slice. Default-model changes still require a separate confirmed route update.
+Saved local benchmark artifacts are tagged through `agent_model_compare` with `benchmarkKind:"local-model-route"` and `taskType:"local-model-route"`; revealed winner judgments remain saved task-fit evidence, and benchmark analytics open on that filtered slice. A winner does not establish latency, hosting, or the capabilities of an unspecified recipe model; latency needs successful exact-route evidence with a timestamp. Default-model changes still require a separate confirmed route update.
 
 The cookbook does not probe drivers, call local network endpoints, install servers, download models, or change the selected route. Live local benchmark execution is a separate confirmed action that spends model tokens, saves comparison evidence, and leaves default-model changes to a separate revealed judgment and confirmed apply step.
 
@@ -70,3 +70,5 @@ Setting discovery is compact by default through `settings action:"list"` and ful
 - [Getting started](getting-started.md)
 - [Knowledge, artifacts, and multimodal](knowledge-artifacts-and-multimodal.md)
 - [Voice and live TTS](voice-and-live-tts.md)
+
+The full source-screening, lifecycle, nullable output and preserved mechanical boundaries are specified in [Agent model readiness](../../../docs/contracts/agent-model-readiness.md). Live calibration remains separate from offline fixture verification.

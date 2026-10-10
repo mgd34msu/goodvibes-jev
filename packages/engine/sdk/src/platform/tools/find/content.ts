@@ -1,3 +1,4 @@
+import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { stat as statAsync } from 'node:fs/promises';
 import { relative } from 'node:path';
@@ -58,6 +59,7 @@ async function executeContentQuery(
   runtime: FindRuntimeService,
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
+  walkOptions: WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
@@ -96,7 +98,7 @@ async function executeContentQuery(
     return { error: `Invalid regex: ${summarizeError(e)}` };
   }
 
-  const files = await collectFilesForSearch(basePath, query.glob, diagnostics);
+  const files = await collectFilesForSearch(basePath, query.glob, diagnostics, walkOptions);
   // Read-side deny enforcement: a file whose read the gate would hold behind an
   // ask never has its content returned. content mode is a content surface in
   // EVERY format (even files_only/locations reveal that the pattern matched a
@@ -134,7 +136,13 @@ async function executeContentQuery(
   const cacheKey: CacheKey = { pattern: rawPattern, glob: query.glob ?? '', path: basePath, flags };
   await assertCapturedToolAccessCurrent();
   const cachedEntry = runtime.searchCacheGet(cacheKey);
-  const cacheValid = cachedEntry ? await runtime.searchCacheIsValid(cachedEntry) : false;
+  // A fresh directory reading may change eligibility without touching a file's
+  // mtime. Reuse content only for the same current enumeration and order.
+  const sameFiles = cachedEntry?.files.length === files.length
+    && cachedEntry.files.every((file, index) => file === files[index]);
+  const cacheValid = cachedEntry && sameFiles ? await runtime.searchCacheIsValid(cachedEntry) : false;
+  walkOptions.signal?.throwIfAborted();
+  walkOptions.beforeAttempt?.();
 
   let matchedFiles: Map<string, { content: string; matches: ContentMatch[] }>;
   let totalMatches: number;

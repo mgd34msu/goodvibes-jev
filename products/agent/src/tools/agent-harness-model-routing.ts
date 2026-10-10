@@ -3,13 +3,15 @@ import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/arti
 import type { CommandContext } from '../input/command-registry.ts';
 import { requireProviderApi } from '../input/commands/runtime-services.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
-import { localModelCookbook } from './agent-harness-local-model-cookbook.ts';
+import { readLocalModelCookbook, localModelCookbook } from './agent-harness-local-model-cookbook.ts';
 import { localBenchmarkRouteLatencyMap } from './agent-harness-local-model-benchmarks.ts';
 import { localModelDetection, localModelServerEndpoints, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
 import { runLocalModelServerSmoke } from './agent-harness-local-model-smoke.ts';
 import { localHardwareProfile, modelReadinessScore } from './agent-harness-model-readiness.ts';
-import { contextWindowFor, loadModels, listProviderIds, modelBenchmarkCompositeScore, modelBenchmarkQualityTier, modelCapabilities, modelCurrent, modelDisplayName, modelModelId, modelProviderId, modelReasoning, modelRegistryKey, modelTier, readConfig, readProviderApi } from './agent-harness-model-catalog.ts';
+import { contextWindowFor, loadModels, listProviderIds, modelBenchmarkCompositeScore, modelBenchmarkQualityTier, modelAvailable, modelConfigured, modelCapabilities, modelCurrent, modelDisplayName, modelModelId, modelProviderId, modelReasoning, modelRegistryKey, modelTier, readConfig, readProviderApi } from './agent-harness-model-catalog.ts';
 import type { AgentHarnessModelRoutingArgs, LocalModelServerEndpoint, ModelCandidate, ModelProviderHealthSignal, ModelRouteLookupSource, ModelRouteResolution, RouteCandidate } from './agent-harness-model-routing-types.ts';
+import type { ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import { rankHarnessCatalog } from './agent-harness-catalog-ranking.ts';
 import { readLimit, readString } from './agent-harness-model-routing-utils.ts';
 export type { AgentHarnessModelRoutingArgs } from './agent-harness-model-routing-types.ts';
 export { localModelCookbook } from './agent-harness-local-model-cookbook.ts';
@@ -152,44 +154,16 @@ function lookupFromArgs(args: AgentHarnessModelRoutingArgs): { readonly source: 
   return query ? { source: 'query', input: query } : null;
 }
 
-function routeSearchText(route: RouteCandidate): string {
-  return [
-    route.id,
-    route.label,
-    route.detail,
-    ...route.settingKeys,
-    ...route.commands,
-    ...route.uiSurfaces,
-    JSON.stringify(route.currentValue),
-  ].join('\n').toLowerCase();
-}
+type ModelCatalogCandidate = RouteCandidate | ModelCandidate | LocalModelServerEndpoint;
 
-function modelSearchText(model: ModelCandidate): string {
-  return [
-    model.registryKey,
-    model.modelId,
-    model.providerId,
-    model.displayName,
-    model.current ? 'current selected active' : '',
-    model.pinned ? 'pinned favorite' : '',
-    ...model.reasoningEffort,
-    JSON.stringify(model.capabilities),
-  ].join('\n').toLowerCase();
-}
-
-function localEndpointSearchText(endpoint: LocalModelServerEndpoint): string {
-  return [
-    endpoint.id,
-    endpoint.providerId ?? '',
-    endpoint.stack ?? '',
-    endpoint.baseUrl,
-    endpoint.modelsUrl,
-    endpoint.diagnosticStatus,
-    ...endpoint.sources,
-    ...endpoint.sourceDetails,
-    ...endpoint.modelRoutes,
-    ...endpoint.notes,
-  ].join('\n').toLowerCase();
+/** Candidate identity is structural. All candidates reach the canonical reader;
+ * original source protection precedes this bounded descriptive projection. */
+function rankModelCatalog<T extends ModelCatalogCandidate>(entries: readonly T[], query: string, reading: ModelReadingOptions) {
+  return rankHarnessCatalog(entries, query, entry => ({
+    id: `${entry.kind}:${entry.kind === 'model' ? entry.registryKey : entry.id}`,
+    description: JSON.stringify(entry),
+    evidence: entry,
+  }), 'agent.harness.model-routing', { ...reading, requirePreservedSource: true });
 }
 
 function describeLocalServerEndpointRoute(endpoint: LocalModelServerEndpoint, lookup?: Record<string, unknown>): Record<string, unknown> {
@@ -209,7 +183,7 @@ function describeLocalServerEndpointRoute(endpoint: LocalModelServerEndpoint, lo
   };
 }
 
-function describeRoute(route: RouteCandidate, options: { readonly context: CommandContext; readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown> }): Record<string, unknown> {
+async function describeRoute(route: RouteCandidate, options: { readonly context: CommandContext; readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown>; readonly reading?: ModelReadingOptions; readonly cookbook?: Record<string, unknown> }): Promise<Record<string, unknown>> {
   return {
     kind: 'route',
     modelRouteId: route.id,
@@ -223,7 +197,7 @@ function describeRoute(route: RouteCandidate, options: { readonly context: Comma
       uiSurfaces: route.uiSurfaces,
     } : {}),
     ...(options.lookup ? { lookup: options.lookup } : {}),
-    ...(route.id === 'local-model-cookbook' && options.includeParameters === true ? { localCookbook: localModelCookbook(options.context, true) } : {}),
+    ...(route.id === 'local-model-cookbook' && options.includeParameters === true ? { localCookbook: options.cookbook ?? (options.reading?.sourceOwner ? await readLocalModelCookbook(options.context, true, options.reading) : localModelCookbook(options.context, true)) } : {}),
     ...(options.includeParameters ? {
       policy: {
         effect: 'read-only',
@@ -254,14 +228,14 @@ function compactProviderHealthSignal(signal: ModelProviderHealthSignal): Record<
     ...(signal.avgLatencyMs !== undefined ? { avgLatencyMs: signal.avgLatencyMs } : {}),
     ...(signal.rateLimitRemaining !== undefined ? { rateLimitRemaining: signal.rateLimitRemaining } : {}),
     ...(signal.rateLimitResetAt ? { rateLimitResetAt: signal.rateLimitResetAt } : {}),
-    ...(signal.lastErrorMessage ? { lastErrorMessage: signal.lastErrorMessage } : {}),
     missingSignals: signal.missingSignals,
     policy: signal.policy,
   };
 }
 
-function describeModel(model: ModelCandidate, options: { readonly context: CommandContext; readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown> }): Record<string, unknown> {
-  const readiness = modelReadinessScore(options.context, model);
+async function describeModel(model: ModelCandidate, options: { readonly context: CommandContext; readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown>; readonly reading?: ModelReadingOptions }): Promise<Record<string, unknown>> {
+  const readiness = await modelReadinessScore(options.context, model, options.reading);
+  options.reading?.assertCurrent?.();
   return {
     kind: 'model',
     modelRouteId: model.registryKey,
@@ -271,6 +245,8 @@ function describeModel(model: ModelCandidate, options: { readonly context: Comma
     displayName: model.displayName,
     current: model.current,
     pinned: model.pinned,
+    available: model.available ?? null,
+    configured: model.configured ?? null,
     contextWindow: model.contextWindow,
     reasoningEffort: model.reasoningEffort,
     tier: model.tier ?? null,
@@ -285,6 +261,8 @@ function describeModel(model: ModelCandidate, options: { readonly context: Comma
         score: readiness.score,
         level: readiness.level,
         confidence: readiness.confidence,
+        outcome: readiness.outcome,
+        decisionId: readiness.decisionId,
         providerHealth: compactProviderHealthSignal(readiness.providerHealth),
         nextStep: readiness.nextStep,
       },
@@ -364,30 +342,52 @@ export async function modelRoutingCatalogStatus(context: CommandContext): Promis
   };
 }
 
-export async function modelRoutingSummary(context: CommandContext, args: AgentHarnessModelRoutingArgs): Promise<Record<string, unknown>> {
-  const query = readString(args.query).toLowerCase();
+export async function modelRoutingSummary(context: CommandContext, args: AgentHarnessModelRoutingArgs, reading: ModelReadingOptions = {}): Promise<Record<string, unknown>> {
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const [rawModels, providerIds, currentModel] = await Promise.all([
     loadModels(context),
     Promise.resolve(listProviderIds(context)),
     readCurrentModel(context),
   ]);
+  reading.assertCurrent?.();
   const models = attachLocalBenchmarkLatencies(context, rawModels);
   const routes = routeCandidates(context);
-  const filteredRoutes = routes.filter((route) => !query || routeSearchText(route).includes(query));
-  const filteredModels = models.filter((model) => !query || modelSearchText(model).includes(query));
+  const ranked = query ? await rankModelCatalog([...routes, ...models], query, reading) : undefined;
+  reading.assertCurrent?.();
+  const routeMatches = ranked ? ranked.matches.flatMap(({ entry, judgment }) => entry.kind === 'route' ? [{ entry, judgment }] : [])
+    : routes.map(entry => ({ entry, judgment: undefined }));
+  const modelMatches = ranked ? ranked.matches.flatMap(({ entry, judgment }) => entry.kind === 'model' ? [{ entry, judgment }] : [])
+    : models.map(entry => ({ entry, judgment: undefined }));
   const limit = readLimit(args.limit, 100);
   const currentRegistryKey = currentModel ? modelRegistryKey(currentModel) : '';
-  const loadedCurrentModel = currentRegistryKey
-    ? models.find((model) => model.registryKey === currentRegistryKey || model.modelId === modelModelId(currentModel))
+  const listedCurrentModel = currentRegistryKey
+    ? models.find(model => model.registryKey === currentRegistryKey)
+      ?? models.find(model => model.modelId === modelModelId(currentModel) && model.providerId === modelProviderId(currentModel) && model.providerId !== '')
     : null;
+  const currentUnavailable = currentModel && (modelAvailable(currentModel) === false || modelConfigured(currentModel) === false);
+  const loadedCurrentModel = listedCurrentModel && currentUnavailable ? { ...listedCurrentModel,
+    available: modelAvailable(currentModel) === false ? false : listedCurrentModel.available,
+    configured: modelConfigured(currentModel) === false ? false : listedCurrentModel.configured } : listedCurrentModel;
+  reading.assertCurrent?.();
+  const cookbook = reading.sourceOwner ? await readLocalModelCookbook(context, includeParameters, reading) : localModelCookbook(context, includeParameters);
+  reading.assertCurrent?.();
+  // Ranking snapshots entries. Equal captured facts still share enrichment;
+  // an unavailable current-model override has distinct facts and stays separate.
+  const descriptions = new Map<string, Promise<Record<string, unknown>>>();
+  const describe = (model: ModelCandidate) => {
+    const key = JSON.stringify(model);
+    const existing = descriptions.get(key);
+    if (existing) return existing;
+    const result = describeModel(model, { context, includeParameters, reading }); descriptions.set(key, result); return result;
+  };
   return {
     status: readProviderApi(context) ? 'available' : 'degraded',
     current: {
       provider: context.session.runtime.provider,
       model: context.session.runtime.model,
       reasoningEffort: context.session.runtime.reasoningEffort || readConfig(context, 'provider.reasoningEffort') || null,
-      currentModel: currentModel ? describeModel({
+      currentModel: loadedCurrentModel ? await describe(loadedCurrentModel) : currentModel ? await describeModel({
         kind: 'model',
         id: modelRegistryKey(currentModel),
         registryKey: modelRegistryKey(currentModel),
@@ -401,17 +401,23 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
         tier: modelTier(currentModel),
         benchmarkCompositeScore: modelBenchmarkCompositeScore(currentModel),
         benchmarkQualityTier: modelBenchmarkQualityTier(currentModel),
-        localBenchmarkLatency: loadedCurrentModel?.localBenchmarkLatency ?? null,
+        localBenchmarkLatency: null,
         pinned: false,
-      }, { context, includeParameters }) : null,
+        available: modelAvailable(currentModel),
+        configured: modelConfigured(currentModel),
+      }, { context, includeParameters, reading }) : null,
     },
     providers: providerIds,
-    localCookbook: localModelCookbook(context, includeParameters),
-    routes: filteredRoutes.slice(0, limit).map((route) => describeRoute(route, { context, includeParameters })),
-    models: filteredModels.slice(0, limit).map((model) => describeModel(model, { context, includeParameters })),
+    localCookbook: cookbook,
+    routes: await Promise.all(routeMatches.slice(0, limit).map(async ({ entry, judgment }) => ({
+      ...await describeRoute(entry, { context, includeParameters, reading, cookbook }), ...(judgment ? { judgment } : {}),
+    }))),
+    models: await Promise.all(modelMatches.slice(0, limit).map(async ({ entry, judgment }) => ({
+      ...await describe(entry), ...(judgment ? { judgment } : {}),
+    }))),
     returned: {
-      routes: Math.min(filteredRoutes.length, limit),
-      models: Math.min(filteredModels.length, limit),
+      routes: Math.min(routeMatches.length, limit),
+      models: Math.min(modelMatches.length, limit),
     },
     total: {
       routes: routes.length,
@@ -426,7 +432,7 @@ export async function modelRoutingSummary(context: CommandContext, args: AgentHa
   };
 }
 
-export async function describeHarnessModelRoute(context: CommandContext, args: AgentHarnessModelRoutingArgs): Promise<ModelRouteResolution> {
+export async function describeHarnessModelRoute(context: CommandContext, args: AgentHarnessModelRoutingArgs, reading: ModelReadingOptions = {}): Promise<ModelRouteResolution> {
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -435,50 +441,39 @@ export async function describeHarnessModelRoute(context: CommandContext, args: A
     };
   }
   const [rawModels] = await Promise.all([loadModels(context)]);
+  reading.assertCurrent?.();
   const models = attachLocalBenchmarkLatencies(context, rawModels);
   const routes = routeCandidates(context);
   const endpoints = localModelServerEndpoints(context, true);
   const normalized = lookup.input.toLowerCase();
   const exactRoute = routes.find((route) => route.id === lookup.input);
-  if (exactRoute) return { status: 'found', route: describeRoute(exactRoute, { context, includeParameters: true, lookup: { ...lookup, resolvedBy: 'route-id' } }) };
+  if (exactRoute) return { status: 'found', route: await describeRoute(exactRoute, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'route-id' } }) };
   const exactModel = models.find((model) => model.registryKey === lookup.input || model.modelId === lookup.input);
-  if (exactModel) return { status: 'found', route: describeModel(exactModel, { context, includeParameters: true, lookup: { ...lookup, resolvedBy: 'model-id' } }) };
+  if (exactModel) return { status: 'found', route: await describeModel(exactModel, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'model-id' } }) };
   const exactEndpoint = endpoints.find((endpoint) => endpoint.id === lookup.input || endpoint.baseUrl === lookup.input || endpoint.modelsUrl === lookup.input);
   if (exactEndpoint) return { status: 'found', route: describeLocalServerEndpointRoute(exactEndpoint, { ...lookup, resolvedBy: 'local-endpoint-id' }) };
   const insensitiveRoute = routes.find((route) => route.id.toLowerCase() === normalized);
-  if (insensitiveRoute) return { status: 'found', route: describeRoute(insensitiveRoute, { context, includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-route-id' } }) };
+  if (insensitiveRoute) return { status: 'found', route: await describeRoute(insensitiveRoute, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'case-insensitive-route-id' } }) };
   const insensitiveModel = models.find((model) => model.registryKey.toLowerCase() === normalized || model.modelId.toLowerCase() === normalized);
-  if (insensitiveModel) return { status: 'found', route: describeModel(insensitiveModel, { context, includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-model-id' } }) };
+  if (insensitiveModel) return { status: 'found', route: await describeModel(insensitiveModel, { context, includeParameters: true, reading, lookup: { ...lookup, resolvedBy: 'case-insensitive-model-id' } }) };
   const insensitiveEndpoint = endpoints.find((endpoint) => endpoint.id.toLowerCase() === normalized || endpoint.baseUrl.toLowerCase() === normalized || endpoint.modelsUrl.toLowerCase() === normalized);
   if (insensitiveEndpoint) return { status: 'found', route: describeLocalServerEndpointRoute(insensitiveEndpoint, { ...lookup, resolvedBy: 'case-insensitive-local-endpoint-id' }) };
-  const searched = [
-    ...routes.filter((route) => routeSearchText(route).includes(normalized)),
-    ...models.filter((model) => modelSearchText(model).includes(normalized)),
-  ];
-  const searchedEndpoints = endpoints.filter((endpoint) => localEndpointSearchText(endpoint).includes(normalized));
-  if (searched.length === 0 && searchedEndpoints.length === 1) {
-    return {
-      status: 'found',
-      route: describeLocalServerEndpointRoute(searchedEndpoints[0]!, { ...lookup, resolvedBy: 'local-endpoint-search' }),
-    };
+  const searched = await rankModelCatalog<ModelCatalogCandidate>([...routes, ...models, ...endpoints], lookup.input, reading);
+  reading.assertCurrent?.();
+  if (searched.matches.length === 1 && searched.matches[0]!.judgment.reading.verdict === 'yes') {
+    const { entry, judgment } = searched.matches[0]!;
+    const resolved = { ...lookup, resolvedBy: entry.kind === 'local-server-endpoint' ? 'local-endpoint-search' : 'search' };
+    const route = entry.kind === 'route' ? await describeRoute(entry, { context, includeParameters: true, reading, lookup: resolved })
+      : entry.kind === 'model' ? await describeModel(entry, { context, includeParameters: true, reading, lookup: resolved })
+      : describeLocalServerEndpointRoute(entry, resolved);
+    reading.assertCurrent?.();
+    return { status: 'found', route: { ...route, judgment } };
   }
-  if (searched.length === 1 && searchedEndpoints.length === 0) {
-    const found = searched[0]!;
-    return {
-      status: 'found',
-      route: found.kind === 'route'
-        ? describeRoute(found, { context, includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } })
-        : describeModel(found, { context, includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }),
-    };
-  }
-  if (searched.length + searchedEndpoints.length > 1) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: [
-        ...searched.slice(0, 8).map(describeCandidate),
-        ...searchedEndpoints.slice(0, Math.max(0, 8 - searched.length)).map(describeEndpointCandidate),
-      ],
+  if (searched.matches.length > 0) {
+    return { status: 'ambiguous', input: lookup.input,
+      candidates: searched.matches.slice(0, 8).map(({ entry, judgment }) => ({
+        ...(entry.kind === 'local-server-endpoint' ? describeEndpointCandidate(entry) : describeCandidate(entry)), judgment,
+      })),
     };
   }
   return {

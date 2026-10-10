@@ -1,10 +1,12 @@
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
  * Data safety with no discipline: every SQLite store the platform writes
  * carries PRAGMA user_version; migrations snapshot first and auto-restore
  * on failure; an older binary refuses a newer schema; restore is one
  * command; daily snapshots stay bounded through the retention engine.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -353,3 +355,8 @@ describe('daily snapshots with bounded retention', () => {
     scheduler.stop();
   }));
 });
+
+// These filesystem fixtures contain authored directories; directory meaning is supplied explicitly.
+let previousDirectoryPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previousDirectoryPort); });

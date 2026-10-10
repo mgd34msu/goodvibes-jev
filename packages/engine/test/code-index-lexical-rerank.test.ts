@@ -39,7 +39,7 @@ let previous: ReturnType<typeof installJudgmentPort>;
 
 /** A store built under one provider and then switched to another, so search takes the lexical path. */
 beforeEach(async () => {
-  previous = installJudgmentPort(undefined);
+  previous = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
   root = mkdtempSync(join(tmpdir(), 'gv-code-lexical-'));
   writeFileSync(join(root, 'retry.ts'), [
     'export function retryWithBackoff(fn: () => Promise<void>): Promise<void> {',
@@ -56,6 +56,7 @@ beforeEach(async () => {
   store = new CodeIndexStore(root, ':memory:', registry);
   await store.init();
   await store.buildFull();
+  installJudgmentPort(undefined);
   registry.register(provider('prov-y'), { makeDefault: true });
   expect(store.stats().embeddingProviderMismatch).toBeDefined();
 });

@@ -8162,7 +8162,13 @@
       "targets": [
         "products/agent/src/tools/agent-harness-command-catalog.ts"
       ],
-      "status": "judgment-migration-pending"
+      "status": "engine-owner-adopted",
+      "provenance": {
+        "previousStatus": "judgment-migration-pending",
+        "change": "THE-63 P11 bounded catalog ranking adoption",
+        "description": "Canonical engine.tools.registry-rank through protected full-source capture and actual awaited callers; no lexical fallback or semantic command execution. Live calibration and integrated acceptance remain open.",
+        "evidence": "docs/design/agent-harness-catalog-ranking.md"
+      }
     },
     {
       "source": "src/tools/agent-harness-command-runner.ts",
@@ -8434,7 +8440,13 @@
       "targets": [
         "products/agent/src/tools/agent-harness-mode-catalog.ts"
       ],
-      "status": "judgment-migration-pending"
+      "status": "engine-owner-adopted",
+      "provenance": {
+        "previousStatus": "judgment-migration-pending",
+        "change": "THE-63 P11 bounded catalog ranking adoption",
+        "description": "Canonical engine.tools.registry-rank through protected full-source capture and actual awaited callers; no lexical fallback or semantic command execution. Live calibration and integrated acceptance remain open.",
+        "evidence": "docs/design/agent-harness-catalog-ranking.md"
+      }
     },
     {
       "source": "src/tools/agent-harness-model-catalog.ts",
@@ -8490,7 +8502,13 @@
       "targets": [
         "products/agent/src/tools/agent-harness-model-tool-catalog.ts"
       ],
-      "status": "judgment-migration-pending"
+      "status": "engine-owner-adopted",
+      "provenance": {
+        "previousStatus": "judgment-migration-pending",
+        "change": "THE-63 P11 bounded catalog ranking adoption",
+        "description": "Canonical engine.tools.registry-rank through protected full-source capture and actual awaited callers; no lexical fallback or semantic command execution. Live calibration and integrated acceptance remain open.",
+        "evidence": "docs/design/agent-harness-catalog-ranking.md"
+      }
     },
     {
       "source": "src/tools/agent-harness-notification-metadata.ts",
@@ -8504,9 +8522,16 @@
       "source": "src/tools/agent-harness-operator-method-vocabulary.ts",
       "disposition": "JEV",
       "targets": [
-        "products/agent/src/tools/agent-harness-operator-method-vocabulary.ts"
+        "products/agent/src/tools/agent-harness-catalog-ranking.ts",
+        "packages/engine/sdk/src/platform/tools/batteries/registry-rank.ts"
       ],
-      "status": "judgment-migration-pending"
+      "status": "engine-owner-adopted",
+      "provenance": {
+        "previousStatus": "judgment-migration-pending",
+        "change": "THE-63 P11 bounded catalog ranking adoption",
+        "description": "Canonical engine.tools.registry-rank through protected full-source capture and actual awaited callers; no lexical fallback or semantic command execution. Live calibration and integrated acceptance remain open.",
+        "evidence": "docs/design/agent-harness-catalog-ranking.md"
+      }
     },
     {
       "source": "src/tools/agent-harness-operator-methods.ts",
@@ -8514,7 +8539,13 @@
       "targets": [
         "products/agent/src/tools/agent-harness-operator-methods.ts"
       ],
-      "status": "judgment-migration-pending"
+      "status": "engine-owner-adopted",
+      "provenance": {
+        "previousStatus": "judgment-migration-pending",
+        "change": "THE-63 P11 bounded catalog ranking adoption",
+        "description": "Canonical engine.tools.registry-rank through protected full-source capture and actual awaited callers; no lexical fallback or semantic command execution. Live calibration and integrated acceptance remain open.",
+        "evidence": "docs/design/agent-harness-catalog-ranking.md"
+      }
     },
     {
       "source": "src/tools/agent-harness-pairing-posture.ts",

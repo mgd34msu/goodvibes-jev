@@ -18,7 +18,10 @@
  *    for a domain reached none of its keys.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { cleanupResearchScreeningFixtures, ordinaryResearchOwner } from '../helpers/research-screening.ts';
 import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createTestManagers } from '../helpers/test-managers.ts';
 import { harnessSettingsCatalog } from '../../tools/agent-harness-settings-catalog.ts';
@@ -46,15 +49,18 @@ async function settingsPage(query: string, extra: Record<string, unknown> = {}):
   ) as unknown as SettingsPage;
 }
 
-function modeIds(query: string): readonly string[] {
-  const page = listHarnessModes({ query, limit: 20 }) as { readonly modes: readonly { readonly id: string }[] };
+const rankingOptions = () => ({ sourceOwner: ordinaryResearchOwner() });
+afterAll(cleanupResearchScreeningFixtures);
+
+async function modeIds(query: string): Promise<readonly string[]> {
+  const page = await listHarnessModes({ query, limit: 20 }, rankingOptions()) as { readonly modes: readonly { readonly id: string }[] };
   return page.modes.map((mode) => mode.id);
 }
 
-function commandNames(query: string): readonly string[] {
+async function commandNames(query: string): Promise<readonly string[]> {
   const registry = new CommandRegistry();
   registerPaymentCardCommands(registry);
-  return searchHarnessCommands(registry, { query }).matches.map((command) => String(command.name));
+  return (await searchHarnessCommands(registry, { query }, rankingOptions())).matches.map((command) => String(command.name));
 }
 
 describe('capability discovery: the settings catalog answers in plain words', () => {
@@ -125,17 +131,31 @@ describe('capability discovery: the settings catalog answers in plain words', ()
 });
 
 describe('capability discovery: modes and commands', () => {
-  test('the settings mode is findable by the domain it holds', () => {
-    expect(modeIds('payment')).toContain('settings');
-    expect(modeIds('credit card')).toContain('settings');
-    expect(modeIds('spending limit')).toContain('settings');
+  // These explicit local fixtures test metadata survival through canonical ranking.
+  const readings: Readonly<Record<string, readonly string[]>> = {
+    payment: ['settings', 'payments'],
+    'credit card': ['settings', 'payments'],
+    'spending limit': ['settings'],
+    card: ['payments'],
+  };
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => {
+    previous = installJudgmentPort(fakePort((_name, _question, rawState) => {
+      const state = rawState as unknown as { query: string; candidate: { name: string } };
+      return noulAnswer(readings[state.query]?.includes(state.candidate.name) ? 0.95 : 0.01);
+    }).port);
+  });
+  afterEach(() => { installJudgmentPort(previous); });
+  test('the settings mode is surfaced by the scripted domain readings', async () => {
+    expect(await modeIds('payment')).toContain('settings');
+    expect(await modeIds('credit card')).toContain('settings');
+    expect(await modeIds('spending limit')).toContain('settings');
   });
 
-  test('the /payments command is findable by the words for it', () => {
-    expect(commandNames('payment')).toContain('payments');
-    expect(commandNames('card')).toContain('payments');
-    // Two words, neither adjacent in the command's own description.
-    expect(commandNames('credit card')).toContain('payments');
+  test('the /payments command is surfaced by the scripted task readings', async () => {
+    expect(await commandNames('payment')).toContain('payments');
+    expect(await commandNames('card')).toContain('payments');
+    expect(await commandNames('credit card')).toContain('payments');
   });
 });
 

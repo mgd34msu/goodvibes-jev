@@ -1,3 +1,5 @@
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 // ---------------------------------------------------------------------------
 // code-index-services.test.ts, repo source-tree code index
 //
@@ -12,7 +14,7 @@
 // and memory-store.test.ts's ConfigManager construction.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { beforeEach, describe, test, expect, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '../sdk/src/platform/config/index.ts';
@@ -145,3 +147,8 @@ describe('createCodeIndexServices: real CodeIndexStore wiring', () => {
     codeIndexStore.close();
   });
 });
+
+// These filesystem fixtures contain authored directories; directory meaning is supplied explicitly.
+let previousDirectoryPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previousDirectoryPort); });

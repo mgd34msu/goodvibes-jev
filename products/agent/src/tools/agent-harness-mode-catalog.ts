@@ -1,6 +1,6 @@
 import { AGENT_HARNESS_MODES } from './agent-harness-tool-schema.ts';
 import { catalogEnvelope, readLimit } from './agent-harness-tool-utils.ts';
-import { catalogSearchTokens, searchCatalog, type CatalogSearchResult } from './agent-harness-catalog-search.ts';
+import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 
 export type AgentHarnessMode = typeof AGENT_HARNESS_MODES[number];
 
@@ -205,57 +205,13 @@ function harnessModeSearchText(descriptor: HarnessModeDescriptor): string {
     ...(descriptor.aliases ?? []),
     ...(descriptor.keywords ?? []),
     ...(descriptor.parameters ?? []),
-  ].filter(Boolean).join('\n').toLowerCase();
+  ].filter(Boolean).join('\n');
 }
 
-function tokenScore(tokens: readonly string[], value: string | undefined, weight: number): number {
-  if (!value) return 0;
-  const text = value.toLowerCase();
-  return tokens.reduce((score, token) => score + (text.includes(token) ? weight : 0), 0);
-}
-
-const ACTION_VERBS = new Set(['run', 'set', 'reset', 'open', 'create', 'send', 'schedule']);
-
-function harnessModeRelevance(descriptor: HarnessModeDescriptor, input: string): number {
-  const normalized = input.toLowerCase().trim();
-  if (!normalized) return 0;
-
-  const tokens = catalogSearchTokens(normalized);
-  const id = descriptor.id.toLowerCase();
-  const idPhrase = id.replace(/_/g, ' ');
-  const idLookup = normalized.replace(/\s+/g, '_');
-  let score = 0;
-
-  if (id === normalized || idPhrase === normalized) score += 10_000;
-  if (id.startsWith(idLookup) || idPhrase.startsWith(normalized)) score += 5_000;
-  if (id.includes(idLookup) || idPhrase.includes(normalized)) score += 2_500;
-
-  score += tokenScore(tokens, [id, idPhrase, ...(descriptor.aliases ?? [])].join('\n'), 1_000);
-  score += tokenScore(tokens, descriptor.family, 500);
-  score += tokenScore(tokens, descriptor.kind, 500);
-  score += tokenScore(tokens, (descriptor.parameters ?? []).join('\n'), 350);
-  score += tokenScore(tokens, descriptor.summary, 200);
-  score += tokenScore(tokens, (descriptor.keywords ?? []).join('\n'), 150);
-  score += tokenScore(tokens, descriptor.next, 100);
-
-  const actionVerb = tokens.find((token) => ACTION_VERBS.has(token));
-  if (actionVerb) {
-    const idTokens = catalogSearchTokens(id);
-    if (idTokens[0] === actionVerb) score += 2_000;
-    if (descriptor.kind === 'effect' && idTokens.includes(actionVerb)) score += 1_000;
-  }
-
-  return score;
-}
-
-function matchingHarnessModes(input: string): CatalogSearchResult<HarnessModeDescriptor> {
-  const found = searchCatalog(HARNESS_MODE_DESCRIPTORS, input, harnessModeSearchText);
-  if (!input) return found;
-  const ranked = found.matches
-    .map((descriptor, index) => ({ descriptor, index, score: harnessModeRelevance(descriptor, input) }))
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .map(({ descriptor }) => descriptor);
-  return { matches: ranked, relaxed: found.relaxed };
+async function matchingHarnessModes(input: string, options: CatalogRankingOptions) {
+  if (!input) return { matches: HARNESS_MODE_DESCRIPTORS.map((entry) => ({ entry, judgment: undefined })) };
+  return rankHarnessCatalog(HARNESS_MODE_DESCRIPTORS, input,
+    (entry) => ({ id: entry.id, description: harnessModeSearchText(entry), evidence: entry }), 'agent.harness.modes', { ...options, requirePreservedSource: true });
 }
 
 function modeLookupInput(args: HarnessModeCatalogArgs): { readonly source: 'target' | 'query'; readonly input: string } | null {
@@ -265,24 +221,26 @@ function modeLookupInput(args: HarnessModeCatalogArgs): { readonly source: 'targ
   return query ? { source: 'query', input: query } : null;
 }
 
-export function listHarnessModes(args: HarnessModeCatalogArgs): Record<string, unknown> {
+export async function listHarnessModes(args: HarnessModeCatalogArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   const lookup = modeLookupInput(args);
   const limit = readLimit(args.limit, 120);
-  const normalized = lookup?.input.toLowerCase() ?? '';
-  const found = matchingHarnessModes(normalized);
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const found = await matchingHarnessModes(lookup?.input ?? '', options);
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const modes = found.matches
-    .map((descriptor) => describeHarnessModeDescriptor(descriptor, { includeParameters: args.includeParameters === true }))
+    .map(({ entry, judgment }) => ({ ...describeHarnessModeDescriptor(entry, { includeParameters: args.includeParameters === true }), ...(judgment ? { judgment } : {}) }))
     .slice(0, limit);
   return {
     ...catalogEnvelope('modes', modes, HARNESS_MODE_DESCRIPTORS.length, {
       ...(lookup ? { [lookup.source]: lookup.input } : {}),
-    }, 'agent_harness mode:"modes" with no query', { relaxedQuery: found.relaxed }),
+    }, 'agent_harness mode:"modes" with no query', { relaxedQuery: false }),
     families: Array.from(new Set(HARNESS_MODE_DESCRIPTORS.map((descriptor) => descriptor.family))).sort(),
     policy: 'Mode discovery is read-only. Effect modes still require confirm:true and explicitUserRequest.',
   };
 }
 
-export function describeHarnessMode(args: HarnessModeCatalogArgs): HarnessModeResolution {
+export async function describeHarnessMode(args: HarnessModeCatalogArgs, options: CatalogRankingOptions = {}): Promise<HarnessModeResolution> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const lookup = modeLookupInput(args);
   if (!lookup) {
     return {
@@ -295,18 +253,15 @@ export function describeHarnessMode(args: HarnessModeCatalogArgs): HarnessModeRe
   if (exact) return { status: 'found', mode: describeHarnessModeDescriptor(exact, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'id' } }) };
   const insensitive = HARNESS_MODE_DESCRIPTORS.find((descriptor) => descriptor.id.toLowerCase() === normalized);
   if (insensitive) return { status: 'found', mode: describeHarnessModeDescriptor(insensitive, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'case-insensitive-id' } }) };
-  const searched = matchingHarnessModes(normalized);
-  // A relaxed hit matched a WORD of the query, not the query. Naming one of
-  // those as THE mode would be a guess with a receipt on it, so loose hits are
-  // always offered as candidates for the caller to choose between.
-  if (searched.matches.length === 1 && !searched.relaxed) {
-    return { status: 'found', mode: describeHarnessModeDescriptor(searched.matches[0]!, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }) };
+  const searched = await matchingHarnessModes(lookup.input, options);
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  if (searched.matches.length === 1 && searched.matches[0]!.judgment?.reading.verdict === 'yes') {
+    const { entry, judgment } = searched.matches[0]!;
+    return { status: 'found', mode: { ...describeHarnessModeDescriptor(entry, { includeParameters: true, lookup: { ...lookup, resolvedBy: 'search' } }), judgment } };
   }
   if (searched.matches.length > 0) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: searched.matches.slice(0, 12).map((descriptor) => describeHarnessModeDescriptor(descriptor)),
+    return { status: 'ambiguous', input: lookup.input,
+      candidates: searched.matches.slice(0, 12).map(({ entry, judgment }) => ({ ...describeHarnessModeDescriptor(entry), judgment })),
     };
   }
   return {

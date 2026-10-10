@@ -1,4 +1,5 @@
-import type { Tool } from '../../types/tools.js';
+import { assertCurrentToolExecution } from '../registry.js';
+import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
 import { appendSchemaFingerprint } from '../shared/schema-fingerprint.js';
 import { findSchema } from './schema.js';
 import type { FindInput, FindQuery, OutputOptions } from './shared.js';
@@ -35,8 +36,14 @@ export function createFindTool(
   return {
     definition: findSchema,
 
-    async execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string }> {
+    async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
       try {
+        const assertCurrent = (): void => {
+          options?.signal?.throwIfAborted();
+          assertCurrentToolExecution(args, options);
+        };
+        assertCurrent();
+        const walkOptions = { ...(options?.signal ? { signal: options.signal } : {}), beforeAttempt: assertCurrent };
         if (!Array.isArray(args.queries) || (args.queries as unknown[]).length === 0) {
           return { success: false, error: 'Missing or empty "queries" array' };
         }
@@ -52,25 +59,26 @@ export function createFindTool(
           let result: Record<string, unknown>;
           switch (query.mode) {
             case 'files':
-              result = await executeFilesQuery(query, output, projectRoot, readAccessFilter, capturedReadAccess);
+              result = await executeFilesQuery(query, output, projectRoot, readAccessFilter, capturedReadAccess, walkOptions);
               break;
             case 'content':
-              result = await executeContentQuery(query, output, runtime, projectRoot, readAccessFilter);
+              result = await executeContentQuery(query, output, runtime, projectRoot, readAccessFilter, walkOptions);
               break;
             case 'symbols':
-              result = await executeSymbolsQuery(query, output, projectRoot);
+              result = await executeSymbolsQuery(query, output, projectRoot, walkOptions);
               break;
             case 'references':
-              result = await executeReferencesQuery(query, output, projectRoot);
+              result = await executeReferencesQuery(query, output, projectRoot, walkOptions);
               break;
             case 'structural':
-              result = await executeStructuralQuery(query, output, projectRoot);
+              result = await executeStructuralQuery(query, output, projectRoot, walkOptions);
               break;
             default: {
               const exhaustive: never = query;
               result = { error: `Unknown mode: ${(exhaustive as FindQuery).mode}` };
             }
           }
+          assertCurrent();
           return [query.id, appendSchemaFingerprint(result, 'find', query.mode, { featureFlags })];
         };
 

@@ -1,8 +1,8 @@
-import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
+import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent, assertCapturedToolInvocationCurrent } from '../shared/captured-input-tools.js';
 import { existsSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve } from 'node:path';
-import { walkDir } from '../../utils/walk-dir.js';
+import { walkDir, type WalkDirOptions } from '../../utils/walk-dir.js';
 import type { AnalyzeInput, JsonObject, DiffStatFile } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
 
@@ -27,12 +27,27 @@ export async function isBinary(filePath: string): Promise<boolean> {
   }
 }
 
-export async function collectTextFiles(dirPath: string, limit = MAX_SCAN_FILES, deadline?: number): Promise<string[]> {
+export async function collectTextFiles(dirPath: string, limit = MAX_SCAN_FILES, deadline?: number, walkOptions: WalkDirOptions = {}): Promise<string[]> {
   const files: string[] = [];
-  for await (const filePath of walkDir(dirPath)) {
+  for await (const filePath of walkDir(dirPath, {
+    ...walkOptions, beforeAttempt: () => {
+      assertCapturedToolInvocationCurrent();
+      walkOptions.beforeAttempt?.();
+    }, beforeAsyncAttempt: async () => {
+      await assertCapturedToolAccessCurrent();
+      await walkOptions.beforeAsyncAttempt?.();
+    },
+    shouldContinue: () => walkOptions.shouldContinue?.() !== false && files.length < limit && (deadline === undefined || Date.now() <= deadline),
+    site: 'tools.analyze.skip-directory',
+  })) {
     if (files.length >= limit) break;
     if (deadline && Date.now() > deadline) break;
-    if (!(await isBinary(filePath))) {
+    const binary = await isBinary(filePath);
+    await assertCapturedToolAccessCurrent();
+    walkOptions.signal?.throwIfAborted();
+    walkOptions.beforeAttempt?.();
+    if (deadline !== undefined && Date.now() > deadline) break;
+    if (!binary) {
       files.push(filePath);
     }
   }
@@ -72,6 +87,7 @@ export async function collectInputFiles(
     expandDirectories?: boolean | undefined;
     limit?: number | undefined;
     deadline?: number | undefined;
+    walkOptions?: WalkDirOptions | undefined;
   } = {},
 ): Promise<string[]> {
   const expandDirectories = options.expandDirectories ?? false;
@@ -79,7 +95,7 @@ export async function collectInputFiles(
   const deadline = options.deadline;
 
   if (!inputFiles || inputFiles.length === 0) {
-    return collectTextFiles(projectRoot, limit, deadline);
+    return collectTextFiles(projectRoot, limit, deadline, options.walkOptions);
   }
 
   const files: string[] = [];
@@ -88,20 +104,21 @@ export async function collectInputFiles(
     if (deadline && Date.now() > deadline) break;
 
     const resolved = resolve(projectRoot, inputFile);
+    let info: Awaited<ReturnType<typeof stat>>;
     try {
-      const info = await stat(resolved);
-      if (info.isDirectory()) {
-        if (expandDirectories) {
-          const remaining = limit - files.length;
-          const collected = await collectTextFiles(resolved, remaining, deadline);
-          files.push(...collected);
-        }
-        continue;
-      }
-      files.push(resolved);
+      info = await stat(resolved);
     } catch {
-      // Skip missing or unreadable paths.
+      continue; // Missing or unreadable path.
     }
+    if (info.isDirectory()) {
+      if (expandDirectories) {
+        const remaining = limit - files.length;
+        const collected = await collectTextFiles(resolved, remaining, deadline, options.walkOptions);
+        files.push(...collected);
+      }
+      continue;
+    }
+    files.push(resolved);
   }
 
   return files;

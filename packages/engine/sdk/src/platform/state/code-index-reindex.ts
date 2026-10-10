@@ -43,7 +43,7 @@ export const DEFAULT_REINDEX_DEBOUNCE_MS = 300;
 
 /** The subset of CodeIndexStore this scheduler drives, kept structural so tests can supply a minimal fake. */
 export interface CodeIndexReindexTarget {
-  reindexFile(absPath: string): Promise<{ indexed: boolean; mode: CodeChunkMode }>;
+  reindexFile(absPath: string, options?: { automatic?: boolean }): Promise<{ indexed: boolean; mode: CodeChunkMode }>;
   stats(): Pick<CodeIndexStats, 'available' | 'indexedChunks'>;
 }
 
@@ -187,7 +187,7 @@ export class CodeIndexReindexScheduler {
     if (!stats.available || stats.indexedChunks === 0) return;
 
     try {
-      const { indexed, mode } = await this.deps.target.reindexFile(absPath);
+      const { indexed, mode } = await this.deps.target.reindexFile(absPath, { automatic: true });
       this.last = { path: absPath, at: this.now(), status: indexed ? 'indexed' : 'skipped', mode };
     } catch (err) {
       const error = summarizeError(err);

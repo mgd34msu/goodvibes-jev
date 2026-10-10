@@ -19,8 +19,8 @@
  *  3. chunksIndexed accounting: unchanged files' pre-existing chunks are
  *     reported as chunksUnchanged, not silently folded into chunksIndexed.
  */
-import { describe, expect, test, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { beforeEach, describe, expect, test, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodeIndexStore } from '../sdk/src/platform/state/code-index-store.js';
@@ -202,4 +202,90 @@ describe('CodeIndexStore: chunk accounting honesty', () => {
     expect(second.chunksIndexed).toBe(0);
     expect(second.chunksUnchanged).toBe(3);
   });
+});
+
+// These filesystem fixtures contain authored directories; directory meaning is supplied explicitly.
+let previousDirectoryPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousDirectoryPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previousDirectoryPort); });
+
+
+test('reroot during a directory reading aborts before descent, indexing or stale result publication', async () => {
+  const rootA = makeRoot('gv-code-index-directory-a-');
+  const rootB = makeRoot('gv-code-index-directory-b-');
+  mkdirSync(join(rootA, 'src'));
+  writeFileSync(join(rootA, 'src/a.ts'), 'export const treeAOnly = 1;');
+  const registry = makeRegistry(rootA);
+  const { provider, calls } = makeProvider('directory-gated');
+  registry.register(provider, { makeDefault: true });
+  const store = new CodeIndexStore(rootA, ':memory:', registry);
+  await store.init();
+  let release!: () => void;
+  let started!: () => void;
+  const waiting = new Promise<void>(resolve => { started = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const fake = fakePort(() => noulAnswer(0.01));
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    started(); await gate; return fake.port.ask(request);
+  } });
+  try {
+    const building = store.buildFull();
+    await waiting;
+    await store.reroot(rootB, ':memory:');
+    release();
+    expect((await building).abortReason).toBe('build aborted by reroot');
+    expect(fake.requests).toHaveLength(1);
+    expect(calls()).toBe(0);
+    expect(store.stats().lastBuild).toBeNull();
+    expect(store.stats().indexedChunks).toBe(0);
+  } finally { release(); store.close(); }
+});
+
+test('automatic reindex honors excluded ancestors while explicit single-file indexing retains its contract', async () => {
+  const root = makeRoot('gv-code-index-directory-selection-');
+  mkdirSync(join(root, 'target'));
+  writeFileSync(join(root, 'authored.ts'), 'export const authored = 1;');
+  const generated = join(root, 'target/generated.ts');
+  writeFileSync(generated, 'export const generated = 1;');
+  installJudgmentPort(fakePort((key, _question, state) => {
+    const candidate = (state as { directories: { id: string; relativePath: string }[] }).directories.find(value => value.id === key)!;
+    return noulAnswer(candidate.relativePath === 'target' ? 0.99 : 0.01);
+  }).port);
+  const registry = makeRegistry(root); const { provider } = makeProvider('directory-selection');
+  registry.register(provider, { makeDefault: true });
+  const store = new CodeIndexStore(root, ':memory:', registry); await store.init();
+  try {
+    expect((await store.buildFull()).filesIndexed).toBe(1);
+    expect(await store.reindexFile(generated, { automatic: true })).toEqual({ indexed: false, mode: 'empty' });
+    expect(store.stats().indexedChunks).toBe(1);
+    expect((await store.reindexFile(generated)).indexed).toBe(true);
+    expect(store.stats().indexedChunks).toBe(2);
+    writeFileSync(generated, 'export const generated = 2;');
+    expect(await store.reindexFile(generated, { automatic: true })).toEqual({ indexed: false, mode: 'empty' });
+    expect(store.stats().indexedChunks).toBe(1);
+  } finally { store.close(); }
+});
+
+test('automatic reindex rechecks its target after later ignore-discovery judgments', async () => {
+  const root = makeRoot('gv-code-index-ignore-race-'); const outside = makeRoot('gv-code-index-outside-');
+  mkdirSync(join(root, 'src')); mkdirSync(join(root, 'other'));
+  writeFileSync(join(root, 'src/a.ts'), 'export const owned = 1;');
+  writeFileSync(join(outside, 'a.ts'), 'export const outside = 1;');
+  const registry = makeRegistry(root); const { provider, calls } = makeProvider('directory-race');
+  registry.register(provider, { makeDefault: true });
+  const store = new CodeIndexStore(root, ':memory:', registry); await store.init();
+  const started = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  const fake = fakePort(() => noulAnswer(0.01)); let requests = 0;
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    if (++requests === 2) { started.resolve(); await release.promise; }
+    return fake.port.ask(request);
+  } });
+  try {
+    const pending = store.reindexFile(join(root, 'src/a.ts'), { automatic: true });
+    await started.promise;
+    rmSync(join(root, 'src'), { recursive: true }); symlinkSync(outside, join(root, 'src'));
+    release.resolve();
+    expect(await pending).toEqual({ indexed: false, mode: 'empty' });
+    expect(calls()).toBe(0); expect(store.stats().indexedChunks).toBe(0);
+  } finally { release.resolve(); store.close(); }
 });

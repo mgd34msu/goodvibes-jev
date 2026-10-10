@@ -63,12 +63,23 @@ const OUTPUT_DRAIN_GRACE_MS = 500;
 const MAX_COMPLETED_PROCESSES = 100;
 const COMPLETED_PROCESS_TTL_MS = 30 * 60 * 1000;
 
+/** An admission check cannot promise to authorize a process after it exists. */
+function assertSynchronousAdmission(check: (() => void) | undefined): void {
+  const result: unknown = check?.();
+  if (result === undefined) return;
+  try { void Promise.resolve(result).catch(() => {}); } catch { /* Refuse below. */ }
+  throw new Error('Process admission currentness must be synchronous and return void');
+}
+
 // ─── SpawnOptions ─────────────────────────────────────────────────────────────
 
 export interface SpawnOptions {
   /** Cancel admission, including pending credential resolution. Once spawned,
    * the process keeps its declared lifetime; this signal never kills it. */
   signal?: AbortSignal | undefined;
+  /** Captured admission authority, rechecked after async preparation and immediately
+   * before spawning. Never called to govern an already-running child. */
+  assertCurrent?: (() => void) | undefined;
   /** Abort the process if it hasn't completed within this many ms. Default: 60000. */
   timeout_ms?: number | undefined;
   /** Grace period (ms) between SIGTERM and SIGKILL during termination. Default: 5000. */
@@ -152,7 +163,9 @@ export class ProcessManager {
   // ─── Private helpers ────────────────────────────────────────────────────────
 
   private newId(): string {
-    return `bg_${++this._counter}_${Date.now()}`;
+    // Handles are opaque. Encode generated decimal digits injectively so a
+    // timestamp cannot resemble card material at the unchanged privacy floor.
+    return `bg_${++this._counter}_${Date.now()}`.replace(/\d/g, (digit) => String.fromCharCode(97 + Number(digit)));
   }
 
   // ─── Public API ─────────────────────────────────────────────────────────────
@@ -203,6 +216,7 @@ export class ProcessManager {
   ): Promise<BgCommandResult> {
     if (this._closed) return Promise.reject(new Error('ProcessManager is closed'));
     const signal = opts?.signal;
+    const assertCurrent = opts?.assertCurrent;
     if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise<BgCommandResult>((resolve, reject) => {
       let spawned = false;
@@ -216,7 +230,7 @@ export class ProcessManager {
       const onAbort = (): void => { if (!spawned) finish(() => reject(signal?.reason)); };
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) { onAbort(); return; }
-      const launch = this.launchProcess(argv, cmd, cwd, env, opts, signal, () => {
+      const launch = this.launchProcess(argv, cmd, cwd, env, opts, signal, assertCurrent, () => {
         spawned = true;
         signal?.removeEventListener('abort', onAbort);
       });
@@ -263,8 +277,10 @@ export class ProcessManager {
     env: Record<string, string> | undefined,
     opts?: SpawnOptions,
     admissionSignal?: AbortSignal,
+    assertAdmissionCurrent?: () => void,
     onSpawned?: () => void,
   ): Promise<BgCommandResult> {
+    admissionSignal?.throwIfAborted(); assertSynchronousAdmission(assertAdmissionCurrent);
     admissionSignal?.throwIfAborted();
     const timeoutMs = opts?.timeout_ms ?? 60_000;
     const sigtermGraceMs = opts?.sigterm_grace_ms ?? 5_000;
@@ -284,8 +300,9 @@ export class ProcessManager {
     // background spawn would re-introduce every secret from process.env that the
     // foreground scrub already removed.
     const scrub = opts?.credentialEnvScrub ?? resolveCredentialEnvScrub();
-    admissionSignal?.throwIfAborted();
+    assertSynchronousAdmission(assertAdmissionCurrent); admissionSignal?.throwIfAborted();
     const scrubbedBase = (await scrubCredentialEnv(cleanEnv, scrub)).env;
+    assertSynchronousAdmission(assertAdmissionCurrent);
     if (this._closed) throw new Error('ProcessManager is closed');
     admissionSignal?.throwIfAborted();
     const mergedEnv = { ...scrubbedBase, ...env };
@@ -320,6 +337,7 @@ export class ProcessManager {
       } as Parameters<typeof Bun.spawn>[1];
       // Caller-owned env/options can have accessors. Recheck after reading
       // them, at the final boundary before an actual process is created.
+      assertSynchronousAdmission(assertAdmissionCurrent);
       if (this._closed) throw new Error('ProcessManager is closed');
       admissionSignal?.throwIfAborted();
       proc = Bun.spawn(spawnArgv, spawnOptions);
@@ -465,10 +483,7 @@ export class ProcessManager {
   /** Adopt an already-contained owned execution without spawning a host process. */
   async trackOwnedBoundary(execution: OwnedBoundaryExecution): Promise<BgCommandResult> {
     if (this._closed) { await execution.stop(); throw new Error('ProcessManager is closed'); }
-    // These opaque generated handles are not payment data. Avoid producing a
-    // long decimal timestamp that the unchanged card-material floor can mistake
-    // for a PAN when the model later uses bg_output/bg_status.
-    const id = `bg_owned_${this.newId().slice(3).replace(/\d/g, (digit) => String.fromCharCode(97 + Number(digit)))}`;
+    const id = `bg_owned_${this.newId().slice(3)}`;
     const entry: BackgroundProcess = {
       id, pid: 0, cmd: execution.cmd, startTime: Date.now(), stdout: [], stderr: [],
       exitCode: null, done: false, killDeadline: null,

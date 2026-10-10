@@ -247,6 +247,34 @@ describe('runEnvAudit: env_audit mode', () => {
 describe('runTestFind: test_find mode', () => {
   let tmpDir: string;
 
+  function expectTestFindReadings(source: string, selectionCount: number) {
+    // The canonical walk reads the two root directories before any importer
+    // selection. Account for that request explicitly, even with no importers.
+    expect(readings.requests).toHaveLength(1 + selectionCount);
+    const directoryRequest = readings.requests[0]!;
+    const directoryState = directoryRequest.state as {
+      directories: Array<{ id: string; name: string; relativePath: string }>;
+    };
+    expect(Object.keys(directoryState)).toEqual(['directories']);
+    expect(directoryState.directories.map(({ name, relativePath }) => ({ name, relativePath }))
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath)))
+      .toEqual([{ name: 'src', relativePath: 'src' }, { name: 'test', relativePath: 'test' }]);
+    expect(directoryState.directories.map(({ id }) => id).sort()).toEqual(['directory_0', 'directory_1']);
+    expect(Object.keys(directoryRequest.questions ?? {}).sort()).toEqual(['directory_0', 'directory_1']);
+    for (const { id } of directoryState.directories) {
+      expect(directoryRequest.questions?.[id]).toMatchObject({ type: 'noul', instructions: { directory: id } });
+    }
+
+    const selections = readings.requests.slice(1);
+    for (const request of selections) {
+      const state = request.state as { context: { source: string }; candidates: Array<{ id: string }> };
+      expect(state.context).toEqual({ source });
+      expect(Object.keys(request.questions ?? {}).sort())
+        .toEqual(['pick', ...state.candidates.map((_, index) => `fits_${index}`)].sort());
+    }
+    return selections;
+  }
+
   beforeEach(async () => {
     tmpDir = await makeFixtureDir();
     await mkdir(join(tmpDir, 'src'), { recursive: true });
@@ -266,7 +294,8 @@ describe('runTestFind: test_find mode', () => {
     const result = await runTestFind({ mode: 'test_find', files: ['src/cart.ts'] }, tmpDir);
 
     expect(result.mappings).toEqual([{ source: 'src/cart.ts', test: 'test/cart-totals.test.ts', exists: true, candidates_checked: 2 }]);
-    const offered = (readings.requests[0]!.state as { candidates: Array<{ id: string }> }).candidates.map((candidate) => candidate.id).sort();
+    const selections = expectTestFindReadings('src/cart.ts', 1);
+    const offered = (selections[0]!.state as { candidates: Array<{ id: string }> }).candidates.map((candidate) => candidate.id).sort();
     expect(offered).toEqual(['src/checkout.ts', 'test/cart-totals.test.ts']);
   });
 
@@ -280,18 +309,18 @@ describe('runTestFind: test_find mode', () => {
     const result = await runTestFind({ mode: 'test_find', files: ['src/cart.ts'] }, tmpDir);
 
     expect(result.mappings).toEqual([{ source: 'src/cart.ts', test: 'test/cart-totals.test.ts', exists: true, candidates_checked: TEST_CANDIDATES_PER_READING + 5 }]);
-    // Two groups, then one final selection over the single pick.
-    expect(readings.requests).toHaveLength(3);
-    expect((readings.requests[2]!.state as { candidates: unknown[] }).candidates).toHaveLength(1);
+    // One directory reading, two groups, then a final selection over the single pick.
+    const selections = expectTestFindReadings('src/cart.ts', 3);
+    expect((selections[2]!.state as { candidates: unknown[] }).candidates).toHaveLength(1);
   });
 
-  test('a source nothing imports has no test and asks nothing', async () => {
+  test('a source nothing imports still reads directory scope but asks no test selection', async () => {
     await writeFixture(tmpDir, 'src/lonely.ts', 'export const x = 1;\n');
 
     const result = await runTestFind({ mode: 'test_find', files: ['src/lonely.ts'] }, tmpDir);
 
     expect(result.mappings).toEqual([{ source: 'src/lonely.ts', test: null, exists: false, candidates_checked: 0 }]);
-    expect(readings.requests).toHaveLength(0);
+    expectTestFindReadings('src/lonely.ts', 0);
   });
 
   test('importers Jev reads as no test report none', async () => {
@@ -301,6 +330,7 @@ describe('runTestFind: test_find mode', () => {
     const result = await runTestFind({ mode: 'test_find', files: ['src/hash.ts'] }, tmpDir);
 
     expect(result.mappings).toEqual([{ source: 'src/hash.ts', test: null, exists: false, candidates_checked: 1 }]);
+    expectTestFindReadings('src/hash.ts', 1);
   });
 });
 

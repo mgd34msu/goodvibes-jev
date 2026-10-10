@@ -1,3 +1,4 @@
+import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { resolve } from 'node:path';
 import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { CodeIntelligence, uriToPath } from '../../intelligence/index.js';
@@ -25,6 +26,7 @@ export async function executeReferencesQuery(
   query: ReferencesQuery,
   output: OutputOptions,
   projectRoot: string,
+  walkOptions: WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
   const maxResults = output.max_results ?? 100;
 
@@ -105,7 +107,7 @@ export async function executeReferencesQuery(
     return { error: `Invalid symbol name: ${query.symbol}` };
   }
 
-  const files = await collectTextFiles(projectRoot, diagnostics);
+  const files = await collectTextFiles(projectRoot, diagnostics, walkOptions);
   for (const file of files) {
     if (locations.length >= maxResults) break;
     const content = await readTextFile(file, diagnostics);

@@ -1,10 +1,13 @@
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { processClassificationOptions, spawnClassifiedBackgroundProcess } from './agent-harness-process-launch.ts';
+import type { ProcessClassificationOptions } from './agent-harness-process-classification.ts';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import type { BackgroundProcess, ProcessManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
 import { sudoExecutionPosture } from './agent-harness-sudo-posture.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { interactiveRuntimeCapabilitySummary, interactiveRuntimeParityStatus } from './agent-harness-interactive-runtime-records.ts';
-import { DEFAULT_BACKGROUND_TIMEOUT_MS, clampTimeout, processAgeMs, processStatus, resolveBackgroundProcessClass, resolveKillOnTimeout } from './agent-harness-process-timeout-policy.ts';
+import { DEFAULT_BACKGROUND_TIMEOUT_MS, clampTimeout, processAgeMs, processStatus } from './agent-harness-process-timeout-policy.ts';
 import type {
   AgentHarnessBackgroundProcessArgs,
   BackgroundProcessLookupSource,
@@ -626,7 +629,7 @@ async function waitForProcess(manager: ProcessManager, processId: string, timeou
   }
 }
 
-export async function runBackgroundProcessAction(context: CommandContext, args: AgentHarnessBackgroundProcessArgs): Promise<Record<string, unknown>> {
+export async function runBackgroundProcessAction(context: CommandContext, args: AgentHarnessBackgroundProcessArgs, options: ProcessClassificationOptions = {}): Promise<Record<string, unknown>> {
   const manager = managerFrom(context);
   if (!manager) {
     return {
@@ -698,6 +701,9 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
     };
   }
   if (action === 'start' || action === 'spawn' || action === 'run') {
+    args = snapshotJudgmentInput(args) as AgentHarnessBackgroundProcessArgs;
+    const current = processClassificationOptions(context), supplied = options;
+    options = { ...supplied, assertCurrent: () => { current.assertCurrent?.(); supplied.assertCurrent?.(); } };
     const confirmationError = requireConfirmed(args, 'Background process start');
     if (confirmationError) return { status: 'needs_confirmation', reason: confirmationError, policy: 'Starting a background process requires confirm:true and explicitUserRequest.' };
     const command = readCommand(args);
@@ -712,13 +718,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
     }
     const cwd = readCwd(context, args);
     const timeoutMs = clampTimeout(args.timeoutMs ?? readField(args, 'timeoutMs'), DEFAULT_BACKGROUND_TIMEOUT_MS);
-    const processClass = resolveBackgroundProcessClass(args, command);
-    const killOnTimeout = resolveKillOnTimeout(args, processClass);
-    const result = await manager.spawn(command, cwd, undefined, {
-      timeout_ms: timeoutMs,
-      sigterm_grace_ms: 5_000,
-      kill_on_timeout: killOnTimeout,
-    });
+    const { processClass, killOnTimeout, result } = await spawnClassifiedBackgroundProcess(manager, args, command, cwd, timeoutMs, options);
     return {
       status: 'started',
       processClass,

@@ -1,10 +1,16 @@
-import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeContentQuery } from '../sdk/src/platform/tools/find/content.ts';
 import { executeFilesQuery } from '../sdk/src/platform/tools/find/files.ts';
 import { FindRuntimeService, type ImportGraphLike } from '../sdk/src/platform/tools/find/shared.ts';
+
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previous = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+afterEach(() => { installJudgmentPort(previous); });
 
 function tempRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

@@ -1,3 +1,4 @@
+import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { assertCapturedToolReadAccess, assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { existsSync, readdirSync, type Dirent } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -85,7 +86,7 @@ async function collectExportedSymbols(files: string[], intelligence: CodeIntelli
   return exported;
 }
 
-export async function runImpact(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
+export async function runImpact(input: AnalyzeInput, projectRoot: string, walkOptions: WalkDirOptions = {}): Promise<Record<string, unknown>> {
   const targetFiles = input.files ?? [];
   if (targetFiles.length === 0) {
     return { error: 'impact mode requires at least one file in files[]' };
@@ -104,7 +105,7 @@ export async function runImpact(input: AnalyzeInput, projectRoot: string): Promi
     return { affected_files: [], exported_names: [], message: 'No exported symbols found in target files' };
   }
 
-  const allProjectFiles = await collectTextFiles(projectRoot, MAX_SCAN_FILES, deadline);
+  const allProjectFiles = await collectTextFiles(projectRoot, MAX_SCAN_FILES, deadline, walkOptions);
   const targetSet = new Set(exportedNames.map((e) => e.file));
   const affected = new Map<string, Array<{ name: string; line: number }>>();
 
@@ -205,9 +206,9 @@ function detectCycles(graph: DepGraph): string[][] {
   return cycles;
 }
 
-export async function runDependencies(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
+export async function runDependencies(input: AnalyzeInput, projectRoot: string, walkOptions: WalkDirOptions = {}): Promise<Record<string, unknown>> {
   const submode = input.submode ?? 'analyze';
-  const targetFiles = await collectInputFiles(input.files, projectRoot, { expandDirectories: true });
+  const targetFiles = await collectInputFiles(input.files, projectRoot, { expandDirectories: true, walkOptions });
   const graph = await buildDepGraph(targetFiles, projectRoot);
 
   if (submode === 'analyze') {
@@ -240,12 +241,12 @@ export async function runDependencies(input: AnalyzeInput, projectRoot: string):
   return { error: `Unknown dependencies submode: ${submode}` };
 }
 
-export async function runDeadCode(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
+export async function runDeadCode(input: AnalyzeInput, projectRoot: string, walkOptions: WalkDirOptions = {}): Promise<Record<string, unknown>> {
   const deadline = Date.now() + MAX_SCAN_MS;
   const intelligence = new CodeIntelligence({});
   const scanRoot = input.files && input.files.length > 0 ? resolve(projectRoot, input.files[0]!) : projectRoot;
 
-  const allFiles = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline);
+  const allFiles = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline, walkOptions);
   const exports = await collectExportedSymbols(allFiles, intelligence);
 
   const fileContentCache = new Map<string, string>();
@@ -649,7 +650,7 @@ async function pickTestOf(
   }
 }
 
-export async function runTestFind(input: AnalyzeInput, projectRoot: string): Promise<Record<string, unknown>> {
+export async function runTestFind(input: AnalyzeInput, projectRoot: string, walkOptions: WalkDirOptions = {}): Promise<Record<string, unknown>> {
   const sourceFiles = input.files ?? [];
 
   if (sourceFiles.length === 0) {
@@ -657,7 +658,7 @@ export async function runTestFind(input: AnalyzeInput, projectRoot: string): Pro
   }
 
   // Every project file is read for its imports, so a test is found wherever it lives.
-  const importing = await resolvedImports(await collectTextFiles(projectRoot, Number.POSITIVE_INFINITY));
+  const importing = await resolvedImports(await collectTextFiles(projectRoot, Number.POSITIVE_INFINITY, undefined, walkOptions));
   const mappings: Array<{
     source: string;
     test: string | null;

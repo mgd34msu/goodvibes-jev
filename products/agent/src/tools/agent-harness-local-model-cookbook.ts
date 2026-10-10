@@ -2,9 +2,11 @@ import type { CommandContext } from '../input/command-registry.ts';
 import { estimateModelBytes, fitAssessment, fitVerdictLabel, readHardwareProfileSync, REPRESENTATIVE_7B_PARAMS } from '../core/hardware-profile.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { localModelDetection, localModelServerHealthMap } from './agent-harness-local-model-endpoints.ts';
-import { localHardwareProfile, localRecipeReadinessScore, localRecipeStackId, scoreLocalModelRecipe } from './agent-harness-model-readiness.ts';
+import { deferredModelReadiness, deferredRecipeFit, localHardwareProfile, localRecipeReadinessScore, localRecipeStackId, scoreLocalModelRecipe } from './agent-harness-model-readiness.ts';
 import { localModelBenchmarkHistory, localModelBenchmarkPlan } from './agent-harness-local-model-benchmarks.ts';
-import type { LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, LocalModelSetupPlan, LocalModelBenchmarkEvidence } from './agent-harness-model-routing-types.ts';
+import type { LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, LocalModelSetupPlan, LocalModelBenchmarkEvidence, ModelReadinessScore } from './agent-harness-model-routing-types.ts';
+import { routeReadiness } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
 import { readRecord, readString } from './agent-harness-model-routing-utils.ts';
 
 export function localModelDownloadGuidance(recipe: LocalModelRecipe, hardware: LocalModelHardwareProfile): readonly string[] {
@@ -71,11 +73,12 @@ export function localModelSetupPlan(
   hardware: LocalModelHardwareProfile,
   detection: LocalModelDetection,
   fit: LocalModelRecipeFit,
+  readiness: ModelReadinessScore = deferredModelReadiness(),
 ): LocalModelSetupPlan {
   const stackId = localRecipeStackId(recipe);
   const detected = detection.stacks.includes(stackId);
   return {
-    status: detected ? 'detected' : fit.level === 'weak' ? 'needs-hardware-review' : 'ready-to-try',
+    status: detected ? 'detected' : fit.outcome !== 'ready' || fit.score === null || readiness.outcome !== 'ready' ? 'unknown' : fit.level === 'weak' ? 'needs-hardware-review' : 'ready-to-try',
     priority: fit.score,
     downloadGuidance: localModelDownloadGuidance(recipe, hardware),
     providerRoutes: localModelProviderRoutes(recipe),
@@ -166,17 +169,18 @@ export function describeLocalModelRecipe(
   hardware: LocalModelHardwareProfile,
   benchmarkEvidence: LocalModelBenchmarkEvidence,
   includeParameters: boolean,
+  fit: LocalModelRecipeFit = deferredRecipeFit(),
+  readiness: ModelReadinessScore = deferredModelReadiness(),
 ): Record<string, unknown> {
   const stackId = localRecipeStackId(recipe);
   const detected = detection.stacks.includes(stackId);
-  const fit = scoreLocalModelRecipe(recipe, hardware, detection);
-  const readiness = localRecipeReadinessScore(recipe, fit, detected, benchmarkEvidence);
   return {
     id: recipe.id,
     label: recipe.label,
     fit: recipe.fit,
     fitScore: fit.score,
     fitLevel: fit.level,
+    fitReading: fit,
     readinessScore: readiness.score,
     readinessLevel: readiness.level,
     readiness: includeParameters
@@ -185,6 +189,8 @@ export function describeLocalModelRecipe(
         score: readiness.score,
         level: readiness.level,
         confidence: readiness.confidence,
+        outcome: readiness.outcome,
+        decisionId: readiness.decisionId,
         nextStep: readiness.nextStep,
       },
     bestFor: recipe.bestFor,
@@ -203,28 +209,34 @@ export function describeLocalModelRecipe(
       setup: recipe.setup,
       modelExamples: recipe.modelExamples,
       cautions: recipe.cautions,
-      setupPlan: localModelSetupPlan(recipe, hardware, detection, fit),
+      setupPlan: localModelSetupPlan(recipe, hardware, detection, fit, readiness),
     } : {}),
   };
 }
 
 export function localModelCookbook(context: CommandContext, includeParameters: boolean): Record<string, unknown> {
+  return cookbookSnapshot(context, includeParameters);
+}
+
+function cookbookSnapshot(context: CommandContext, includeParameters: boolean, enriched?: readonly Record<string, unknown>[], hardware?: LocalModelHardwareProfile): Record<string, unknown> {
   const detection = localModelDetection(context);
-  const hardwareProfile = localHardwareProfile();
+  const hardwareProfile = hardware ?? localHardwareProfile();
   const benchmarkHistory = localModelBenchmarkHistory(context, includeParameters);
   const benchmarkEvidence = readRecord(benchmarkHistory.evidence) as unknown as LocalModelBenchmarkEvidence;
   const localServerHealth = localModelServerHealthMap(context, includeParameters);
-  const recipes = localModelRecipes()
-    .map((recipe) => describeLocalModelRecipe(recipe, detection, hardwareProfile, benchmarkEvidence, includeParameters))
-    .sort((left, right) => Number(readRecord(right).fitScore ?? 0) - Number(readRecord(left).fitScore ?? 0));
-  const topRecipe = readRecord(recipes[0]);
-  const topLabel = readString(topRecipe.label) || 'Ollama';
+  const recipes = enriched ?? localModelRecipes()
+    .map((recipe) => describeLocalModelRecipe(recipe, detection, hardwareProfile, benchmarkEvidence, includeParameters));
+  const ready = recipes.filter(recipe => readRecord(recipe.fitReading).outcome === 'ready'
+    && readRecord(recipe.readiness).outcome === 'ready' && typeof recipe.readinessScore === 'number');
+  const topRecipe = ready[0];
+  const topLabel = topRecipe ? readString(topRecipe.label) : null;
   const nextActions = [
     localServerHealth.endpointCount > 0
       ? `Smoke test detected local endpoint(s): ${localServerHealth.endpoints[0]?.modelsUrl ?? 'see localServerHealth.endpoints'}.`
       : detection.stacks.length > 0
       ? `Inspect detected local route(s): ${detection.modelRoutes.join(', ') || detection.providerIds.join(', ')}.`
-      : `Start with ${topLabel}: inspect its setupPlan, then install/start the server outside Agent.`,
+      : topLabel ? `Review ${topLabel} and its setupPlan before any installation.`
+      : 'Recipe readiness is unknown. Inspect hardware requirements and gather exact route and benchmark evidence.',
     'Refresh the model catalog after the local server is running.',
     'Run the local benchmark workspace action or saved model comparison before changing the default route.',
   ];
@@ -234,28 +246,42 @@ export function localModelCookbook(context: CommandContext, includeParameters: b
       : localServerHealth.endpointCount > 0
         ? 'detected-local-server'
         : 'recommendations-only',
-    recommendation: detection.stacks.includes('ollama')
-      ? 'Use the discovered Ollama route first unless throughput requirements point to vLLM.'
-      : `Best current fit: ${topLabel}. Ollama remains the easiest first local route; use llama.cpp for offline GGUF files or vLLM for GPU throughput.`,
+    recommendation: topLabel ? `Best settled fit: ${topLabel}. Review its evidence before choosing a route.` : null,
+    enrichment: enriched ? 'read' : 'deferred',
     hardwareProfile,
     detected: detection,
     localServerHealth,
     recipes,
     benchmarkHistory,
     readinessRubric: {
-      score: '0-100 estimated readiness for autonomous Agent work.',
-      confidence: 'estimated until a live route benchmark records latency and task fit on this machine',
-      dimensions: [
-        { id: 'latency', weight: 20 },
-        { id: 'context-window', weight: 20 },
-        { id: 'tool-support', weight: 20 },
-        { id: 'vision', weight: 10 },
-        { id: 'cost', weight: 15 },
-        { id: 'privacy', weight: 15 },
-      ],
+      score: '0-100 from settled rubric readings only; null when evidence or a reading is missing.',
+      battery: 'agent.models.route-readiness',
+      dimensions: routeReadiness.composite.dimensions.map(({ id, weight }) => ({ id, weight })),
     },
     nextActions,
     modelRoute: 'models action:"local"',
-    policy: 'Read-only hardware-aware cookbook. Readiness scores are estimated until a live benchmark is recorded. Setup plans include download/start guidance and a confirmed benchmark action route, but installs, downloads, live benchmarks, provider edits, and route changes stay separate visible user actions.',
+    policy: 'Read-only hardware-aware cookbook. Readiness enrichment is deferred in synchronous startup snapshots and unknown when evidence or readings are unsettled. Setup plans include download/start guidance and a confirmed benchmark action route, but installs, downloads, live benchmarks, provider edits, and route changes stay separate visible user actions.',
   };
+}
+
+/** Explicit inspection may enrich facts; startup and setup snapshots never ask a model. */
+export async function readLocalModelCookbook(context: CommandContext, includeParameters: boolean, options: ModelReadingOptions): Promise<Record<string, unknown>> {
+  const recipes = localModelRecipes(), hardware = localHardwareProfile(), detection = localModelDetection(context);
+  const history = localModelBenchmarkHistory(context, true);
+  const evidence = readRecord(history.evidence) as unknown as LocalModelBenchmarkEvidence;
+  return withModelReadingSource({ recipes, hardware, detection, evidence }, options, async (facts, scoped) => {
+    const enriched: Record<string, unknown>[] = [];
+    for (const recipe of facts.recipes) {
+      const fit = await scoreLocalModelRecipe(recipe, facts.hardware, facts.detection, scoped);
+      scoped.assertCurrent?.();
+      const readiness = await localRecipeReadinessScore(recipe, fit, facts.detection.stacks.includes(localRecipeStackId(recipe)), facts.evidence, scoped);
+      scoped.assertCurrent?.();
+      enriched.push(describeLocalModelRecipe(recipe, facts.detection, facts.hardware, facts.evidence, includeParameters, fit, readiness));
+    }
+    // Explicit null handling: missing scores stay at the end and never become zero.
+    enriched.sort((a, b) => typeof a.fitScore !== 'number' ? typeof b.fitScore !== 'number' ? 0 : 1
+      : typeof b.fitScore !== 'number' ? -1 : b.fitScore - a.fitScore);
+    const result = cookbookSnapshot(context, includeParameters, enriched, facts.hardware);
+    scoped.assertCurrent?.(); return result;
+  });
 }

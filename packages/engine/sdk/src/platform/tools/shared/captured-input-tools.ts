@@ -1,3 +1,4 @@
+import { assertCurrentToolExecution } from '../registry.js';
 import { withCapturedAnalyzeInput } from '../analyze/captured-git.js';
 import { assertCapturedWriteRevision, captureCapturedWriteRevision, type CapturedWriteRevision } from './captured-write-revision.js';
 import { prepareCapturedWriteBackup } from './captured-write-backup.js';
@@ -18,6 +19,7 @@ import {
   withContractInputAuthority,
   authorizeContractInputPath,
   contractInputAuthorityMutable,
+  contractInputAuthorityRoot,
   contractInputAuthoritySourceRoot,
   type ContractInputAuthority,
 } from '../../contract/input-authority.js';
@@ -33,11 +35,16 @@ const deliveryReads = new AsyncLocalStorage<{
   readonly signal?: AbortSignal | undefined;
   readonly authorize: (path: string) => Promise<void>;
   readonly assertCurrent: () => Promise<void>;
+  readonly assertInvocationCurrent: () => void;
 }>();
 
 export async function assertCapturedToolReadAccess(path: string): Promise<void> {
   assertCapturedInputPathContext(path);
   await deliveryReads.getStore()?.authorize(path);
+}
+/** Synchronous invocation/token fence; never a source-read authorization. */
+export function assertCapturedToolInvocationCurrent(): void {
+  deliveryReads.getStore()?.assertInvocationCurrent();
 }
 export async function assertCapturedToolAccessCurrent(): Promise<void> {
   await deliveryReads.getStore()?.assertCurrent();
@@ -105,14 +112,28 @@ export function capturedInputTool(
   return {
     definition: tool.definition,
     async execute(args, options) {
-      options = options === undefined ? undefined : Object.freeze({ signal: options.signal });
+      // Rewritten captured-view args cannot borrow the original invocation's
+      // proof. Keep that exact args/options pair in this owner closure instead.
+      const invocationArgs = args;
+      const invocationOptions = options;
+      const callSignal = options?.signal;
+      const assertInvocationCurrent = (): void => {
+        signal?.throwIfAborted();
+        callSignal?.throwIfAborted();
+        assertCurrentToolExecution(invocationArgs, invocationOptions);
+        // This accessor checks the construction-owned token and pinned receipt,
+        // without granting access or replaying the source/view readset.
+        contractInputAuthorityRoot(authority);
+      };
+      const childOptions = options === undefined ? undefined : Object.freeze({ signal: callSignal });
       return withContractInputAuthority(authority, () =>
         deliveryReads.run(
           {
             paths: new Set<string>(),
+            assertInvocationCurrent,
             checks: new Set<() => Promise<void>>(),
             assertMutable: (path) => {
-              signal?.throwIfAborted(); options?.signal?.throwIfAborted();
+              signal?.throwIfAborted(); assertInvocationCurrent();
               if (!contractInputAuthorityMutable(authority)) throw new Error('immutable captured input cannot be changed');
               if (path !== undefined) {
                 const target = resolve(root, path);
@@ -141,30 +162,32 @@ export function capturedInputTool(
             assertRevision: (path, revision) => { assertCapturedWriteRevision(revision, authority, capturedToolPublicationContext().lease, path); },
             captureRevision: (path, bytes) => captureCapturedWriteRevision(authority, capturedToolPublicationContext().lease, path, bytes),
             prepareBackup: (path) => {
-              const callSignal = options?.signal;
               const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
               return prepareCapturedWriteBackup({ authority, root, readAccessFilter: filter, signal: combined }, path, combined, capturedToolPublicationContext().lease);
             },
-            signal: options?.signal,
+            signal: callSignal,
             authorize: async (path) => {
-              const callSignal = options?.signal;
+              assertInvocationCurrent();
               const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
               const authorized = await authorizeContractInputPath(authority, resolve(root, path), filter, combined);
+              assertInvocationCurrent();
               deliveryReads.getStore()!.paths.add(authorized);
             },
             assertCurrent: async () => {
-              const callSignal = options?.signal;
+              assertInvocationCurrent();
               const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
               await assertContractInputReadAccess(authority, filter, combined);
+              assertInvocationCurrent();
             },
           },
           async () => {
             try {
+              assertInvocationCurrent();
               // Model arguments and callers remain mutable outside this invocation.
               // Pin an owned deep copy before the first permission/validation await.
               args = freezeInput(structuredClone(args));
               await assertContractInputAuthority(authority, root, signal);
-              options?.signal?.throwIfAborted();
+              assertInvocationCurrent();
               if (!filter) throw new Error('captured input requires original-owner read authorization');
               await assertCapturedToolAccessCurrent();
               if (name === 'read') {
@@ -219,19 +242,18 @@ export function capturedInputTool(
                   `captured ${name} requires an original-owner-authorized backend; this workflow is not yet available`,
                 );
               }
-              const publicationSignal = signal && options?.signal ? AbortSignal.any([signal, options.signal]) : signal ?? options?.signal;
+              const publicationSignal = signal && callSignal ? AbortSignal.any([signal, callSignal]) : signal ?? callSignal;
               const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
                 ? await withCapturedPublication(authority, (publicationLease) => deliveryReads.run(
                   { ...deliveryReads.getStore()!, publicationLease, signal: publicationSignal },
-                  () => tool.execute(args, options),
+                  () => tool.execute(args, childOptions),
                 ), publicationSignal)
                 : name === 'analyze'
-                  ? await withCapturedAnalyzeInput(authority, root, publicationSignal, () => tool.execute(args, options))
-                  : await tool.execute(args, options);
+                  ? await withCapturedAnalyzeInput(authority, root, publicationSignal, () => tool.execute(args, childOptions))
+                  : await tool.execute(args, childOptions);
               await assertContractInputAuthority(authority, root, signal);
-              options?.signal?.throwIfAborted();
+              assertInvocationCurrent();
               // No content, cached output, diagnostics or errors leave after revocation.
-              const callSignal = options?.signal;
               const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
               for (const path of deliveryReads.getStore()!.paths)
                 await authorizeContractInputPath(authority, path, filter, combined);

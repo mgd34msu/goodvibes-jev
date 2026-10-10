@@ -1,3 +1,8 @@
+import { assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { modelReadingOptions, modelReadingServicePath, withModelReadingContext } from './agent-harness-model-reading-source.ts';
+import { processClassificationOptions } from './agent-harness-process-launch.ts';
+import { createProcessInputProjector } from './agent-process-ingress.ts';
+import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
@@ -151,7 +156,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       concurrency: 'serial',
     },
     execute: async (rawArgs, options) => {
-      const signal = options?.signal;
+      const assertCatalogExecution = harnessCatalogExecutionGuard(rawArgs, options);
+      const signal = modelReadingServicePath(options, ['signal']) as AbortSignal | undefined;
       // Inspect the routing descriptor without invoking a caller accessor. Full
       // judgment validation belongs to explanation input, not unrelated local
       // harness routes (which retain their own credential/redaction handling).
@@ -177,6 +183,20 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         if (resolved.status === 'ambiguous') return error(`Ambiguous policy explanation target ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
         return error(resolved.usage);
       }
+      if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args, processClassificationOptions(deps.commandContext, deps.toolRegistry, signal, () => { assertCurrentToolExecution(rawArgs, options); })));
+      if (dispatchMode === 'model_routing' || dispatchMode === 'model_route') {
+        const reading = modelReadingOptions(deps.commandContext, deps.toolRegistry, signal, assertCatalogExecution, retainHarnessCatalogCurrent(rawArgs));
+        return withModelReadingContext(deps.commandContext, rawArgs, reading, async (context, scoped) => {
+          if (dispatchMode === 'model_routing') {
+            const result = await modelRoutingSummary(context, args, scoped); scoped.assertCurrent?.(); return output(result);
+          }
+          const resolved = await describeHarnessModelRoute(context, args, scoped); scoped.assertCurrent?.();
+          if (resolved.status === 'found') return output(resolved.route);
+          if (resolved.status === 'ambiguous') return error(`Ambiguous model route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
+          return error(resolved.usage);
+        });
+      }
+
       const personalOpsOwner = agentResearchSourceOwner(deps.toolRegistry);
       const personalOpsSession = deps.commandContext.session?.runtime;
       const personalOpsSessionId = personalOpsSession?.sessionId;
@@ -188,6 +208,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           || deps.commandContext.session?.runtime?.sessionId !== personalOpsSessionId
           || (deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry) !== personalOpsApi) throw new Error('PersonalOps source owner changed.');
       } };
+      const catalogOptions = { ...personalOpsOptions, assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
       if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args, personalOpsOptions));
       if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, personalOpsOptions));
       if (dispatchMode === 'personal_ops_lane') {
@@ -198,6 +219,43 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         return error(resolved.usage);
       }
       if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, personalOpsOptions));
+        if (dispatchMode === 'modes') return output(await listHarnessModes(args, catalogOptions));
+        if (dispatchMode === 'mode') {
+          const mode = await describeHarnessMode(args, catalogOptions);
+          if (mode.status === 'ambiguous') return error(`Ambiguous harness mode ${String(mode.input)}. Candidates: ${JSON.stringify(mode.candidates)}`);
+          if (mode.status === 'missing_lookup') return error(String(mode.usage));
+          return output(mode.mode);
+        }
+        if (dispatchMode === 'commands') {
+          const commands = await searchHarnessCommands(deps.commandRegistry, args, catalogOptions);
+          return output(catalogEnvelope('commands', commands.matches, deps.commandRegistry.list().length, catalogFilters(args, CQ.commands.filters), CQ.commands.discovery, { relaxedQuery: commands.relaxed }));
+        }
+        if (dispatchMode === 'command') {
+          const detail = await describeHarnessCommand(deps.commandRegistry, args, catalogOptions);
+          const query = readString(args.command || args.commandName || args.target || args.query);
+          return detail
+            ? output(detail)
+            : error(`Unknown slash command ${query || '<missing>'}. Use mode:"commands" to inspect available commands.`);
+        }
+        if (dispatchMode === 'run_command') return await runCommand(deps, args, catalogOptions);
+        if (dispatchMode === 'tools') {
+          const tools = await searchHarnessModelTools(deps.toolRegistry, args, catalogOptions);
+          return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery, { relaxedQuery: tools.relaxed }));
+        }
+        if (dispatchMode === 'tool') {
+          const query = readString(args.toolName || args.target || args.query);
+          const resolved = await describeHarnessModelTool(deps.toolRegistry, args, catalogOptions);
+          if (resolved?.status === 'found') return output(resolved.tool);
+          if (resolved?.status === 'ambiguous') return error(`Ambiguous model tool ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
+          return error(describeUnknownModelTool(deps.toolRegistry, query));
+        }
+        if (dispatchMode === 'operator_methods') return output(await operatorMethodSummary(args, catalogOptions));
+        if (dispatchMode === 'operator_method') {
+          const resolved = await describeHarnessOperatorMethod(args, catalogOptions);
+          if (resolved.status === 'found') return output(resolved.method);
+          if (resolved.status === 'ambiguous') return error(`Ambiguous operator method ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
+          return error(resolved.usage);
+        }
       try {
         if (dispatchMode === 'summary') {
           const channelReadiness = channelReadinessCatalogStatus(deps.commandContext);
@@ -316,13 +374,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             connectedHost,
           });
         }
-        if (dispatchMode === 'modes') return output(listHarnessModes(args));
-        if (dispatchMode === 'mode') {
-          const mode = describeHarnessMode(args);
-          if (mode.status === 'ambiguous') return error(`Ambiguous harness mode ${String(mode.input)}. Candidates: ${JSON.stringify(mode.candidates)}`);
-          if (mode.status === 'missing_lookup') return error(String(mode.usage));
-          return output(mode.mode);
-        }
         if (dispatchMode === 'route_decision') return output(await planAgentTaskRoute(deps.commandContext, args, deps.taskRouteSources, { ...(signal ? { signal } : {}) }));
         if (dispatchMode === 'cli_commands') {
           const commands = listHarnessCliCommands(args);
@@ -366,18 +417,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const confirmationError = requireConfirmedAction(args, 'Keybinding action');
           return confirmationError ? error(confirmationError) : output(runHarnessKeybinding(deps.commandContext, args));
         }
-        if (dispatchMode === 'commands') {
-          const commands = searchHarnessCommands(deps.commandRegistry, args);
-          return output(catalogEnvelope('commands', commands.matches, deps.commandRegistry.list().length, catalogFilters(args, CQ.commands.filters), CQ.commands.discovery, { relaxedQuery: commands.relaxed }));
-        }
-        if (dispatchMode === 'command') {
-          const detail = describeHarnessCommand(deps.commandRegistry, args);
-          const query = readString(args.command || args.commandName || args.target || args.query);
-          return detail
-            ? output(detail)
-            : error(`Unknown slash command ${query || '<missing>'}. Use mode:"commands" to inspect available commands.`);
-        }
-        if (dispatchMode === 'run_command') return runCommand(deps, args);
         if (dispatchMode === 'channels') return output(listHarnessChannels(deps.commandContext, args));
         if (dispatchMode === 'channel') {
           const resolved = describeHarnessChannel(deps.commandContext, args);
@@ -464,13 +503,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (setupItemId && setupItemId !== 'install-smoke') return error('run_setup_smoke currently supports setupItemId:"install-smoke" only.');
           return output(await runSetupInstallSmoke(deps.commandContext, args));
         }
-        if (dispatchMode === 'model_routing') return output(await modelRoutingSummary(deps.commandContext, args));
-        if (dispatchMode === 'model_route') {
-          const resolved = await describeHarnessModelRoute(deps.commandContext, args);
-          if (resolved.status === 'found') return output(resolved.route);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous model route ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
-        }
         if (dispatchMode === 'run_local_model_smoke') {
           const confirmationError = requireConfirmedAction(args, 'Local model smoke');
           return confirmationError ? error(confirmationError) : output(await runLocalModelServerSmoke(deps.commandContext, args));
@@ -490,7 +522,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous background process ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'run_background_process') return output(await runBackgroundProcessAction(deps.commandContext, args));
         if (dispatchMode === 'execution_history') return output(executionHistorySummary(deps.commandContext, args));
         if (dispatchMode === 'execution_history_item') {
           const resolved = describeExecutionHistoryItem(deps.commandContext, args);
@@ -693,17 +724,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           };
           return protectAgentHarnessResearchTool(workspaceActionTool, deps.toolRegistry).execute(args as Record<string, unknown>, options);
         }
-        if (dispatchMode === 'tools') {
-          const tools = searchHarnessModelTools(deps.toolRegistry, args);
-          return output(catalogEnvelope('tools', tools.matches, deps.toolRegistry.getToolDefinitions().length, catalogFilters(args, CQ.tools.filters), CQ.tools.discovery, { relaxedQuery: tools.relaxed }));
-        }
-        if (dispatchMode === 'tool') {
-          const query = readString(args.toolName || args.target || args.query);
-          const resolved = describeHarnessModelTool(deps.toolRegistry, args);
-          if (resolved?.status === 'found') return output(resolved.tool);
-          if (resolved?.status === 'ambiguous') return error(`Ambiguous model tool ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(describeUnknownModelTool(deps.toolRegistry, query));
-        }
         if (dispatchMode === 'release_evidence') return output(releaseEvidenceSummary(args));
         if (dispatchMode === 'release_evidence_artifact') {
           const resolved = describeHarnessReleaseEvidenceArtifact(args);
@@ -720,13 +740,6 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'unavailable') return output(resolved);
           if (resolved.status === 'missing_lookup') return error(resolved.usage ?? 'release_readiness_item requires itemId, target, or query.');
           return error(`Unknown release readiness item ${readString(args.itemId || args.target || args.query) || '<missing>'}. Use mode:"release_readiness" to inspect available items.`);
-        }
-        if (dispatchMode === 'operator_methods') return output(operatorMethodSummary(args));
-        if (dispatchMode === 'operator_method') {
-          const resolved = describeHarnessOperatorMethod(args);
-          if (resolved.status === 'found') return output(resolved.method);
-          if (resolved.status === 'ambiguous') return error(`Ambiguous operator method ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-          return error(resolved.usage);
         }
         if (dispatchMode === 'service_posture') return output(await servicePostureSummary(deps.commandContext, args));
         if (dispatchMode === 'service_endpoint') {
@@ -816,7 +829,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       }
     },
   };
-  return tool;
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, undefined, deps.commandContext);
 }
 
 export function registerAgentHarnessTool(
@@ -825,5 +838,5 @@ export function registerAgentHarnessTool(
   commandContext: CommandContext,
   taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources,
 ): void {
-  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry)) });
+  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createHarnessCatalogInputProjector(registry, createProcessInputProjector(registry, 'agent_harness', createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry))), undefined, commandContext) });
 }

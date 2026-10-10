@@ -1,5 +1,9 @@
+import { types as nodeTypes } from 'node:util';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { catalogSearchTokens, searchCatalog, type CatalogSearchResult } from './agent-harness-catalog-search.ts';
+import type { CatalogSearchResult } from './agent-harness-catalog-search.ts';
+import { rankHarnessCatalog, captureCatalogData, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 
 export interface AgentHarnessModelToolCatalogArgs {
   readonly query?: unknown;
@@ -42,61 +46,49 @@ function schemaSearchText(value: unknown): string {
 }
 
 function modelToolSearchText(tool: HarnessModelToolDefinition): string {
+  snapshotJudgmentInput(tool);
   return [
     tool.name,
     tool.name.replace(/_/g, ' '),
     tool.description,
     ...(tool.sideEffects ?? []),
     schemaSearchText(tool.parameters),
-  ].join('\n').toLowerCase();
+  ].join('\n');
 }
 
 
-function tokenScore(tokens: readonly string[], value: string | undefined, weight: number): number {
-  if (!value) return 0;
-  const text = value.toLowerCase();
-  return tokens.reduce((score, token) => score + (text.includes(token) ? weight : 0), 0);
+/** Read registered definition data without invoking a replaced accessor/proxy. */
+function captureModelTools(toolRegistry: ToolRegistry): readonly HarnessModelToolDefinition[] {
+  const budget = { nodes: 0, characters: 0, slots: 0 };
+  return toolRegistry.list().map((tool) => {
+    let owner: object | null = tool;
+    for (let depth = 0; owner && depth < 64; depth++) {
+      if (nodeTypes.isProxy(owner)) throw new ToolInputProjectionError('invalid');
+      const descriptor = Object.getOwnPropertyDescriptor(owner, 'definition');
+      if (descriptor) {
+        if (!('value' in descriptor)) throw new ToolInputProjectionError('invalid');
+        return captureCatalogData(descriptor.value, budget) as HarnessModelToolDefinition;
+      }
+      owner = Object.getPrototypeOf(owner) as object | null;
+    }
+    throw new ToolInputProjectionError('invalid');
+  });
 }
 
-const ACTION_VERBS = new Set(['run', 'set', 'reset', 'open', 'create', 'send', 'schedule', 'generate', 'read', 'search', 'ingest']);
-
-function modelToolRelevance(tool: HarnessModelToolDefinition, input: string): number {
-  const normalized = input.toLowerCase().trim();
-  if (!normalized) return 0;
-
-  const tokens = catalogSearchTokens(normalized);
-  const name = tool.name.toLowerCase();
-  const namePhrase = name.replace(/_/g, ' ');
-  const nameLookup = normalized.replace(/\s+/g, '_');
-  const parameterText = schemaSearchText(tool.parameters);
-  let score = 0;
-
-  if (name === normalized || namePhrase === normalized) score += 10_000;
-  if (name.startsWith(nameLookup) || namePhrase.startsWith(normalized)) score += 5_000;
-  if (name.includes(nameLookup) || namePhrase.includes(normalized)) score += 2_500;
-
-  score += tokenScore(tokens, `${name}\n${namePhrase}`, 1_000);
-  score += tokenScore(tokens, tool.description, 300);
-  score += tokenScore(tokens, (tool.sideEffects ?? []).join('\n'), 250);
-  score += tokenScore(tokens, parameterText, 150);
-
-  const actionVerb = tokens.find((token) => ACTION_VERBS.has(token));
-  if (actionVerb && catalogSearchTokens(name).includes(actionVerb)) score += 1_500;
-
-  return score;
-}
-
-function matchingModelTools(tools: readonly HarnessModelToolDefinition[], input: string): CatalogSearchResult<HarnessModelToolDefinition> {
-  const query = input.toLowerCase().trim();
-  const found = searchCatalog(tools, query, modelToolSearchText);
-  const ranked = found.matches
-    .map((tool, index) => ({ tool, index, score: modelToolRelevance(tool, query) }))
-    .sort((left, right) => {
-      if (!query) return left.tool.name.localeCompare(right.tool.name);
-      return right.score - left.score || left.tool.name.localeCompare(right.tool.name) || left.index - right.index;
-    })
-    .map(({ tool }) => tool);
-  return { matches: ranked, relaxed: found.relaxed };
+async function matchingModelTools(toolRegistry: ToolRegistry, input: string, options: CatalogRankingOptions) {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const registrations = toolRegistry.list();
+  const tools = captureModelTools(toolRegistry);
+  if (!input) return { matches: tools.slice().sort((a, b) => a.name.localeCompare(b.name)).map((entry) => ({ entry, judgment: undefined })) };
+  const revision = JSON.stringify(tools);
+  return rankHarnessCatalog(tools, input, (entry) => ({ id: entry.name, description: modelToolSearchText(entry), evidence: entry }), 'agent.harness.tools', {
+    ...options, requirePreservedSource: true, assertCurrent: () => {
+      options.assertCurrent?.();
+      const current = toolRegistry.list();
+      if (current.length !== registrations.length || current.some((tool, index) => tool !== registrations[index])
+        || JSON.stringify(captureModelTools(toolRegistry)) !== revision) throw new ToolInputProjectionError('stale');
+    },
+  });
 }
 
 function modelToolLookupFromArgs(args: AgentHarnessModelToolCatalogArgs): { readonly source: ModelToolLookupSource; readonly input: string } | null {
@@ -136,17 +128,19 @@ function describeModelToolCandidates(tools: readonly HarnessModelToolDefinition[
   }));
 }
 
-export function searchHarnessModelTools(
+export async function searchHarnessModelTools(
   toolRegistry: ToolRegistry,
   args: AgentHarnessModelToolCatalogArgs,
-): CatalogSearchResult<Record<string, unknown>> {
-  const query = readString(args.query).toLowerCase();
+  options: CatalogRankingOptions = {},
+): Promise<CatalogSearchResult<Record<string, unknown>>> {
+  const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
   const limit = readLimit(args.limit, 500);
-  const found = matchingModelTools(toolRegistry.getToolDefinitions(), query);
+  const found = await matchingModelTools(toolRegistry, query, options);
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   return {
-    matches: found.matches.slice(0, limit).map((tool) => describeModelTool(tool, { includeParameters })),
-    relaxed: found.relaxed,
+    matches: found.matches.slice(0, limit).map(({ entry, judgment }) => ({ ...describeModelTool(entry, { includeParameters }), ...(judgment ? { judgment } : {}) })),
+    relaxed: false,
   };
 }
 
@@ -175,7 +169,7 @@ const MCP_QUALIFIED_NAME_PATTERN = /^mcp:[^:]+:[^:]+$/;
  * named explicitly.
  */
 export function describeUnknownModelTool(toolRegistry: ToolRegistry, query: string): string {
-  const names = toolRegistry.getToolDefinitions().map((tool) => tool.name).sort();
+  const names = captureModelTools(toolRegistry).map((tool) => tool.name).sort();
   const known = names.length > 0 ? `Known tools: ${names.join(', ')}.` : 'No model tools are registered.';
   const label = query || '<missing>';
   if (query && MCP_QUALIFIED_NAME_PATTERN.test(query)) {
@@ -187,31 +181,32 @@ export function describeUnknownModelTool(toolRegistry: ToolRegistry, query: stri
   return `Unknown model tool ${label}. ${known} Use mode:"tools" to inspect available model tools.`;
 }
 
-export function describeHarnessModelTool(toolRegistry: ToolRegistry, args: AgentHarnessModelToolCatalogArgs): HarnessModelToolResolution | null {
+export async function describeHarnessModelTool(toolRegistry: ToolRegistry, args: AgentHarnessModelToolCatalogArgs, options: CatalogRankingOptions = {}): Promise<HarnessModelToolResolution | null> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
   const lookup = modelToolLookupFromArgs(args);
   if (!lookup) return null;
-  const tools = toolRegistry.getToolDefinitions().sort((a, b) => a.name.localeCompare(b.name));
+  const tools = captureModelTools(toolRegistry).slice().sort((a, b) => a.name.localeCompare(b.name));
   const normalized = lookup.input.toLowerCase();
   const exact = tools.find((tool) => tool.name === lookup.input);
-  const found = exact
-    ? { tool: exact, resolvedBy: 'name' }
-    : (() => {
-        const insensitive = tools.find((tool) => tool.name.toLowerCase() === normalized);
-        if (insensitive) return { tool: insensitive, resolvedBy: 'case-insensitive-name' };
-        if (lookup.source === 'toolName') return null;
-        const searched = matchingModelTools(tools, normalized);
-        // A loose hit names a tool the query did not: offer it, never pick it.
-        if (searched.matches.length === 1 && !searched.relaxed) return { tool: searched.matches[0]!, resolvedBy: 'search' };
-        if (searched.matches.length > 0) return { candidates: searched.matches };
-        return null;
-      })();
+  const insensitive = tools.find((tool) => tool.name.toLowerCase() === normalized);
+  let found: { tool: HarnessModelToolDefinition; resolvedBy: string; judgment?: unknown } | undefined;
+  if (exact || insensitive) found = { tool: (exact ?? insensitive)!, resolvedBy: exact ? 'name' : 'case-insensitive-name' };
+  else if (lookup.source !== 'toolName') {
+    const searched = await matchingModelTools(toolRegistry, lookup.input, options);
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (searched.matches.length === 1 && searched.matches[0]!.judgment?.reading.verdict === 'yes') {
+      const match = searched.matches[0]!;
+      found = { tool: match.entry, resolvedBy: 'search', judgment: match.judgment };
+    } else if (searched.matches.length > 0) {
+      return { status: 'ambiguous', input: lookup.input, candidates: searched.matches.slice(0, 8).map(({ entry, judgment }) => ({
+        ...describeModelToolCandidates([entry])[0], judgment,
+      })) };
+    }
+  }
   if (!found) return null;
-  if (found.candidates !== undefined) return { status: 'ambiguous', input: lookup.input, candidates: describeModelToolCandidates(found.candidates) };
-  return {
-    status: 'found',
-    tool: {
-      ...describeModelTool(found.tool, { includeParameters: true, lookup: { ...lookup, resolvedBy: found.resolvedBy } }),
-      policy: 'This is a first-class model tool definition. Use the returned JSON schema directly; mutating or external side-effect tools still require the explicit confirmation arguments defined by that tool.',
-    },
-  };
+  return { status: 'found', tool: {
+    ...describeModelTool(found.tool, { includeParameters: true, lookup: { ...lookup, resolvedBy: found.resolvedBy } }),
+    ...(found.judgment ? { judgment: found.judgment } : {}),
+    policy: 'This is a first-class model tool definition. Use the returned JSON schema directly; mutating or external side-effect tools still require the explicit confirmation arguments defined by that tool.',
+  } };
 }

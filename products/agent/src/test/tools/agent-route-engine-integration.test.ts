@@ -49,7 +49,7 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     expect(body).toMatchObject({ status: 'ready', request: args.query, routesConsidered: 1, alternatives: [], preferred: { id: 'host-runtime-diagnostics', confidence: 'high', score: 0.94, requiresConfirmation: false, modelRoute: 'host action:"status" includeParameters:true' } });
     expect(body.nextAction).toContain('read-only');
     const workspaceIds = new Set(listWorkspaceActions(context, { limit: 1000 }).map(record => record.id));
-    const modeIds = new Set((listHarnessModes({ limit: 1000 }).modes as { id: string }[]).map(record => record.id));
+    const modeIds = new Set(((await listHarnessModes({ limit: 1000 })).modes as { id: string }[]).map(record => record.id));
     expect(body.workspaceMatches.length).toBe(6);
     expect(body.workspaceMatches.every((record: { id: string }) => workspaceIds.has(record.id))).toBe(true);
     expect(body.harnessModeMatches.every((record: { id: string }) => modeIds.has(record.id))).toBe(true);

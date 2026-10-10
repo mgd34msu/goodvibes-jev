@@ -1,3 +1,4 @@
+import { catalogRoutingInput, createHarnessCatalogInputProjector, forwardHarnessCatalogCall, protectHarnessCatalogTool } from './agent-harness-catalog-ingress.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -61,6 +62,12 @@ function compactArgs(entries: Record<string, unknown>): Record<string, unknown> 
   return Object.fromEntries(Object.entries(entries).filter(([, value]) => value !== undefined && value !== ''));
 }
 
+function isHostCatalogQuery(input: Record<string, unknown>): boolean {
+  const routing = catalogRoutingInput(input);
+  return ['methods', 'method'].includes(readAction(routing))
+    && [routing.query, routing.target].some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
 export function createAgentHostTool(deps: AgentHostToolDeps): Tool {
   const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
     commandRegistry: deps.commandRegistry,
@@ -68,7 +75,7 @@ export function createAgentHostTool(deps: AgentHostToolDeps): Tool {
     toolRegistry: deps.toolRegistry,
   });
 
-  return {
+  const tool: Tool = {
     definition: {
       name: 'host',
       description: 'Inspect GoodVibes host status, services, and methods.',
@@ -94,24 +101,25 @@ export function createAgentHostTool(deps: AgentHostToolDeps): Tool {
       sideEffects: [],
       concurrency: 'parallel',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs, options) => {
+      const dispatch = (input: Record<string, unknown>) => forwardHarnessCatalogCall(harnessTool, rawArgs, input, options);
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentHostToolArgs;
       const action = readAction(args);
 
       if (action === 'status') {
-        return harnessTool.execute(compactArgs({
+        return dispatch(compactArgs({
           mode: 'connected_host_status',
           includeParameters: args.includeParameters,
         }));
       }
       if (action === 'capabilities') {
-        return harnessTool.execute(compactArgs({
+        return dispatch(compactArgs({
           mode: 'connected_host',
           includeParameters: args.includeParameters,
         }));
       }
       if (action === 'capability') {
-        return harnessTool.execute(compactArgs({
+        return dispatch(compactArgs({
           mode: 'connected_host_capability',
           capabilityId: args.capabilityId,
           target: args.target,
@@ -119,13 +127,13 @@ export function createAgentHostTool(deps: AgentHostToolDeps): Tool {
         }));
       }
       if (action === 'services') {
-        return harnessTool.execute(compactArgs({
+        return dispatch(compactArgs({
           mode: 'service_posture',
           includeParameters: args.includeParameters,
         }));
       }
       if (action === 'service') {
-        return harnessTool.execute(compactArgs({
+        return dispatch(compactArgs({
           mode: 'service_endpoint',
           endpointId: args.endpointId,
           target: args.target,
@@ -133,14 +141,14 @@ export function createAgentHostTool(deps: AgentHostToolDeps): Tool {
         }));
       }
       if (action === 'methods') {
-        return harnessTool.execute(compactArgs({
+        return dispatch(compactArgs({
           mode: 'operator_methods',
           query: args.query ?? args.target,
           includeParameters: args.includeParameters,
           limit: args.limit,
         }));
       }
-      return harnessTool.execute(compactArgs({
+      return dispatch(compactArgs({
         mode: 'operator_method',
         methodId: args.methodId,
         target: args.target,
@@ -148,6 +156,7 @@ export function createAgentHostTool(deps: AgentHostToolDeps): Tool {
       }));
     },
   };
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, isHostCatalogQuery, deps.commandContext);
 }
 
 export function registerAgentHostTool(
@@ -155,5 +164,5 @@ export function registerAgentHostTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('host')) registry.register(createAgentHostTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('host')) registry.register(createAgentHostTool({ commandRegistry, commandContext, toolRegistry: registry }), { inputProjection: createHarnessCatalogInputProjector(registry, undefined, isHostCatalogQuery, commandContext) });
 }

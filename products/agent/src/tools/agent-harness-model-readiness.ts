@@ -1,432 +1,273 @@
+import { types as nodeTypes } from 'node:util';
 import { arch, cpus, freemem, platform, totalmem } from 'node:os';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { routingRegistry, routeReadiness, localRecipeFit, routeReadinessFrom, localRecipeFitFrom, modelReadinessFlagFrom } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
-import { previewHarnessText } from './agent-harness-text.ts';
 import { readProviderHealthSignal } from './agent-harness-model-provider-health.ts';
-import { localStackFor } from './agent-harness-local-model-endpoints.ts';
-import type { LocalModelBenchmarkEvidence, LocalModelBenchmarkRouteLatency, LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, ModelCandidate, ModelReadinessDimension, ModelReadinessScore, ModelRouteReadinessScore, ModelProviderHealthSignal } from './agent-harness-model-routing-types.ts';
+import { listProviderRegistryProviders } from './agent-harness-model-catalog.ts';
+import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath, withModelReadingSource, type ModelReadingOptions } from './agent-harness-model-reading-source.ts';
+import type { LocalModelBenchmarkEvidence, LocalModelDetection, LocalModelHardwareProfile, LocalModelRecipe, LocalModelRecipeFit, ModelCandidate, ModelReadinessDimension, ModelReadinessScore, ModelRouteReadinessScore } from './agent-harness-model-routing-types.ts';
 import { readRecord } from './agent-harness-model-routing-utils.ts';
 
 export function localRecipeStackId(recipe: LocalModelRecipe): string {
   return recipe.id === 'openai-compatible-local' ? 'openai-compatible' : recipe.id === 'llama-cpp' ? 'llama.cpp' : recipe.id;
 }
-
 export function roundGb(bytes: number): number {
   if (!Number.isFinite(bytes) || bytes <= 0) return 0;
   return Math.max(0, Math.round((bytes / 1024 / 1024 / 1024) * 10) / 10);
 }
-
+/** Raw local facts. Adequacy belongs to the recipe-specific reading. */
 export function localHardwareProfile(): LocalModelHardwareProfile {
-  const cpuList = cpus();
-  const ramGb = roundGb(totalmem());
-  const freeRamGb = roundGb(freemem());
-  const runtimePlatform = platform();
-  const runtimeArch = arch();
-  const acceleratorHint = runtimePlatform === 'darwin' && runtimeArch === 'arm64'
-    ? 'apple-silicon'
-    : (process.env.CUDA_VISIBLE_DEVICES || process.env.NVIDIA_VISIBLE_DEVICES)
-      ? 'cuda-env'
-      : 'none-detected';
+  const cpuList = cpus(), runtimePlatform = platform(), runtimeArch = arch();
   return {
-    platform: runtimePlatform,
-    arch: runtimeArch,
-    cpuModel: previewHarnessText(cpuList[0]?.model ?? 'unknown CPU', 96),
-    cpuThreads: cpuList.length,
-    ramGb,
-    freeRamGb,
-    memoryTier: ramGb >= 64 ? 'large' : ramGb >= 32 ? 'comfortable' : ramGb >= 16 ? 'starter' : 'constrained',
-    acceleratorHint,
+    platform: runtimePlatform, arch: runtimeArch, cpuModel: cpuList[0]?.model ?? 'unknown CPU', cpuThreads: cpuList.length,
+    ramGb: roundGb(totalmem()), freeRamGb: roundGb(freemem()),
+    acceleratorHint: runtimePlatform === 'darwin' && runtimeArch === 'arm64' ? 'apple-silicon'
+      : (process.env.CUDA_VISIBLE_DEVICES || process.env.NVIDIA_VISIBLE_DEVICES) ? 'cuda-env' : 'none-detected',
     privacy: 'local-only',
     caveat: 'Hardware scan uses local OS memory/CPU data and safe accelerator hints only; it does not probe drivers, download models, or benchmark live inference.',
   };
 }
-
-export function fitLevel(score: number): LocalModelRecipeFit['level'] {
-  if (score >= 85) return 'strong';
-  if (score >= 70) return 'good';
-  if (score >= 50) return 'usable';
-  return 'weak';
-}
-
-export function clampFit(score: number): number {
-  return Math.max(0, Math.min(100, Math.round(score)));
-}
-
-export function modelReadinessLevel(score: number): ModelReadinessScore['level'] {
-  if (score >= 85) return 'excellent';
-  if (score >= 70) return 'good';
-  if (score >= 50) return 'usable';
-  return 'risky';
-}
-
 export function capabilityEnabled(capabilities: unknown, key: 'toolCalling' | 'multimodal'): boolean | null {
   const value = readRecord(capabilities)[key];
-  if (typeof value === 'boolean') return value;
-  return null;
+  return typeof value === 'boolean' ? value : null;
+}
+const RUBRIC = 'General Agent work: sustained interactive assistance with project context, reliable tool use, occasional image input, tolerable observed response latency and cost, and accurately disclosed prompt-data transfer. Readiness is advisory only and cannot override route availability, model limits, private-address checks, permissions, or confirmed apply actions.';
+const NEXT_STEP = 'Inspect missing evidence and run a separately confirmed task-specific benchmark before changing any model route.';
+
+export function deferredModelReadiness(reason = 'Readiness enrichment has not run.'): ModelReadinessScore {
+  return { score: null, level: null, outcome: 'deferred', confidence: null, decisionId: null, provenance: null,
+    cloudTransfer: null, dimensions: [], missingSignals: [reason], nextStep: NEXT_STEP };
+}
+export function deferredRecipeFit(): LocalModelRecipeFit {
+  return { score: null, level: null, outcome: 'deferred', confidence: null, decisionId: null, memoryTier: null,
+    provenance: null, reasons: ['Recipe-fit enrichment has not run.'] };
 }
 
-export function isLocalCandidate(fields: readonly string[]): boolean {
-  return fields.some((field) => Boolean(localStackFor(field)));
-}
-
-export function contextWindowScore(contextWindow: number | null): ModelReadinessDimension {
-  const score = contextWindow == null
-    ? 45
-    : contextWindow >= 128_000
-      ? 100
-      : contextWindow >= 64_000
-        ? 88
-        : contextWindow >= 32_000
-          ? 76
-          : contextWindow >= 16_000
-            ? 62
-            : 45;
-  return {
-    id: 'context-window',
-    label: 'Context window',
-    score,
-    weight: 20,
-    summary: contextWindow == null
-      ? 'No context-window metadata; inspect the provider route before long-context work.'
-      : `${contextWindow.toLocaleString()} token context window.`,
+/** The registry object alone is not the definition: policy/run mutation also expires a read. */
+function batteryDefinitionGuard(battery: typeof routeReadiness | typeof localRecipeFit): () => void {
+  const state = () => {
+    const fields = Object.getOwnPropertyDescriptors(battery);
+    const values: Record<string, unknown> = {};
+    for (const key of ['name', 'version', 'items', 'composite']) {
+      const field = fields[key];
+      if (!field || !('value' in field)) throw new ToolInputProjectionError('held');
+      values[key] = field.value;
+    }
+    const run = fields.run;
+    if (!run || !('value' in run) || typeof run.value !== 'function') throw new ToolInputProjectionError('held');
+    return { run: run.value as unknown, values };
   };
+  const original = state(), policy = JSON.stringify(captureModelReadingInput(state().values));
+  return () => { const current = state(); if (current.run !== original.run) throw new ToolInputProjectionError('held'); assertModelReadingInputCurrent(current.values, policy); };
 }
 
-export function toolSupportScore(capabilities: unknown): ModelReadinessDimension {
-  const enabled = capabilityEnabled(capabilities, 'toolCalling');
-  return {
-    id: 'tool-support',
-    label: 'Tool support',
-    score: enabled === true ? 100 : enabled === false ? 35 : 55,
-    weight: 20,
-    summary: enabled === true
-      ? 'Tool calling is advertised.'
-      : enabled === false
-        ? 'Tool calling is not advertised; use for chat or drafting, not autonomous tool workflows.'
-        : 'Tool-calling support is unknown; inspect the provider before tool-heavy work.',
+/** The installed recording port legitimately has a model getter. Capture that
+ * trusted accessor once, then compare every slot descriptor before reading it
+ * again. A later accessor/proxy replacement is never invoked. */
+function captureBackend(port: ReturnType<typeof judgmentPort>) {
+  const slots = (subject: object, keys: readonly string[], modelGetter = false) => {
+    const chain: object[] = [];
+    let owner: object | null = subject;
+    while (owner) {
+      if (nodeTypes.isProxy(owner) || chain.length >= 64) throw new ToolInputProjectionError('held');
+      chain.push(owner); owner = Object.getPrototypeOf(owner) as object | null;
+    }
+    return { chain, fields: keys.map(key => {
+      for (const owner of chain) {
+        const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+        if (descriptor) {
+          if (!('value' in descriptor) && (!modelGetter || key !== 'model' || typeof descriptor.get !== 'function' || descriptor.set)) throw new ToolInputProjectionError('held');
+          return { owner, descriptor };
+        }
+      }
+      return undefined;
+    }) };
   };
-}
-
-export function visionScore(capabilities: unknown): ModelReadinessDimension {
-  const enabled = capabilityEnabled(capabilities, 'multimodal');
-  return {
-    id: 'vision',
-    label: 'Vision',
-    score: enabled === true ? 100 : enabled === false ? 45 : 55,
-    weight: 10,
-    summary: enabled === true
-      ? 'Vision or multimodal input is advertised.'
-      : enabled === false
-        ? 'Vision is not advertised; avoid image/screen-heavy work on this route.'
-        : 'Vision support is unknown.',
+  const captured = slots(port, ['model', 'ask', 'recorder'], true);
+  const model = port.model, ask = port.ask, recorder = port.recorder;
+  const capturedRecorder = recorder ? slots(recorder, ['recordReadings', 'recordAction']) : undefined;
+  const assertSlots = (beforeSlots: ReturnType<typeof slots>, current: ReturnType<typeof slots>) => {
+    if (current.chain.length !== beforeSlots.chain.length || current.chain.some((entry, index) => entry !== beforeSlots.chain[index])) throw new ToolInputProjectionError('held');
+    for (const [index, before] of beforeSlots.fields.entries()) {
+      const after = current.fields[index];
+      if (before?.owner !== after?.owner || before?.descriptor.value !== after?.descriptor.value
+        || before?.descriptor.get !== after?.descriptor.get || before?.descriptor.set !== after?.descriptor.set
+        || before?.descriptor.enumerable !== after?.descriptor.enumerable || before?.descriptor.configurable !== after?.descriptor.configurable
+        || before?.descriptor.writable !== after?.descriptor.writable) throw new ToolInputProjectionError('held');
+    }
   };
-}
-
-export function costScore(tier: string | undefined, local: boolean): ModelReadinessDimension {
-  const normalized = (tier ?? '').toLowerCase();
-  const score = local
-    ? 100
-    : normalized === 'free'
-      ? 95
-      : normalized === 'subscription'
-        ? 86
-        : normalized === 'standard'
-          ? 72
-          : normalized === 'premium'
-            ? 55
-            : 62;
-  return {
-    id: 'cost',
-    label: 'Cost',
-    score,
-    weight: 15,
-    summary: local
-      ? 'Local route; marginal token cost is user hardware and power.'
-      : tier
-        ? `${tier} tier route.`
-        : 'Cost tier is unknown; inspect provider pricing before long runs.',
+  const assertCurrent = () => {
+    assertSlots(captured, slots(port, ['model', 'ask', 'recorder'], true));
+    if (recorder && capturedRecorder) assertSlots(capturedRecorder, slots(recorder, ['recordReadings', 'recordAction']));
+    if (port.model !== model || port.ask !== ask || port.recorder !== recorder) throw new ToolInputProjectionError('held');
   };
+  return { model, ask, recorder, assertCurrent };
 }
 
-export function privacyScore(local: boolean, providerId: string): ModelReadinessDimension {
-  const normalized = providerId.toLowerCase();
-  const score = local
-    ? 100
-    : /subscription|account|openrouter|openai|anthropic|google|gemini|xai|mistral|cohere/.test(normalized)
-      ? 48
-      : 60;
-  return {
-    id: 'privacy',
-    label: 'Privacy',
-    score,
-    weight: 15,
-    summary: local
-      ? 'Local/private route detected.'
-      : 'Cloud/provider route; treat sensitive data according to provider policy.',
-  };
-}
-
-export function latencyScore(
-  local: boolean,
-  benchmarkCompositeScore: number | null | undefined,
-  providerHealth: ModelProviderHealthSignal,
-  localBenchmarkLatency: LocalModelBenchmarkRouteLatency | null | undefined,
-): ModelReadinessDimension {
-  const liveLatency = providerHealth.status === 'record-found' ? providerHealth.avgLatencyMs : undefined;
-  if (liveLatency !== undefined) {
-    const score = liveLatency <= 750
-      ? 95
-      : liveLatency <= 1500
-        ? 86
-        : liveLatency <= 3000
-          ? 72
-          : 55;
-    const details = [
-      `Live provider-health latency is ${liveLatency} ms`,
-      ...(providerHealth.minLatencyMs !== undefined || providerHealth.maxLatencyMs !== undefined
-        ? [`range ${providerHealth.minLatencyMs ?? '?'}-${providerHealth.maxLatencyMs ?? '?'} ms`]
-        : []),
-      ...(providerHealth.healthStatus ? [`provider status ${providerHealth.healthStatus}`] : []),
-      ...(providerHealth.lastErrorMessage ? [`last error: ${providerHealth.lastErrorMessage}`] : []),
-    ];
-    return {
-      id: 'latency',
-      label: 'Latency',
-      score,
-      weight: 20,
-      summary: `${details.join('; ')}.`,
+/** Acquire neither a battery nor a port until full-source screening settles. */
+async function readRoute(source: unknown, options: ModelReadingOptions) {
+  return withModelReadingSource(source, options, async (state, scoped) => {
+    scoped.assertCurrent?.();
+    const decision = routingRegistry.get('agent.models.route-readiness');
+    if (!decision || typeof modelReadingServicePath(decision, ['run']) !== 'function') return routeReadinessFrom(null);
+    const battery = decision as typeof routeReadiness;
+    const assertDefinition = batteryDefinitionGuard(battery);
+    const port = judgmentPort('agent.models.route-readiness');
+    const backend = captureBackend(port), { model, recorder } = backend;
+    const assertBackend = () => {
+      assertDefinition(); backend.assertCurrent();
+      if (routingRegistry.get(battery.name) !== decision || judgmentPort('agent.models.route-readiness') !== port) throw new ToolInputProjectionError('held');
     };
-  }
-
-  if (localBenchmarkLatency && localBenchmarkLatency.status !== 'failed') {
-    const latency = localBenchmarkLatency.latencyMs;
-    const score = latency <= 750
-      ? 93
-      : latency <= 1500
-        ? 84
-        : latency <= 3000
-          ? 70
-          : 54;
-    return {
-      id: 'latency',
-      label: 'Latency',
-      score,
-      weight: 20,
-      summary: `Measured local benchmark latency is ${latency} ms from ${localBenchmarkLatency.artifactId}${localBenchmarkLatency.comparisonId ? ` (${localBenchmarkLatency.comparisonId})` : ''}.`,
+    scoped.retainCurrent?.(assertBackend, 'agent.models.route-readiness');
+    const assertCurrent = () => { scoped.signal?.throwIfAborted(); scoped.assertCurrent?.(); assertBackend(); };
+    const guarded: typeof port = { model, ...(recorder ? { recorder: {
+      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
+      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
+    } } : {}), ask: async request => {
+      assertCurrent(); const result = await port.ask({ ...request,
+        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); },
+        assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); } });
+      assertCurrent(); return result;
+    } };
+    const run = await battery.run(guarded, state as unknown as Parameters<typeof battery.run>[1], { site: 'agent.models.route-readiness', ...(scoped.signal ? { signal: scoped.signal } : {}),
+      only: ['latency', 'contextWindow', 'toolSupport', 'vision', 'cost', 'privacy', 'cloudTransfer'] });
+    assertCurrent();
+    const result = routeReadinessFrom(run);
+    assertCurrent(); return result;
+  });
+}
+async function readExampleVision(example: string, facts: unknown, options: ModelReadingOptions) {
+  return withModelReadingSource({ exampleModel: { id: example, facts }, rubric: RUBRIC }, options, async (state, scoped) => {
+    const decision = routingRegistry.get('agent.models.route-readiness');
+    if (!decision || typeof modelReadingServicePath(decision, ['run']) !== 'function') return modelReadinessFlagFrom(null, 'exampleVision');
+    const battery = decision as typeof routeReadiness;
+    const assertDefinition = batteryDefinitionGuard(battery);
+    const port = judgmentPort('agent.models.example-vision');
+    const backend = captureBackend(port), { model, recorder } = backend;
+    const assertBackend = () => {
+      assertDefinition(); backend.assertCurrent();
+      if (routingRegistry.get(battery.name) !== decision || judgmentPort('agent.models.example-vision') !== port) throw new ToolInputProjectionError('held');
     };
-  }
-
-  const score = local
-    ? 55
-    : benchmarkCompositeScore != null
-      ? 78
-      : 70;
-  return {
-    id: 'latency',
-    label: 'Latency',
-    score,
-    weight: 20,
-    summary: local
-      ? 'Local latency is unmeasured until the user runs the benchmark prompt on this machine.'
-      : benchmarkCompositeScore != null
-        ? 'No daemon-published provider-health latency is reachable; benchmark metadata is quality context only.'
-        : 'No daemon-published provider-health latency is reachable; assume normal provider latency until measured.',
-  };
+    scoped.retainCurrent?.(assertBackend, 'agent.models.example-vision');
+    const assertCurrent = () => { scoped.signal?.throwIfAborted(); scoped.assertCurrent?.(); assertBackend(); };
+    const guarded: typeof port = { model, ...(recorder ? { recorder: {
+      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
+      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
+    } } : {}), ask: async request => {
+      assertCurrent(); const result = await port.ask({ ...request,
+        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); }, assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); } });
+      assertCurrent(); return result;
+    } };
+    assertCurrent(); const run = await battery.run(guarded, state as unknown as Parameters<typeof battery.run>[1], { site: 'agent.models.example-vision', only: ['exampleVision'], ...(scoped.signal ? { signal: scoped.signal } : {}) });
+    assertCurrent(); return modelReadinessFlagFrom(run, 'exampleVision');
+  });
 }
 
-export function weightedReadiness(dimensions: readonly ModelReadinessDimension[]): number {
-  const totalWeight = dimensions.reduce((total, dimension) => total + dimension.weight, 0);
-  if (totalWeight <= 0) return 0;
-  return clampFit(dimensions.reduce((total, dimension) => total + (dimension.score * dimension.weight), 0) / totalWeight);
+function described(reading: ReturnType<typeof routeReadinessFrom>, missing: ReadonlyMap<ModelReadinessDimension['id'], string>): ModelReadinessScore {
+  const dimensions: ModelReadinessDimension[] = reading.dimensions.map(dimension => ({
+    ...dimension, ...(missing.has(dimension.id) ? { score: null, normalized: null, outcome: 'deferred' as const, confidence: null } : {}),
+    summary: missing.get(dimension.id) ?? dimension.reason ?? 'Settled rubric reading.',
+  }));
+  const settled = reading.outcome === 'ready' && missing.size === 0;
+  return { ...reading, confidence: settled ? reading.confidence : null, score: settled ? reading.score : null, normalized: settled ? reading.normalized : null, level: settled ? reading.level : null,
+    cloudTransfer: missing.has('privacy') ? { ...reading.cloudTransfer, value: null, probability: null, confidence: null, outcome: 'deferred' } : reading.cloudTransfer,
+    outcome: reading.outcome === 'ready' && !settled ? 'deferred' : reading.outcome,
+    dimensions, missingSignals: [...missing.values()], nextStep: NEXT_STEP };
 }
 
-export function modelReadinessScore(context: CommandContext, model: ModelCandidate): ModelRouteReadinessScore {
-  const local = isLocalCandidate([model.providerId, model.registryKey, model.modelId, model.displayName]);
-  const providerHealth = readProviderHealthSignal(context, model.providerId, model.registryKey);
-  const dimensions: readonly ModelReadinessDimension[] = [
-    latencyScore(local, model.benchmarkCompositeScore, providerHealth, model.localBenchmarkLatency),
-    contextWindowScore(model.contextWindow),
-    toolSupportScore(model.capabilities),
-    visionScore(model.capabilities),
-    costScore(model.tier, local),
-    privacyScore(local, model.providerId),
-  ];
-  const score = weightedReadiness(dimensions);
-  const hasLiveLatency = providerHealth.status === 'record-found' && providerHealth.avgLatencyMs !== undefined;
-  const hasBenchmarkLatency = Boolean(model.localBenchmarkLatency && model.localBenchmarkLatency.status !== 'failed');
-  const missingSignals = [
-    ...providerHealth.missingSignals,
-    ...(hasLiveLatency || hasBenchmarkLatency ? [] : ['No live latency benchmark has been recorded for this Agent route.']),
-    ...(model.contextWindow == null ? ['Context-window metadata is missing.'] : []),
-    ...(capabilityEnabled(model.capabilities, 'toolCalling') == null ? ['Tool-calling support is unknown.'] : []),
-    ...(capabilityEnabled(model.capabilities, 'multimodal') == null ? ['Vision support is unknown.'] : []),
-    ...(!model.tier && !local ? ['Cost tier is unknown.'] : []),
-  ];
-  return {
-    score,
-    level: modelReadinessLevel(score),
-    confidence: providerHealth.status === 'record-found' && missingSignals.length === 0
-      ? 'provider-health-backed'
-      : hasBenchmarkLatency && missingSignals.length === 0
-        ? 'measured'
-      : missingSignals.length === 0
-        ? 'metadata-backed'
-        : 'estimated',
-    dimensions,
-    missingSignals,
-    providerHealth,
-    nextStep: local
-      ? hasBenchmarkLatency
-        ? `Review local benchmark latency evidence ${model.localBenchmarkLatency?.artifactId}, then use a separate confirmed apply/update route only if the user wants this route as default.`
-        : 'Run the local benchmark prompt before making this route the default.'
-      : providerHealth.status === 'record-found'
-        ? 'Use provider-health-backed route posture for triage; run a task-specific comparison before changing the default model.'
-        : hasBenchmarkLatency
-          ? `Review benchmark latency evidence ${model.localBenchmarkLatency?.artifactId}; wait for daemon provider-health publication for live status, rate-limit, and error posture before changing defaults.`
-        : 'Use this score for routing triage; wait for daemon provider-health publication or run a task-specific comparison before changing the default model.',
-  };
+export async function modelReadinessScore(context: CommandContext, model: ModelCandidate, options: ModelReadingOptions = {}): Promise<ModelRouteReadinessScore> {
+  const rawHealth = readProviderHealthSignal(context, model.providerId, model.registryKey);
+  // Freeform error previews are not semantic evidence. Complete originals are
+  // screened by the invocation owner; these fields are omitted from the rubric.
+  const { lastErrorMessage: _lastErrorMessage, ...providerHealth } = rawHealth;
+  const provider = listProviderRegistryProviders(context).find(value => {
+    const facts = readRecord(value); return facts.id === model.providerId || facts.providerId === model.providerId || facts.name === model.providerId;
+  }) ?? null;
+  const healthLatency = providerHealth.status === 'record-found' && ['healthy', 'degraded'].includes(providerHealth.healthStatus ?? '') && providerHealth.measuredRouteId === model.registryKey && providerHealth.measuredProviderId === model.providerId
+    && typeof providerHealth.avgLatencyMs === 'number' && providerHealth.avgLatencyMs >= 0 && providerHealth.measurementRecordedAt && Number.isFinite(Date.parse(providerHealth.measurementRecordedAt))
+    ? { milliseconds: providerHealth.avgLatencyMs, routeId: providerHealth.measuredRouteId, recordedAt: providerHealth.measurementRecordedAt, sourceRecordId: providerHealth.sourceRecordId, source: 'provider-health' } : null;
+  const benchmark = model.localBenchmarkLatency;
+  const benchmarkLatency = benchmark && benchmark.registryKey === model.registryKey && benchmark.providerId === model.providerId
+    && benchmark.status === 'completed' && Number.isFinite(benchmark.latencyMs) && benchmark.latencyMs >= 0
+    && benchmark.createdAt && Number.isFinite(Date.parse(benchmark.createdAt)) ? benchmark : null;
+  const latency = healthLatency ?? benchmarkLatency;
+  const missing = new Map<ModelReadinessDimension['id'], string>();
+  if (!latency) missing.set('latency', 'No successful route-specific latency measurement with a timestamp is available.');
+  if (model.contextWindow == null || model.contextWindow <= 0) missing.set('context-window', 'Context-window metadata is missing.');
+  if (capabilityEnabled(model.capabilities, 'toolCalling') == null) missing.set('tool-support', 'Tool-calling capability is unknown.');
+  if (capabilityEnabled(model.capabilities, 'multimodal') == null) missing.set('vision', 'Vision capability is unknown.');
+  if (!model.tier) missing.set('cost', 'Cost evidence is missing.');
+  const providerFacts = readRecord(provider);
+  const providerConfig = readRecord(providerFacts.config);
+  const hasEndpointFacts = [providerFacts.baseUrl, providerFacts.baseURL, providerFacts.api, providerFacts.endpoint, providerConfig.baseUrl, providerConfig.baseURL].some(value => {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    try { const url = new URL(value); return url.protocol === 'http:' || url.protocol === 'https:'; } catch { return false; }
+  });
+  const hasHostingFacts = hasEndpointFacts || [providerFacts.hosting, providerFacts.documentation, providerFacts.setupDescription, providerFacts.anonymousDetail].some(value => typeof value === 'string' && value.trim().length > 0);
+  if (!hasHostingFacts) missing.set('privacy', 'Provider and endpoint facts are missing; a route name is not hosting evidence.');
+  if (!options.sourceOwner) return { ...deferredModelReadiness('Readiness source screening is unavailable.'), outcome: 'unavailable', providerHealth };
+  const reading = await readRoute({ subject: model, rubric: RUBRIC, capabilities: model.capabilities, contextWindow: model.contextWindow,
+    cost: { tier: model.tier ?? null }, provider, measuredLatency: latency, benchmarkQuality: model.benchmarkCompositeScore ?? null,
+    providerHealth, missingSignals: [...missing.values()] }, options);
+  const result = described(reading, missing);
+  if (model.available === false || model.configured === false || providerHealth.isConfigured === false || providerFacts.available === false || providerFacts.isAvailable === false || providerFacts.configured === false || providerFacts.isConfigured === false) {
+    return { ...result, score: null, normalized: null, level: null, confidence: null, outcome: 'unavailable',
+      missingSignals: [...result.missingSignals, 'This provider or model is unavailable or unconfigured.'], providerHealth };
+  }
+  return { ...result, providerHealth };
 }
 
-export function localRecipeReadinessScore(
-  recipe: LocalModelRecipe,
-  fit: LocalModelRecipeFit,
-  detected: boolean,
-  evidence: LocalModelBenchmarkEvidence,
-): ModelReadinessScore {
-  const contextScore = recipe.id === 'vllm' ? 70 : recipe.id === 'openai-compatible-local' ? 60 : 65;
-  const toolScore = recipe.id === 'ollama' || recipe.id === 'openai-compatible-local' ? 70 : 55;
-  const visionSupport = recipe.modelExamples.some((model) => /vision|vl|multimodal/i.test(model));
-  const reviewedWinner = evidence.winnerStacks.includes(localRecipeStackId(recipe));
-  const measured = evidence.comparisonCount > 0;
-  const dimensions: readonly ModelReadinessDimension[] = [
-    {
-      id: 'latency',
-      label: 'Latency',
-      score: reviewedWinner ? 82 : measured ? 68 : detected ? 62 : 50,
-      weight: 20,
-      summary: reviewedWinner
-        ? 'A revealed saved local benchmark judgment selected this stack.'
-        : measured
-          ? 'A saved local benchmark comparison exists, but no revealed winner is tied to this stack yet.'
-          : detected
-            ? 'Local stack is detected, but latency still needs an on-machine benchmark.'
-            : 'Latency is unknown until the local server and model are running.',
-    },
-    {
-      id: 'context-window',
-      label: 'Context window',
-      score: contextScore,
-      weight: 20,
-      summary: 'Depends on the selected local model and serving stack; verify after the route is available.',
-    },
-    {
-      id: 'tool-support',
-      label: 'Tool support',
-      score: toolScore,
-      weight: 20,
-      summary: 'Tool behavior depends on the selected local model and OpenAI-compatible server support.',
-    },
-    {
-      id: 'vision',
-      label: 'Vision',
-      score: visionSupport ? 75 : 45,
-      weight: 10,
-      summary: visionSupport ? 'Example list includes a vision-capable route.' : 'No vision route is assumed for this local recipe.',
-    },
-    {
-      id: 'cost',
-      label: 'Cost',
-      score: 100,
-      weight: 15,
-      summary: 'Local route; marginal token cost is user hardware and power.',
-    },
-    {
-      id: 'privacy',
-      label: 'Privacy',
-      score: 100,
-      weight: 15,
-      summary: 'Local route can keep prompts on user-controlled hardware.',
-    },
-  ];
-  const score = clampFit((weightedReadiness(dimensions) * 0.72) + (fit.score * 0.28));
-  return {
-    score,
-    level: modelReadinessLevel(score),
-    confidence: reviewedWinner ? 'measured' : 'estimated',
-    dimensions,
-    missingSignals: [
-      ...(measured ? [] : ['No live latency benchmark has been recorded for this local recipe.']),
-      ...(reviewedWinner ? [] : ['No revealed local benchmark judgment has selected this recipe yet.']),
-      'Context window, tool support, and vision support depend on the exact model served.',
-    ],
-    nextStep: reviewedWinner
-      ? 'Review the saved benchmark judgment, then use a separate confirmed apply/update route only if the user wants this winner as the default.'
-      : measured
-        ? 'Review the saved comparison and save a revealed judgment before recommending a default-model change.'
-        : 'Start the local server, refresh models, then run the setupPlan benchmark action before changing the default model.',
-  };
+export async function localRecipeReadinessScore(recipe: LocalModelRecipe, fit: LocalModelRecipeFit, detected: boolean,
+  evidence: LocalModelBenchmarkEvidence, options: ModelReadingOptions = {}): Promise<ModelReadinessScore> {
+  if (!options.sourceOwner) return deferredModelReadiness();
+  const exampleVision = [];
+  for (const example of recipe.modelExamples) {
+    // An example name alone is explicitly uncertain, regardless of familiar words.
+    const result = await readExampleVision(example, { advertisedCapabilities: null, recipeRequirements: recipe.hardware }, options);
+    exampleVision.push({ example, ...result, value: null, probability: null, confidence: null, outcome: 'deferred', reason: 'No advertised capability or documentation is supplied for this example.' });
+  }
+  const reading = await readRoute({ subject: recipe, rubric: RUBRIC, detected, benchmarkEvidence: evidence,
+    localFit: fit.outcome === 'ready' ? fit : null, exampleVision, provider: null,
+    capabilities: null, contextWindow: null, measuredLatency: null, cost: null }, options);
+  const missing = new Map<ModelReadinessDimension['id'], string>([
+    ['latency', 'Recipe examples have no measured latency for an exact configured route.'],
+    ['context-window', 'Verify the context window of the exact model served.'],
+    ['tool-support', 'Verify tool calling on the exact model and server.'],
+    ['vision', 'Example names do not establish advertised vision capability.'],
+    ['cost', 'Recipe identity does not establish the cost of a configured route.'],
+    ['privacy', 'Recipe identity does not establish the endpoint or prompt-data transfer policy.'],
+  ]);
+  return { ...described(reading, missing), exampleVision };
 }
 
-export function scoreLocalModelRecipe(
-  recipe: LocalModelRecipe,
-  hardware: LocalModelHardwareProfile,
-  detection: LocalModelDetection,
-): LocalModelRecipeFit {
-  const stackId = localRecipeStackId(recipe);
-  const detected = detection.stacks.includes(stackId);
-  const reasons: string[] = [];
-  let score = 45;
-  if (detected) {
-    score += 18;
-    reasons.push('matching local provider or model route already detected');
-  }
-  if (recipe.id === 'ollama') {
-    score += 20;
-    reasons.push('lowest setup friction for most local users');
-    if (hardware.ramGb >= 16) {
-      score += 12;
-      reasons.push(`${hardware.ramGb} GB RAM is enough for practical 7B/8B quantized models`);
-    } else {
-      score -= 10;
-      reasons.push('RAM is below the comfortable 16 GB local-model baseline');
-    }
-    if (hardware.acceleratorHint === 'apple-silicon') {
-      score += 10;
-      reasons.push('Apple Silicon is a good Ollama path');
-    }
-  } else if (recipe.id === 'llama-cpp') {
-    score += 16;
-    reasons.push('best offline fallback when downloads and serving stay manual');
-    if (hardware.ramGb >= 8) {
-      score += 10;
-      reasons.push('can use smaller GGUF quantized models within available system memory');
-    }
-    if (hardware.acceleratorHint === 'apple-silicon') {
-      score += 8;
-      reasons.push('Metal-backed llama.cpp is a strong local path on Apple Silicon');
-    }
-  } else if (recipe.id === 'vllm') {
-    score += hardware.acceleratorHint === 'cuda-env' ? 30 : -12;
-    reasons.push(hardware.acceleratorHint === 'cuda-env'
-      ? 'CUDA environment hints are present'
-      : 'no CUDA hint was detected; vLLM may still work, but requires GPU/driver verification');
-    if (hardware.ramGb >= 32) {
-      score += 10;
-      reasons.push('system memory is comfortable for GPU serving overhead');
-    }
-  } else {
-    score += detected ? 10 : 4;
-    reasons.push(detected
-      ? 'existing OpenAI-compatible local route can be reused'
-      : 'useful when the user already runs LM Studio, LocalAI, TGI, or another local endpoint');
-  }
-  if (hardware.cpuThreads >= 8 && recipe.id !== 'vllm') {
-    score += 5;
-    reasons.push(`${hardware.cpuThreads} CPU threads help local inference`);
-  }
-  const finalScore = clampFit(score);
-  return {
-    score: finalScore,
-    level: fitLevel(finalScore),
-    reasons,
-  };
+export async function scoreLocalModelRecipe(recipe: LocalModelRecipe, hardware: LocalModelHardwareProfile, detection: LocalModelDetection,
+  options: ModelReadingOptions = {}): Promise<LocalModelRecipeFit> {
+  if (!options.sourceOwner) return deferredRecipeFit();
+  return withModelReadingSource({ recipe, hardware, detection, rubric: RUBRIC }, options, async (state, scoped) => {
+    const decision = routingRegistry.get('agent.models.local-recipe-fit');
+    if (!decision || typeof modelReadingServicePath(decision, ['run']) !== 'function') return { ...deferredRecipeFit(), outcome: 'unavailable' };
+    const battery = decision as typeof localRecipeFit;
+    const assertDefinition = batteryDefinitionGuard(battery);
+    const port = judgmentPort('agent.models.local-recipe-fit');
+    const backend = captureBackend(port), { model, recorder } = backend;
+    const assertBackend = () => {
+      assertDefinition(); backend.assertCurrent();
+      if (routingRegistry.get(battery.name) !== decision || judgmentPort('agent.models.local-recipe-fit') !== port) throw new ToolInputProjectionError('held');
+    };
+    scoped.retainCurrent?.(assertBackend, 'agent.models.local-recipe-fit');
+    const assertCurrent = () => { scoped.signal?.throwIfAborted(); scoped.assertCurrent?.(); assertBackend(); };
+    const guarded: typeof port = { model, ...(recorder ? { recorder: {
+      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
+      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
+    } } : {}), ask: async request => {
+      assertCurrent(); const result = await port.ask({ ...request,
+        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); }, assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); } });
+      assertCurrent(); return result;
+    } };
+    assertCurrent(); const run = await battery.run(guarded, state as unknown as Parameters<typeof battery.run>[1], { site: 'agent.models.local-recipe-fit', ...(scoped.signal ? { signal: scoped.signal } : {}) });
+    assertCurrent(); const reading = localRecipeFitFrom(run);
+    return { ...reading, reasons: reading.outcome === 'ready' ? ['Settled hardware and recipe-requirements reading.'] : ['Hardware fit is unsettled.'] };
+  });
 }

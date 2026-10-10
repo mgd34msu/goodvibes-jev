@@ -57,3 +57,8 @@ registry.register(cacheMinimum);
 // Provider setup presentation is separate from routing/catalog access semantics.
 import { providerSetupReading } from '../providers/setup-reading.js';
 registry.register(providerSetupReading);
+
+// Agent model readiness and local hardware/recipe fit share one canonical definition.
+import { localRecipeFit, routeReadiness } from './batteries/model-readiness.js';
+registry.register(routeReadiness);
+registry.register(localRecipeFit);
