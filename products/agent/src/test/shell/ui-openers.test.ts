@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { wireShellUiOpeners } from '../../shell/ui-openers.ts';
-import { createTestManagers } from '../helpers/test-managers.ts';
+import { buildTestModelDefinition, createTestManagers } from '../helpers/test-managers.ts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { getBundledTheme, resolveTheme } from '@goodvibes-jev/engine/sdk/platform/presentation';
 import { dirname } from 'node:path';
@@ -131,7 +133,14 @@ describe('wireShellUiOpeners', () => {
   // do exactly the same, a freshly-opened picker reflects models the provider
   // started or stopped serving, without blocking the open.
   describe('live model discovery re-check on picker open', () => {
-    function wirePickerWithRegistry(refreshLiveModelDiscovery: ReturnType<typeof mock>): void {
+    let previousPort: ReturnType<typeof installJudgmentPort>;
+    let families: ReturnType<typeof fakePort>;
+    beforeEach(() => {
+      families = fakePort((_name, question) => choiceAnswer(question, 'Other', 0.99));
+      previousPort = installJudgmentPort(families.port);
+    });
+    afterEach(() => { installJudgmentPort(previousPort); });
+    function wirePickerWithRegistry(refreshLiveModelDiscovery: ReturnType<typeof mock>, getSelectableModels = () => [] as ReturnType<typeof buildTestModelDefinition>[]): void {
       input = {
         indicatorFocused: false,
         modelPicker: {
@@ -161,7 +170,7 @@ describe('wireShellUiOpeners', () => {
         conversation: conversation as never,
         configManager: testManagers.configManager,
         providerRegistry: {
-          getSelectableModels: () => [],
+          getSelectableModels,
           refreshLiveModelDiscovery,
         } as never,
         runtime: { model: 'm', provider: 'p' } as never,
@@ -187,18 +196,34 @@ describe('wireShellUiOpeners', () => {
       expect(refreshLiveModelDiscovery).toHaveBeenCalledTimes(1);
     });
 
-    test('a re-check that changes any provider list re-renders once more than an unchanged one', async () => {
-      const rendersFor = async (added: string[]): Promise<number> => {
+    test('a changed live list lands in the open picker and repaints before loading finishes', async () => {
+      for (const changed of [false, true]) {
+        let completeRefresh!: (value: { providerId: string; models: string[]; source: 'live'; added: string[]; removed: string[] }[]) => void;
+        const refresh = new Promise<Parameters<typeof completeRefresh>[0]>((resolve) => { completeRefresh = resolve; });
+        let catalog: ReturnType<typeof buildTestModelDefinition>[] = [];
+        const getSelectableModels = mock(() => catalog);
+        wirePickerWithRegistry(mock(() => refresh), getSelectableModels);
+        const picker = input.modelPicker as { models: typeof catalog; catalogLoading: boolean };
+        const frames: { ids: string[]; loading: boolean }[] = [];
+        let loaded!: () => void;
+        const done = new Promise<void>((resolve) => { loaded = resolve; });
         render.mockClear();
-        wirePickerWithRegistry(mock(async () => [{ providerId: 'openai', models: ['a'], source: 'live' as const, added, removed: [] }]));
+        render.mockImplementation(() => {
+          frames.push({ ids: picker.models.map((model) => model.id), loading: picker.catalogLoading });
+          if (!picker.catalogLoading) loaded();
+        });
         (commandContext.openModelPicker as () => void)();
-        expect(render.mock.calls.length).toBe(1); // the picker is on screen before any read resolves
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        return render.mock.calls.length;
-      };
-      const unchanged = await rendersFor([]);
-      const changed = await rendersFor(['a']);
-      expect(changed).toBe(unchanged + 1); // the refreshed list lands in the open picker
+        expect(frames).toEqual([{ ids: [], loading: true }]);
+        catalog = changed ? [buildTestModelDefinition('openai', 'a')] : [];
+        completeRefresh([{ providerId: 'openai', models: catalog.map((model) => model.id), source: 'live', added: changed ? ['a'] : [], removed: [] }]);
+        await done;
+        expect(getSelectableModels).toHaveBeenCalledTimes(changed ? 2 : 1);
+        expect(picker.models).toEqual(catalog);
+        expect(families.requests.map((request) => request.state)).toEqual(changed
+          ? [{ id: 'a', displayName: 'a', provider: 'openai' }] : []);
+        expect(frames).toContainEqual({ ids: changed ? ['a'] : [], loading: true });
+        expect(frames.at(-1)).toEqual({ ids: changed ? ['a'] : [], loading: false });
+      }
     });
 
     test('a rejecting re-check never breaks the picker open', async () => {

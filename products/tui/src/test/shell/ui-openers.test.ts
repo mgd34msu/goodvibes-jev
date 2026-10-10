@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
 import { wireShellUiOpeners } from '../../shell/ui-openers.ts';
 import { createTestManagers } from '../helpers/test-managers.ts';
@@ -6,6 +6,7 @@ import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { getBundledTheme, resolveTheme } from '@goodvibes-jev/engine/sdk/platform/presentation';
 import { dirname } from 'node:path';
 import { SettingsModal } from '../../input/settings-modal.ts';
+import { ModelPickerModal } from '../../input/model-picker.ts';
 import { activeTokens, activeThemeMode, getActiveThemeName, listThemeChoices, normalizeThemeName, setActiveThemeMode, setActiveThemeName } from '../../renderer/theme.ts';
 import { resetTerminalPaletteForTests } from '../../renderer/terminal-palette.ts';
 import { makeTestShellViews } from '../helpers/shell-views.ts';
@@ -53,25 +54,16 @@ describe('wireShellUiOpeners', () => {
     testManagers = createTestManagers();
     fakeEmbeddingRegistry = makeFakeEmbeddingRegistry();
     commandContext = { print: mock(() => {}) };
+    // Keep catalog ownership and late-fill handling real; observing opener calls
+    // must not replace the modal's lifecycle with a partial handwritten fixture.
+    const modelPicker = new ModelPickerModal(
+      testManagers.favoritesStore, testManagers.benchmarkStore, testManagers.providerRegistry,
+    );
+    spyOn(modelPicker, 'openAllModels');
+    spyOn(modelPicker, 'openProviders');
     input = {
       indicatorFocused: false,
-      modelPicker: {
-        embeddingProviders: [],
-        setTargetInfos: mock(() => {}),
-        openAllModels: mock(() => {}),
-        openProviders: mock(() => {}),
-        loadRecentModels: mock(async () => {}),
-        getSelectedTargetInfo: mock(() => null),
-        target: 'main',
-        // The picker opens on the cached catalog, then the slow reads land through
-        // fillCatalog (input/model-picker-open.ts); the stub applies them the same way.
-        beginCatalogLoad: mock(() => 1),
-        fillCatalog: mock(function (this: Record<string, unknown>, _ticket: number, fill: { embeddingProviders?: unknown[]; targetInfos?: unknown[] }) {
-          if (fill.embeddingProviders) this.embeddingProviders = fill.embeddingProviders;
-          if (fill.targetInfos) (this.setTargetInfos as (infos: unknown[]) => void)(fill.targetInfos);
-          return true;
-        }),
-      },
+      modelPicker,
       modalOpened: mock(() => {}),
       openSelection: mock(() => {}),
       surfaceModals: new SurfaceModalHost(),
@@ -297,17 +289,16 @@ describe('wireShellUiOpeners', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    function getModelPicker(): Record<string, unknown> {
-      return input.modelPicker as Record<string, unknown>;
+    function getModelPicker(): ModelPickerModal {
+      return input.modelPicker as ModelPickerModal;
     }
 
     test('adds a 5th "embeddings" target with an honest provider + dimensions + configured note', async () => {
       await openModelPickerAndFlush();
 
-      const setTargetInfos = getModelPicker().setTargetInfos as ReturnType<typeof mock>;
-      // Once on open (cached), once more when the embeddings probe lands.
-      expect(setTargetInfos).toHaveBeenCalledTimes(2);
-      const targets = setTargetInfos.mock.calls.at(-1)![0] as Array<{ target: string; label: string; configuredNote?: string; model: string }>;
+      const targets = getModelPicker().targetInfos;
+      expect(getModelPicker().active).toBe(true);
+      expect(getModelPicker().catalogLoading).toBe(false);
       expect(targets.map((t) => t.target)).toEqual(['main', 'helper', 'tool', 'tts', 'embeddings']);
 
       const embeddingsTarget = targets.find((t) => t.target === 'embeddings')!;
@@ -319,8 +310,7 @@ describe('wireShellUiOpeners', () => {
     test('the four existing targets are unchanged', async () => {
       await openModelPickerAndFlush();
 
-      const setTargetInfos = getModelPicker().setTargetInfos as ReturnType<typeof mock>;
-      const targets = setTargetInfos.mock.calls.at(-1)![0] as Array<{ target: string; label: string }>;
+      const targets = getModelPicker().targetInfos;
       expect(targets.find((t) => t.target === 'main')?.label).toBe('Main Chat');
       expect(targets.find((t) => t.target === 'helper')?.label).toBe('Helper Model');
       expect(targets.find((t) => t.target === 'tool')?.label).toBe('Tool LLM');
@@ -330,7 +320,7 @@ describe('wireShellUiOpeners', () => {
     test('populates the picker\'s embedding-provider list, showing unconfigured providers honestly', async () => {
       await openModelPickerAndFlush();
 
-      const embeddingProviders = getModelPicker().embeddingProviders as Array<{ id: string; configured: boolean }>;
+      const embeddingProviders = getModelPicker().embeddingProviders;
       expect(embeddingProviders).toHaveLength(2);
       expect(embeddingProviders.find((p) => p.id === 'hashed-local')?.configured).toBe(true);
       expect(embeddingProviders.find((p) => p.id === 'openai')?.configured).toBe(false);
@@ -340,9 +330,24 @@ describe('wireShellUiOpeners', () => {
       fakeEmbeddingRegistry.getDefaultProviderId.mockReturnValue('vanished-provider');
       await openModelPickerAndFlush();
 
-      const setTargetInfos = getModelPicker().setTargetInfos as ReturnType<typeof mock>;
-      const targets = setTargetInfos.mock.calls.at(-1)![0] as Array<{ target: string; configuredNote?: string }>;
+      const targets = getModelPicker().targetInfos;
       expect(targets.find((t) => t.target === 'embeddings')?.configuredNote).toBe('vanished-provider · unregistered');
+    });
+
+    test('closing the real picker prevents a pending embedding probe from repopulating it', async () => {
+      let resolveStatus!: (statuses: FakeEmbeddingStatus[]) => void;
+      fakeEmbeddingRegistry.status.mockReturnValueOnce(new Promise(resolve => { resolveStatus = resolve; }));
+      (commandContext.openModelPicker as () => void)();
+      const picker = getModelPicker();
+      expect(picker.active).toBe(true);
+      expect(picker.catalogLoading).toBe(true);
+      picker.close();
+      resolveStatus([{ id: 'late-provider', label: 'Late Provider', dimensions: 512, configured: true }]);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(picker.active).toBe(false);
+      expect(picker.catalogLoading).toBe(false);
+      expect(picker.targetInfos).toEqual([]);
+      expect(picker.embeddingProviders).toEqual([]);
     });
 
     test('completeEmbeddingProviderSelection persists the selection via the registry', () => {

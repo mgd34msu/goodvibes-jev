@@ -1,6 +1,7 @@
 /** Shared, snapshot-bound family judgments for model picker surfaces. */
 import { JudgmentPortMissingError, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { mapLimit, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { modelFamily, type ModelFamilyOption } from './batteries/model-family.js';
 
 export type ModelFamily = ModelFamilyOption;
@@ -44,9 +45,12 @@ export class ModelFamilyReadings {
   /** Undefined means unread, failed or unsettled, never an inferred Other verdict. */
   known(model: ModelFamilyInput): ModelFamily | undefined {
     try {
-      return this.cache(judgmentPort(SITE)).families.get(evidenceKey(model));
+      // Screen the complete original even on cache hits: a caller can replace
+      // non-projected metadata while retaining the same family evidence key.
+      const evidence = snapshotJudgmentInput(model) as ModelFamilyInput;
+      return this.cache(judgmentPort(SITE)).families.get(evidenceKey(evidence));
     } catch (error) {
-      if (error instanceof JudgmentPortMissingError) return undefined;
+      if (error instanceof JudgmentInputError || error instanceof JudgmentPortMissingError) return undefined;
       throw error;
     }
   }
@@ -57,10 +61,18 @@ export class ModelFamilyReadings {
    */
   async read(models: readonly ModelFamilyInput[]): Promise<boolean> {
     if (models.length === 0) return false;
+    // Capture and screen every complete original before projection, cache keys,
+    // port access or recording. Never spread borrowed fields before this floor.
+    // Refused models remain ungrouped without stranding valid sibling readings.
+    const evidence: ModelFamilyInput[] = [];
+    const failures: unknown[] = [];
+    for (const model of models) {
+      try { evidence.push(snapshotJudgmentInput(model) as ModelFamilyInput); }
+      catch (error) { failures.push(error); }
+    }
+    if (evidence.length === 0) throw failures[0];
     const port = judgmentPort(SITE);
     const cache = this.cache(port);
-    const evidence = models.map((model) => ({ ...model }));
-    const failures: unknown[] = [];
     const results = await mapLimit(evidence, READ_CONCURRENCY, async (model) => {
       try {
         return await this.readOne(model, port, cache);

@@ -53,7 +53,14 @@ describe('foundation surface stability gate', () => {
     resetPeerFoundationState();
     const note = '# Foundation Surface Note\n\nThis note proves the in-process knowledge API remains consumable.\n';
     const rejected: string[] = [];
+    const familyEvidence = () => runtimeServices.providerRegistry.listModels().map(({ id, displayName, provider }) => ({ id, displayName, provider }));
+    const familyReadings: unknown[] = [];
     const readings = fakePort((name, question, state) => {
+      if (name === 'family' && familyEvidence().some((model) => JSON.stringify(model) === JSON.stringify(state))) {
+        familyReadings.push(state);
+        // A deliberate synthetic judgment, not a name-based family heuristic.
+        return choiceAnswer(question, 'Other', 0.99);
+      }
       const facts = state as { filename?: string; mimeType?: string; sample?: string };
       if (name === 'kind' && facts.filename === 'foundation-surface-note.md' && facts.mimeType === 'text/markdown') {
         return choiceAnswer(question, 'document', 0.99);
@@ -126,6 +133,9 @@ describe('foundation surface stability gate', () => {
     expect(providerIds.length).toBeGreaterThan(0);
     expect(providerIds).toContain(currentModel.providerId);
     expect(selectableModels.map((model) => model.selectable)).not.toContain(false);
+    // Metadata enrichment is intentionally nonblocking; join its exact catalog reads before teardown.
+    await Providers.modelFamilyReadings.read(runtimeServices.providerRegistry.listModels());
+    expect(familyReadings).toContainEqual({ id: 'mock-model', displayName: 'mock-model', provider: 'mock' });
     expect(favorites.pinned).toEqual([]);
     expect(favorites.recent).toEqual([]);
     expect(runtimeMetadata.scope).toBe('all');
