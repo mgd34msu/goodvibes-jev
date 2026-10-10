@@ -39,7 +39,8 @@
  * - `permissions.mode` is `allow-all`: nobody is at a terminal to approve the
  *   units' writes and commands, and the project is a temporary directory;
  * - `provider.model` is the session model (CONTRACT_PROOF_SESSION_MODEL,
- *   default gemini:gemini-3.5-flash): a session-mode contract is worked by the
+ *   default gemini:gemini-3.5-flash): this is a requested model, not evidence
+ *   of the serving model. A session-mode contract is worked by the
  *   session's own turns on the configured model;
  * - the model providers are those whose keys are named in
  *   CONTRACT_PROOF_PROVIDER_KEYS (comma-separated environment variable names;
@@ -51,7 +52,9 @@
  *   TYPESAFE_API_KEY=... bun run --cwd packages/engine contract-proof
  *
  * A full run takes tens of minutes (every unit is real model work, checked
- * live). Exit 0 when every assertion holds, 1 otherwise.
+ * live). Exit 0 when every behavioral assertion holds, 1 otherwise. Neither
+ * result qualifies the serving model: provider-returned model identity is
+ * not retained in this proof's evidence (see docs/audit/contract-proof-model-provenance.md).
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -65,6 +68,7 @@ import type { ContractUnitView, ContractView, CriterionView, UnitCheck } from '.
 import { decisionLogPath } from '../sdk/src/platform/state/decision-log.ts';
 import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
 import { PROOF_RETAINED_MARKER, STALE_PROOF_TMP_MS, retainProofOutput } from './proof-temp.ts';
+import { describeRequestedModel, describeProofResult } from './contract-proof-model.ts';
 
 const BIN = resolve(dirname(new URL(import.meta.url).pathname), '..', 'sdk', 'src', 'bin', 'goodvibes-contract.ts');
 /** The longest either contract may run before the proof gives up on it. */
@@ -331,6 +335,7 @@ type DeepCheck = ContractView['checks'][number];
 
 function printTranscript(contract: ContractView): void {
   say(`Contract ${contract.id}: ${contract.status}${contract.sessionMode === true ? ' (session mode)' : ''}, isolation ${contract.isolation}`);
+  if (contract.sessionMode === true) say(describeRequestedModel('session configuration', SESSION_MODEL));
   say(`Ask: ${contract.ask}`);
   say(`Goal: ${contract.goal}`);
   say('Contract criteria (each with the words of the ask it traces to):');
@@ -346,7 +351,11 @@ function printTranscript(contract: ContractView): void {
     say(`Group ${group.id} "${group.title}" (${group.kind}, ${group.status})`);
     for (const criterion of group.criteria) say(`  [${criterion.id}] ${criterion.text} (serves ${criterion.serves.join(', ')})`);
     for (const unit of contract.units.filter((candidate) => candidate.groupId === group.id)) {
-      say(`  Unit ${unit.id} "${unit.title}" (${unit.role}, ${unit.status}), route ${unit.route?.model ?? '(none)'}`);
+      say(`  Unit ${unit.id} "${unit.title}" (${unit.role}, ${unit.status})`);
+      say(`    ${describeRequestedModel('unit route', unit.route?.model)}`);
+      for (const attempt of unit.attemptUnits ?? []) {
+        say(`    Attempt ${attempt.id}: ${describeRequestedModel('unit route', attempt.route?.model)}`);
+      }
       for (const criterion of unit.criteria) say(`    [${criterion.id}] ${criterion.text} (serves ${criterion.serves.join(', ')})`);
       let nudged = false;
       for (const unitCheck of unit.checks) {
@@ -441,6 +450,7 @@ heading('Setup');
 say(`Project: ${root}`);
 say(`Model providers: ${presentKeys.map((name) => name.replace(/_API_KEY$/, '').toLowerCase()).join(', ')} (keys ${presentKeys.join(', ')})`);
 say(`Base commit: ${git(root, 'rev-parse', 'HEAD').out}`);
+say(describeRequestedModel('session configuration', SESSION_MODEL));
 
 heading('Run 1: a multi-unit contract through goodvibes-contract run');
 say(`Ask: ${MAIN_ASK}`);
@@ -585,8 +595,8 @@ if (sessionContract !== undefined) {
 }
 
 heading('Result');
+say(describeProofResult(failures.length));
 if (failures.length === 0) {
-  say('Every assertion held.');
   rmSync(root, { recursive: true, force: true });
 } else {
   retainProofOutput(root);
