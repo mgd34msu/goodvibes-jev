@@ -1,1 +1,40 @@
+# Current native output and explicit build/preparation coordination.
 /native/
+/.tmp/
+
+# Local dependency/tool environments. Shared node_modules/dist/Python caches
+# are already covered by the workspace root; do not ignore vendored source.
+/venv/
+/.venv/
+
+# Private environment and encrypted payloads, including inside allowed resources.
+.env
+.env.*
+*.enc
+
+# Override the root's blanket .goodvibes/ exclusion only for the original
+# source-controlled resource families. Other runtime state remains private.
+!/.goodvibes/
+/.goodvibes/*
+!/.goodvibes/skills/
+!/.goodvibes/agents/
+!/.goodvibes/GOODVIBES.md
+!/.goodvibes/.npmignore
+!/.goodvibes/eval/
+/.goodvibes/eval/*
+!/.goodvibes/eval/baseline.json
+
+# Local assistant state and deployment/UAT observations, not canonical audits.
+/.codex
+/.claude/
+/docs/uat/
+
+# Known local scratch directories; deliberately no broad tmp* filename rule.
+/.test-tmp/
+/.test-edit-tmp*/
+/.tmp-tests/
+/test-tmp-hooks/
+/test-tmp*/
+/tmp/
+/.gvtmp/
+/.test-tmp-scratch/

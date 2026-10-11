@@ -230,7 +230,7 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
 
   function raise(run: ContractRun, input: EscalationInput): Escalation {
     const { contract } = run;
-    if (contract.nativeSource !== undefined) throw new Error('Native contracts cannot enter owner approval');
+    if (contract.nativeSource !== undefined || contract.originalSource !== undefined) throw new Error('Source-bound contracts cannot enter owner approval');
     const question = input.question ?? buildEscalationQuestion(contract, input);
     const escalation: Escalation = {
       id: `${contract.id}.e${contract.escalations.length + 1}`,

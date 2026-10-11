@@ -17,7 +17,7 @@ const TOKEN = 'e2e-shared-daemon-token';
 const model = startStubModel(() => ({ text: 'unused' }));
 let tui: TuiSession | null = null;
 let daemon: BootedDaemon | null = null;
-afterAll(async () => { tui?.stop(); await daemon?.stop(); model.stop(); });
+afterAll(async () => { await tui?.stop(); await daemon?.stop(); model.stop(); });
 
 interface DaemonSession { readonly kind: string; readonly project: string; readonly surfaceKinds: readonly string[] }
 

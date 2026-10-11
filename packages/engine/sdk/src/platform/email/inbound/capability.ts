@@ -33,8 +33,11 @@
  * answer even then leaves the question genuinely unknown.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertImapReadingCurrent, imapFailureText, ImapReadingError, readImapCursorFailure } from '../imap-readings.js';
 import {
-  classifyServerRefusal,
+  classifyServerRefusalOwned,
+  assertImapFailureCurrent,
   describeEmailCapabilityFailure,
   resolveIdleSupport,
 } from '../imap-open.js';
@@ -313,6 +316,8 @@ export function verdictForBodyReadability(
 
 /** Everything the caller can read off a failure, already classified. */
 export interface OpenFailureVerdict {
+  /** Original reading owner, retained through the watcher’s final publication. */
+  readonly assertCurrent?: (() => void) | undefined;
   readonly verdict: InboundCapabilityVerdict;
   /**
    * True when retrying on a backoff cannot help and the watcher must stop
@@ -357,8 +362,9 @@ const REASON_FOR_NOTICE: Readonly<
  * email layer and a competing one from here.
  */
 export function classifyOpenFailure(error: unknown): OpenFailureVerdict {
-  const text = errorText(error);
-  const notice = describeEmailCapabilityFailure(error);
+  const text = 'The mail connection failed; server details withheld.';
+  let notice;
+  try { notice = describeEmailCapabilityFailure(error); } catch { notice = null; }
   if (notice === null) {
     // A socket that never reached a server, or a factory that threw. Nothing
     // said it was about the account, so it is a reconnect.
@@ -373,11 +379,12 @@ export function classifyOpenFailure(error: unknown): OpenFailureVerdict {
     verdict: {
       state: STATE_BY_REASON[reason],
       reason,
-      detail: notice.serverMessage.length > 0 ? notice.serverMessage : text,
+      detail: text,
       fix: notice.ownerMessage,
     },
     terminal: notice.terminal,
     notice,
+    assertCurrent: () => assertImapFailureCurrent(error),
   };
 }
 
@@ -402,37 +409,45 @@ export function classifyOpenFailure(error: unknown): OpenFailureVerdict {
  *     transiently, under load, and on a folder being reindexed, and stopping
  *     for an hour over one would turn a hiccup into silence.
  */
-export function classifyReadFailure(
+export async function classifyReadFailure(
   error: unknown,
   phase: 'search' | 'fetch' = 'fetch',
-): OpenFailureVerdict {
-  const text = errorText(error);
+  options: JudgmentReadingOptions = {},
+): Promise<OpenFailureVerdict> {
+  assertImapReadingCurrent(options);
+  const text = imapFailureText(error);
   const transient = { terminal: false, notice: null } as const;
   if (!/^IMAP command failed:/.test(text)) {
-    return { verdict: capabilityVerdict('reconnecting', text), ...transient };
+    return { verdict: capabilityVerdict('reconnecting', 'The mail command failed; server details withheld.'), ...transient };
   }
-  const named = classifyServerRefusal(text, 'connection-failed');
+  const reading = await classifyServerRefusalOwned(text, 'connection-failed', options);
+  reading.assertCurrent();
+  const named = reading.value;
+  const retained = { assertCurrent: reading.assertCurrent };
+  assertImapReadingCurrent(options);
   if (named === 'server-unavailable') {
-    return { verdict: capabilityVerdict('server-unavailable', text), ...transient };
+    return { ...retained, verdict: capabilityVerdict('server-unavailable', 'The mail command failed; server details withheld.'), ...transient };
   }
   if (named === 'authentication-rejected') {
     return {
-      verdict: capabilityVerdict('credentials-rejected', text),
+      ...retained,
+      verdict: capabilityVerdict('credentials-rejected', 'The mail command failed; server details withheld.'),
       terminal: true,
       notice: null,
     };
   }
   if (named === 'mailbox-unavailable') {
     return {
-      verdict: capabilityVerdict('mailbox-unreadable', text),
+      ...retained,
+      verdict: capabilityVerdict('mailbox-unreadable', 'The mail command failed; server details withheld.'),
       terminal: true,
       notice: null,
     };
   }
   if (phase === 'fetch') {
-    return { verdict: capabilityVerdict('fetch-refused', text), terminal: true, notice: null };
+    return { ...retained, verdict: capabilityVerdict('fetch-refused', 'The mail command failed; server details withheld.'), terminal: true, notice: null };
   }
-  return { verdict: capabilityVerdict('reconnecting', text), ...transient };
+  return { ...retained, verdict: capabilityVerdict('reconnecting', 'The mail command failed; server details withheld.'), ...transient };
 }
 
 /**
@@ -473,19 +488,23 @@ function errnoOf(error: unknown): string {
  * and the tenth is a condition the owner has to be told about, because at that
  * point "it will clear on its own" has been disproved by the machine.
  */
-export function classifyLocalFailure(
+export async function classifyLocalFailure(
   error: unknown,
   consecutive: number,
   giveUpAfter: number,
-): OpenFailureVerdict {
-  const text = errorText(error);
+  options: JudgmentReadingOptions = {},
+): Promise<OpenFailureVerdict> {
+  assertImapReadingCurrent(options);
+  if (error instanceof ImapReadingError) return { verdict: capabilityVerdict(
+    'reconnecting', error.message), terminal: false, notice: null };
+  const text = imapFailureText(error);
   const errno = errnoOf(error);
   const permanent = PERMANENT_STORE_ERRNOS.has(errno);
   const exhausted = consecutive >= giveUpAfter;
   if (!permanent && !exhausted) {
     return {
       verdict: capabilityVerdict('reconnecting',
-        `The mailbox watcher could not complete a pass: ${text}. `
+        'The mailbox watcher could not complete a pass. '
         + `Attempt ${String(consecutive)} of ${String(giveUpAfter)} before this is `
         + 'treated as permanent.'),
       terminal: false,
@@ -496,10 +515,11 @@ export function classifyLocalFailure(
   // failure that looks like one borrows that advice. Anything else keeps its
   // own words: sending an owner to check disk space over an unrelated bug is
   // the same class of mistake as calling a connection limit a bad password.
-  const reason = STORAGE_ERRNOS.has(errno) || /\bcursor\b/i.test(text)
-    ? 'local-store-unwritable'
-    : 'watcher-stopped-unexpectedly';
-  return { verdict: capabilityVerdict(reason, text), terminal: true, notice: null };
+  const reading = STORAGE_ERRNOS.has(errno) ? undefined : await readImapCursorFailure(text, options);
+  reading?.assertCurrent();
+  const reason = reading === undefined || reading.value ? 'local-store-unwritable' : 'watcher-stopped-unexpectedly';
+  assertImapReadingCurrent(options);
+  return { assertCurrent: reading?.assertCurrent, verdict: capabilityVerdict(reason, 'The mailbox watcher could not complete a pass; failure details withheld.'), terminal: true, notice: null };
 }
 
 export function errorText(error: unknown): string {

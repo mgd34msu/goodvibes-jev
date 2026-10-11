@@ -1,3 +1,4 @@
+import { PostalAddressHeldError, type PostalReadOptions, type PreparedPostalAddress } from '../../config/postal-address.js';
 /**
  * address-store.ts, the stored shipping and billing addresses, read from
  * config.
@@ -38,7 +39,30 @@ function isEntirelyBlank(address: PostalAddress): boolean {
     && address.country === '';
 }
 
-export function configBackedAddressStore(config: PaymentsConfigReader): AddressStore {
+export function configBackedAddressStore(
+  config: PaymentsConfigReader,
+  preparePostalAddress?: ((kind: AddressKind, options?: PostalReadOptions) => Promise<PreparedPostalAddress>) | undefined,
+): AddressStore {
+  if (preparePostalAddress) return {
+    async read(kind, options) { const prepared = await preparePostalAddress(kind, options); prepared.assertCurrent(); return prepared.value; },
+    async prepare(kinds, options = {}) {
+      const captured = new Map<AddressKind, PreparedPostalAddress>();
+      for (const kind of new Set(kinds)) {
+        for (const value of captured.values()) value.assertCurrent();
+        captured.set(kind, await preparePostalAddress(kind, options));
+      }
+      const assertCurrent = () => { options.signal?.throwIfAborted(); for (const value of captured.values()) value.assertCurrent(); };
+      assertCurrent();
+      return Object.freeze({ assertCurrent, async read(kind: AddressKind) {
+        assertCurrent(); const value = captured.get(kind);
+        if (!value) throw new PostalAddressHeldError();
+        return value.value;
+      } });
+    },
+  };
+  // Compatibility for explicitly supplied config-only stores. Real daemon
+  // composition supplies the prepared reader; a profile-backed get holds.
+
   return {
     async read(kind: AddressKind): Promise<PostalAddress | null> {
       const address: PostalAddress = {

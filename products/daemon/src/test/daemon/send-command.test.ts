@@ -94,6 +94,27 @@ describe('send selection and canonical enablement', () => {
     expect(result.lines.join('\n')).toContain('arrival is not verified');
   });
 
+  test('default selection reports the fixed catalog channel and original unique-destination reason', async () => {
+    const fixture = deps();
+    const result = await runSendCommand(['body'], fixture.ports);
+    expect(result.exitCode).toBe(0);
+    expect(result.lines.join('\n')).toContain('using ntfy');
+    expect(result.lines.join('\n')).toContain('the only channel that is switched on and has a destination configured');
+  });
+
+  test('unknown and disabled choices name configured channels without disclosing input, destinations or redirecting', async () => {
+    const fixture = deps({ 'surfaces.telegram.enabled': false, 'surfaces.googleChat.enabled': true,
+      'surfaces.googleChat.webhookUrl': 'https://example.invalid/synthetic-private-capability?key=secret' });
+    for (const [channel, code] of [['synthetic-private-unknown', 2], ['telegram', 1]] as const) {
+      const result = await runSendCommand(['--channel', channel, 'body'], fixture.ports);
+      expect(result.exitCode).toBe(code);
+      expect(result.lines.join('\n')).toContain('Configured and ready: ntfy, googleChat.');
+      expect(result.lines.join('\n')).not.toContain('synthetic-private');
+      expect(result.lines.join('\n')).not.toContain('key=secret');
+      expect(fixture.requests).toHaveLength(0); expect(fixture.stdinReads()).toBe(0);
+    }
+  });
+
   test('explicit choice resolves otherwise ambiguous configured defaults', async () => {
     const fixture = deps({ 'surfaces.telegram.enabled': true, 'surfaces.telegram.defaultChatId': 'other-default' });
     expect((await runSendCommand(['--channel=NTFY', 'body'], fixture.ports)).exitCode).toBe(0);
@@ -169,7 +190,7 @@ describe('send owns the complete asynchronous outcome', () => {
     try {
       await turn(); expect(settled).toBe(false); expect(fixture.requests).toHaveLength(0);
       input.resolve('first line\nsecond line\n');
-      expect((await running).exitCode).toBe(0); expect(fixture.requests[0]?.body).toBe('first line\nsecond line\n');
+      expect((await running).exitCode).toBe(0); expect(fixture.requests[0]?.body).toBe('first line\nsecond line');
     } finally { input.resolve(''); await running; }
   });
 
@@ -182,6 +203,17 @@ describe('send owns the complete asynchronous outcome', () => {
       const result = await running;
       expect(result.exitCode).toBe(1); expect(calls).toBe(1); expect(result.lines.join('\n')).not.toContain('synthetic-private');
     } finally { delivery.resolve(undefined); await running; }
+  });
+
+  test('stdin removes only terminal LF characters while explicit argument bytes are preserved', async () => {
+    for (const [input, expected] of [['piped from a script\n', 'piped from a script'],
+      ['  first\nsecond\n\n', '  first\nsecond'], ['body \n', 'body '], ['body\r\n', 'body\r']] as const) {
+      const fixture = deps();
+      expect((await runSendCommand([], { ...fixture.ports, readStdin: async () => input })).exitCode).toBe(0);
+      expect(fixture.requests[0]?.body).toBe(expected);
+      expect((await runSendCommand([input], fixture.ports)).exitCode).toBe(0);
+      expect(fixture.requests[1]?.body).toBe(input);
+    }
   });
 
   test('TTY, empty stdin, and broken stdin fail without dispatch', async () => {

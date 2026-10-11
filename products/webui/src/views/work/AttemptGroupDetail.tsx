@@ -1,3 +1,4 @@
+import { attemptGroupProgress } from './attempt-group-progress';
 /**
  * A best-of-N attempt group in the Work view's detail pane: the candidates as
  * rows (state, files changed, cost when priced) and, once the group is ready,
@@ -25,21 +26,21 @@ function candidateState(state: string): { word: string; tone: 'ok' | 'warn' | 'b
 export function AttemptGroupDetail({ group, onClose }: { group: FleetAttemptGroup; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [comparing, setComparing] = useState(false);
-  const held = group.candidates.filter((c) => c.state === 'held-merge').length;
+  const progress = attemptGroupProgress(group);
 
   return (
     <DetailPane
-      title={group.ready ? `Pick a winner: ${group.sourceTitle || group.groupId}` : `Best of ${group.candidates.length}: ${group.sourceTitle || group.groupId}`}
+      title={progress.ready ? `Pick a winner: ${group.sourceTitle || group.groupId}` : `Best of ${progress.count}: ${group.sourceTitle || group.groupId}`}
       status={(
         <span className="work-status">
-          <StatusDot tone={group.ready ? 'warn' : 'live'} />
-          {group.ready ? 'Ready: compare and pick' : 'Waiting for attempts'}
+          <StatusDot tone={progress.tone} />
+          {progress.ready ? 'Ready: compare and pick' : progress.status}
         </span>
       )}
-      meta={`${held} of ${group.candidates.length} held${group.judgment ? ' · judge ready' : ''}`}
+      meta={progress.meta}
       onClose={onClose}
       closeLabel="Close attempts"
-      footer={group.ready ? (
+      footer={progress.ready ? (
         <Button variant="primary" onClick={() => setComparing(true)}>Compare and pick</Button>
       ) : undefined}
     >
@@ -48,6 +49,11 @@ export function AttemptGroupDetail({ group, onClose }: { group: FleetAttemptGrou
       </p>
       <DetailSection title="Attempts">
         <RowList aria-label="Attempts">
+          {progress.unresolved.map(item => (
+            <Row key={item.itemId} leading={<StatusDot tone={item.state === 'blocked-bookkeeping' ? 'warn' : 'live'} />}
+              title={item.title || `Attempt ${item.attemptIndex + 1}`}
+              meta={[item.state === 'blocked-bookkeeping' ? 'Held: repository condition unresolved' : item.state, item.reason].filter(Boolean).join(' · ')} />
+          ))}
           {group.candidates.map((candidate) => {
             const state = candidateState(candidate.state);
             const cost = candidate.usage.costState !== 'unpriced' && candidate.usage.costUsd != null
@@ -66,10 +72,10 @@ export function AttemptGroupDetail({ group, onClose }: { group: FleetAttemptGrou
           })}
         </RowList>
       </DetailSection>
-      {group.judgment && (
+      {progress.ready && group.judgment && (
         <Facts items={[{ label: 'Judge proposes', value: group.candidates.find((c) => c.itemId === group.judgment?.proposedWinnerItemId)?.title ?? group.judgment.proposedWinnerItemId ?? '' }]} />
       )}
-      {comparing && (
+      {comparing && progress.ready && (
         <AttemptComparison
           open
           group={group}

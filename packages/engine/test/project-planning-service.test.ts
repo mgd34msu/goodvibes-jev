@@ -1,15 +1,23 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   ProjectPlanningService,
   type ProjectWorkPlanSnapshot,
   projectKnowledgeSpaceId,
 } from '../sdk/src/platform/knowledge/index.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import type { PlannerEvent } from '../sdk/src/events/planner.js';
+
+let previousPort: JudgmentPort | undefined;
+beforeEach(() => { previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 const tmpRoots: string[] = [];
 
@@ -82,6 +90,7 @@ describe('project planning service', () => {
   });
 
   test('evaluates gaps and next questions without mutating stored state', async () => {
+    installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
     const service = createService();
     const evaluation = await service.evaluate({
       projectId: 'alpha',
@@ -196,10 +205,22 @@ describe('stored work plans written before the contract rename', () => {
     const source = store.listSources(100).find((candidate) => candidate.metadata['planningArtifactKind'] === 'work-plan')!;
     const value = source.metadata['value'] as { tasks: Array<Record<string, unknown>> };
     const legacyTasks = value.tasks.map(({ contractId, ...rest }) => ({ ...rest, chainId: contractId }));
-    await store.upsertSource({ ...source, metadata: { ...source.metadata, value: { ...value, tasks: legacyTasks } } });
-
-    const snapshot = await service.getWorkPlanSnapshot({ projectId: 'alpha', contractId: 'ctr-old' });
-    expect(snapshot.tasks.map((task) => [task.title, task.contractId])).toEqual([['Older task', 'ctr-old']]);
+    const original = store.getSourceSnapshot({ id: source.id }).raw!;
+    // Inject only the historical field-name shape. A generic source upsert would
+    // rewrite canonical source clocks through its numeric compatibility view.
+    const raw = new SQLiteStore(store.storagePath, { coordinated: true });
+    await raw.init(() => {}, { schemaVersion: 9 });
+    raw.run('UPDATE knowledge_sources SET metadata = ? WHERE id = ?',
+      [JSON.stringify({ ...source.metadata, value: { ...value, tasks: legacyTasks } }), source.id]);
+    await raw.save(); raw.close();
+    const reopened = new KnowledgeStore({ dbPath: store.storagePath });
+    try {
+      await reopened.init();
+      const after = reopened.getSourceSnapshot({ id: source.id }).raw!;
+      expect(after.created_at).toBe(original.created_at); expect(after.updated_at).toBe(original.updated_at);
+      const snapshot = await new ProjectPlanningService(reopened).getWorkPlanSnapshot({ projectId: 'alpha', contractId: 'ctr-old' });
+      expect(snapshot.tasks.map((task) => [task.title, task.contractId])).toEqual([['Older task', 'ctr-old']]);
+    } finally { await reopened.close(); }
   });
 });
 

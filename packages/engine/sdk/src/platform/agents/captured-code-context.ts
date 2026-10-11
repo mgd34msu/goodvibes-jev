@@ -7,6 +7,7 @@ import {
 } from '../contract/input-authority.js';
 import { CONTRACT_INPUT_EXCLUSIONS } from '../contract/input-snapshot.js';
 import { executePolicyCheck } from '../gate/execute-policy-check.js';
+import { rankCodeInjectionSnapshots } from '../state/code-injection-ranking.js';
 import { CodeIndexStore } from '../state/code-index-store.js';
 import { sha256 } from '../state/code-index-chunking.js';
 import { MEMORY_VECTOR_DIMS } from '../state/memory-vector-store.js';
@@ -31,6 +32,7 @@ export function createCapturedCodeContext(input: {
   let store: CodeIndexStore | undefined;
   let cachedStats: ReturnType<TurnCodeIndexSource['stats']> | undefined;
   let current: Generation | undefined;
+  let assertReadingCurrent: (() => Promise<void>) | undefined;
   let pinnedProvider: MemoryEmbeddingProvider | null = null;
   let operation: AbortController | undefined;
   let disposed = false;
@@ -120,7 +122,7 @@ export function createCapturedCodeContext(input: {
     async prepare() {
       input.signal?.throwIfAborted();
       if (disposed) throw new Error('captured code context is closed');
-      current = undefined; cachedStats = undefined; operation?.abort(); store?.close(); store = undefined;
+      assertReadingCurrent = undefined; current = undefined; cachedStats = undefined; operation?.abort(); store?.close(); store = undefined;
       operation = new AbortController();
       deadline = Date.now() + LIMITS.ms;
       const signal = input.signal ? AbortSignal.any([input.signal, operation.signal]) : operation.signal;
@@ -225,6 +227,30 @@ export function createCapturedCodeContext(input: {
         } finally { await stopWatching(); }
       });
     },
+    async rankForInjection(query, hits) {
+      checkSignal();
+      const selected = current;
+      if (!selected || !operation) throw new Error('captured code generation unavailable');
+      return bounded(async signal => {
+        const assertCurrent = async () => {
+          if (current !== selected) throw new Error('captured code generation replaced');
+          await assertGeneration(selected, signal);
+        };
+        await assertCurrent();
+        const snapshots = hits.map(hit => {
+          const file = selected.files.find(file => file.path === hit.chunk.path);
+          if (!file || file.digest !== hit.chunk.fileHash) throw new Error('captured code hit is stale');
+          return { hit, code: file.content };
+        });
+        const stopWatching = watch(selected, signal);
+        try {
+          const reading = await rankCodeInjectionSnapshots(query, snapshots, { signal, assertCurrent });
+          assertReadingCurrent = reading.assertCurrent;
+          return reading;
+        }
+        finally { await stopWatching(); }
+      });
+    },
     stats() {
       if (cachedStats) return cachedStats;
       return { available: false, indexedChunks: 0, semanticRetrievalAvailable: unavailable !== 'no semantic embedding provider', ...(unavailable ? { error: unavailable } : {}) };
@@ -234,10 +260,10 @@ export function createCapturedCodeContext(input: {
       if (!current || !operation) { if (expected !== undefined) throw new Error('captured code generation unavailable'); return; }
       if (expected !== undefined && current.id !== expected) throw new Error('captured code generation replaced');
       const selected = current;
-      await bounded(signal => assertGeneration(selected, signal));
+      await bounded(async signal => { await assertGeneration(selected, signal); await assertReadingCurrent?.(); });
     },
-    finishTurn() { cachedStats = undefined; current = undefined; operation?.abort(); store?.close(); store = undefined; },
-    dispose() { cachedStats = undefined; disposed = true; operation?.abort(); current = undefined; store?.close(); store = undefined; },
+    finishTurn() { assertReadingCurrent = undefined; cachedStats = undefined; current = undefined; operation?.abort(); store?.close(); store = undefined; },
+    dispose() { assertReadingCurrent = undefined; cachedStats = undefined; disposed = true; operation?.abort(); current = undefined; store?.close(); store = undefined; },
   };
   return source;
 }

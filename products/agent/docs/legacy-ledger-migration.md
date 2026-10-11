@@ -1,4 +1,4 @@
-# Native legacy import and recovery (THE-105)
+# Native legacy import and recovery
 
 Agent and TUI share the same explicit `/work-import` command and durable journal.
 The selected authenticated daemon and its existing KnowledgeStore remain the only
@@ -76,9 +76,7 @@ also refuses caller-reported pending local edits. The authenticated gateway
 captures persisted images and can preview an earlier version while a host batch
 has unsaved edits; it does not currently expose that pending-edit state. Import
 admission refuses active batches or dirty local state and revalidates the source
-images and generations before publication. Remote pending-edit disclosure remains
-follow-on integration work.
-Ordinary pending/in-progress work is valid data and is not mistaken for dirty
+images and generations before publication. Ordinary pending/in-progress work is valid data and is not mistaken for dirty
 source state. Preparation owns no write operation, so cancellation never implies
 rollback of a command that might already have committed.
 
@@ -92,7 +90,7 @@ provenance message instead of source contents. Full history authorization failur
 purges cached rows and reports unavailable. Terminal control characters
 are neutralized, and long source records remain scrollable.
 
-## Verification and remaining gates
+## Validation boundaries
 
 - Synthetic replay fixtures cover duplicate/conflicting IDs, stale source and
   host bindings, source deletion, cancellation, dirty-source rejection, malformed
@@ -120,7 +118,49 @@ synthetic owned HTTP hosts, SQLite journal reopen, lost acknowledgement and exac
 replay, repeated submit, stale request selection, source/revision conflicts,
 revocation during shared retry, closed service, and interrupted transports.
 Compiled command fixtures exercise the real command/SDK/journal composition in
-new processes. Planning-history retirement and its additional replacement/recovery
-proof are tracked in [PR187](https://github.com/mgd34msu/goodvibes-jev/pull/187).
-Independent review, exact-head CI, product tests and compiled startup qualification
-remain delivery gates. This evidence does not establish whole-product parity.
+new processes. Independent review, exact-head CI, product tests and compiled
+startup qualification remain required validation boundaries. Synthetic fixture
+evidence does not establish whole-product parity.
+
+## Journal and protected-read integrity
+
+Agent and TUI share one canonical workspace/project journal path. Resolve aliases
+through realpath and fail closed on an earlier incompatible Agent journal. Store
+the complete immutable command and request identity in private SQLite files,
+using immediate cross-process transactions, EXTRA synchronization and ordered
+containing-directory/ancestor fsync. A process-interruption test does not prove
+hardware power-loss durability; importing the shared module under Node is allowed,
+but journal construction without Bun fails before creating storage.
+
+Pending, unknown, accepted, rejected and cancelled are distinct recovery states.
+Cancellation after dispatch is not rollback; an unknown request retains its exact
+command, and a late accepted receipt wins over later rejection. Validate every
+result variant structurally. Dispatch, cancellation and result recording compare
+the caller's complete validated captured command inside the same immediate
+transaction that updates the slot. A stale command cannot mutate a later
+replacement under the same endpoint/project/principal. This identity comparison
+is a content guard, not semantic authority.
+
+Store actual shared decision provenance beside the exact command and authenticated
+selection; old journals keep empty provenance rather than invented decisions.
+Credentials are neither minted nor journaled. Preview/status need no keyboard
+attestation or human-confirmation claim. Discover all source pages: malformed
+cursors, duplicate IDs and the 5,000-source cap fail closed. Recheck revocation
+before displaying protected data. Preserve both legacy `{ sources }` and cursor
+`{ items, hasMore, nextCursor? }` source-list results with validation enabled;
+TypeScript callers narrow the output union even when omitting pagination input.
+
+Compiled protected-read validation uses real command/SDK/journal composition and
+readable status/binding/preview lines. Cover empty status, complete paginated
+preview with one preparation, and knowledge-read revocation during the first
+page stopping before preparation. Preserve the fixed synthetic read-fixture
+assertions: two authentication reads for empty status; eight reads for a two-page
+preview with one preparation; four reads and one page before revocation stops
+preparation. These are fixture call boundaries, not a production polling cadence.
+Read-only scenarios must make no import
+mutation, preserve the paired credential bytes, leave a private 0600 journal
+with zero saved commands, exit naturally and record no external-network use.
+Do not infer mutation/runner/live-provider acceptance from those read probes.
+
+The [native persistence and legacy guard contract](../../../docs/contracts/native-work-persistence-and-history.md)
+retains generic source-write compatibility and durable publication requirements.

@@ -4,6 +4,13 @@ import { homeGraphRepairProfileValues } from './_helpers/repair-profile-fixture-
 
 const qualityReadings = useKnowledgeAnswerReadings({ repairProfile: homeGraphRepairProfileValues });
 beforeEach(() => { qualityReadings.set({
+  autoLinks: [['LG 86NANO90UNA owner manual', 'LG webOS Smart TV', 'ha_device', 'has_manual']],
+  repairUseful: [
+    ['Display and audio specifications', 'Display and audio specifications: 4K UHD NanoCell display, HDR10, Dolby Vision, 120 Hz refresh rate, and 2 x 10W speakers.', 'LG 86NANO90UNA has a 4K UHD NanoCell display, HDR10, Dolby Vision, 120 Hz refresh rate, and 2 x 10W speakers.'],
+    ['Audio capabilities', 'Audio capabilities: 2 x 10W speakers.', 'LG 86NANO90UNA has 2 x 10W speakers.'],
+    ['Audio capabilities', 'Audio capabilities: 2 x 10W speakers.', 'Audio capabilities: 2 x 10W speakers.'],
+    ['Display and picture specifications', 'Display and picture specifications: 4K UHD resolution, HDR10, and Dolby Vision.', 'Display and picture specifications: 4K UHD resolution, HDR10, and Dolby Vision.'],
+  ],
   excerpts: [['LG 86NANO90UNA TV features include Dolby Vision IQ, HDR10,\nHDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.', 0.99]],
   activation: [['Display and picture specifications', 0.99],['Input and output ports', 0.99],['Smart TV platform and integrations', 0.99],['Network and wireless capabilities', 0.99],['Gaming and HDMI features', 0.99],['Audio capabilities', 0.99],['Tuner and broadcast support', 0.99],['LG webOS Smart TV', 0.99],['LG TV', 0.99],['Display and audio specifications', 0.99]],
   quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
@@ -300,6 +307,9 @@ describe('Home Graph repair and generated pages', () => {
       relation: 'source_for',
       metadata: { knowledgeSpaceId: spaceId },
     });
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic-reference', format: 'text',
+      excerpt: 'Display and picture specifications: 4K UHD resolution, HDR10, and Dolby Vision. Audio capabilities: 2 x 10W speakers.',
+      metadata: { knowledgeSpaceId: spaceId } });
     // Existing pre-gate rows deliberately include unsupported fragments; this test checks rendering defenses.
     const legacyFacts: KnowledgeNodeRecord[] = [];
     for (const entry of [
@@ -425,7 +435,8 @@ describe('Home Graph repair and generated pages', () => {
 
     expect(page.markdown).toContain('Display and picture specifications: 4K UHD resolution, HDR10, Dolby Vision');
     expect(page.markdown).toContain('Audio capabilities: 2 x 10W speakers');
-    expect(page.markdown.match(/Display and picture specifications/g)?.length).toBe(1);
+    expect(page.markdown.split('\n').filter((line) => line.startsWith('- Display and picture specifications:'))).toHaveLength(1);
+    expect(page.markdown).toContain('Display and picture specifications: 4K UHD resolution, HDR10, and Dolby Vision.');
     expect(page.markdown).not.toContain('01 x Ethernet RJ45');
     expect(page.markdown).not.toContain('This gives you a more direct comparison');
     expect(page.markdown).not.toContain('AMD Freesync Premium and HGiG mode');

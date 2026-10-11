@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation, knowledgeSourceMetadataView, prepareKnowledgeOwnedClocks, retainKnowledgePreparedRecord, retainKnowledgeRepresentation } from './store-record-representation.js';
 import { randomUUID } from 'node:crypto';
 import type { SQLiteStore } from '../state/sqlite-store.js';
 import type { KnowledgeSourceRecord, KnowledgeSourceUpsertInput, KnowledgeExtractionRecord, KnowledgeExtractionUpsertInput } from './types.js';
@@ -48,14 +49,20 @@ export function prepareKnowledgeSourceRecord(input: KnowledgeSourceUpsertInput, 
       ...(typeof input.lastCrawledAt === 'number' ? { lastCrawledAt: input.lastCrawledAt } : existing?.lastCrawledAt ? { lastCrawledAt: existing.lastCrawledAt } : {}),
       ...opt('crawlError', _crawlError, existing?.crawlError && input.status !== 'indexed' ? existing.crawlError : undefined),
       ...opt('sessionId', _sessionId, existing?.sessionId),
-      metadata: sourceMetadata,
+      metadata: knowledgeSourceMetadataView(knowledgeRawRepresentation(sourceMetadata)),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    return record;
+    const owned = prepareKnowledgeOwnedClocks(record, existing, now);
+    const raw = knowledgeRawRepresentation(owned);
+    const inputRaw = knowledgeRawRepresentation(input);
+    const existingRaw = existing ? knowledgeRawRepresentation(existing) : undefined;
+    return retainKnowledgePreparedRecord(retainKnowledgeRepresentation(owned, { ...raw,
+      ...(typeof input.lastCrawledAt === 'number' ? { lastCrawledAt: inputRaw.lastCrawledAt } : existing?.lastCrawledAt ? { lastCrawledAt: existingRaw?.lastCrawledAt } : {}) }));
 }
 
-export function writeKnowledgeSourceRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeSourceRecord): void {
+export function writeKnowledgeSourceRow(sqlite: Pick<SQLiteStore, 'run'>, record: Omit<KnowledgeSourceRecord, 'createdAt' | 'updatedAt'> & { readonly createdAt: number | string; readonly updatedAt: number | string }): void {
+    const raw = knowledgeRawRepresentation(record);
     sqlite.run(`
       INSERT OR REPLACE INTO knowledge_sources (
         id, connector_id, source_type, title, source_uri, canonical_uri, summary, description,
@@ -76,12 +83,12 @@ export function writeKnowledgeSourceRow(sqlite: Pick<SQLiteStore, 'run'>, record
       record.status,
       record.artifactId ?? null,
       record.contentHash ?? null,
-      record.lastCrawledAt ?? null,
+      raw.lastCrawledAt ?? null,
       record.crawlError ?? null,
       record.sessionId ?? null,
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
+      JSON.stringify(raw.metadata),
+      raw.createdAt,
+      raw.updatedAt,
     ]);
 }
 
@@ -127,10 +134,11 @@ export function prepareKnowledgeExtractionRecord(input: KnowledgeExtractionUpser
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    return record;
+    return retainKnowledgePreparedRecord(prepareKnowledgeOwnedClocks(record, existing, now));
 }
 
 export function writeKnowledgeExtractionRow(sqlite: SQLiteStore, record: KnowledgeExtractionRecord): void {
+    const raw = knowledgeRawRepresentation(record);
     sqlite.run(`
       INSERT OR REPLACE INTO knowledge_extractions (
         id, source_id, artifact_id, extractor_id, format, title, summary, excerpt,
@@ -149,8 +157,8 @@ export function writeKnowledgeExtractionRow(sqlite: SQLiteStore, record: Knowled
       JSON.stringify([...record.links]),
       record.estimatedTokens,
       JSON.stringify(record.structure),
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
+      JSON.stringify(raw.metadata),
+      raw.createdAt,
+      raw.updatedAt,
     ]);
 }

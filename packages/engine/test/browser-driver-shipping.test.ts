@@ -1,5 +1,6 @@
+import { useBrowserProvisionReadings } from './_helpers/browser-provision-readings.js';
 import { afterAll, describe, expect, test } from 'bun:test';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -502,3 +503,24 @@ afterAll(() => {
     }
   }
 });
+
+
+describe('strict bounded CI archive admission', () => {
+  test('ordinary ustar is accepted and expansion is bounded without changing legacy defaults', () => {
+    const archive = buildTarGz([{ path: 'member', data: 'payload', mode: 0o755 }]);
+    expect([...readTarGzEntries(archive, { strict: true })].map(entry => entry.path)).toEqual(['member']);
+    expect(() => [...readTarGzEntries(archive, { strict: true, maxOutputLength: 512 })]).toThrow();
+  });
+  test('header corruption, truncated members, missing/dirty terminators and archive tails refuse', () => {
+    const tar = gunzipSync(buildTarGz([{ path: 'member', data: 'payload' }]));
+    const checksum = Buffer.from(tar); checksum[148] = 0x37;
+    const dirty = Buffer.from(tar); dirty[dirty.length - 1] = 1;
+    for (const bytes of [checksum, tar.subarray(0, 515), tar.subarray(0, 1024), tar.subarray(0, 1536), dirty, Buffer.concat([tar, Buffer.from('junk')])]) {
+      expect(() => [...readTarGzEntries(gzipSync(bytes), { strict: true })]).toThrow();
+    }
+    // Existing browser callers retain their permissive archive semantics.
+    expect([...readTarGzEntries(gzipSync(checksum))]).toHaveLength(1);
+  });
+});
+
+useBrowserProvisionReadings();

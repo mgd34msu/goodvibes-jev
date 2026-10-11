@@ -91,6 +91,7 @@ export function resumeStepOf(contract: Pick<Contract, 'status' | 'statusBeforeOw
  * worktree. A session-mode contract has no engine and no worktree.
  */
 export function findZombieCause(contract: Contract): string | null {
+  if (contract.originalSource) return 'original source owner is unavailable after restart';
   if (contract.isolation === 'worktree') {
     if (contract.inputSnapshot === undefined) {
       if (contract.schemaVersion >= 2 && contract.status === 'queued' && contract.resumeFrom === undefined && contract.shape === undefined) return null;

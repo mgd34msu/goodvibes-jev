@@ -74,7 +74,7 @@ export interface SurfaceAdapterContext {
   /** Explicit daemon-owned selected lane; absence preserves existing Telegram behavior. */
   readonly delegatedTelegram?: import('../daemon/delegated-telegram-intake.js').DelegatedTelegramAdapter | undefined;
   readonly serviceRegistry: ServiceRegistry;
-  readonly secretsManager?: Pick<SecretsManager, 'get' | 'getGlobalHome'> | undefined;
+  readonly secretsManager?: (Pick<SecretsManager, 'get' | 'getGlobalHome'> & Partial<Pick<SecretsManager, 'onDidChange'>>) | undefined;
   readonly configManager: {
     get(key: string): unknown;
   };
@@ -104,14 +104,14 @@ export interface SurfaceAdapterContext {
    * wires no alarm is unaffected.
    */
   readonly reportIngressFailure?: ((surface: import('../channels/types.js').ChannelSurface, detail: string) => void) | undefined;
-  readonly parseSurfaceControlCommand: (text: string) => SurfaceControlCommand | null;
+  readonly parseSurfaceControlCommand: (text: string, options?: import('@goodvibes-jev/judgment/decisions').CallOptions) => SurfaceControlCommand | null | Promise<SurfaceControlCommand | null>;
   readonly performSurfaceControlCommand: (command: SurfaceControlCommand) => Promise<string>;
   readonly performInteractiveSurfaceAction: (
     actionId: string,
     surface: 'slack' | 'discord',
     req: Request,
   ) => Promise<string>;
-  readonly trySpawnAgent: TrySpawnAgentFn;
+  readonly trySpawnAgent: (...args: Parameters<TrySpawnAgentFn>) => TrySpawnAgentResult | Promise<TrySpawnAgentResult>;
   readonly queueSurfaceReplyFromBinding: (
     binding: AutomationRouteBinding | undefined,
     input: QueueSurfaceReplyInput,

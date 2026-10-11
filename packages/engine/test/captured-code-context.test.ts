@@ -7,6 +7,7 @@ import { mkdtempSync, writeFileSync, rmSync, symlinkSync, unlinkSync, renameSync
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildPerTurnKnowledgeInjection } from '../sdk/src/platform/agents/turn-knowledge-injection.js';
 import { createCapturedCodeContext } from '../sdk/src/platform/agents/captured-code-context.js';
 import { captureContractInput, materializeContractInput, contractInputPath } from '../sdk/src/platform/contract/input-snapshot.js';
 import { createContractInputAuthority, revokeContractInputAuthority, type ContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
@@ -278,3 +279,33 @@ test('regular-file to FIFO replacement requires nonblocking open and rejects bef
     expect(calls.length).toBe(0);
   } finally { tap.mockRestore(); }
 }), 30_000);
+
+
+test('captured vector injection applies the canonical relevance owner to authorized snapshots', async () => fixture(async ({ source }) => {
+  const fake = fakePort((name, question) => question.type === 'choice' ? choiceAnswer(question, 'file-mutation', 0.99) : noulAnswer(name === 'match' ? 0.99 : 0.01));
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const result = await buildPerTurnKnowledgeInjection({ task: ORIGINAL, conversationTail: [], memoryRegistry: { getAll: () => [] },
+      codeIndex: source, codeInjectionEnabled: true, budgetTokens: 4000, relevanceFloor: 95, alreadyInjectedIds: [], turn: 1 });
+    expect(result.record.injectedSources).toContain('code-index');
+    expect(fake.requests.some(request => request.context?.battery === 'engine.state.code-search')).toBe(true);
+    expect(JSON.stringify(fake.requests)).not.toContain(PRIVATE);
+    await source.assertCurrent?.();
+    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    await expect(source.assertCurrent!()).rejects.toThrow();
+  } finally { installJudgmentPort(previous); }
+}));
+
+
+test('captured vector relevance cannot publish after its source file changes during the reading', async () => fixture(async ({ source, view }) => {
+  const fake = fakePort((name, question) => {
+    if (name === 'match') writeFileSync(join(view, 'allowed.txt'), REVISED);
+    return question.type === 'choice' ? choiceAnswer(question, 'file-mutation', 0.99) : noulAnswer(name === 'match' ? 0.99 : 0.01);
+  });
+  const previous = installJudgmentPort(fake.port);
+  try {
+    await expect(buildPerTurnKnowledgeInjection({ task: ORIGINAL, conversationTail: [], memoryRegistry: { getAll: () => [] },
+      codeIndex: source, codeInjectionEnabled: true, budgetTokens: 4000, relevanceFloor: 95, alreadyInjectedIds: [], turn: 1 })).rejects.toThrow();
+    expect(fake.requests.some(request => request.context?.battery === 'engine.state.code-search')).toBe(true);
+  } finally { installJudgmentPort(previous); }
+}));

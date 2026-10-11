@@ -47,7 +47,9 @@ export type {
 } from './approval-updates.js';
 
 export { createDaemonConfigClient, isDaemonOwnedConfigKey } from './config-client.js';
-export type { DaemonConfigClient } from './config-client.js';
+export type { DaemonConfigClient, PreparedDaemonSettingsClient } from './config-client.js';
+export { captureRemoteSettingsPrecondition } from '../../config/settings-precondition-client.js';
+export type { RemoteSettingsPrecondition, RemoteSettingsPreconditionFacts, SettingsPreconditionRequest, SettingsPreconditionReceipt } from '../../config/settings-precondition-client.js';
 
 export { createDaemonCredentialsClient } from './credentials-client.js';
 export type { CredentialWriteReceipt, DaemonCredentialsClient } from './credentials-client.js';

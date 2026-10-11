@@ -49,7 +49,7 @@ let daemon: BootedDaemon | null = null;
 let door: DaemonDoor | null = null;
 let home: E2EHome | null = null;
 afterAll(async () => {
-  agent?.stop();
+  await agent?.stop();
   await door?.stop();
   await daemon?.stop();
   model.stop();

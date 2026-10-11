@@ -1,3 +1,5 @@
+import { googleSetupWritePorts } from './google-setup-effects.ts';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 /**
  * The Google connection actions, owned in one place so every surface runs the
  * same code.
@@ -98,12 +100,12 @@ export function googleConfigPort(ctx: CommandContext): GoogleConfigPort {
 export function googleSecretPort(ctx: CommandContext): GoogleSecretPort {
   const manager = requireSecretsManager(ctx) as {
     get: (key: string) => Promise<string | null>;
-    set: (key: string, value: string) => Promise<void>;
+    set: (key: string, value: string, ownership?: { readonly assertCurrent: () => void }) => Promise<void>;
     delete?: (key: string) => Promise<void>;
   };
   return {
     get: (key) => manager.get(key),
-    set: (key, value) => manager.set(key, value),
+    set: (key, value, ownership) => manager.set(key, value, ownership),
     // Carried so a confirmation-gated removal can actually remove. Nothing
     // reaches it except `forgetGoogleCredentials`, which refuses without an
     // explicit yes, see the SDK's credential-removal.ts.
@@ -137,12 +139,39 @@ export function googleBrowserFactory(ctx: CommandContext): () => Promise<GoogleB
   };
 }
 
-export function googleActionDeps(ctx: CommandContext, intake?: GoogleClientIntakeChoice): GoogleSetupActionDeps {
+const googleSetupRequests = new WeakMap<CommandContext, object>();
+
+export interface GoogleSetupExecutionOptions extends JudgmentReadingOptions {
+  /** A caller-owned browser adapter; defaults to the agent browser. */
+  readonly browser?: (() => Promise<GoogleBrowserPort>) | undefined;
+}
+
+export function googleActionDeps(ctx: CommandContext, intake?: GoogleClientIntakeChoice, options: GoogleSetupExecutionOptions = {}): GoogleSetupActionDeps {
   const homeDirectory = requireShellPaths(ctx).homeDirectory;
+  const platform = ctx.platform, session = ctx.session, runtime = session.runtime;
+  const sessionId = runtime.sessionId, configManager = platform.configManager;
+  const secretsManager = requireSecretsManager(ctx);
+  const request = Object.freeze({});
+  googleSetupRequests.set(ctx, request);
+  const configGet = configManager.get, configSet = configManager.setDynamic;
+  const secretGet = secretsManager.get, secretSet = secretsManager.set;
+  const signal = options.signal, externalCurrent = options.assertCurrent;
+  const assertCurrent = () => {
+    if (signal?.aborted) throw new Error('The Google setup request was cancelled.');
+    const result: unknown = externalCurrent?.();
+    if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('The Google setup request guard must be synchronous.'); }
+    if (googleSetupRequests.get(ctx) !== request || configManager.get !== configGet || configManager.setDynamic !== configSet
+      || secretsManager.get !== secretGet || secretsManager.set !== secretSet || ctx.platform !== platform || ctx.session !== session || session.runtime !== runtime
+      || runtime.sessionId !== sessionId || platform.configManager !== configManager
+      || requireSecretsManager(ctx) !== secretsManager) throw new Error('The Google setup request is no longer current.');
+  };
+  const writes = googleSetupWritePorts(configManager, secretsManager, googleConfigPort(ctx), googleSecretPort(ctx), assertCurrent);
   return {
-    config: googleConfigPort(ctx),
-    secrets: googleSecretPort(ctx),
-    browser: googleBrowserFactory(ctx),
+    assertCurrent: writes.assertCurrent,
+    signal,
+    config: writes.config,
+    secrets: writes.secrets,
+    browser: options.browser ?? googleBrowserFactory(ctx),
     commands: createProcessCommandPort(),
     fetchPort: { fetch: (url, init) => fetch(url, init) },
     files: googleFilePort,
@@ -267,10 +296,11 @@ export async function runGoogleSetup(
   ctx: CommandContext,
   progress: GoogleProgressPort,
   intake?: GoogleClientIntakeChoice,
+  options: GoogleSetupExecutionOptions = {},
 ): Promise<GoogleSetupReport> {
   return await runGoogleSetupFlow(path, {
     progress,
-    runners: buildGoogleSetupRunners(path, googleActionDeps(ctx, intake)),
+    runners: buildGoogleSetupRunners(path, googleActionDeps(ctx, intake, options)),
   });
 }
 

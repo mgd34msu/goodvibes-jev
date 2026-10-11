@@ -128,6 +128,7 @@ export class WakeListener {
 
   #phase: WakeListenerPhase = 'idle';
   #stream: AudioCaptureStream | null = null;
+  #captureGeneration = 0;
   #engine: WakeWordEngine | null = null;
   #recorder: VoiceInputRecorder | null = null;
   #recordingFor: WakeDetection | null = null;
@@ -213,7 +214,7 @@ export class WakeListener {
    * must not produce a microphone permission prompt.
    */
   async start(): Promise<WakeStartOutcome> {
-    if (this.#stream !== null || this.#phase === 'starting') {
+    if (this.#stopping || this.#stream !== null || this.#phase === 'starting') {
       return { started: false, refusal: 'already-running', detail: 'the wake-word listener is already running' };
     }
     if (!this.#settings.enabled) {
@@ -247,6 +248,7 @@ export class WakeListener {
   /** Stop listening and release the device. Idempotent. */
   async stop(): Promise<void> {
     this.#stopping = true;
+    const generation = ++this.#captureGeneration;
     if (this.#restartTimer !== null) {
       this.#clearTimer(this.#restartTimer);
       this.#restartTimer = null;
@@ -260,6 +262,7 @@ export class WakeListener {
     this.#discardRecording();
     this.#supervisor.noteStopped();
     if (stream !== null) await stream.stop();
+    if (generation !== this.#captureGeneration) return;
     this.#setPhase('stopped');
     this.#stopping = false;
   }
@@ -274,6 +277,9 @@ export class WakeListener {
   }
 
   async #open(): Promise<WakeStartOutcome> {
+    const generation = ++this.#captureGeneration;
+    const current = (): boolean => generation === this.#captureGeneration && !this.#stopping;
+    const retired = (): WakeStartOutcome => ({ started: false, refusal: 'capture-unavailable', detail: 'the capture start was retired' });
     this.#setPhase('starting');
     this.#framesSeen = 0;
     this.#lastFrameAt = null;
@@ -284,6 +290,7 @@ export class WakeListener {
     // device that is not connected is turned into a fallback here rather than
     // handed to a recorder that will sit there producing nothing.
     const binding = await this.#resolveDeviceBinding();
+    if (!current()) return retired();
     if (!binding.usable) {
       this.#setPhase('idle');
       this.#lastError = binding.message;
@@ -293,15 +300,17 @@ export class WakeListener {
     let engine: WakeWordEngine;
     try {
       engine = await this.#options.createEngine();
+      if (!current()) return retired();
     } catch (error) {
+      if (!current()) return retired();
       const detail = error instanceof Error ? error.message : String(error);
       this.#lastError = detail;
       this.#setPhase('idle');
       return { started: false, refusal: 'capture-unavailable', detail: `the wake models could not be loaded: ${detail}` };
     }
     const handlers: AudioCaptureHandlers = {
-      onFrame: (frame) => { this.#onFrame(frame); },
-      onStopped: (reason, error) => { this.#onStreamStopped(reason, error); },
+      onFrame: (frame) => { if (current()) this.#onFrame(frame); },
+      onStopped: (reason, error) => { if (current()) this.#onStreamStopped(reason, error); },
     };
     try {
       const stream = await this.#openCapture(
@@ -316,6 +325,7 @@ export class WakeListener {
         },
         handlers,
       );
+      if (!current()) { await stream.stop(); return retired(); }
       this.#clearStartWatchdog();
       this.#engine = engine;
       this.#stream = stream;
@@ -330,6 +340,7 @@ export class WakeListener {
       this.#armDeviceRecheck();
       return { started: true, deviceLabel: stream.label };
     } catch (error) {
+      if (!current()) return retired();
       this.#clearStartWatchdog();
       const captureError = error instanceof AudioCaptureError
         ? error
@@ -342,7 +353,7 @@ export class WakeListener {
         this.#setPhase('restarting');
         this.#restartTimer = this.#setTimer(() => {
           this.#restartTimer = null;
-          if (this.#stopping) return;
+          if (!current()) return;
           void this.#open();
         }, DEVICE_WAIT_RETRY_MS);
         return { started: false, refusal: 'capture-unavailable', detail: captureError.message };
@@ -367,10 +378,13 @@ export class WakeListener {
    */
   #armStartWatchdog(): void {
     this.#clearStartWatchdog();
+    const generation = this.#captureGeneration;
     const timeout = this.#options.startTimeoutMs ?? START_TIMEOUT_MS;
     this.#startTimer = this.#setTimer(() => {
+      if (generation !== this.#captureGeneration) return;
       this.#startTimer = null;
       if (this.#stopping || this.#stream !== null || this.#phase !== 'starting') return;
+      ++this.#captureGeneration;
       const detail = `wake capture did not finish starting within ${timeout} ms; nothing is listening`;
       this.#lastError = detail;
       this.#setPhase('idle');
@@ -392,8 +406,10 @@ export class WakeListener {
    */
   #armFirstFrameWatchdog(): void {
     this.#clearFirstFrameWatchdog();
+    const generation = this.#captureGeneration;
     const timeout = this.#options.firstFrameTimeoutMs ?? FIRST_FRAME_TIMEOUT_MS;
     this.#firstFrameTimer = this.#setTimer(() => {
+      if (generation !== this.#captureGeneration) return;
       this.#firstFrameTimer = null;
       if (this.#stopping || this.#stream === null || this.#framesSeen > 0) return;
       const using = this.#deviceBinding?.device;
@@ -433,10 +449,12 @@ export class WakeListener {
    * direction is one line.
    */
   async #resolveDeviceBinding(): Promise<AudioInputBinding> {
+    const generation = this.#captureGeneration;
     const binding = await resolveAudioInputBinding(
       this.#settings.capture.device,
       this.#options.enumerateInputDevices,
     );
+    if (generation !== this.#captureGeneration || this.#stopping) return binding;
     const previous = this.#deviceBinding;
     this.#deviceBinding = binding;
     const changed = previous === null
@@ -461,8 +479,10 @@ export class WakeListener {
   #armDeviceRecheck(): void {
     this.#disarmDeviceRecheck();
     if (this.#deviceBinding?.state !== 'fallback') return;
+    const generation = this.#captureGeneration;
     const interval = this.#options.deviceRecheckMs ?? DEVICE_RECHECK_INTERVAL_MS;
     this.#deviceRecheckTimer = this.#setTimer(() => {
+      if (generation !== this.#captureGeneration) return;
       this.#deviceRecheckTimer = null;
       void this.#recheckDevice();
     }, interval);
@@ -483,6 +503,7 @@ export class WakeListener {
    * would truncate the sentence the user is in the middle of saying.
    */
   async #recheckDevice(): Promise<void> {
+    const generation = this.#captureGeneration;
     if (this.#stopping || this.#stream === null) return;
     if (this.#recorder !== null) {
       // Mid-utterance: try again on the next tick rather than cutting them off.
@@ -491,7 +512,7 @@ export class WakeListener {
     }
     const before = this.#deviceBinding;
     const binding = await this.#resolveDeviceBinding();
-    if (this.#stopping || this.#stream === null) return;
+    if (generation !== this.#captureGeneration || this.#stopping || this.#stream === null) return;
     if (binding.state === 'fallback' || binding.device === (before?.device ?? '')) {
       this.#armDeviceRecheck();
       return;
@@ -501,7 +522,9 @@ export class WakeListener {
     const stream = this.#stream;
     this.#stream = null;
     this.#engine = null;
+    const rebinding = ++this.#captureGeneration;
     await stream.stop();
+    if (rebinding !== this.#captureGeneration || this.#stopping) return;
     const outcome = await this.#open();
     if (!outcome.started) {
       this.#options.warn?.('wake could not reopen capture after a device change', {
@@ -547,13 +570,16 @@ export class WakeListener {
     }
     if (this.#droppedSinceReport > 0) this.#reportDroppedFrames();
     this.#queued += 1;
+    const generation = this.#captureGeneration;
+    const engine = this.#engine;
     this.#chain = this.#chain.then(async () => {
-      const engine = this.#engine;
-      if (engine === null) return;
       try {
+        if (generation !== this.#captureGeneration || engine === null) return;
         const result = await engine.pushFrame(frame);
+        if (generation !== this.#captureGeneration) return;
         for (const detection of result.detections) this.#onDetection(detection);
       } catch (error) {
+        if (generation !== this.#captureGeneration) return;
         this.#options.warn?.('wake frame scoring failed', {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -696,6 +722,12 @@ export class WakeListener {
 
   #onStreamStopped(reason: 'requested' | 'stream-ended' | 'failed', error?: AudioCaptureError): void {
     if (this.#stopping || reason === 'requested') return;
+    const generation = ++this.#captureGeneration;
+    const retiredStream = this.#stream;
+    // Retire in-flight diagnostic readings even when a watchdog initiated this
+    // transition. Do not await stop inside the recorder's own onStopped callback.
+    if (retiredStream) void retiredStream.stop().catch(() => {});
+    this.#clearStartWatchdog();
     // A recording in flight when the device died is still worth transcribing,
     // the user spoke, and the audio up to the cut is what they said.
     if (this.#recorder !== null) this.#completeRecording('stream-ended');
@@ -709,6 +741,12 @@ export class WakeListener {
     this.#clearFirstFrameWatchdog();
     const captureError = error ?? new AudioCaptureError('stream-ended', 'the capture stream ended');
     this.#lastError = captureError.message;
+    if (captureError.reason === 'failure-reading-unavailable') {
+      this.#waitingForDevice = false;
+      this.#setPhase('idle');
+      this.#options.handlers?.onFailure?.(captureError, false, captureError.message);
+      return;
+    }
     if (captureError.reason === 'device-missing') {
       const firstNotice = !this.#waitingForDevice;
       this.#waitingForDevice = true;
@@ -722,7 +760,7 @@ export class WakeListener {
       }
       this.#restartTimer = this.#setTimer(() => {
         this.#restartTimer = null;
-        if (this.#stopping) return;
+        if (generation !== this.#captureGeneration || this.#stopping) return;
         void this.#open();
       }, DEVICE_WAIT_RETRY_MS);
       return;
@@ -741,7 +779,7 @@ export class WakeListener {
     );
     this.#restartTimer = this.#setTimer(() => {
       this.#restartTimer = null;
-      if (this.#stopping) return;
+      if (generation !== this.#captureGeneration || this.#stopping) return;
       void this.#open();
     }, decision.delayMs);
   }

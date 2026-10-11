@@ -1,6 +1,8 @@
 export const NODE_ACTIVATION_LIMITS = Object.freeze({ nodes: 320, sources: 32, bytes: 2_000_000, concurrency: 4, timeoutMs: 30_000, defaultTimeoutMs: 15_000 });
 export interface KnowledgeNodeActivationOptions {
   readonly signal?: AbortSignal | undefined;
+  /** Retained caller authority, rechecked synchronously at every final commit. */
+  readonly assertCurrent?: (() => void) | undefined;
   readonly timeoutMs?: number | undefined;
   /** A composed serving pass cannot consume a pending draft as a successful claim. */
   readonly requireAccepted?: boolean | undefined;

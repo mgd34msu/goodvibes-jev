@@ -1,12 +1,14 @@
-import type { KnowledgeSourceRecord } from '../types.js';
-import { hasConcreteFeatureSignal, isLowValueFeatureOrSpecText } from './fact-quality.js';
-import {
-  normalizeWhitespace,
-  readRecord,
-  readString,
-  splitSentences,
-  uniqueStrings,
-} from './utils.js';
+import { sameKnowledgeRecord } from '../store-record-representation.js';
+import { assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
+import { captureOwnedJson } from '../../gate/judgment-input.js';
+import { getKnowledgeSpaceId } from '../spaces.js';
+import { captureKnowledgeSourceReferences, projectKnowledgeSourceReferences } from '../source-structural-references.js';
+import type { KnowledgeStore } from '../store.js';
+import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
+import { repairProfileSubject } from './repair-profile.js';
+import { createRepairSourceAuthorityReader, KnowledgeRepairSourceAuthorityHeldError as Held,
+  type RepairSourceAuthorityInput } from './repair-source-authority/reader.js';
+import { readRecord } from './utils.js';
 
 export interface RepairFactClassification {
   readonly kind: 'feature' | 'capability' | 'specification' | 'compatibility' | 'configuration';
@@ -17,180 +19,92 @@ export interface RepairFactClassification {
   readonly aliases: readonly string[];
 }
 
-export function selectRepairFactSentences(input: {
-  readonly query: string;
+interface RepairAuthoritySource {
   readonly source: KnowledgeSourceRecord;
+  readonly extraction: KnowledgeExtractionRecord;
   readonly text: string;
-}): readonly string[] {
-  const wanted = repairIntentPatterns(input.query);
-  const sourceText = normalizeWhitespace(input.text);
-  const candidates = splitSentences(sourceText, 360)
-    .map((sentence) => normalizeWhitespace(sentence))
-    .filter((sentence) => sentence.length >= 24 && sentence.length <= 360)
-    .filter((sentence) => !sentence.trim().endsWith('?'))
-    .filter((sentence) => !isSourceAddressFragment(sentence))
-    .filter((sentence) => hasConcreteFeatureSignal(sentence))
-    .filter((sentence) => !isLowValueFeatureOrSpecText(sentence));
-  const scored = candidates.map((sentence) => ({
-    sentence,
-    score: repairSentenceScore(sentence, wanted, input.source),
-  })).filter((entry) => entry.score > 0);
-  return uniqueStrings(scored
-    .sort((left, right) => right.score - left.score || left.sentence.localeCompare(right.sentence))
-    .map((entry) => entry.sentence))
-    .slice(0, 14);
 }
+/** Keep the original full rows, request and caller configuration live through publication.
+ * Role is a canonical semantic classification, not permission or fact support.
+ * Discovery labels remain unverified claims and never establish ownership by themselves.
+ */
+export async function prepareRepairSourceAuthorities(input: {
+  readonly store: KnowledgeStore;
+  readonly spaceId: string;
+  readonly gap: KnowledgeNodeRecord;
+  readonly subjects: readonly KnowledgeNodeRecord[];
+  readonly sources: readonly RepairAuthoritySource[];
+  readonly signal?: AbortSignal | undefined;
+  readonly shouldStop?: (() => boolean) | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}) {
+  const { store, spaceId, signal, shouldStop, assertCurrent: ownerCurrent } = input;
+  const originals = { gap: input.gap, subjects: input.subjects, sources: input.sources };
+  // Capture structurally before property reads. This is local only: arbitrary
+  // metadata is protected but is never included in the model projection.
+  const snapshot = captureOwnedJson(originals) as typeof originals;
 
-export function classifyRepairFact(sentence: string): RepairFactClassification | null {
-  const lower = sentence.toLowerCase();
-  if (/\b(resolution|4k|8k|uhd|display|screen|panel|lcd|led|oled|qled|mini[- ]?led|refresh|hz|hdr|dolby vision|hlg)\b/.test(lower)) {
-    return buildRepairFactClassification('specification', 'Display and picture specifications', ['display', 'picture'], ['display', 'picture'], sentence, [
-      ['4K UHD resolution', /\b4k\b|\buhd\b|\b3840\s*(?:x|×)\s*2160\b/i],
-      ['display panel technology', /\boled\b|\bqled\b|\bmini[- ]?led\b|\bled\b|\blcd\b/i],
-      ['LCD/LED display', /\blcd\b|\bled\b/i],
-      ['100/120 Hz refresh rate', /\b(?:100|120)\s*hz\b|\btrumotion\s*240\b/i],
-      ['HDR10', /\bhdr10\b/i],
-      ['Dolby Vision', /\bdolby vision\b/i],
-      ['HLG', /\bhlg\b/i],
-    ]);
-  }
-  if (/\b(hdmi|usb|ethernet|optical|rf|antenna|rs-?232|composite|component|earc|arc|ports?|input|output)\b/.test(lower)) {
-    return buildRepairFactClassification('specification', 'Input and output ports', ['ports', 'connectivity'], ['ports', 'inputs', 'outputs'], sentence, [
-      ['HDMI inputs', /\bhdmi\b/i],
-      ['HDMI ARC/eARC', /\bearc\b|\barc\b/i],
-      ['USB ports', /\busb\b/i],
-      ['Ethernet/LAN', /\bethernet\b|\blan\b|\brj-?45\b/i],
-      ['Optical audio output', /\boptical\b|\btoslink\b/i],
-      ['RF/antenna input', /\brf\b|\bantenna\b/i],
-      ['Composite/component video', /\bcomposite\b|\bcomponent\b/i],
-      ['RS-232C/external control', /\brs-?232c?\b|\bexternal control\b/i],
-    ]);
-  }
-  if (/\b(wi-?fi|bluetooth|wireless|airplay|homekit|miracast|chromecast|ethernet)\b/.test(lower)) {
-    return buildRepairFactClassification('capability', 'Network and wireless capabilities', ['network', 'wireless'], ['network', 'wireless'], sentence, [
-      ['Wi-Fi/wireless LAN', /\bwi-?fi\b|\bwireless lan\b/i],
-      ['Bluetooth', /\bbluetooth\b/i],
-      ['Ethernet/LAN', /\bethernet\b|\blan\b/i],
-      ['Apple AirPlay', /\bairplay\b/i],
-      ['Apple HomeKit', /\bhomekit\b/i],
-      ['Chromecast/Miracast support', /\bchromecast\b|\bmiracast\b/i],
-    ]);
-  }
-  if (/\b(speaker|audio|dolby atmos|dolby audio|sound|watts?|channels?)\b/.test(lower)) {
-    return buildRepairFactClassification('specification', 'Audio capabilities', ['audio'], ['audio', 'speakers'], sentence, [
-      ['speaker wattage', /\b\d+\s*x\s*\d+\s*w\b|\b\d+(?:\.\d+)?\s*w\b/i],
-      ['speaker/audio output', /\bspeakers?\b|\b(?:10|20|40)\s*w\b|\b2(?:\.0)?\s*ch\b/i],
-      ['Dolby audio formats', /\bdolby atmos\b|\bdolby digital\b|\bdolby audio\b|\btruehd\b|\bpcm\b/i],
-      ['HDMI ARC/eARC audio', /\bearc\b|\barc\b/i],
-    ]);
-  }
-  if (/\b(game|gaming|vrr|allm|freesync|g-?sync|low latency)\b/.test(lower)) {
-    return buildRepairFactClassification('feature', 'Gaming features', ['gaming'], ['gaming'], sentence, [
-      ['FreeSync/VRR support', /\bfreesync\b|\bvrr\b/i],
-      ['ALLM/low-latency support', /\ballm\b|\blow latency\b/i],
-      ['Game Optimizer/game mode', /\bgame optimizer\b|\bgame mode\b|\bgaming\b/i],
-      ['4K/120 Hz or high-bandwidth HDMI', /\bhdmi\s*2\.1\b|\b4k\s*(?:at|@)?\s*120\b|\b120\s*hz\b/i],
-    ]);
-  }
-  if (/\b(webos|smart tv|apps?|voice assistant|alexa|google assistant|streaming)\b/.test(lower)) {
-    return buildRepairFactClassification('feature', 'Smart TV features', ['smart-tv'], ['smart tv', 'apps'], sentence, [
-      ['webOS smart TV platform', /\bwebos\b/i],
-      ['voice assistant support', /\bvoice\b|\balexa\b|\bgoogle assistant\b/i],
-      ['streaming app support', /\bapps?\b|\bstreaming\b/i],
-    ]);
-  }
-  if (/\b(tuner|atsc|ntsc|qam|broadcast|clear qam)\b/.test(lower)) {
-    return buildRepairFactClassification('specification', 'Tuner support', ['tuner'], ['tuner', 'broadcast'], sentence, [
-      ['ATSC tuner support', /\batsc\b/i],
-      ['NTSC analog tuner support', /\bntsc\b/i],
-      ['Clear QAM support', /\bqam\b|\bclear qam\b/i],
-      ['broadcast tuner support', /\btuner\b|\bbroadcast\b/i],
-    ]);
-  }
-  return null;
-}
-
-export function sourceAuthority(source: KnowledgeSourceRecord): 'official-vendor' | 'vendor' | 'secondary' {
-  const discovery = readRecord(source.metadata.sourceDiscovery);
-  const trust = [
-    readString(discovery.trustReason),
-    readString(discovery.sourceDomain),
-    source.title,
-    source.summary,
-    source.description,
-    source.url,
-    source.sourceUri,
-    source.canonicalUri,
-  ].filter(Boolean).join(' ').toLowerCase();
-  if (/\bofficial-vendor-domain\b/.test(trust)) return 'official-vendor';
-  if (/\bofficial\b/.test(trust) && /\b(support|specifications?|manual|product|docs?|datasheet)\b/.test(trust) && !isCommercialLowValueSourceText(trust)) {
-    return 'official-vendor';
-  }
-  if (/\bmanufacturer-domain\b/.test(trust)) return 'vendor';
-  return 'secondary';
-}
-
-function repairSentenceScore(sentence: string, wanted: readonly RegExp[], source: KnowledgeSourceRecord): number {
-  const lower = sentence.toLowerCase();
-  let score = sourceAuthority(source) === 'official-vendor' ? 12 : 0;
-  if (wanted.some((pattern) => pattern.test(lower))) score += 20;
-  if (hasConcreteFeatureSignal(lower)) score += 8;
-  if (/\b(hdmi|usb|ethernet|wi-?fi|bluetooth|hdr|dolby|resolution|refresh|120\s*hz|speaker|tuner|atsc|qam|webos|airplay|homekit|freesync|vrr|allm|earc|arc)\b/.test(lower)) {
-    score += 12;
-  }
-  if (/\b(specifications?|features?|connectivity|ports?|display|audio|network|smart tv|gaming)\b/.test(lower)) score += 6;
-  if (/^\s*\d+\s/.test(lower) || /\b(question|answer|faq|click|price|review|manual\.nz)\b/.test(lower)) score -= 20;
-  return score;
-}
-
-function isSourceAddressFragment(sentence: string): boolean {
-  const lower = sentence.toLowerCase();
-  return /homegraph:\/\//.test(lower)
-    || /https?:\/\//.test(lower)
-    || /\b[a-z0-9-]+\.(?:com|net|org|io|dev|tv|ca|co\.uk)\/[a-z0-9/_?=&.#-]+/.test(lower)
-    || /\b(?:series_url|canonicaluri|sourceuri|current page|loading)\b/.test(lower);
-}
-
-function buildRepairFactClassification(
-  kind: RepairFactClassification['kind'],
-  title: string,
-  labels: readonly string[],
-  aliases: readonly string[],
-  sentence: string,
-  terms: readonly [string, RegExp][],
-): RepairFactClassification | null {
-  const values = uniqueStrings(terms
-    .filter(([, pattern]) => pattern.test(sentence))
-    .map(([label]) => label));
-  if (values.length === 0) return null;
-  return {
-    kind,
-    title,
-    value: values.join(', '),
-    summary: `${title}: ${joinValues(values)}.`,
-    labels,
-    aliases,
+  const gapRecord = store.getNode(input.gap.id);
+  const references = input.sources.map(({ source, extraction }) => captureKnowledgeSourceReferences(store, source, extraction));
+  const structural = snapshot.sources.map(({ source, extraction }, index) => projectKnowledgeSourceReferences(source, extraction, references[index]));
+  const admissions = [prepareKnowledgeRecordAdmission(store, 'node', input.gap),
+    ...input.subjects.map(subject => prepareKnowledgeRecordAdmission(store, 'node', subject)),
+    ...input.sources.flatMap(({ source, extraction }, index) => [
+      prepareKnowledgeRecordAdmission(store, 'source', source, { source, extraction, proof: references[index] }),
+      prepareKnowledgeRecordAdmission(store, 'extraction', extraction, { source, extraction, proof: references[index] }),
+    ])];
+  assertKnowledgeRecordContainers(originals, admissions);
+  const sameSpace = (record: KnowledgeSourceRecord | KnowledgeExtractionRecord | KnowledgeNodeRecord) => {
+    if (getKnowledgeSpaceId(record) !== spaceId) throw new Held('foreign-space');
+    for (const key of ['knowledgeSpaceId', 'spaceId', 'namespace']) {
+      const value = record.metadata[key];
+      if (value !== undefined && (typeof value !== 'string' || value.trim() !== spaceId)) throw new Held('foreign-space');
+    }
   };
-}
-
-function joinValues(values: readonly string[]): string {
-  if (values.length <= 1) return values[0]! ?? '';
-  if (values.length === 2) return `${values[0]!} and ${values[1]!}`;
-  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
-}
-
-function repairIntentPatterns(query: string): readonly RegExp[] {
-  const lower = query.toLowerCase();
-  const patterns: RegExp[] = [];
-  if (/\b(port|ports|input|output|hdmi|usb|optical|rf|antenna|rs-?232|composite|component|i\/o)\b/.test(lower)) patterns.push(/\b(hdmi|usb|optical|rf|antenna|ethernet|rs-?232|composite|component|earc|arc|ports?|input|output)\b/);
-  if (/\b(bluetooth|wifi|wi-fi|wireless|network)\b/.test(lower)) patterns.push(/\b(bluetooth|wi-?fi|wireless|network|ethernet|airplay|homekit)\b/);
-  if (/\b(refresh|hz|hdr|dolby|vision|gaming|vrr|allm|freesync)\b/.test(lower)) patterns.push(/\b(refresh|hz|hdr|hdr10|dolby vision|hlg|game|vrr|allm|freesync|120\s*hz|100\s*hz)\b/);
-  if (/\b(display|screen|resolution|panel|lcd|led|oled|qled|mini[- ]?led)\b/.test(lower)) patterns.push(/\b(display|screen|resolution|4k|uhd|lcd|led|oled|qled|panel)\b/);
-  if (patterns.length === 0) patterns.push(/\b(hdmi|usb|hdr|dolby|resolution|refresh|wi-?fi|bluetooth|speaker|audio|webos|smart tv|tuner|gaming|ports?)\b/);
-  return patterns;
-}
-
-function isCommercialLowValueSourceText(text: string): boolean {
-  return /\b(shopping|shop now|affiliate|associate program|buy now|add to cart|price comparison|marketplace|retailer|store listing|seller listing|sponsored listing|latest price|compare prices)\b/.test(text)
-    || /(^|\.)amazon\.[a-z.]+\b|(^|\.)ebay\.[a-z.]+\b|(^|\.)walmart\.[a-z.]+\b|(^|\.)bestbuy\.[a-z.]+\b|(^|\.)target\.[a-z.]+\b/.test(text);
+  sameSpace(snapshot.gap);
+  for (const subject of snapshot.subjects) sameSpace(subject);
+  const assertOriginalCurrent = () => {
+    try { store.assertRecordSnapshotFrame(() => {
+      if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
+      if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
+        || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord({ gap: input.gap, subjects: input.subjects, sources: input.sources }, snapshot)
+        || store.getNode(input.gap.id) !== gapRecord) throw new Held('stale');
+      ownerCurrent?.();
+      for (const admission of admissions) {
+        try { admission.assertCurrent(); } catch (error) {
+          // Preserve the declared reader failure vocabulary without treating a
+          // retired raw-record generation as an operational/model outage.
+          if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
+          throw error;
+        }
+      }
+      for (const subject of originals.subjects) if (store.getNode(subject.id) !== subject) throw new Held('stale');
+      for (const { source, extraction } of originals.sources) {
+        // Object identity detects delete/reinsert and ABA replacements even when
+        // the restored row has identical values and timestamps.
+        if (store.getSource(source.id) !== source || store.getExtractionBySourceId(source.id) !== extraction) throw new Held('stale');
+      }
+    }); } catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError) throw new Held(error.reason);
+      throw error;
+    }
+  };
+  const selected: RepairSourceAuthorityInput[] = snapshot.sources.map(({ source, extraction, text }, index) => {
+    sameSpace(source); sameSpace(extraction);
+    if ((source.status !== 'indexed' && source.status !== 'pending') || extraction.sourceId !== source.id) throw new Held('stale');
+    const proof = structural[index], discovery = readRecord(source.metadata.sourceDiscovery);
+    return { reference: `source-${index + 1}`, query: [snapshot.gap.title, snapshot.gap.summary].filter((value) => value !== undefined).join('\n\n'),
+      subjects: snapshot.subjects.map(repairProfileSubject), text,
+      source: { sourceType: source.sourceType, title: source.title, summary: source.summary, description: source.description, url: source.url,
+        sourceUri: proof?.omitSourceUri ? undefined : source.sourceUri, canonicalUri: proof?.omitCanonicalUri ? undefined : source.canonicalUri },
+      extraction: { format: extraction.format, title: extraction.title, links: extraction.links },
+      claimedProvenance: { trustReason: discovery.trustReason as string | undefined, sourceDomain: discovery.sourceDomain as string | undefined } };
+  });
+  const reader = createRepairSourceAuthorityReader({ signal, assertCurrent: assertOriginalCurrent });
+  const readings = await reader.read(selected);
+  assertOriginalCurrent(); reader.assertCurrent();
+  return Object.freeze({
+    sources: Object.freeze(readings.map((reading) => Object.freeze({ authority: reading.authority }))),
+    assertCurrent: reader.assertCurrent,
+  });
 }

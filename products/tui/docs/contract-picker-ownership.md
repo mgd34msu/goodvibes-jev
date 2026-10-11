@@ -1,10 +1,7 @@
-# Contract attempt picker ownership (THE-108)
+# Contract attempt picker ownership
 
-This bounded THE-62 parity repair starts from main `6b8f84e7`. The inventoried
-FleetActs flow lists the selected contract unit's recorded held attempts, previews
-one candidate, and applies it only after the owner confirms. The corresponding
-source obligation is retained in `docs/audit/tui-retained-rename-review-2026-10-02.json`.
-This patch does not declare that entire obligation or the TUI migration complete.
+The FleetActs flow lists the selected contract unit's recorded held attempts,
+previews one candidate, and applies it only after the owner confirms.
 
 ## Behavior repaired
 
@@ -26,38 +23,27 @@ list interactions and deep links. Confirmation is one-shot. An already admitted 
 success/refusal/error receipt after dismissal; its completion cannot close or
 clear the newer picker. Dismissal is not represented as remote cancellation.
 
-## Evidence
+## Validation
 
-The new test file is `src/test/input/fleet-pick-ownership.test.ts`. It drives the
-public process registry, real AgentsModal input/rendering, SurfaceModalHost and
-real ChangesModal preview/confirmation with local synthetic gateway responses.
-It covers 20 cases / 103 assertions, including deferred success/failure, repeated
-input, stale contract state, retry, selection changes, stale confirmation callbacks
-and late admitted apply completion. Independent review additionally reproduced
-and drove fixes for archive navigation and opening search while the list read
-was pending. No provider or live daemon calls are made.
+`src/test/input/fleet-pick-ownership.test.ts` drives the public process registry,
+real AgentsModal input/rendering, SurfaceModalHost and real ChangesModal
+preview/confirmation with local synthetic gateway responses. Preserve deferred
+success/failure, repeated input, stale contract state, retry, selection changes,
+stale confirmation callbacks and late admitted apply completion. Include archive
+navigation and opening search while the list read is pending. Controls must
+expose missing ownership behavior rather than cover only happy paths. No provider
+or live daemon calls are needed.
 
-The initial ten regressions all failed on the unchanged main source. Independent
-review also replayed the subsequent 13-test ChangesModal harness on main: 12 failed
-and one existing retry behavior passed. This distinguishes missing behavior from
-new happy-path coverage.
-
-The unchanged guarded product runner passes all 21 `fleet-` files: 312 tests /
-1,429 assertions. Run from `products/tui`:
+Run the guarded fleet suites and full test-program typecheck from `products/tui`:
 
 - `bun scripts/run-tests.ts fleet- --jobs 2`
 - `node --max-old-space-size=4096 ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json`
 
-The full test-program typecheck passes with the larger heap. The first invocation
-hit Node's default roughly 2 GiB heap ceiling; that failure is retained separately
-rather than described as a passing run. No guard or runner-admission configuration
-was changed. No source-disposition row was relabeled and no legacy responsibility
-was retired by this patch.
+Do not weaken guard or runner-admission configuration to obtain a passing result.
 
-## Remaining acceptance
+## Acceptance boundaries
 
-Independent exact-commit review, full zero-exclusion product tests, current native
-binary/PTY and live-provider parity, exact-head CI and the remaining source
-inventory remain separate gates. Focused synthetic UI tests are not compiled-shell
-or live-provider acceptance. This local repair does not include publication,
-merging, release, or PR56 filesystem/security work.
+Full zero-exclusion product tests, current native binary/PTY and live-provider
+parity, and exact-head CI have their own acceptance requirements. Focused synthetic
+UI tests do not establish compiled-shell or live-provider acceptance, or PR56
+filesystem/security behavior.

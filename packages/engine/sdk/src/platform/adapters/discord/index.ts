@@ -94,7 +94,7 @@ export async function handleDiscordInteractionPayload(
       return deferredResponse;
     }
 
-    const controlCommand = context.parseSurfaceControlCommand(task);
+    const controlCommand = await context.parseSurfaceControlCommand(task, { signal: req.signal });
     if (controlCommand) {
       const message = await context.performSurfaceControlCommand(controlCommand);
       return Response.json({
@@ -132,7 +132,7 @@ export async function handleDiscordInteractionPayload(
           return;
         }
 
-        const spawnResult = context.trySpawnAgent(
+        const spawnResult = await context.trySpawnAgent(
           { mode: 'spawn', task: submission.task! },
           'handleDiscordSurfaceWebhook',
           submission.session.id,
@@ -297,7 +297,7 @@ export async function handleDiscordGatewayDispatchPayload(
       agentId: submission.activeAgentId,
     });
   }
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleDiscordGatewayDispatchPayload',
     submission.session.id,

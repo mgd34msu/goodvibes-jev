@@ -50,6 +50,7 @@
  *, stated when a floor says nothing, is the contained one.
  */
 
+import type { DevicePostureRuntime } from '../devices/device-posture-runtime.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ClientRuntimeServices } from '../runtime/client-services.js';
@@ -62,6 +63,8 @@ import { hostedLifecycleCallbacks } from './lifecycle-callbacks.js';
  * it that a turn also needs.
  */
 export interface HostedWorkspaceFloor {
+  /** Borrowed root-owned paired-device feature. */
+  readonly devicePosture?: DevicePostureRuntime | undefined;
   /** The client-shape composition every session in this workspace runs on. */
   readonly services: ClientRuntimeServices;
   /**

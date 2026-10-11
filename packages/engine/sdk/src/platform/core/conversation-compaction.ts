@@ -1,3 +1,4 @@
+import { OwnedJudgmentWork } from '../runtime/owned-judgment-work.js';
 import type { ProviderMessage } from '../providers/interface.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { logger } from '../utils/logger.js';
@@ -17,6 +18,7 @@ function scoreResult(
   llmMessages: ProviderMessage[],
   result: CompactionResult,
   contextWindow: number,
+  work: OwnedJudgmentWork,
 ): Promise<CompactionQualityScore> {
   return computeQualityScore(
     {
@@ -34,6 +36,7 @@ function scoreResult(
       durationMs: 0,
       warnings: result.validationWarnings,
     },
+    work.options('runtime.compaction.quality-score'),
   );
 }
 
@@ -48,6 +51,7 @@ async function produceCompaction(
   llmMessages: ProviderMessage[],
   compactionContext: CompactionContext,
   registry: ProviderRegistry,
+  work: OwnedJudgmentWork,
 ): Promise<{
   result: CompactionResult;
   strategy: CompactionStrategyChoice;
@@ -59,7 +63,9 @@ async function produceCompaction(
   if (requested === 'distiller') {
     try {
       const distilled = await distillConversation(compactionContext, registry);
-      const quality = await scoreResult(llmMessages, distilled, compactionContext.contextWindow);
+      work.assertCurrent();
+      const quality = await scoreResult(llmMessages, distilled, compactionContext.contextWindow, work);
+      work.assertCurrent();
       const noReduction = distilled.tokensAfterEstimate >= distilled.tokensBeforeEstimate;
       if (!quality.isLowQuality && !noReduction) {
         return { result: distilled, strategy: 'distiller', requestedStrategy: 'distiller' };
@@ -69,17 +75,21 @@ async function produceCompaction(
         : `distillation produced no token reduction; fell back to structured`;
       logger.warn('Distiller fell back to structured compaction', { reason });
       const structured = await compactMessages(compactionContext, registry);
+      work.assertCurrent();
       return { result: structured, strategy: 'structured', requestedStrategy: 'distiller', fallbackReason: reason };
     } catch (err) {
+      work.assertCurrent();
       if (!(err instanceof DistillerUnavailableError)) throw err;
       const reason = `distiller unavailable (${err.message}); fell back to structured`;
       logger.warn('Distiller unavailable; falling back to structured compaction', { reason });
       const structured = await compactMessages(compactionContext, registry);
+      work.assertCurrent();
       return { result: structured, strategy: 'structured', requestedStrategy: 'distiller', fallbackReason: reason };
     }
   }
 
   const structured = await compactMessages(compactionContext, registry);
+  work.assertCurrent();
   return { result: structured, strategy: 'structured', requestedStrategy: 'structured' };
 }
 
@@ -108,6 +118,8 @@ export interface ConversationCompactionHost {
   getSessionLineageTracker(): Pick<SessionLineageTracker, 'addCompactionEntry'>;
 }
 
+const activeCompactions = new WeakMap<ConversationCompactionHost, OwnedJudgmentWork>();
+
 export async function compactConversation(
   host: ConversationCompactionHost,
   registry: ProviderRegistry,
@@ -116,11 +128,31 @@ export async function compactConversation(
   provider?: string,
   context?: CompactionContext,
 ): Promise<CompactionReceipt | undefined> {
+  context?.signal?.throwIfAborted();
+  context?.assertCurrent?.();
   if (host.getMessageCount() === 0) return undefined;
+  activeCompactions.get(host)?.retire();
+  let applied = false;
+  let originalMessages: string | undefined;
+  const contextRevision = JSON.stringify(context);
+  const work = new OwnedJudgmentWork({ signal: context?.signal, assertCurrent: () => {
+    context?.assertCurrent?.();
+    if (JSON.stringify(context) !== contextRevision) throw new Error('Compaction context changed');
+    if (activeCompactions.get(host) !== work) throw new Error('Conversation compaction was superseded');
+    if (!applied && originalMessages !== undefined && JSON.stringify(host.getMessagesForLLM()) !== originalMessages) {
+      throw new Error('Conversation changed during compaction');
+    }
+  } });
+  activeCompactions.set(host, work);
 
   try {
+    work.assertCurrent();
     const llmMessages = host.getMessagesForLLM();
-    const compactionContext: CompactionContext = context ?? {
+    originalMessages = JSON.stringify(llmMessages);
+    if (context && JSON.stringify(context.messages) !== originalMessages) {
+      throw new Error('Conversation changed before compaction');
+    }
+    const compactionContext: CompactionContext = { ...(context ?? {
       messages: llmMessages,
       trigger,
       extractionModelId: modelId,
@@ -132,19 +164,21 @@ export async function compactConversation(
       lineageEntries: [],
       compactionCount: 0,
       contextWindow: 0,
-    };
+    }), signal: work.signal, assertCurrent: work.assertCurrent };
     // Select and run the compaction strategy. The distiller (fresh-context)
     // strategy falls back to structured, through the SAME quality scorer,
     // when its distillation is unavailable or scores below the floor; the
     // fallback is named on the receipt.
-    const produced = await produceCompaction(llmMessages, compactionContext, registry);
+    const produced = await work.wait(() => produceCompaction(llmMessages, compactionContext, registry, work));
+    work.assertCurrent();
     const { result } = produced;
 
     // Quality guard: score the compaction before committing it. A low-quality
     // result (e.g. no compression, or a destroyed handoff) is rejected, the
     // full conversation is kept and the failure is surfaced honestly rather
     // than silently swapping in a bad summary.
-    const quality = await scoreResult(llmMessages, result, compactionContext.contextWindow);
+    const quality = await work.wait(() => scoreResult(llmMessages, result, compactionContext.contextWindow, work));
+    work.assertCurrent();
 
     const strategyFellBack = produced.strategy !== produced.requestedStrategy;
     const receiptBase = {
@@ -179,16 +213,26 @@ export async function compactConversation(
       throw new CompactionQualityError({ ...receiptBase, lowQuality: true, outcome: 'kept-original', detail });
     }
 
+    work.assertCurrent();
     host.replaceMessagesForLLM(result.messages);
-
-    const memoriesCount = host.getSessionMemoryStore()?.list().length ?? 0;
+    applied = true;
+    const receipt: CompactionReceipt = { ...receiptBase, outcome: 'applied' };
+    // Disposal during a host callback cannot undo already-applied messages.
+    if (!work.current) return receipt;
+    const memoryStore = host.getSessionMemoryStore();
+    if (!work.current) return receipt;
+    const memoriesCount = memoryStore?.list().length ?? 0;
+    if (!work.current) return receipt;
     const memoriesPart = memoriesCount > 0 ? `, ${memoriesCount} pinned memories` : '';
     const saved = result.tokensBeforeEstimate - result.tokensAfterEstimate;
     const savedKTokens = Math.round(saved / 1000);
-    host.getSessionLineageTracker().addCompactionEntry(
+    const lineage = host.getSessionLineageTracker();
+    if (!work.current) return receipt;
+    lineage.addCompactionEntry(
       `${trigger} compact, saved ~${savedKTokens}K tokens${memoriesPart}.`,
     );
 
+    if (!work.current) return receipt;
     logger.info('Conversation compacted', {
       trigger,
       messagesBeforeCompaction: result.event.messagesBeforeCompaction,
@@ -200,11 +244,14 @@ export async function compactConversation(
       qualityGrade: quality.grade,
     });
 
-    return { ...receiptBase, outcome: 'applied' };
+    return receipt;
   } catch (err: unknown) {
-    if (err instanceof CompactionQualityError) throw err;
+    if (!work.current || err instanceof CompactionQualityError) throw err;
     const msg = summarizeError(err);
     logger.error('Compact failed', { error: msg });
     throw err;
+  } finally {
+    if (activeCompactions.get(host) === work) activeCompactions.delete(host);
+    work.retire();
   }
 }

@@ -11,6 +11,8 @@ import { resolveManagedEngine } from './provisioning/provisioner.js';
 export interface BuiltinVoiceProviderOptions {
   /** voice.local.* config reader, registers the free local-engine provider when present. */
   readonly readConfig?: LocalVoiceConfigReader | undefined;
+  /** Opaque host config revision fences even an unobserved A -> B -> A edit. */
+  readonly readConfigIncarnation?: (() => number) | undefined;
   /**
    * The managed voice-runtime root. When set, a provisioned host resolves engine
    * binaries/models from the managed install by default (config still wins), so
@@ -32,6 +34,7 @@ export function ensureBuiltinVoiceProviders(registry: VoiceProviderRegistry, opt
     const managedRoot = options.managedVoiceRoot;
     registry.register(createLocalVoiceProvider({
       readConfig: options.readConfig,
+      ...(options.readConfigIncarnation ? { readConfigIncarnation: options.readConfigIncarnation } : {}),
       ...(managedRoot ? { resolveManaged: (prefix) => resolveManagedEngine(prefix, managedRoot) } : {}),
     }), { replace: true });
   }

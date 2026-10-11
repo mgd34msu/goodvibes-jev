@@ -42,11 +42,11 @@ export class ProjectPlanningRoutes {
       }
       if (url.pathname === '/api/projects/planning/state' && req.method === 'POST') {
         return this.admin(req, async () => Response.json(
-          await this.context.projectPlanningService.upsertState(await this.readBody<ProjectPlanningStateUpsertInput>(req)),
+          await this.context.projectPlanningService.upsertState(await this.readBody<ProjectPlanningStateUpsertInput>(req), { signal: req.signal }),
         ));
       }
       if (url.pathname === '/api/projects/planning/evaluate' && req.method === 'POST') {
-        return Response.json(await this.context.projectPlanningService.evaluate(await this.readOptionalBody<ProjectPlanningEvaluateInput>(req)));
+        return Response.json(await this.context.projectPlanningService.evaluate(await this.readOptionalBody<ProjectPlanningEvaluateInput>(req), { signal: req.signal }));
       }
       if (url.pathname === '/api/projects/planning/decisions' && req.method === 'GET') {
         return Response.json(await this.context.projectPlanningService.listDecisions(readProjectSpaceFromUrl(url)));

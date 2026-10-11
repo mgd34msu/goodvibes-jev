@@ -67,7 +67,29 @@ export function parseBrowserJudgmentRequest(value: unknown): BrowserJudgmentRequ
   if (!(BROWSER_JUDGMENT_BATTERY_IDS as readonly string[]).includes(battery)) throw new BrowserJudgmentError('JUDGMENT_BATTERY_UNKNOWN');
   if (!Number.isInteger(request.batteryVersion) || Number(request.batteryVersion) < 1) return invalid();
   if (request.batteryVersion !== 1) throw new BrowserJudgmentError('JUDGMENT_BATTERY_VERSION_UNSUPPORTED');
-  if (battery === 'webui.errors.daemon-refusal') {
+  if (battery === 'webui.code.language' || battery === 'webui.voice.speech-seams') {
+    const input = judgmentRecord(request.input, ['sessionId', 'messageId', 'start', 'end', 'contentDigest', ...(battery === 'webui.voice.speech-seams' ? ['cursor'] : [])]);
+    if (battery === 'webui.voice.speech-seams' && (typeof input.cursor !== 'number' || !Number.isInteger(input.cursor) || input.cursor < 0 || input.cursor >= 4096 || input.cursor % 64 !== 0)) return invalid();
+    judgmentText(input.sessionId); judgmentText(input.messageId);
+    if (typeof input.contentDigest !== 'string' || !/^[0-9a-f]{64}$/.test(input.contentDigest)
+      || typeof input.start !== 'number' || !Number.isInteger(input.start) || input.start < 0
+      || typeof input.end !== 'number' || !Number.isInteger(input.end) || input.end <= input.start || input.end > 1_000_000) return invalid();
+  } else if ((battery === 'webui.config.credential-key' || battery === 'webui.settings.card-material-key')) {
+    const input = judgmentRecord(request.input, ['keys']);
+    if (!Array.isArray(input.keys) || input.keys.length < 1 || input.keys.length > 64) return invalid();
+    const seen = new Set<string>();
+    for (const key of input.keys) { const name = judgmentText(key, 256); if (seen.has(name)) return invalid(); seen.add(name); }
+  } else if ((battery === 'webui.credentials.provider-key' || battery === 'webui.models.catalog-provider-match')) {
+    const input = judgmentRecord(request.input, ['providerId', 'keys']); judgmentText(input.providerId, 128);
+    if (!Array.isArray(input.keys) || input.keys.length < 1 || input.keys.length > 64) return invalid();
+    const seen = new Set<string>();
+    for (const key of input.keys) { const name = judgmentText(key, 256); if (seen.has(name)) return invalid(); seen.add(name); }
+  } else if (battery === 'webui.pwa.install-platform') {
+    const input = judgmentRecord(request.input, ['userAgent', 'platform', 'maxTouchPoints']);
+    judgmentText(input.userAgent, 2048);
+    if (typeof input.platform !== 'string' || input.platform.length > 128 || typeof input.maxTouchPoints !== 'number'
+      || !Number.isInteger(input.maxTouchPoints) || input.maxTouchPoints < 0 || input.maxTouchPoints > 256) return invalid();
+  } else if (battery === 'webui.errors.daemon-refusal') {
     const input = judgmentRecord(request.input, ['errorRef']); judgmentText(input.errorRef);
   } else if (battery === 'webui.mail.reply-subject') {
     const input = judgmentRecord(request.input, ['subjectRef']); judgmentText(input.subjectRef);

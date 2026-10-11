@@ -1,11 +1,10 @@
-# Native work ledger foundation (THE-104)
+# Native work ledger foundation
 
-This is an additive, provisional engine seam. It does not wire a runner, create
-another executor, persist a second database, or replace the old planning UX.
-THE-104 remains open until production persistence, runner and product integration
-are exercised end to end. Import the supported narrow
-`@goodvibes-jev/engine/sdk/platform/workflow/work-ledger` subpath. The SDK root
-and broad workflow barrel deliberately do not re-export this authority seam.
+This additive engine seam does not wire a runner, create another executor,
+persist a second database or replace the planning UX. Production persistence,
+runner and product integration require end-to-end validation. Import the supported
+narrow `@goodvibes-jev/engine/sdk/platform/workflow/work-ledger` subpath. The SDK
+root and broad workflow barrel deliberately do not re-export this authority seam.
 
 ## Trusted composition and consumers
 

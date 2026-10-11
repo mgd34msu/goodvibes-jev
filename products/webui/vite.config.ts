@@ -7,6 +7,7 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readWebBindingFromDaemon, type GoodVibesWebBinding } from './scripts/daemon-binding';
 
 // Directory this config file lives in (the repo root), resolved independent
 // of process.cwd(), this config is the seam every `vite build` invocation
@@ -54,15 +55,6 @@ interface GoodVibesTuiSettings {
   web?: GoodVibesListenerSettings;
 }
 
-interface GoodVibesWebBinding {
-  enabled?: boolean;
-  hostMode?: string;
-  configuredHost?: string;
-  host?: string;
-  port?: number;
-  url?: string;
-}
-
 function readTuiSettings(): GoodVibesTuiSettings {
   const settingsPath = process.env.GOODVIBES_TUI_SETTINGS_PATH
     ?? join(process.env.GOODVIBES_DAEMON_HOME ?? homedir(), '.goodvibes', 'tui', 'settings.json');
@@ -80,59 +72,22 @@ function readWebBindingFromCli(): GoodVibesWebBinding {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 2000,
+      maxBuffer: 64 * 1024,
+      killSignal: 'SIGKILL',
     });
-    return JSON.parse(output) as GoodVibesWebBinding;
+    const binding: unknown = JSON.parse(output);
+    if (typeof binding !== 'object' || binding === null || Array.isArray(binding)) return {};
+    const value = binding as Record<string, unknown>;
+    if ((value.host !== undefined && (typeof value.host !== 'string' || !value.host.trim()))
+      || (value.port !== undefined && (typeof value.port !== 'number' || !Number.isInteger(value.port)
+        || value.port < 1 || value.port > 65535))) return {};
+    return {
+      ...(typeof value.host === 'string' ? { host: value.host } : {}),
+      ...(typeof value.port === 'number' ? { port: value.port } : {}),
+      ...(typeof value.url === 'string' ? { url: value.url } : {}),
+    };
   } catch {
     return {};
-  }
-}
-
-/**
- * Whether this machine's installed `goodvibes-daemon` binary recognizes `webui` as a
- * subcommand at all, checked via its own `--help` listing before ever invoking it.
- * NOT a version-string check: some installed daemon builds treat any unrecognized
- * leading argument (including `webui`) as ignorable noise and fall straight through to
- * booting the daemon itself, which would mean `readWebBindingFromDaemon` below,
- * called from `vite`'s own config evaluation, could accidentally start a second,
- * unmanaged daemon process bound to a real port as a side effect of running `bun run
- * dev`. `--help` is side-effect-free on every observed build and always exits
- * immediately, so this is the safe way to learn whether `webui status --json` is a
- * subcommand this binary will actually route to, before running it for real.
- */
-function daemonSupportsWebuiCommand(): boolean {
-  try {
-    const help = execFileSync('goodvibes-daemon', ['--help'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 2000,
-    });
-    return /\bwebui\b/.test(help);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The daemon is the authority on where the web surface is bound, `goodvibes web --json`
- * and `~/.goodvibes/tui/settings.json` (readWebBindingFromCli/readTuiSettings above) read
- * `controlPlane.*`/`web.*` keys through the TERMINAL's own CLI and settings file, which is
- * a holdover from before the daemon became its own product with its own CLI. Returns null
- * when the daemon does not answer this (no `goodvibes-daemon` on PATH, an installed daemon
- * that predates the `webui` subcommand entirely, see daemonSupportsWebuiCommand above,
- * or one whose `webui status` predates a `--json` output mode), so the caller falls back
- * to the terminal-owned path rather than fail the whole dev server boot.
- */
-function readWebBindingFromDaemon(): GoodVibesWebBinding | null {
-  if (!daemonSupportsWebuiCommand()) return null;
-  try {
-    const output = execFileSync('goodvibes-daemon', ['webui', 'status', '--json'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 2000,
-    });
-    return JSON.parse(output) as GoodVibesWebBinding;
-  } catch {
-    return null;
   }
 }
 
@@ -179,7 +134,7 @@ const discoverBinding = command === 'serve' && !isPreview && process.env.GOODVIB
 const daemonWebBinding = discoverBinding ? readWebBindingFromDaemon() : null;
 if (discoverBinding && !daemonWebBinding) {
   console.warn(
-    '[vite] `goodvibes-daemon webui status --json` did not answer, falling back to the ' +
+    '[vite] Verified daemon WebUI binding discovery is unavailable, falling back to the ' +
     'deprecated `goodvibes web --json` / TUI settings.json binding source. That path predates ' +
     'the daemon becoming its own product and is removed once every supported daemon answers ' +
     '`webui status --json`.',

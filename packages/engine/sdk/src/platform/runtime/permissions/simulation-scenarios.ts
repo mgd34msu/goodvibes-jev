@@ -51,8 +51,8 @@ export async function runPolicySimulationScenarios(
   scenarios: PolicySimulationScenario[] = buildDefaultPolicySimulationScenarios(),
 ): Promise<PolicySimulationSummary> {
   const classifications = await Promise.all(scenarios.map((scenario) => readCallClassification(scenario.toolName, scenario.args, 'engine.gate.policy-simulation')));
-  const results = scenarios.map((scenario, index) => {
-    const result = simulator.evaluate(scenario.toolName, scenario.args, classifications[index]!);
+  const results = await Promise.all(scenarios.map(async (scenario, index) => {
+    const result = await simulator.evaluateAsync(scenario.toolName, scenario.args, classifications[index]!);
     return {
       scenario,
       actualDecision: result.actualDecision,
@@ -61,7 +61,7 @@ export async function runPolicySimulationScenarios(
       diverged: result.diverged,
       ...(result.divergenceType !== undefined ? { divergenceType: result.divergenceType } : {}),
     };
-  });
+  }));
 
   return {
     simulatedAt: new Date().toISOString(),

@@ -48,24 +48,19 @@ recursively. Scalar validation is the sole intentional behavior change from the
 pinned source: out-of-range decimal entities no longer throw and surrogate
 entities no longer produce isolated surrogate code units.
 
-## Source accounting
+## Source attribution and validation
 
 Source: [goodvibes-daemon mapping.ts](https://github.com/mgd34msu/goodvibes-daemon/blob/254699bf5d834cdca41436211ada1ae32bf89258/src/daemon/handlers/inbox/mapping.ts),
 blob `117965d4debe0783215f52f9dcc36278aeba6428`.
 Retained digest, markup and MIME fixtures come from
 [mapping.test.ts](https://github.com/mgd34msu/goodvibes-daemon/blob/254699bf5d834cdca41436211ada1ae32bf89258/src/test/daemon/inbox/mapping.test.ts),
 blob `cddb13456910653f1e9a43fffcce04df51a3d0fc`.
-`docs/inventory/daemon.md` continues to account for both source files as partial
-HOIST work. This reconstruction starts from published main
-`96764055a25c2ab292aa772107013befe7972bc5`; it does not claim recovery of the
-unavailable earlier local implementation or reuse its validation results.
 
 The deterministic tests cover the retained fixtures, hash width/UTF-8 semantics,
 MIME preference and fallback, literal regex-metacharacter boundaries, malformed
 parts, header limitations, markup, whitespace and entity ordering, scalar
 endpoints, every surrogate and invalid decimal values. Consumer-vantage type
-tests pin the four published declarations. This document states the contract;
-the reconstruction's fresh test and gate results are recorded separately.
+tests pin the four published declarations.
 
 ## Work still open
 

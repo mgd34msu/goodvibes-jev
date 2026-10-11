@@ -187,12 +187,12 @@ test('initialization persists settled-run retention before the first guarded sou
   });
   // Model an older file containing an over-cap settled history; current normal
   // upserts already prune their own completed records.
-  const legacy = new SQLiteStore(file); await legacy.init(createSchema, { schemaVersion: 7 });
+  const legacy = new SQLiteStore(file); await legacy.init(createSchema, { schemaVersion: 9 });
   legacy.run("UPDATE knowledge_job_runs SET status = 'completed'"); await legacy.save(); legacy.close();
   const reopened = await open(file);
   expect(reopened.listJobRuns(1000)).toHaveLength(500);
   expect(await reopened.upsertSourceIfCurrent(source('first-guarded'), null)).toMatchObject({ kind: 'written' });
-  const disk = new SQLiteStore(file); await disk.init(createSchema, { schemaVersion: 7 });
+  const disk = new SQLiteStore(file); await disk.init(createSchema, { schemaVersion: 9 });
   expect(disk.exec('SELECT COUNT(*) FROM knowledge_job_runs')[0]?.values).toEqual([[500]]);
   disk.close();
   expect((await open(file)).getSource('first-guarded')).not.toBeNull();
@@ -203,7 +203,7 @@ test('an initialization retention conflict refuses stale persistence and a retry
   await seed.batch(async () => {
     for (let index = 0; index < 501; index++) await seed.upsertJobRun({ ...job(`retained-${index}`), status: 'running' });
   });
-  const writer = new SQLiteStore(file, { coordinated: true }); await writer.init(createSchema, { schemaVersion: 7 });
+  const writer = new SQLiteStore(file, { coordinated: true }); await writer.init(createSchema, { schemaVersion: 9 });
   writer.run("UPDATE knowledge_job_runs SET status = 'completed'"); await writer.save();
   const release = await acquireCrossProcessLock(`${file}.knowledge-lock`);
   const target = new KnowledgeStore({ dbPath: file });

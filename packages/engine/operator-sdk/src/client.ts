@@ -12,6 +12,7 @@ import {
 import {
   createOperatorRemoteClient,
   type OperatorRemoteClient,
+  type OperatorRemoteClientOptions,
   type OperatorRemoteClientInvokeOptions,
   type OperatorRemoteClientStreamOptions,
 } from './client-core.js';
@@ -24,7 +25,7 @@ import { buildSchemaRegistry } from './schema-registry.js';
  * Typically created indirectly by `createGoodVibesSdk`, pass operator-level
  * options as part of `GoodVibesSdkOptions` instead.
  */
-export interface OperatorSdkOptions extends HttpTransportOptions {
+export interface OperatorSdkOptions extends HttpTransportOptions, Pick<OperatorRemoteClientOptions, 'regexReading' | 'getRegexReading'> {
   /**
    * When `true` (default), response bodies for typed operator methods are
    * validated against their Zod contract schemas. Set to `false` to opt out.
@@ -110,6 +111,8 @@ export function createOperatorSdk(options: OperatorSdkOptions): OperatorSdk {
     : {};
   const remote = createOperatorRemoteClient(transport, contract, {
     validateResponses,
+    regexReading: options.regexReading,
+    getRegexReading: options.getRegexReading,
     getResponseSchema: validateResponses
       ? (methodId) => schemaRegistry[methodId]
       : undefined,

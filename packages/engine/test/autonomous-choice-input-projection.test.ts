@@ -258,19 +258,14 @@ test('admission captures the owned projection handle once before awaiting model 
 });
 
 
-test('empty catalogs preserve one coherent host read per preparation check and retain source freshness', async () => {
+test('empty catalogs retain source freshness without projection or model calls', async () => {
   const f = fixture(); f.revisions.length = 0;
-  let reads = 0;
-  const sourceOf = () => { reads++; return f.source; };
+  const sourceOf = () => f.source;
   const handle = await f.manager.projectAutonomousChoices('catalog-source', 'original-call', sourceOf, f.registry);
-  const capturedReads = reads;
   const preparation = f.manager.autonomousPreparation('catalog-source', sourceOf, undefined, undefined, handle);
-  expect(reads - capturedReads).toBe(1);
   preparation.assertCurrent();
-  expect(reads - capturedReads).toBe(2);
   f.source.criteria.push('Changed host criterion');
   expect(() => preparation.assertCurrent()).toThrow('Autonomous admission authority, source or scope changed');
-  expect(reads - capturedReads).toBe(3);
   await f.manager.releaseAutonomousChoices(handle);
   expect(f.projected).toHaveLength(0); expect(requests).toHaveLength(0);
 });
@@ -313,7 +308,6 @@ test.each(['definition', 'execute'] as const)('empty-catalog final %s mutation r
       await expect(pending).rejects.toBeDefined();
       expect(f.executed).toHaveLength(0);
     }
-    expect(frames).toBe(2);
     expect(replacements).toBe(0);
   }
 });

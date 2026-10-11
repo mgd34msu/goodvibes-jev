@@ -101,7 +101,7 @@ export function createKnowledgeServices(deps: KnowledgeServicesDeps): KnowledgeS
   agentKnowledgeService.attachRuntimeBus(runtimeBus);
   const homeGraphService = new HomeGraphService(homeGraphKnowledgeStore, artifactStore, { semanticService: homeGraphSemanticService, admitExpensiveWork });
   deps.ownership.ownUntilRegistered('home graph service', () => homeGraphService.dispose());
-  const projectPlanningService = new ProjectPlanningService(knowledgeStore, { defaultProjectId: projectPlanningProjectId });
+  const projectPlanningService = new ProjectPlanningService(knowledgeStore, { defaultProjectId: projectPlanningProjectId, waitForStartup: () => knowledgeService.whenReady() });
   const workPlanStore = new WorkPlanStore({
     homeDirectory: deps.homeDirectory,
     surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT,

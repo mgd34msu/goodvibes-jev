@@ -46,6 +46,15 @@ export const semanticRepairProfileValues = values([
 ]);
 
 export const semanticRepairUsefulValues: RepairUsefulFixtureValues = [
+  ['controller includes local control mode', 'The controller includes local control mode.', 'The controller includes local control mode.'],
+  ['controller supports Wi-Fi configuration', 'The controller supports Wi-Fi configuration.', 'The controller supports Wi-Fi configuration.'],
+  ['controller has USB-C power', 'The controller has USB-C power.', 'The controller has USB-C power.'],
+  ['Dolby Vision support', 'The device supports Dolby Vision.', 'supports Dolby Vision'],
+  ['Dolby Vision support', 'The TV supports Dolby Vision.', 'supports Dolby Vision'],
+  ['HDMI inputs', 'The device includes four HDMI ports.', 'includes four HDMI ports'],
+  ['HDMI support', 'The device supports HDMI.', 'supports HDMI'],
+  ['NanoCell 4K feature set', 'The TV supports NanoCell 4K, HDR10, Dolby Vision, HDMI eARC, webOS, and Game Optimizer.',
+    'NanoCell 4K display, HDR10, Dolby Vision, HDMI eARC, webOS, and Game Optimizer'],
   [display, 'Display and picture specifications: 4K UHD resolution, HDR10, Dolby Vision, and 120 Hz refresh rate.',
     'LG 86NANO90UNA specifications: Display and picture specifications: 4K UHD resolution, HDR10, Dolby Vision, and 120 Hz refresh rate.'],
   [ports, 'Input and output ports: HDMI inputs, HDMI eARC, USB ports, Ethernet, optical audio output, RF antenna input, and RS-232C/external control.',

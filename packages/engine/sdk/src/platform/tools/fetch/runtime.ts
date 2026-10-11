@@ -1,3 +1,5 @@
+import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
+import type { LocalhostFetchApproval, LocalhostFetchPermit } from '../../runtime/permissions/localhost-fetch-approval.js';
 import { logger } from '../../utils/logger.js';
 import type { Tool, ToolDefinition } from '../../types/tools.js';
 import { FETCH_TOOL_SCHEMA } from './schema.js';
@@ -56,18 +58,16 @@ export interface FetchRuntimeDeps {
    */
   readonly resolveHost?: HostResolver | undefined;
   /**
-   * Live read of the per-project localhost approval (fetch.allowLocalhost).
-   * When true, fetches to loopback dev servers proceed without an ask.
+   * Interactive-only read of the per-project approval (fetch.allowLocalhost).
+   * Autonomous operations always require fresh exact-hop admission.
    */
   readonly isLocalhostAllowed?: (() => boolean) | undefined;
   /**
-   * One-tap "allow for this project" ask for a loopback fetch. Wired to the
-   * shared approval broker by the runtime composition root; resolving true
-   * means the approval was granted (and persisted per project by the wiring),
-   * so it is never asked again. Absent → unapproved localhost fetches are
-   * refused with an honest reason naming fetch.allowLocalhost.
+   * The runtime composition returns a live exact-hop permit for autonomous
+   * operations, or a legacy interactive boolean grant. A boolean can never
+   * authorize an autonomous socket. Missing admission fails closed.
    */
-  readonly approveLocalhostFetch?: ((input: { url: string; host: string }) => Promise<boolean>) | undefined;
+  readonly approveLocalhostFetch?: LocalhostFetchApproval | undefined;
 }
 
 interface CacheEntry {
@@ -291,8 +291,10 @@ async function fetchOneRaw(
   trustTierConfig: TrustTierConfig,
   localhostApproved: boolean,
   credentialHeaders: ReadonlySet<string>,
-  externalSignal?: AbortSignal | undefined,
-  resolveHost?: HostResolver | undefined,
+  externalSignal: AbortSignal | undefined,
+  resolveHost: HostResolver | undefined,
+  deps: FetchRuntimeDeps,
+  permits: LocalhostFetchPermit[],
 ): Promise<Response> {
   const { signal: timeoutSignal, dispose } = createTimeoutController(urlInput.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   const signal = externalSignal ? AbortSignal.any([timeoutSignal, externalSignal]) : timeoutSignal;
@@ -309,6 +311,9 @@ async function fetchOneRaw(
       localhostApproved,
       credentialHeaders,
       resolveHost,
+      deps,
+      permits,
+      originalRequest: urlInput,
     });
   } finally {
     dispose();
@@ -323,6 +328,9 @@ async function fetchWithValidatedRedirects(input: {
   signal: AbortSignal;
   trustTierConfig: TrustTierConfig;
   localhostApproved: boolean;
+  deps: FetchRuntimeDeps;
+  permits: LocalhostFetchPermit[];
+  originalRequest: FetchUrlInput;
   credentialHeaders: ReadonlySet<string>;
   resolveHost?: HostResolver | undefined;
 }): Promise<Response> {
@@ -330,17 +338,51 @@ async function fetchWithValidatedRedirects(input: {
   let currentMethod = input.method;
   let currentBody = input.body;
   let currentHeaders = { ...input.headers };
+  const autonomousLocalhostStart = currentExternalOperationSource() !== undefined
+    && classifyHostTrustTier(extractHostname(input.url) ?? '', input.trustTierConfig).tier === 'localhost';
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
-    // Every hop: resolve the host, check each answer, send to the checked address.
-    const addresses = await resolveCheckedAddresses(currentUrl, { trustTierConfig: input.trustTierConfig, localhostApproved: input.localhostApproved, resolveHost: input.resolveHost });
+    const operation = currentExternalOperationSource();
+    const priorPermits = [...input.permits];
+    const assertCurrent = () => {
+      input.signal.throwIfAborted(); operation?.signal?.throwIfAborted(); operation?.assertCurrent();
+      for (const prior of priorPermits) prior.assertCurrent();
+    };
+    assertCurrent();
+    const host = extractHostname(currentUrl);
+    const local = host !== null && classifyHostTrustTier(host, input.trustTierConfig).tier === 'localhost';
+    let permit: LocalhostFetchPermit | undefined;
+    let localhostApproved = input.localhostApproved;
+    if (local && operation) {
+      const request: FetchUrlInput = {
+        url: currentUrl, method: currentMethod as FetchUrlInput['method'], headers: { ...currentHeaders },
+        ...(typeof currentBody === 'string' ? { body: currentBody } : {}),
+        ...(currentBody instanceof FormData ? { body_type: 'multipart' as const,
+          body_data: Object.fromEntries([...currentBody.entries()].map(([key, value]) => [key, String(value)])) } : {}),
+      };
+      const approved = await input.deps.approveLocalhostFetch?.({ url: currentUrl, host: host!, request,
+        originalRequest: input.originalRequest, credentialHeaders: [...input.credentialHeaders] }, { signal: input.signal, assertCurrent });
+      if (!approved || typeof approved === 'boolean') throw new Error('Request blocked: autonomous localhost fetch requires exact-hop admission');
+      permit = approved;
+      input.permits.push(permit);
+      assertCurrent();
+      permit.assertCurrent();
+      localhostApproved = true;
+    }
+    // Final claim follows checked DNS. The live guard also protects every address retry.
+    const addresses = await resolveCheckedAddresses(currentUrl, { trustTierConfig: input.trustTierConfig, localhostApproved, resolveHost: input.resolveHost });
+    assertCurrent();
+    permit?.assertCurrent();
+    permit?.claim();
+    const guard = () => { assertCurrent(); permit?.assertCurrent(); };
     const response = await pinnedFetch(currentUrl, {
       method: currentMethod,
       ...(Object.keys(currentHeaders).length > 0 ? { headers: currentHeaders as HeadersInit } : {}),
       ...(currentBody !== undefined ? { body: currentBody } : {}),
-      signal: input.signal,
+      signal: AbortSignal.any([input.signal, ...input.permits.map(owned => owned.signal)]),
       redirect: 'manual',
-    } as RequestInit, addresses);
+    } as RequestInit, addresses, 'default', guard);
+    guard();
 
     if (!isRedirectStatus(response.status)) return response;
 
@@ -359,7 +401,7 @@ async function fetchWithValidatedRedirects(input: {
         if (trustResult.isSsrf) emitSsrfDeny(nextHost, nextUrl, trustResult.reason);
         throw new Error(`Redirect blocked: ${trustResult.reason}`);
       }
-      if (trustResult.tier === 'localhost' && !input.localhostApproved) {
+      if (trustResult.tier === 'localhost' && !input.localhostApproved && !autonomousLocalhostStart) {
         // A public origin redirecting into loopback is an SSRF vector; only an
         // approved-for-this-project localhost target may be followed.
         emitSsrfDeny(nextHost, nextUrl, trustResult.reason);
@@ -506,11 +548,11 @@ async function fetchOne(
 
     // Loopback dev servers: allowed for this project, or a one-tap ask that
     // persists the approval; otherwise refused with the setting named.
-    if (initialTrustResult.tier === 'localhost') {
+    if (initialTrustResult.tier === 'localhost' && !currentExternalOperationSource()) {
       localhostApproved = deps.isLocalhostAllowed?.() ?? false;
       if (!localhostApproved && deps.approveLocalhostFetch) {
         try {
-          localhostApproved = await deps.approveLocalhostFetch({ url: urlInput.url, host: hostname });
+          localhostApproved = await deps.approveLocalhostFetch({ url: effectiveUrl, host: hostname, originalRequest: urlInput }) === true;
         } catch {
           localhostApproved = false;
         }
@@ -527,7 +569,7 @@ async function fetchOne(
     }
   }
 
-  if (cacheTtlSeconds > 0 && method === 'GET') {
+  if (!currentExternalOperationSource() && cacheTtlSeconds > 0 && method === 'GET') {
     const key = cacheKey(urlInput.url, urlInput.params, extractMode, verbosity);
     const cached = runtime.getCached(key, cacheTtlSeconds);
     if (cached) {
@@ -537,6 +579,7 @@ async function fetchOne(
 
   const { headers, credentialHeaders, body: requestBody } = await prepareFetchRequest(urlInput, extractMode, deps);
   const startTime = performance.now();
+  const permits: LocalhostFetchPermit[] = [];
 
   try {
     let response = await fetchOneRaw(
@@ -550,8 +593,11 @@ async function fetchOne(
       credentialHeaders,
       deps.signal,
       deps.resolveHost,
+      deps,
+      permits,
     );
 
+    for (const permit of permits) permit.assertCurrent();
     const retryOnAuth = urlInput.retry_on_auth ?? (urlInput.service !== undefined);
     if (response.status === 401 && retryOnAuth && urlInput.service && !(requestBody instanceof FormData)) {
       const refreshedHeaders = await deps.serviceRegistry?.resolveAuth(urlInput.service);
@@ -570,6 +616,8 @@ async function fetchOne(
           retryCredentialHeaders,
           deps.signal,
           deps.resolveHost,
+          deps,
+          permits,
         );
       }
     }
@@ -577,6 +625,7 @@ async function fetchOne(
     const durationMs = Math.round(performance.now() - startTime);
     let contentType = response.headers.get('content-type') ?? '';
     const bodyResult = await readResponseText(response, effectiveMaxContent);
+    for (const permit of permits) permit.assertCurrent();
     let rawBody = bodyResult.text;
     contentType = sniffContentType(contentType, rawBody);
 
@@ -649,7 +698,10 @@ async function fetchOne(
         ? err.message
         : summarizeError(err);
     logger.warn('fetch tool: request failed', { url: urlInput.url, error: message });
-    return { url: urlInput.url, error: message, duration_ms: durationMs };
+    return { url: urlInput.url, error: message, duration_ms: durationMs,
+      ...(initialTrustResult?.tier === 'localhost' ? { host_trust_tier: 'localhost' as const } : {}) };
+  } finally {
+    for (const permit of permits) permit.close();
   }
 }
 

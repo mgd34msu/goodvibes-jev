@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.js';
 import { markWorkAuthorized } from '../sdk/src/platform/agents/conversation-continuation.js';
 import type { AutomationRouteBinding } from '../sdk/src/platform/automation/routes.js';
@@ -12,6 +14,9 @@ import type { AgentRecord } from '../sdk/src/platform/tools/agent/record.js';
 import { createProfileTool } from '../sdk/src/platform/tools/profile/index.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 
+let prior: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { prior = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'conversation', 0.99)).port); });
+afterEach(() => installJudgmentPort(prior));
 const disposables = trackDisposables();
 const OWNER_CHAT = 'owner-chat';
 const ownerConfig = { get: (key: string): unknown => key === 'profile.ownerChannels' ? `telegram:${OWNER_CHAT}` : undefined };
@@ -38,9 +43,9 @@ function gateHarness() {
 }
 
 describe('first channel turn capability and capture boundaries', () => {
-  test('an explicit tool list only narrows conversation, and cannot keep caller-supplied owner authority', () => {
+  test('an explicit tool list only narrows conversation, and cannot keep caller-supplied owner authority', async () => {
     const { deps, calls } = gateHarness();
-    gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'other-chat', text: 'Hello' }, {
+    await gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'other-chat', text: 'Hello' }, {
       mode: 'spawn', task: 'Hello', tools: ['read', 'exec', 'write', 'edit', 'profile'], restrictTools: false,
       captureAuthority: resolveCaptureAuthority({}),
     }, undefined, 'session-1');
@@ -52,32 +57,32 @@ describe('first channel turn capability and capture boundaries', () => {
     expect(calls[0]?.context).toContain('not available on this turn');
   });
 
-  test('an explicitly empty tool list stays empty', () => {
+  test('an explicitly empty tool list stays empty', async () => {
     const { deps, calls } = gateHarness();
-    gateSurfaceSpawn(deps, { surface: 'telegram', text: 'Hello' }, { mode: 'spawn', task: 'Hello', tools: [] });
+    await gateSurfaceSpawn(deps, { surface: 'telegram', text: 'Hello' }, { mode: 'spawn', task: 'Hello', tools: [] });
     expect(calls[0]?.tools).toEqual([]);
     expect(calls[0]?.restrictTools).toBe(true);
   });
 
-  test('a sessionless known owner channel gets bound authority without a fabricated session instruction', () => {
+  test('a sessionless known owner channel gets bound authority without a fabricated session instruction', async () => {
     const { deps, calls } = gateHarness();
-    gateSurfaceSpawn(deps, { surface: 'telegram', channelId: OWNER_CHAT, text: 'Hello' }, { mode: 'spawn', task: 'Hello' });
+    await gateSurfaceSpawn(deps, { surface: 'telegram', channelId: OWNER_CHAT, text: 'Hello' }, { mode: 'spawn', task: 'Hello' });
     expect(calls[0]?.tools).toEqual(['read', 'find', 'fetch', 'profile']);
     expect(calls[0]?.captureAuthority?.canCapture).toBe(true);
     expect(calls[0]?.context).toBeUndefined();
   });
 
-  test('missing origin stays untrusted with and without a session', () => {
+  test('missing origin stays untrusted with and without a session', async () => {
     for (const sessionId of [undefined, 'session-1']) {
       const { deps, calls } = gateHarness();
-      gateSurfaceSpawn(deps, null, { mode: 'spawn', task: 'Hello' }, undefined, sessionId);
+      await gateSurfaceSpawn(deps, null, { mode: 'spawn', task: 'Hello' }, undefined, sessionId);
       expect(calls[0]?.restrictTools).toBe(true);
       expect(calls[0]?.captureAuthority?.authority).toBe('channel-message');
       expect(calls[0]?.captureAuthority?.canCapture).toBe(false);
     }
   });
 
-  test('another same-surface route in the session cannot authorize this ingress', () => {
+  test('another same-surface route in the session cannot authorize this ingress', async () => {
     const { deps, calls } = gateHarness();
     const staleOwnerRoute = { id: 'owner-route', surfaceKind: 'telegram', surfaceId: OWNER_CHAT, channelId: OWNER_CHAT };
     deps.routeBindings.getBinding = () => staleOwnerRoute as AutomationRouteBinding;
@@ -86,17 +91,17 @@ describe('first channel turn capability and capture boundaries', () => {
       createdAt: 1, updatedAt: 1, lastActivityAt: 1, messageCount: 0, pendingInputCount: 0,
       routeIds: ['owner-route'], surfaceKinds: ['telegram'], participants: [], metadata: {},
     });
-    gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'other-chat', text: 'Hello' }, { mode: 'spawn', task: 'Hello' }, undefined, 'session-1');
+    await gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'other-chat', text: 'Hello' }, { mode: 'spawn', task: 'Hello' }, undefined, 'session-1');
     expect(calls[0]?.captureAuthority?.canCapture).toBe(false);
   });
 
-  test('an older config schema still answers while capture fails closed', () => {
+  test('an older config schema still answers while capture fails closed', async () => {
     const { deps, calls } = gateHarness();
     deps.configManager.get = (key) => {
       if (key.startsWith('conversationGate.')) return undefined;
       throw new Error(`Unknown config key: ${key}`);
     };
-    gateSurfaceSpawn(deps, { surface: 'telegram', channelId: OWNER_CHAT, text: 'Hello' }, { mode: 'spawn', task: 'Hello' }, undefined, 'session-1');
+    await gateSurfaceSpawn(deps, { surface: 'telegram', channelId: OWNER_CHAT, text: 'Hello' }, { mode: 'spawn', task: 'Hello' }, undefined, 'session-1');
     expect(calls).toHaveLength(1);
     expect(calls[0]?.tools).toEqual(['read', 'find', 'fetch']);
     expect(calls[0]?.outsideContract).toBe(true);
@@ -104,20 +109,20 @@ describe('first channel turn capability and capture boundaries', () => {
     expect(calls[0]?.context).toContain('not available on this turn');
   });
 
-  test('the shipped Telegram nudge destination is not an owner profile grant', () => {
+  test('the shipped Telegram nudge destination is not an owner profile grant', async () => {
     const { deps, calls } = gateHarness();
     deps.configManager.get = (key) => key === 'occasions.nudgeChannel' ? 'telegram' : '';
-    gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'collaborator-chat', text: 'Hello' }, {
+    await gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'collaborator-chat', text: 'Hello' }, {
       mode: 'spawn', task: 'Hello', tools: ['read', 'profile'],
     });
     expect(calls[0]?.tools).toEqual(['read']);
     expect(calls[0]?.captureAuthority?.canCapture).toBe(false);
   });
 
-  test('an explicit ownerChannels surface wildcard remains an intentional grant', () => {
+  test('an explicit ownerChannels surface wildcard remains an intentional grant', async () => {
     const { deps, calls } = gateHarness();
     deps.configManager.get = (key) => key === 'profile.ownerChannels' ? 'telegram' : '';
-    gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'explicitly-covered-chat', text: 'Hello' }, { mode: 'spawn', task: 'Hello' });
+    await gateSurfaceSpawn(deps, { surface: 'telegram', channelId: 'explicitly-covered-chat', text: 'Hello' }, { mode: 'spawn', task: 'Hello' });
     expect(calls[0]?.tools).toContain('profile');
     expect(calls[0]?.captureAuthority?.source).toBe('profile.ownerChannels');
   });

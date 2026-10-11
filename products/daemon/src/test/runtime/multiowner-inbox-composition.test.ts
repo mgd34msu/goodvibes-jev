@@ -25,7 +25,9 @@ function context(): HandlerContext {
     credentials: { resolveConfigSecret: async () => null, resolveRef: async () => null, put: async () => {}, has: async () => false },
   };
 }
-const routing = {} as Parameters<DaemonInboxFactory>[1];
+const routing: Parameters<DaemonInboxFactory>[1] = {
+  async initialize() {}, async close() {}, unregister() {}, resolveProfileId: () => null,
+};
 const controls = { gatePolling() {} };
 function adapter(id: string): InboundProviderAdapter {
   return { id, pollIntervalMs: 3_600_000, async poll() {

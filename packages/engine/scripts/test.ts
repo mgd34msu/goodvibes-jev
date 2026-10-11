@@ -93,6 +93,7 @@ await withWorkspaceLock('test', async () => {
     // Owned, not merely spawned, see scripts/owned-test-child.ts for the
     // orphan this replaces.
     const { exitCode, signalCode, stopped, stopReason } = await runOwnedTestChild({
+        ownProcessGroup: process.platform !== 'win32',
       argv: [...timeoutArgs, ...testArgs],
       cwd: SDK_ROOT,
       env: {

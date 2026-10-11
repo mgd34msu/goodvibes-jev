@@ -1,9 +1,9 @@
 /** Lazy daemon-owned native graph; ordinary conversations keep their own runner. */
 import { createAgentExecutionGraph } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import { ProcessManager, cancelAllAgentRuns } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ProcessManager, cancelAllAgentRuns, type AgentFleetOwnership } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { AgentOrchestrator } from '@goodvibes-jev/engine/sdk/platform/agents';
 import type { PermissionManager } from '@goodvibes-jev/engine/sdk/platform/permissions';
-import { NativeWorkExecutionError } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution';
+import { NativeWorkExecutionError, type NativeWorkExecutionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution';
 import { createDaemonNativeWorkExecutionServices } from './native-work-execution-composition.js';
 import { createNativeWorkSessionDriver, type NativeSessionDriverOptions } from './native-work-session-driver.js';
 
@@ -15,7 +15,14 @@ export type NativeWorkExecutionActivationOptions = Omit<NativeOptions, 'agentMan
   readonly hookDispatcher: NativeSessionDriverOptions['hookDispatcher'];
 };
 
-export function createDaemonNativeWorkExecutionActivation(options: NativeWorkExecutionActivationOptions) {
+/** Public lifetime boundary: opaque execution authority stays behind the engine host type. */
+export interface NativeWorkExecutionActivation {
+  readonly fleetOwnership: () => readonly AgentFleetOwnership[];
+  acquire(): Promise<NativeWorkExecutionHost>;
+  close(): Promise<void>;
+}
+
+export function createDaemonNativeWorkExecutionActivation(options: NativeWorkExecutionActivationOptions): NativeWorkExecutionActivation {
   let closed = false;
   let opening: Promise<Awaited<ReturnType<typeof build>>> | undefined;
   let closing: Promise<void> | undefined;

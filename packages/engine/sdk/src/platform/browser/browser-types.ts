@@ -1,3 +1,4 @@
+import type { BrowserProvisionLifetime } from './browser-failure-reading.js';
 /**
  * Shared types for first-class browser automation.
  *
@@ -70,6 +71,7 @@ export interface CommandOutcome {
   readonly stderr: string;
   readonly timedOut: boolean;
   readonly spawnError: string | null;
+  readonly spawnCode?: string | undefined;
 }
 
 /** Resolution of the Playwright driver package itself (not the browser binary). */
@@ -85,7 +87,7 @@ export interface BrowserDriverResolution {
 export interface BrowserProvisionIo {
   readonly resolveDriver: () => BrowserDriverResolution;
   /** Installs the driver package into a directory this surface owns. */
-  readonly installDriver?: (targetRoot: string) => Promise<CommandOutcome>;
+  readonly installDriver?: (targetRoot: string, lifetime?: BrowserProvisionLifetime) => Promise<CommandOutcome>;
   /** Where a self-installed driver goes. */
   readonly managedDriverRoot?: () => string;
   /**
@@ -103,7 +105,7 @@ export interface BrowserProvisionIo {
   readonly runCommand: (
     command: string,
     args: readonly string[],
-    options: { readonly timeoutMs: number; readonly env?: Readonly<Record<string, string>> },
+    options: { readonly timeoutMs: number; readonly env?: Readonly<Record<string, string>>; readonly signal?: AbortSignal | undefined },
   ) => Promise<CommandOutcome>;
   readonly systemBrowserCandidates: () => readonly string[];
   readonly now: () => number;

@@ -108,8 +108,9 @@ function hostnameOf(origin: string): string {
 export function ensurePublicBaseUrl(
   configManager: Pick<ConfigManager, 'get' | 'setDynamic'>,
   probe?: () => StableHostInputs,
+  boundControlPlane?: { readonly host: string; readonly port: number; readonly scheme?: 'http' | 'https' },
 ): PairingWebOrigin {
-  const resolved = resolvePairingWebOrigin(configManager, probe);
+  const resolved = resolvePairingWebOrigin(configManager, probe, boundControlPlane);
   if (!String(configManager.get('web.publicBaseUrl') ?? '').trim() && !resolved.fromPublicBaseUrl && resolved.resolvedHost.stable) {
     configManager.setDynamic('web.publicBaseUrl', resolved.origin);
     return { ...resolved, fromPublicBaseUrl: true };

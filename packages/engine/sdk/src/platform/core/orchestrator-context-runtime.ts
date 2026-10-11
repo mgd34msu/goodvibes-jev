@@ -146,6 +146,7 @@ async function buildAutoCompactionContext(
   deps.signal?.throwIfAborted();
   const activeSkillFrontmatter = deps.getActiveSkillFrontmatter?.()?.trim() || undefined;
   return {
+    signal: deps.signal,
     messages: params.messages,
     sessionMemories: deps.sessionMemoryStore?.list() ?? [],
     lineageEntries: deps.sessionLineageTracker.getEntries(),
@@ -288,11 +289,12 @@ export async function checkContextWindowPreflight(
           tokenCount: estimatedTokens,
           contextWindow,
           threshold: preflightDecision.thresholdTokens,
+          signal: deps.signal,
         },
         deps.conversation,
-        () => {
-          deps.signal?.throwIfAborted();
-          return deps.conversation.compact(deps.providerRegistry, model.registryKey, 'auto', model.provider, preflightCtx);
+        (lifetime) => {
+          lifetime.assertCurrent();
+          return deps.conversation.compact(deps.providerRegistry, model.registryKey, 'auto', model.provider, { ...preflightCtx, ...lifetime });
         },
       );
       deps.signal?.throwIfAborted();
@@ -544,6 +546,7 @@ export async function handlePostTurnContextMaintenance(
         tokenCount: totalTokens,
         contextWindow: maxTokens,
         threshold: autoDecision.thresholdTokens,
+        signal: deps.signal,
       };
 
       if (!skipAutoCompact && useSmallWindow) {
@@ -554,9 +557,10 @@ export async function handlePostTurnContextMaintenance(
             deps.compactionManager,
             lifecycleRun,
             deps.conversation,
-            async (): Promise<CompactionReceipt> => {
-              deps.signal?.throwIfAborted();
+            async (lifetime): Promise<CompactionReceipt> => {
+              lifetime.assertCurrent();
               const compactedMsgs = compactSmallWindow(currentMsgs, SMALL_WINDOW_KEEP_RECENT);
+              lifetime.assertCurrent();
               deps.conversation.replaceMessagesForLLM(compactedMsgs);
               return {
                 trigger: 'auto', strategy: 'small-window',
@@ -594,14 +598,14 @@ export async function handlePostTurnContextMaintenance(
           deps.compactionManager,
           lifecycleRun,
           deps.conversation,
-          () => {
-            deps.signal?.throwIfAborted();
+          (lifetime) => {
+            lifetime.assertCurrent();
             return deps.conversation.compact(
               deps.providerRegistry,
               currentModel.registryKey,
               'auto',
               currentModel.provider,
-              compactionCtx,
+              { ...compactionCtx, ...lifetime },
             );
           },
         ).then((receipt) => {

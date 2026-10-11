@@ -214,6 +214,7 @@ export async function openContractRunner(projectRoot: string, io: ContractCliIo)
     new GlobalNetworkTransportInstaller().install(configManager);
     configureRuntimeEventBusDefaults(runtimeEventBusOptionsFrom((key) => configManager.get(key)));
     const services = createClientRuntimeServices({
+      workspaceTrust: null, // This captured CLI has no separate workspace-trust policy.
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),
       configManager,

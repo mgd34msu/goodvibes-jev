@@ -19,6 +19,8 @@ import type { OccasionsPolicy } from './sweep.js';
 /** The narrow config surface this feature reads and writes. */
 export interface OccasionsConfigAccess {
   get(key: string): unknown;
+  /** Actual configuration incarnation, including no-op and ABA mutation intent. */
+  getConfigurationIncarnation?(): number;
   set(key: string, value: string | boolean | number): void;
 }
 

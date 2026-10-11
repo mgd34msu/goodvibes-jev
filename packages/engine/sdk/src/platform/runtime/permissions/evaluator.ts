@@ -1,3 +1,4 @@
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 /**
  * Runtime permissions evaluator.
  *
@@ -20,7 +21,7 @@ import type { BundleProvenance } from './policy-loader.js';
 
 import { DecisionLog } from './decision-log.js';
 import { evaluatePrefixRule } from './rules/prefix.js';
-import { evaluateArgShapeRule } from './rules/arg-shape.js';
+import { evaluateArgShapeRule, evaluateArgShapeRuleAsync, type ArgShapeRuleResult } from './rules/arg-shape.js';
 import { evaluatePathScopeRule } from './rules/path-scope.js';
 import { evaluateNetworkScopeRule } from './rules/network-scope.js';
 import { evaluateModeConstraintRule } from './rules/mode-constraint.js';
@@ -182,6 +183,7 @@ function dispatchPolicyRule(
   activeMode: PermissionMode,
   classification: CommandClassification,
   projectRoot?: string,
+  argShape?: ArgShapeRuleResult,
 ): PolicyRuleCheckResult {
   let matched = false;
   let step: EvaluationStep;
@@ -194,7 +196,7 @@ function dispatchPolicyRule(
       break;
     }
     case 'arg-shape': {
-      const result = evaluateArgShapeRule(rule, toolName, args);
+      const result = argShape ?? evaluateArgShapeRule(rule, toolName, args);
       matched = result.matched;
       step = result.step;
       break;
@@ -252,6 +254,8 @@ export class LayeredPolicyEvaluator {
   private readonly projectRoot?: string | undefined;
   private readonly sessionCache: Map<string, boolean> = new Map();
   private sessionCacheInsertOrder: string[] = [];
+  private sessionPublication = 0;
+  private readonly decisionOwners = new WeakMap<PermissionDecision, () => void>();
   readonly log: DecisionLog;
   /** GC-PERM-011: Provenance from the loaded policy bundle, if any. */
   private readonly provenance?: BundleProvenance | undefined;
@@ -278,11 +282,42 @@ export class LayeredPolicyEvaluator {
    * @param classification, What the call does, from the gate's Jev reading
    *   (gate/reading.ts classificationFromReading or readCallClassification).
    */
-  evaluate(
+  /** @deprecated Synchronous compatibility only. Production callers use evaluateAsync. */
+  evaluate(toolName: string, args: Record<string, unknown>, classification: CommandClassification): PermissionDecision {
+    const walk = this.evaluateSteps(toolName, args, classification);
+    let next = walk.next();
+    while (!next.done) next = walk.next(evaluateArgShapeRule(next.value, toolName, args));
+    return next.value;
+  }
+
+  async evaluateAsync(toolName: string, args: Record<string, unknown>, classification: CommandClassification, options: JudgmentReadingOptions = {}): Promise<PermissionDecision> {
+    const before = JSON.stringify([this.sessionPublication, this.mode, this.rules, this.projectRoot, this.defaultEffect, args]);
+    const current = () => {
+      options.signal?.throwIfAborted(); options.assertCurrent?.();
+      if (JSON.stringify([this.sessionPublication, this.mode, this.rules, this.projectRoot, this.defaultEffect, args]) !== before) throw new Error('Permission policy changed while reading');
+    };
+    current();
+    const walk = this.evaluateSteps(toolName, args, classification);
+    let next = walk.next();
+    while (!next.done) {
+      const result = await evaluateArgShapeRuleAsync(next.value, toolName, args, { ...options, assertCurrent: current });
+      current(); next = walk.next(result);
+    }
+    current(); this.decisionOwners.set(next.value, current); return next.value;
+  }
+
+  /** The observation is current only while its exact policy/session/request owns it. */
+  assertCurrent(decision: PermissionDecision): void {
+    const current = this.decisionOwners.get(decision);
+    if (!current) throw new Error('Permission decision has no async owner');
+    current();
+  }
+
+  private *evaluateSteps(
     toolName: string,
     args: Record<string, unknown>,
     classification: CommandClassification,
-  ): PermissionDecision {
+  ): Generator<Extract<PolicyRule, { type: 'arg-shape' }>, PermissionDecision, ArgShapeRuleResult> {
     const trace: EvaluationStep[] = [];
 
     // ── Layer 2: Mode constraints ───────────────────────────────────
@@ -347,7 +382,8 @@ export class LayeredPolicyEvaluator {
     const orderedRules = [...userRules, ...managedRules];
 
     for (const rule of orderedRules) {
-      const result = dispatchPolicyRule(rule, toolName, args, this.mode, classification, this.projectRoot);
+      const argShape = rule.type === 'arg-shape' ? yield rule : undefined;
+      const result = dispatchPolicyRule(rule, toolName, args, this.mode, classification, this.projectRoot, argShape);
       trace.push(result.step);
       if (result.matched) {
         return this.finalize({
@@ -411,6 +447,7 @@ export class LayeredPolicyEvaluator {
         this.sessionCacheInsertOrder.push(key);
       }
       this.sessionCache.set(key, approved);
+      this.sessionPublication++;
     }
   }
 

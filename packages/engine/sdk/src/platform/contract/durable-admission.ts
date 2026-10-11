@@ -118,6 +118,7 @@ export function freezeDurableRequest(value: DurableContractRequest): DurableCont
     || typeof input['origin'] !== 'string' || !(CONTRACT_ORIGINS as readonly string[]).includes(input['origin'])) {
     throw new DurableContractAdmissionError('invalid');
   }
+  if (input['taskEvidence'] !== undefined && typeof input['taskEvidence'] !== 'string') throw new DurableContractAdmissionError('invalid');
   if (input['isolation'] !== undefined && (typeof input['isolation'] !== 'string' || !['auto', 'worktree', 'shared'].includes(input['isolation']))) throw new DurableContractAdmissionError('invalid');
   if (input['nativeSource'] !== undefined) {
     let source;
@@ -164,7 +165,7 @@ export function assertDurableCheckpoint(contract: ContractView, admission: Durab
     || contract.id !== admission.contractId || contract.ownerAgentId !== admission.ownerAgentId) {
     throw new DurableContractAdmissionError('checkpoint');
   }
-  for (const field of ['ask', 'sessionId', 'origin', 'projectRoot', 'parentAgentId', 'budget', 'proposedUnits', 'nativeSource'] as const) {
+  for (const field of ['ask', 'sessionId', 'origin', 'projectRoot', 'parentAgentId', 'budget', 'proposedUnits', 'nativeSource', 'taskEvidence'] as const) {
     if (canonical({ value: contract[field] }) !== canonical({ value: admission.input[field] })) {
       throw new DurableContractAdmissionError('checkpoint');
     }

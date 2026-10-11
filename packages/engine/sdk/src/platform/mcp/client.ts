@@ -414,6 +414,7 @@ export class McpClient {
     const cwd = processSpec?.cwd;
 
     try {
+      this.options?.beforeProcessStart?.();
       this.proc = Bun.spawn([cmd, ...args], {
         stdin: 'pipe',
         stdout: 'pipe',

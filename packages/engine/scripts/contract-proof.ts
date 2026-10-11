@@ -54,7 +54,7 @@
  * A full run takes tens of minutes (every unit is real model work, checked
  * live). Exit 0 when every behavioral assertion holds, 1 otherwise. Neither
  * result qualifies the serving model: provider-returned model identity is
- * not retained in this proof's evidence (see docs/audit/contract-proof-model-provenance.md).
+ * not retained in this proof's evidence (see docs/contracts/conversation-runtime-semantics.md#requested-models-and-proof-provenance).
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

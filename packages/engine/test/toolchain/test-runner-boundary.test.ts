@@ -79,7 +79,7 @@ test('the normalized packed entry contains every emitted runtime and declaration
     types: './toolchain/dist/test-runner/index.d.ts', import: './toolchain/dist/test-runner/index.js',
   });
   for (const name of ['index', 'owned-test-child', 'test-child-watchdog', 'test-child-watchdog-env',
-    'test-isolation', 'test-network-guard', 'test-network-preload', 'test-run-tmp', 'stale-tmp-sweep']) {
+    'test-isolation', 'test-network-guard', 'test-network-preload', 'test-run-tmp', 'stale-tmp-sweep', 'temp-registry', 'test-temp-cleanup']) {
     for (const suffix of ['.js', '.d.ts']) expect(files).toContain(`toolchain/dist/test-runner/${name}${suffix}`);
   }
   expect(files.some((path) => path.startsWith('scripts/') || path.includes('/src/'))).toBe(false);
@@ -153,3 +153,35 @@ test.each(['pass', 'blocked'] as const)('installed Bun owner activates emitted p
   expect(record.result).toMatchObject({ exitCode: mode === 'pass' ? 0 : 1, stopped: null, outputTruncated: false });
   if (mode === 'blocked') expect(record.stderr).toContain('unexpected external test I/O was blocked');
 });
+
+test.each(['pass', 'hard-exit'] as const)('installed emitted owner cleans registered paths on %s', (mode) => {
+  const fixture = join(consumer, `cleanup-${mode}.test.ts`);
+  const record = join(consumer, `cleanup-${mode}.json`);
+  const registry = pathToFileURL(join(installed, 'toolchain/dist/test-runner/temp-registry.js')).href;
+  writeFileSync(fixture, `
+    import { test } from 'bun:test';
+    import { mkdtempSync, writeFileSync } from 'node:fs';
+    import { tmpdir } from 'node:os';
+    import { join } from 'node:path';
+    import { registerTempDirForCleanup } from ${JSON.stringify(registry)};
+    const path = registerTempDirForCleanup(mkdtempSync(join(tmpdir(), 'packed-owned-')));
+    writeFileSync(${JSON.stringify(record)}, JSON.stringify({ path, root: tmpdir() }));
+    ${mode === 'hard-exit' ? 'process.exit(7);' : "test('owned fixture', () => {});"}
+  `);
+  const entry = join(consumer, `cleanup-${mode}.mjs`);
+  writeFileSync(entry, `
+    import { runOwnedTestChild } from '${PUBLIC_ENTRY}';
+    import { Writable } from 'node:stream';
+    let output = '';
+    const result = await runOwnedTestChild({ argv: [${JSON.stringify(fixture)}], cwd: process.cwd(), env: process.env, ownProcessGroup: true, ceilingMs: 10000,
+      stdout: new Writable({ write(chunk, _encoding, done) { output += String(chunk); done(); } }),
+    });
+    console.log(JSON.stringify({ result, output }));
+  `);
+  const child = spawnSync(process.execPath, ['--no-env-file', entry], { cwd: consumer, encoding: 'utf8', timeout: 15000 });
+  expect({ status: child.status, error: child.error?.message }).toEqual({ status: 0, error: undefined });
+  const outcome = JSON.parse(child.stdout).result;
+  expect(outcome.exitCode).toBe(mode === 'pass' ? 0 : 7);
+  const owned = JSON.parse(readFileSync(record, 'utf8'));
+  expect(existsSync(owned.path)).toBe(false); expect(existsSync(owned.root)).toBe(false);
+}, 20000);

@@ -1,10 +1,11 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
 import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
 import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/activation/types.js';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -393,9 +394,39 @@ describe('knowledge wiki honesty: unlink is a real reversal (unlink sub-defect)'
     const { store, artifactStore } = createStores();
     const service = disposables.add(new HomeGraphService(store, artifactStore));
     await service.syncSnapshot({ installationId: 'house', devices: [{ id: 'tv', name: 'TV' }] });
-    const source = (await service.ingestNote({
-      installationId: 'house', title: 'Note', body: 'A note body long enough to index.',
-    })).source;
+    // This exact generic note is unrelated to the sole TV candidate. Keep the
+    // automatic-link reading real so unlink still exercises persisted state.
+    const body = 'A note body long enough to index.';
+    const document = {
+      title: 'Note', sourceType: 'document', tags: ['homeassistant', 'home-graph', 'note'],
+      extraction: { title: body, summary: body, excerpt: body, sections: [body],
+        structure: { lineCount: 1, headingCount: 0, searchText: body },
+        metadata: { homeGraph: true, homeAssistant: { installationId: 'house' },
+          knowledgeSpaceId: 'homeassistant:house', namespace: 'homeassistant:house', extractorVersion: 3 } },
+    };
+    const candidate = { reference: 'candidate-1', subject: { kind: 'ha_device', title: 'TV',
+      aliases: ['TV'], homeAssistant: { objectKind: 'device', objectId: 'tv' } }, entities: [] };
+    const kindState = { source: document };
+    const subjectState = { source: document, candidates: [candidate], candidate,
+      documentKind: { manual: 'no', integrationDocumentation: 'no' } };
+    const readNames: string[] = [];
+    const readings = fakePort((name, question, state) => {
+      readNames.push(name);
+      if (isDeepStrictEqual(state, kindState)) {
+        if (name === 'manual' || name === 'integrationDocumentation') return noulAnswer(0.01);
+        if (name === 'relation') return choiceAnswer(question, 'source_for');
+      }
+      if (name === 'selected' && isDeepStrictEqual(state, subjectState)) return noulAnswer(0.01);
+      throw new Error(`Unexpected unrelated-note reading: ${name}`);
+    });
+    const previous = installJudgmentPort(readings.port);
+    let source: Awaited<ReturnType<HomeGraphService['ingestNote']>>['source'];
+    try {
+      source = (await service.ingestNote({ installationId: 'house', title: 'Note', body })).source;
+    } finally {
+      installJudgmentPort(previous);
+    }
+    expect(readNames).toEqual(['manual', 'integrationDocumentation', 'relation', 'selected']);
     const nodesBefore = store.listNodes(100_000).length;
     const edgesBefore = store.listEdges().length;
 

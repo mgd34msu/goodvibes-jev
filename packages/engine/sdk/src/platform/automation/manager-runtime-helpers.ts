@@ -18,6 +18,7 @@ import { resolveModelReference, type ModelIdCandidate } from '../providers/model
 import { getNextAutomationOccurrence } from './schedules.js';
 
 export interface CreateAutomationJobInput {
+  readonly requiresSourceOwner?: boolean | undefined;
   readonly name: string;
   readonly kind?: import('./jobs.js').AutomationJobKind | undefined;
   readonly prompt: string;
@@ -266,6 +267,7 @@ export function buildDefaultExecution(
   const thinking = normalizeOptionalString(input.thinking);
   return {
     prompt: input.prompt,
+    ...(input.requiresSourceOwner ? { requiresSourceOwner: true } : {}),
     ...(input.template ? { template: input.template } : {}),
     target: input.target ?? {
       kind: 'isolated',

@@ -1,9 +1,11 @@
-import { isValidElement, ReactNode, useState } from 'react';
+import { readCodeLanguage, type CodeLanguageResult } from '../lib/code-language-judgment';
+import { subscribeClientLifetime } from '../lib/client-lifetime';
+import { isValidElement, ReactNode, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { Check, Copy } from 'lucide-react';
-import { highlightCode } from '../lib/highlight';
+import { highlightCode, normalizeLanguage } from '../lib/highlight';
 import { useWebUiPreferences } from '../lib/ui-preferences';
 import { IconButton } from './ui/IconButton';
 import '../styles/components/markdown.css';
@@ -35,17 +37,37 @@ function codeTextFromChildren(children: ReactNode): string {
   return textFromReactNode(child?.props.children ?? children);
 }
 
+interface MessageSource { readonly sessionId: string; readonly messageId: string }
 interface CodeBlockProps {
+  source?: MessageSource;
+  content: string;
+  start?: number;
+  end?: number;
   children: ReactNode;
   lineNumbers: boolean;
 }
 
-function CodeBlock({ children, lineNumbers }: CodeBlockProps) {
+function CodeBlock({ children, lineNumbers, source, content, start, end }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const language = languageFromCodeChild(children);
   const code = codeTextFromChildren(children);
   const visibleCode = code.endsWith('\n') ? code.slice(0, -1) : code;
-  const highlighted = highlightCode(visibleCode, language);
+  const [reading, setReading] = useState<{ signature: string; result: CodeLanguageResult }>();
+  const [identityRevision, setIdentityRevision] = useState(0);
+  const declaredLanguage = normalizeLanguage(language);
+  const sessionId = source?.sessionId; const messageId = source?.messageId;
+  const signature = JSON.stringify([sessionId, messageId, content, start, end, identityRevision]);
+  useEffect(() => subscribeClientLifetime(() => { setReading(undefined); setIdentityRevision(value => value + 1); }), []);
+  useEffect(() => {
+    if (declaredLanguage || !sessionId || !messageId || start === undefined || end === undefined) return;
+    const abort = new AbortController();
+    void readCodeLanguage({ sessionId, messageId, content, start, end }, abort.signal).then(result => {
+      if (!abort.signal.aborted) setReading({ signature, result });
+    });
+    return () => abort.abort();
+  }, [declaredLanguage, sessionId, messageId, content, start, end, signature]);
+  const inferredLanguage = reading?.signature === signature && reading.result.status === 'ready' && reading.result.isCurrent() ? reading.result.language : '';
+  const highlighted = highlightCode(visibleCode, declaredLanguage || inferredLanguage);
   const highlightedLines = highlighted.html.split('\n');
   const displayLanguage = language || highlighted.language;
 
@@ -95,9 +117,10 @@ function CodeBlock({ children, lineNumbers }: CodeBlockProps) {
 interface MarkdownMessageProps {
   content: string;
   lineNumbers?: boolean;
+  source?: MessageSource;
 }
 
-export function MarkdownMessage({ content, lineNumbers }: MarkdownMessageProps) {
+export function MarkdownMessage({ content, lineNumbers, source }: MarkdownMessageProps) {
   const [preferences] = useWebUiPreferences();
   const showLineNumbers = lineNumbers ?? preferences.codeBlockLineNumbers;
 
@@ -111,9 +134,9 @@ export function MarkdownMessage({ content, lineNumbers }: MarkdownMessageProps) 
               {children}
             </a>
           ),
-          pre: ({ children }) => {
+          pre: ({ children, node }) => {
             return (
-              <CodeBlock lineNumbers={showLineNumbers}>
+              <CodeBlock lineNumbers={showLineNumbers} source={source} content={content} start={node?.position?.start.offset} end={node?.position?.end.offset}>
                 {children}
               </CodeBlock>
             );

@@ -174,3 +174,12 @@ describe('reasoningOptionsForModel', () => {
     expect(reasoningOptionsForModel(junk, 'p:m')).toBeNull();
   });
 });
+
+test('provider spelling and subscription suffix cannot infer catalog models synchronously', () => {
+  const catalog = [{ providerId: 'openai', models: ['model-a'] }, { providerId: 'inceptionlabs', models: ['model-b'] }];
+  for (const providerId of ['openai-subscriber', 'inception', 'azure-openai']) {
+    expect(providerModelSourceIds({ providerId })).toEqual([]);
+    expect(modelOptionsForProvider({ providerId }, catalog)).toEqual([]);
+  }
+  expect(modelOptionsForProvider({ providerId: 'openai-subscriber', catalogProviderId: 'openai' }, catalog).map(model => model.registryKey)).toEqual(['openai:model-a']);
+});

@@ -67,13 +67,13 @@ export interface MediaProviderRegistryLike {
 export interface MultimodalServiceLike {
   getStatus(): Promise<unknown>;
   listProviders(): Promise<readonly unknown[]>;
-  analyze(input: Record<string, unknown>): Promise<MultimodalAnalysisResult>;
+  analyze(input: Record<string, unknown>, options?: { readonly signal?: AbortSignal | undefined }): Promise<MultimodalAnalysisResult>;
   buildPacket(
     analysis: MultimodalAnalysisResult,
     detail: MultimodalDetail,
     budgetLimit?: number,
   ): unknown;
-  writeBackAnalysis(analysis: MultimodalAnalysisResult, input: Record<string, unknown>): Promise<unknown>;
+  writeBackAnalysis(analysis: MultimodalAnalysisResult, input: Record<string, unknown>, options?: { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined }): Promise<unknown>;
 }
 
 export interface DaemonMediaRouteContext {

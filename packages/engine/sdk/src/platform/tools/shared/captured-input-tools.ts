@@ -112,6 +112,9 @@ export function capturedInputTool(
   return {
     definition: tool.definition,
     async execute(args, options) {
+      // Preserve exact registry-authenticated effect arguments/options. Rewritten
+      // read arguments retain original currentness only in this owner closure.
+      const authenticated = assertCurrentToolExecution(args, options);
       // Rewritten captured-view args cannot borrow the original invocation's
       // proof. Keep that exact args/options pair in this owner closure instead.
       const invocationArgs = args;
@@ -125,7 +128,7 @@ export function capturedInputTool(
         // without granting access or replaying the source/view readset.
         contractInputAuthorityRoot(authority);
       };
-      const childOptions = options === undefined ? undefined : Object.freeze({ signal: callSignal });
+      const readOptions = options === undefined ? undefined : Object.freeze({ signal: callSignal });
       return withContractInputAuthority(authority, () =>
         deliveryReads.run(
           {
@@ -185,7 +188,7 @@ export function capturedInputTool(
               assertInvocationCurrent();
               // Model arguments and callers remain mutable outside this invocation.
               // Pin an owned deep copy before the first permission/validation await.
-              args = freezeInput(structuredClone(args));
+              if (!authenticated) args = freezeInput(structuredClone(args));
               await assertContractInputAuthority(authority, root, signal);
               assertInvocationCurrent();
               if (!filter) throw new Error('captured input requires original-owner read authorization');
@@ -242,6 +245,7 @@ export function capturedInputTool(
                   `captured ${name} requires an original-owner-authorized backend; this workflow is not yet available`,
                 );
               }
+              const childOptions = authenticated && args === invocationArgs ? invocationOptions : readOptions;
               const publicationSignal = signal && callSignal ? AbortSignal.any([signal, callSignal]) : signal ?? callSignal;
               const result = name === 'write' || name === 'edit' || (name === 'inspect' && args.mode === 'scaffold' && args.dryRun === false)
                 ? await withCapturedPublication(authority, (publicationLease) => deliveryReads.run(

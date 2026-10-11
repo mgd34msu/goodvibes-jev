@@ -17,7 +17,6 @@ import { enrichModelEntries, groupEntriesByProvider } from './health-enrichment.
 import type { ModelPickerData, ModelPickerEntry } from './types.js';
 import { modelFamilyReadings } from './model-family-readings.js';
 import { logger } from '../../../utils/logger.js';
-import { summarizeError } from '../../../utils/error-display.js';
 
 /** Options for constructing a ModelPickerDataProvider. */
 export interface ModelPickerDataProviderOptions {
@@ -150,9 +149,11 @@ export class ModelPickerDataProvider {
     const models = this._models;
     void modelFamilyReadings.read(models).then(
       (changed) => { if (changed && !this._disposed && this._models === models) this._rebuild(); },
-      (error: unknown) => {
-        logger.warn('model picker: model family readings did not complete', { error: summarizeError(error) });
-        if (!this._disposed && this._models === models) this._rebuild();
+      () => {
+        if (!this._disposed && this._models === models) {
+          logger.warn('model picker: model family readings did not complete');
+          this._rebuild();
+        }
       },
     );
   }

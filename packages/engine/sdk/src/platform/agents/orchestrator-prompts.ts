@@ -1,3 +1,4 @@
+import type { ProjectFrameworkObservation } from './orchestrator-observations.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { estimateTokens } from '../core/context-compaction.js';
@@ -13,6 +14,7 @@ import { KnowledgeEvidenceRelevanceHeldError } from '../knowledge/semantic/evide
 
 type PromptContextDeps = {
   readonly workingDirectory: string;
+  readonly projectFramework?: ProjectFrameworkObservation | undefined;
   readonly knowledgeService?: Pick<KnowledgeService, 'preparePromptPacket'> | undefined;
   readonly preparedKnowledgePrompt?: PreparedKnowledgePromptPacket | undefined;
   readonly memoryRegistry?: Pick<MemoryRegistry, 'getAll' | 'semanticCandidates'> | undefined;
@@ -42,6 +44,7 @@ export async function prepareOrchestratorPromptContext(
  * transmission. A changed read-set cannot reuse a previously rendered string.
  */
 export function assertOrchestratorKnowledgeCurrent(record: AgentRecord, deps?: PromptContextDeps): void {
+  deps?.projectFramework?.assertCurrent();
   if (deps?.preparedKnowledgePrompt) {
     readPreparedKnowledgePromptPacket(deps.preparedKnowledgePrompt, record.task, record.writeScope ?? []);
   } else if (deps?.knowledgeService) {
@@ -49,7 +52,8 @@ export function assertOrchestratorKnowledgeCurrent(record: AgentRecord, deps?: P
   }
 }
 
-function buildProjectContext(workingDirectory: string): string | null {
+function buildProjectContext(workingDirectory: string, observation?: ProjectFrameworkObservation): string | null {
+  observation?.assertCurrent();
   const cwd = workingDirectory;
 
   try {
@@ -71,11 +75,7 @@ function buildProjectContext(workingDirectory: string): string | null {
         // TypeScript
         lines.push(`- TypeScript: ${existsSync(join(cwd, 'tsconfig.json')) ? 'yes' : 'no'}`);
 
-        // Test framework
-        const allDeps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-        if (allDeps['vitest']) lines.push('- Test framework: vitest');
-        else if (allDeps['jest']) lines.push('- Test framework: jest');
-        else if (pkg.scripts?.test === 'bun test' || pkg.scripts?.test?.startsWith('bun test ')) lines.push('- Test framework: bun:test');
+        if (observation?.framework) lines.push(`- Test framework: ${observation.framework}`);
 
         // Scripts
         const scriptNames = Object.keys(pkg.scripts ?? {}).slice(0, 10);
@@ -326,7 +326,7 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
 
   // --- Layer 3: Project context ---
   if (!skipLayers?.has('project')) {
-    const projectContext = deps ? buildProjectContext(deps.workingDirectory) : null;
+    const projectContext = deps ? buildProjectContext(deps.workingDirectory, deps.projectFramework) : null;
     if (projectContext) {
       parts.push(projectContext);
     }

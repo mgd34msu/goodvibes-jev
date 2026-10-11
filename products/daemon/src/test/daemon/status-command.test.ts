@@ -367,7 +367,10 @@ describe('update reports what the daemon knows about its own updates', () => {
     expect(result.exitCode).toBe(0);
     const text = result.lines.join('\n');
     expect(text).toContain('publishes no verb to trigger an update check early');
-    expect(text).toContain('restart-service');
+    expect(text).toContain('only reads status');
+    expect(text).toContain('require a configured update artifact and host policy');
+    expect(text).not.toContain('restart-service');
+    expect(text).not.toContain('checks once an hour');
     // Nothing was invented: only the identity call was made.
     expect(calls).toEqual(['/status']);
   });

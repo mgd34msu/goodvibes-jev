@@ -22,15 +22,18 @@
  *   - an admin-scope refusal (403) on config.get reads distinctly from a generic
  *     fetch failure;
  *   - a secret-shaped key never renders its stored value;
- *   - a key the daemon holds but the schema does not know still renders (as a
- *     read-only raw row) so nothing becomes invisible.
+ *   - undeclared keys remain excluded until current canonical metadata readings
+ *     establish they are not card material; unresolved secrets remain masked.
  *
  * Writes go through config.set one key at a time (the daemon's real /config
  * contract); the raw key/value form remains, demoted to an explicit escape hatch
  * for unschema'd keys (RawConfigEditor, in "All settings").
  */
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, useEffect, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { isDeclaredCardMaterialKey } from '../../../lib/card-material';
+import { readConfigKey, type ConfigKeyResult } from '../../../lib/config-key-judgment';
+import { subscribeClientLifetime } from '../../../lib/client-lifetime';
 import { sdk, type ConfigSetOutcome } from '../../../lib/goodvibes';
 import { formatError, serializeError } from '../../../lib/errors';
 import { asRecord } from '../../../lib/object';
@@ -41,9 +44,11 @@ import { SettingsField } from '../SettingsField';
 import { SettingsHeadingLevel } from './parts';
 import { FeatureUnitCard } from '../FeatureUnitCard';
 import { PaymentCardEntry } from '../PaymentCardEntry';
-import { displayConfigValue } from '../../../lib/config-redaction';
+import { displayConfigValue, isUnresolvedConfigKey, SECRET_CONFIG_KEYS } from '../../../lib/config-redaction';
 import {
   buildSettingsModel,
+  liveLeafKeys,
+  OBJECT_TYPED_CONFIG_KEYS,
   filterSettingsModel,
   readConfigPath,
   type SettingsGroupModel,
@@ -90,7 +95,63 @@ export function ConfigSettingsProvider({ enabled = true, children }: { enabled?:
     retry: false,
   });
 
-  const groups = useMemo(() => buildSettingsModel(config.data), [config.data]);
+  const baseGroups = useMemo(() => buildSettingsModel(config.data), [config.data]);
+  // Canonically declared secrets stay deterministic, including non-schema keys.
+  // Only genuinely unresolved names need credential and card-material readings.
+  const unresolvedNames = liveLeafKeys(config.data, "", new Set([...OBJECT_TYPED_CONFIG_KEYS, ...SECRET_CONFIG_KEYS]))
+    .filter((key) => isUnresolvedConfigKey(key) && !isDeclaredCardMaterialKey(key));
+  const nameSignature = JSON.stringify(unresolvedNames);
+  const [classification, setClassification] = useState<{
+    data: unknown;
+    updatedAt: number;
+    nameSignature: string;
+    result: ConfigKeyResult;
+    cardResult: ConfigKeyResult;
+  }>();
+  const [identityRevision, setIdentityRevision] = useState(0);
+  useEffect(
+    () =>
+      subscribeClientLifetime(() => {
+        setClassification(undefined);
+        setIdentityRevision((value) => value + 1);
+      }),
+    []
+  );
+  useEffect(() => {
+    const names = JSON.parse(nameSignature) as string[];
+    if (!enabled || !config.isSuccess || config.isFetching || !names.length || names.length > 64)
+      return;
+    const abort = new AbortController();
+    void Promise.all([readConfigKey(names, abort.signal), readConfigKey(names, abort.signal, "webui.settings.card-material-key")]).then(([result, cardResult]) => {
+      if (!abort.signal.aborted)
+        setClassification({
+          data: config.data,
+          updatedAt: config.dataUpdatedAt,
+          nameSignature,
+          result,
+          cardResult,
+        });
+    });
+    return () => abort.abort();
+  }, [
+    enabled,
+    config.isSuccess,
+    config.isFetching,
+    config.data,
+    config.dataUpdatedAt,
+    nameSignature,
+    identityRevision,
+  ]);
+  const current = enabled && config.isSuccess && !config.isFetching
+    && classification?.data === config.data && classification.updatedAt === config.dataUpdatedAt
+    && classification.nameSignature === nameSignature ? classification : undefined;
+  const nonCardKeys = current?.cardResult.status === 'ready' && current.cardResult.isCurrent()
+    ? new Set(unresolvedNames.filter((_, index) => current.cardResult.status === 'ready' && current.cardResult.matches.at(index) === false))
+    : new Set<string>();
+  const clearedKeys = current?.result.status === 'ready' && current.result.isCurrent()
+    ? new Set(unresolvedNames.filter((_, index) => current.result.status === 'ready' && current.result.matches.at(index) === false))
+    : new Set<string>();
+  const groups = nonCardKeys.size ? buildSettingsModel(config.data, clearedKeys, nonCardKeys) : baseGroups;
   // payments.currency's live value, for MoneyField's currency label, read from
   // the live config since it may sit in a different group than the money field.
   const currency = useMemo(() => {
@@ -249,7 +310,7 @@ export function ConfigGroupList({
                   <div key={row.key} className="settings-readable__row">
                     <dt className="settings-readable__key">
                       {row.key}
-                      {row.isSecret && <span className="settings-secret-flag"> (secret)</span>}
+                      {row.isSecret && <span className="settings-secret-flag"> {isUnresolvedConfigKey(row.key) ? '(masked)' : '(secret)'}</span>}
                       {row.daemonOwned && (
                         <span
                           className="settings-daemon-flag"
@@ -261,7 +322,7 @@ export function ConfigGroupList({
                       )}
                     </dt>
                     <dd className={row.isSecret ? 'settings-value settings-value--secret' : 'settings-value'}>
-                      {displayConfigValue(row.key, row.value)}
+                      {displayConfigValue(row.key, row.value, row.displayCleared)}
                     </dd>
                   </div>
                 ))}

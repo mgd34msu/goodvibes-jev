@@ -45,6 +45,8 @@
  * interval the watcher was configured with, rather than inventing a number.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertImapReadingCurrent } from '../imap-readings.js';
 import type {
   InboundCapabilityVerdict,
   InboundCapabilityTransition,
@@ -70,6 +72,8 @@ export class ImapMailSource implements InboundMailSource {
   readonly kind = 'imap' as const;
 
   private readonly watcher: InboundMailboxWatcher;
+  private readonly reading: JudgmentReadingOptions;
+  private readonly disposeReading: (() => void) | undefined;
   private readonly pollIntervalMs: number;
   /** Set to `poll` when the owner configured polling rather than push. */
   private readonly configuredMode: 'idle' | 'poll' | 'auto';
@@ -80,6 +84,8 @@ export class ImapMailSource implements InboundMailSource {
   private readonly firstVerdictReached: Promise<InboundCapabilityVerdict>;
 
   constructor(deps: InboundMailboxWatcherDeps) {
+    this.reading = deps.reading ?? {};
+    this.disposeReading = deps.disposeReading;
     this.caller = deps.observer;
     this.pollIntervalMs = deps.settings.pollIntervalMs;
     this.configuredMode = deps.settings.mode;
@@ -97,6 +103,8 @@ export class ImapMailSource implements InboundMailSource {
    * a `MailboxOpenReport`, a `UIDVALIDITY` and a body probe are IMAP facts and
    * have no Gmail counterpart, so they belong on the concrete source.
    */
+  get retired(): boolean { return this.reading.signal?.aborted === true; }
+
   get status(): InboundMailboxWatcherStatus {
     return this.watcher.status;
   }
@@ -135,12 +143,15 @@ export class ImapMailSource implements InboundMailSource {
    * already listens for it.
    */
   async start(signal: AbortSignal): Promise<InboundCapabilityVerdict> {
+    signal = AbortSignal.any([signal, ...(this.reading.signal ? [this.reading.signal] : [])]);
+    if (signal.aborted) return this.watcher.status.verdict;
+    assertImapReadingCurrent(this.reading);
     this.watcher.start();
     if (this.firstVerdict !== null) return this.firstVerdict;
 
     let abandon: (value: null) => void = () => undefined;
     const abandoned = new Promise<null>((resolve) => { abandon = resolve; });
-    const onAbort = (): void => { abandon(null); };
+    const onAbort = (): void => { abandon(null); void this.watcher.stop(); };
     if (signal.aborted) abandon(null);
     else signal.addEventListener('abort', onAbort, { once: true });
     try {
@@ -165,6 +176,7 @@ export class ImapMailSource implements InboundMailSource {
    * rather than a state to invent.
    */
   async run(signal: AbortSignal): Promise<void> {
+    signal = AbortSignal.any([signal, ...(this.reading.signal ? [this.reading.signal] : [])]);
     if (signal.aborted) {
       await this.stop();
       return;
@@ -180,7 +192,7 @@ export class ImapMailSource implements InboundMailSource {
 
   /** Stop watching and release the socket. Safe to call twice. */
   async stop(): Promise<void> {
-    await this.watcher.stop();
+    try { await this.watcher.stop(); } finally { this.disposeReading?.(); }
   }
 
   /**

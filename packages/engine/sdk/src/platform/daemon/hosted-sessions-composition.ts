@@ -1,3 +1,4 @@
+import type { FailureReadOptions } from '@goodvibes-jev/engine/errors';
 import { createNativeHostedTurnHost, type NativeHostedTurnDependencies, type NativeHostedTurnHost } from '../hosted-sessions/native-turn-host.js';
 import { registerNativeHostedTurnGatewayMethods } from '../control-plane/routes/native-hosted-turn.js';
 import type { SharedSessionBroker } from '../control-plane/session-broker.js';
@@ -72,6 +73,7 @@ export interface DaemonHostedSessionsOptions {
 
 /** What this composition needs from an already-built daemon. */
 export interface HostedSessionCompositionInput {
+  readonly failureReading?: FailureReadOptions | undefined;
   readonly options: DaemonHostedSessionsOptions;
   readonly configManager: ConfigManager;
   readonly runtimeBus: RuntimeEventBus;
@@ -122,6 +124,7 @@ export function composeHostedSessions(input: HostedSessionCompositionInput): Hos
   );
   let native: NativeHostedTurnHost | undefined;
   const manager = new HostedSessionManager({
+    failureReading: input.failureReading,
     closeNativeTurns: () => native?.close() ?? Promise.resolve(),
     floorFactory: input.options.floorFactory,
     store,
@@ -170,6 +173,7 @@ export function composeHostedSessionsForFacade(
     return null;
   }
   const manager = composeHostedSessions({
+    failureReading: { port: runtimeServices.judgment.port },
     options,
     configManager,
     runtimeBus,

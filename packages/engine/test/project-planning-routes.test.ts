@@ -1,10 +1,17 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ProjectPlanningRoutes } from '../sdk/src/platform/daemon/http/project-planning-routes.js';
 import { ProjectPlanningService } from '../sdk/src/platform/knowledge/index.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+
+let previousPort: JudgmentPort | undefined;
+beforeEach(() => { previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 const tmpRoots: string[] = [];
 
@@ -16,6 +23,7 @@ afterEach(() => {
 
 describe('project planning routes', () => {
   test('requires admin for writes and allows passive evaluation reads', async () => {
+    installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
     const routes = createRoutes({ admin: false });
     const write = await routes.handle(jsonRequest('/api/projects/planning/state', {
       projectId: 'alpha',
@@ -118,3 +126,24 @@ function jsonRequest(path: string, body: unknown): Request {
     body: JSON.stringify(body),
   });
 }
+
+
+test('an aborted HTTP planning request cannot publish a late semantic result', async () => {
+  const routes = createRoutes({ admin: true });
+  const fake = fakePort(() => noulAnswer(0.99));
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  installJudgmentPort({ ...fake.port, async ask(request) { entered(); await gate; return fake.port.ask(request); } });
+  const controller = new AbortController();
+  const request = new Request(jsonRequest('/api/projects/planning/state', {
+    projectId: 'alpha', state: { goal: 'Cap retry delay at 30 seconds', scope: 'Retry helper', executionApproved: true,
+      tasks: [{ id: 'retry', title: 'Cap delay', verification: ['Run retry tests'] }] },
+  }), { signal: controller.signal });
+  const pending = routes.handle(request);
+  await started; controller.abort(); release();
+  // The existing admin POST path propagates async service rejections.
+  await expect(pending).rejects.toThrow();
+  const status = await routes.handle(new Request('http://daemon.local/api/projects/planning/status?projectId=alpha'));
+  expect(await status!.json()).toMatchObject({ counts: { states: 0, workPlans: 0 } });
+});

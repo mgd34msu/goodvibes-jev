@@ -49,6 +49,8 @@ export function integrationBarrier() {
 
 export async function createNativeIntegrationFixture(options: {
   harness?: Partial<HarnessOptions>;
+  /** Exact source-backed work requested by a focused integration scenario. */
+  work?: { title: string; goal: string; criteria: readonly string[] };
   decoratePort?: (port: JudgmentPort) => JudgmentPort;
   /** Auto isolation outside git is genuinely shared; never fabricate a DTO. */
   withoutGit?: boolean;
@@ -72,7 +74,7 @@ export async function createNativeIntegrationFixture(options: {
   let revision = 0;
   async function addWork() {
     const created = await ledger.service.execute({ type: 'create', requestId: `create-${revision}`, expectedRevision: revision,
-      title: 'Native integration display label', goal: NATIVE_INTEGRATION_GOAL, criteria: NATIVE_INTEGRATION_CRITERIA }, actor);
+      title: options.work?.title ?? 'Native integration display label', goal: options.work?.goal ?? NATIVE_INTEGRATION_GOAL, criteria: [...(options.work?.criteria ?? NATIVE_INTEGRATION_CRITERIA)] }, actor);
     if (created.kind !== 'accepted' || created.event.type === 'import_legacy') throw new Error('Native fixture create failed');
     revision++;
     const claimed = await ledger.service.execute({ type: 'claim', requestId: `claim-${revision}`, expectedRevision: revision, workId: created.event.workId }, actor);

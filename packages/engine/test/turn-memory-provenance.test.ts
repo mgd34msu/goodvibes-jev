@@ -45,13 +45,13 @@ function readMemoryProvenanceIds(metadata: unknown): readonly string[] {
   return recordIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
 }
 
-async function captureTurnCompleted(run: (bus: RuntimeEventBus) => void): Promise<TurnCompleted> {
+async function captureTurnCompleted(run: (bus: RuntimeEventBus) => void | Promise<void>): Promise<TurnCompleted> {
   const bus = new RuntimeEventBus();
   const seen: TurnCompleted[] = [];
   bus.on<TurnCompleted>('TURN_COMPLETED', (envelope: RuntimeEventEnvelope<'TURN_COMPLETED', TurnCompleted>) => {
     seen.push(envelope.payload);
   });
-  run(bus);
+  await run(bus);
   // The bus dispatches each subscriber in its own microtask, flush them.
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(seen).toHaveLength(1);
@@ -118,9 +118,9 @@ describe('memory-source filtering (the loop stamps only source \'memory\')', () 
 
 describe('handleFinalResponseOutcome: the real turn-completion emit site', () => {
   function runOutcome(memoryRecordIds: readonly string[] | undefined): Promise<TurnCompleted> {
-    return captureTurnCompleted((bus) => {
+    return captureTurnCompleted(async (bus) => {
       const conversationCalls: string[] = [];
-      handleFinalResponseOutcome({
+      await handleFinalResponseOutcome({
         conversation: {
           addAssistantMessage: (content: string) => { conversationCalls.push(content); },
           addSystemMessage: () => undefined,

@@ -26,6 +26,9 @@
  * (RFC 6154), which is the only answer that is right by construction.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { assertImapReadingCurrent, ImapReadingError, imapReadingLease, readImapDrafts, type ImapReadingLease } from './imap-readings.js';
 import type { ImapFetchFrame } from './imap-fetch-response.js';
 import type { ImapAppendDraftInput } from './imap-client.js';
 import { validateSmtpAddress, validateSmtpSubject } from './smtp-client.js';
@@ -219,45 +222,26 @@ export function parseMailboxList(lines: readonly (string | ImapFetchFrame)[]): M
   return entries;
 }
 
-/**
- * Choose the Drafts mailbox from a LIST reply, in descending order of how much
- * the server actually told us:
- *
- *   1. the folder carrying the `\Drafts` special-use attribute (RFC 6154),
- *      the server's own answer, and the only one that survives a mailbox named
- *      in another language;
- *   2. a folder literally named `drafts`, case-insensitively;
- *   3. a folder whose last path segment is `drafts`, this is what finds
- *      Gmail's `[Gmail]/Drafts`;
- *
- * and null when the reply names none of those, which leaves the caller to fall
- * back to the plain `Drafts` name.
- *
- * `\Noselect` folders are skipped throughout: they are path nodes, and an
- * APPEND to one fails.
- */
-export function selectDraftsMailbox(lines: readonly string[]): string | null {
-  return selectDraftsMailboxFrames(lines);
+/** Server-declared \Drafts wins; otherwise read the selectable candidates, or none. */
+export async function selectDraftsMailbox(lines: readonly string[], options: JudgmentReadingOptions = {}): Promise<string | null> {
+  const selection = await selectDraftsMailboxFrames(lines, options);
+  selection.assertCurrent();
+  return selection.value;
 }
 
 /** Internal transport seam; deliberately not exported by the email public index. */
-export function selectDraftsMailboxFrames(lines: readonly (string | ImapFetchFrame)[]): string | null {
+export async function selectDraftsMailboxFrames(lines: readonly (string | ImapFetchFrame)[], options: JudgmentReadingOptions = {}): Promise<ImapReadingLease<string | null>> {
+  assertImapReadingCurrent(options);
   const entries = parseMailboxList(lines).filter(
     (entry) => !entry.attributes.includes('\\noselect'),
   );
 
   for (const entry of entries) {
-    if (entry.attributes.includes('\\drafts')) return entry.name;
+    if (entry.attributes.includes('\\drafts')) return imapReadingLease(entry.name, options);
   }
-  for (const entry of entries) {
-    if (entry.name.toLowerCase() === 'drafts') return entry.name;
-  }
-  for (const entry of entries) {
-    const delimiter = entry.delimiter.length > 0 ? entry.delimiter : '/';
-    const segments = entry.name.split(delimiter);
-    if ((segments[segments.length - 1] ?? '').toLowerCase() === 'drafts') return entry.name;
-  }
-  return null;
+  // Screen the entire reply before projecting candidates; no clipping or redaction.
+  try { assertJudgmentInput(lines); } catch { throw new ImapReadingError(); }
+  return readImapDrafts(entries, options);
 }
 
 // ---------------------------------------------------------------------------

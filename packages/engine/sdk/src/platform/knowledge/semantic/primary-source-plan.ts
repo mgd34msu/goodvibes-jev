@@ -1,3 +1,4 @@
+import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
 import { projectSemanticPrimaryClaim } from './primary-claim-projection.js';
 import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { sourceRankingContent } from './answer-source-ranking.js';
@@ -31,8 +32,13 @@ export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSi
     node(id: string) { return watch(`node:${id}`, () => store.getNode(id)); },
     extraction(id: string) { return watch(`extraction:${id}`, () => store.getExtractionBySourceId(id)); },
     assertCurrent() {
-      assertSemanticWriteAllowed(signal, shouldStop);
-      for (const check of checks.values()) check();
+      try { store.assertRecordSnapshotFrame(() => {
+        assertSemanticWriteAllowed(signal, shouldStop);
+        for (const check of checks.values()) check();
+      }); } catch (error) {
+        if (error instanceof KnowledgeRecordAdmissionHeldError) throw new KnowledgeSourceQualityHeldError('stale');
+        throw error;
+      }
     },
   };
 }

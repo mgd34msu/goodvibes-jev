@@ -57,6 +57,7 @@ await withWorkspaceLock('leak-scan', async () => {
     // this script reaches the suite too, and the suite is reaped before this
     // callback returns into the temp-tree removal.
     const { exitCode, stopped, stopReason } = await runOwnedTestChild({
+        ownProcessGroup: process.platform !== 'win32',
       argv: ['--preload', './test/_helpers/leak-detector.ts', ...testArgs],
       cwd: SDK_ROOT,
       env: {

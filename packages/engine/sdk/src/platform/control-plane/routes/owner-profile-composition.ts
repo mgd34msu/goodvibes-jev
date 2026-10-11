@@ -1,3 +1,5 @@
+import { createProfilePostalReader } from '../../owner-profile/postal-reading.js';
+import type { PostalProviders } from '../../owner-profile/postal-proposer.js';
 /**
  * routes/owner-profile-composition.ts
  *
@@ -41,8 +43,9 @@ import { registerAccountIdentityRedaction, type AccountIdentity } from '../../ut
 
 /** What the composition needs from the runtime graph. */
 export interface OwnerProfileCompositionDeps {
+  readonly postalProviders?: PostalProviders | undefined;
   /** Reads the `profile.*` policy and receives the consumer read fallback. */
-  readonly configManager: Pick<ConfigManager, 'get' | 'attachProfileFallback'>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'attachProfilePostalFallback'>>;
   /** `--daemon-home`, when the host parsed one. Absent ⇒ env, then `homeDir`. */
   readonly daemonHome?: string | undefined;
   /**
@@ -142,7 +145,8 @@ export function composeOwnerProfile(
   // Beside the profile's own redaction values: egress anonymisation of the
   // account's home directory and login name, matched exactly.
   const accountIdentity = readAccountIdentity();
-  registerAccountIdentityRedaction(() => accountIdentity);
+  const uninstallIdentityRedaction = registerAccountIdentityRedaction(() => accountIdentity);
+  const uninstallPostal = config.attachProfilePostalFallback?.(createProfilePostalReader(store, () => config.get('profile.consumerFallback'), deps.postalProviders));
   const uninstallConsumers = installOwnerProfileConsumers(store, {
     attachProfileFallback: (reader) => config.attachProfileFallback(reader),
     consumerFallbackEnabled: () => config.get('profile.consumerFallback'),
@@ -179,7 +183,8 @@ export function composeOwnerProfile(
     dispose: (): void => {
       store.unwatch();
       uninstallConsumers();
-      registerAccountIdentityRedaction(null);
+      uninstallPostal?.();
+      uninstallIdentityRedaction();
     },
   };
 }

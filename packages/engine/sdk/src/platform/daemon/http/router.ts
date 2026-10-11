@@ -208,7 +208,7 @@ interface DaemonHttpRouterContext {
    * Without this, the production router always passes undefined and the secrets
    * tier is permanently dead on live code paths.
    */
-  readonly secretsManager?: Pick<import('../../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome' | 'list' | 'listDetailed'> | null | undefined;
+  readonly secretsManager?: Pick<import('../../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome' | 'list' | 'listDetailed'> & Partial<import('./settings-precondition.js').ServingSettingsSecrets> | null | undefined;
   readonly trySpawnAgent: (
     input: Parameters<AgentManager['spawn']>[0],
     logLabel?: string,
@@ -236,7 +236,15 @@ export class DaemonHttpRouter {
   setClusterGroupVerbs(verbs: ClusterGroupVerbs): void { this.clusterGroupVerbs = verbs; }
 
   constructor(private readonly context: DaemonHttpRouterContext) {
-    this.settingsPrecondition = context.settingsAuthority ? createServingSettingsPrecondition(context.configManager, context.settingsAuthority) : undefined;
+    const settingsConfigOwner = context.configManager;
+    const settingsAuthorityOwner = context.settingsAuthority;
+    this.settingsPrecondition = context.settingsAuthority ? createServingSettingsPrecondition(context.configManager, context.settingsAuthority, () => {
+      const owner = context.secretsManager;
+      return owner?.prepareScopedDeletion && owner.inspectPreparedScopedDeletion && owner.assertPreparedScopedDeletion && owner.withPreparedScopedDeletion && owner.assertCompletedScopedDeletion
+        ? owner as import('./settings-precondition.js').ServingSettingsSecrets : null;
+    }, () => {
+      if (context.configManager !== settingsConfigOwner || context.settingsAuthority !== settingsAuthorityOwner) throw new Error('Settings serving owner changed.');
+    }) : undefined;
     this.telemetryApi = context.runtimeStore
       ? new TelemetryApiService({
         runtimeBus: context.runtimeBus,

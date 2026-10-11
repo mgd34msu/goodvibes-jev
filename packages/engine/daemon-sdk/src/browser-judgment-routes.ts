@@ -27,6 +27,8 @@ export interface BrowserJudgmentMailSubjectSource {
   readonly snapshot: BrowserJudgmentMailSubjectSnapshot;
 }
 export interface BrowserJudgmentChatSessions {
+  /** Optional canonical completed messages; absence holds code-language reading. */
+  getMessages?(sessionId: string): readonly { readonly id: string; readonly sessionId: string; readonly content: string; readonly createdAt: number; readonly supersededAt?: number | undefined }[];
   getSession(id: string): { readonly id: string; readonly title: string; readonly createdAt: number; readonly updatedAt: number } | null;
 }
 export interface BrowserJudgmentErrorSource {
@@ -100,10 +102,11 @@ export function createBrowserJudgmentHttpHandler(context: BrowserJudgmentHttpCon
     try {
       const principal = context.authenticate(req);
       if (!principal) throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
+      const { principalId, principalKind } = principal;
       if (!principal.admin && missingScopes(principal.scopes, ['write:judgment']).length) throw new BrowserJudgmentError('JUDGMENT_ACCESS_DENIED');
       const currentPrincipal = (): AuthenticatedPrincipal => {
         const current = context.authenticate(req);
-        if (!current || current.principalId !== principal.principalId || current.principalKind !== principal.principalKind
+        if (!current || current.principalId !== principalId || current.principalKind !== principalKind
           || (!current.admin && missingScopes(current.scopes, ['write:judgment']).length)) throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
         return current;
       };

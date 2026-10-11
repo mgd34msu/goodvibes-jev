@@ -218,7 +218,7 @@ test('schema5 migration preserves exact execution, intent and ledger JSON and cr
   });
   const migrated = await open(f.file); expect(migrated.storage.current(f.key)).toEqual(original);
   await inspectImage(f.file, db => {
-    expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]);
+    expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]);
     expect(db.exec('SELECT state_json FROM native_work_executions')[0]?.values).toEqual([[executionJson]]);
     expect(db.exec('SELECT state_json FROM native_work_execution_intents')[0]?.values).toEqual([[intentJson]]);
     expect(db.exec('SELECT state_json FROM work_ledgers')[0]?.values).toEqual([[ledgerJson]]);

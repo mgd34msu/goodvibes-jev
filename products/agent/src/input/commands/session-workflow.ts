@@ -1,3 +1,4 @@
+import { captureTranscriptSource, readTranscriptIndex, transcriptReadingCanceled, TRANSCRIPT_UNAVAILABLE } from './transcript-reading.ts';
 import { randomBytes } from 'node:crypto';
 
 import type { CommandContext } from '../command-registry.ts';
@@ -40,12 +41,14 @@ function formatSessionFailure(action: string, error: unknown): string {
   ].join('\n');
 }
 
-function buildTranscriptReviewLines(
+async function buildTranscriptReviewLines(
   ctx: CommandContext,
   kind: TranscriptEventKind | 'all',
   mode: 'events' | 'groups' | 'hotspots',
-): string[] {
-  const index = ctx.session.conversationManager.getTranscriptEventIndex();
+  source: ReturnType<typeof captureTranscriptSource>,
+): Promise<string[]> {
+  const index = await readTranscriptIndex(ctx, source);
+  if (!index) return [TRANSCRIPT_UNAVAILABLE];
   const events = kind === 'all' ? index.events : index.events.filter((event) => event.kind === kind);
   const groups = kind === 'all' ? index.groups : index.groups.filter((group) => group.kind === kind);
 
@@ -453,7 +456,9 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
 
   if (sub === 'events' || sub === 'groups' || sub === 'hotspots') {
     const kind = parseTranscriptKind(args[1]);
-    ctx.print(buildTranscriptReviewLines(ctx, kind, sub).join('\n'));
+    const source = captureTranscriptSource(ctx);
+    try { const lines = await buildTranscriptReviewLines(ctx, kind, sub, source); source.assertPublishable(); ctx.print(lines.join('\n')); }
+    catch (error) { try { source.assertPublishable(); } catch { return true; } if (!transcriptReadingCanceled(error)) ctx.print(TRANSCRIPT_UNAVAILABLE); }
     return true;
   }
 

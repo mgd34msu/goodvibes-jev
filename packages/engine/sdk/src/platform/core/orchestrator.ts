@@ -192,6 +192,7 @@ export class Orchestrator {
   private readonly toolCallAborts = new ToolCallAbortRegistry();
   /** Monotonic id source for queued-message ids. */
   private queuedMessageSeq = 0;
+  private postTurnPlanOwner: object = {};
   private autoSpawnTimeout: ReturnType<typeof setTimeout> | null = null;
   private nativeConversationProjectId: string | undefined;
   private activeNativeConversationTurn = false;
@@ -513,6 +514,7 @@ export class Orchestrator {
 
   /** Abort the current in-flight LLM request, if any. */
   public abort(): void {
+    this.postTurnPlanOwner = {};
     this.nativeAdmissionAbort?.abort();
     this.abortController?.abort();
     this.followUpRuntime?.cancel();
@@ -676,6 +678,7 @@ export class Orchestrator {
   public get isTurnInFlight(): boolean { return this.turnInFlight || this.activeNativeConversationTurn; }
 
   private startThinking(estimatedInputTokens?: number): void {
+    this.postTurnPlanOwner = {};
     this.followUpRuntime.cancel(true);
     this.isThinking = true;
     this.thinkingFrame = 0; // Reset each turn so gradient starts clean and frame never grows unbounded
@@ -883,7 +886,16 @@ export class Orchestrator {
     turnClassification?: ClassificationResult,
     onTurnTerminal?: (publish: () => void) => void,
   ): Promise<void> {
+    // A successful finalization releases the in-flight controller but does not
+    // retire this plan continuation. New turns, abort/dispose and failures do.
+    const planOwner = this.postTurnPlanOwner;
+    const sessionId = this.sessionId;
+    const signal = this.abortController?.signal;
     await executeOrchestratorTurnLoop({
+      assertPostTurnCurrent: () => {
+        signal?.throwIfAborted();
+        if (this.disposed || this.sessionId !== sessionId || this.postTurnPlanOwner !== planOwner) throw new Error('Plan continuation retired');
+      },
       onTurnTerminal,
       conversation: this.conversation,
       toolRegistry: this.toolRegistry,
@@ -933,6 +945,7 @@ export class Orchestrator {
       passiveKnowledgeInjectionBudgetTokens: this.passiveKnowledgeInjectionBudgetTokens,
       passiveKnowledgeInjectionRelevanceFloor: this.passiveKnowledgeInjectionRelevanceFloor,
       codeIndex: this.coreServices.codeIndex,
+      codeReadAccessFilter: async path => (await this.permissionManager.readAccess(path)) === 'allow',
       isPassiveCodeInjectionEnabled: () => this.isPassiveCodeInjectionEnabled(),
       getAlreadyInjectedKnowledgeIds: () => this.getAlreadyInjectedKnowledgeIds(),
       addInjectedKnowledgeIds: (ids) => { this.addInjectedKnowledgeIds(ids); },
@@ -1058,6 +1071,8 @@ export class Orchestrator {
     if (this._pendingToolCalls.length > 0) {
       this.reconcileUnresolvedToolCalls([], 'exception-before-results');
     }
+
+    if (this._turnFailed) this.postTurnPlanOwner = {};
 
     // --- Submission key: mark turn complete or failed ---
     // Success: markComplete caches the result for duplicate callers.

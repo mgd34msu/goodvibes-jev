@@ -3,7 +3,7 @@
  * Not part of the browser/runtime-neutral SDK facade. Provider credentials
  * remain read-only ports; semantic mapping and triage are separate layers.
  */
-export type { IntakeCredentialStore, IntakeLogger } from './context.js';
+export type { IntakeCredentialStore, IntakeCredentialSnapshot, IntakeLogger } from './context.js';
 export { createProtectedInboxMapper } from './protected-preview.js';
 export type { ProtectedInboxPreviewInput, ProtectedInboxPreviewFields } from './protected-preview.js';
 export { createEmailInboxOwner } from './providers/email-owner.js';
@@ -71,3 +71,13 @@ export type { InboxReadSource } from './composite.js';
 export { createOwnedTriagedInboxSource, registerTriagedInbox } from './triage/owned.js';
 export type { InboxTriageAuthority, OwnedTriagedInboxOptions, OwnedInboxTriageResult, OwnedTriagedInboxSource } from './triage/owned.js';
 export type { InboxTriageOverlay } from './registration.js';
+
+// Explicit host-owned provider mutation handles. No default registration or polling.
+export { createTriageTagger } from './triage/tagger/index.js';
+export type { TriageTagger, TriageTaggerOptions, PreparedTriageTags, TriageTagEffect, TriageProviderTag, TaggerGuard, ImapStoreArgs, ImapStoreFlag, ImapRetryOptions } from './triage/tagger/index.js';
+export { createOwnedInboxTagging } from './triage/tagged-owned.js';
+export type { OwnedInboxTagging, OwnedInboxTaggingOptions, OwnedInboxTagOperation } from './triage/tagged-owned.js';
+
+// Explicit account-bound Discord channels; no implicit catalog or external polling.
+export { createDiscordInboxOwner } from './providers/discord-owner.js';
+export type { DiscordInboxAccount, DiscordInboxChannelScope, DiscordInboxOwnerOptions, DiscordInboxOwnerFactories, DiscordInboxOwner, VerifiedDiscordInboxOwner } from './providers/discord-owner.js';

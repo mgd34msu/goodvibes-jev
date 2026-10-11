@@ -39,6 +39,7 @@
  */
 import type { Locator, Page } from 'playwright-core';
 import { BrowserSessionError } from './browser-sessions.js';
+import { BrowserControlIdentityWork } from './browser-control-identity.js';
 import { resolveRef } from './browser-snapshot.js';
 import type { BrowserElementRef, BrowserSnapshot, CardFieldGuard } from './browser-types.js';
 
@@ -53,6 +54,8 @@ export interface BatchSecretFillRequest {
   readonly fills: readonly SecretFillItem[];
   readonly guard: CardFieldGuard | null;
   readonly timeoutMs: number;
+  readonly work?: BrowserControlIdentityWork | undefined;
+  readonly assertSnapshotCurrent?: (() => void) | undefined;
 }
 
 /**
@@ -76,11 +79,15 @@ export interface BatchSecretFillOutcome {
  * count them itself, which is the kind of thing that shows up in review.
  */
 export async function fillSecretsIntoPage(request: BatchSecretFillRequest): Promise<BatchSecretFillOutcome> {
-  if (request.guard === null) {
+  request = { ...request, fills: request.fills.map(fill => ({ ...fill })) };
+  const work = request.work ?? new BrowserControlIdentityWork();
+  const fills = request.fills.map(fill => ({ ...fill }));
+  work.assertCurrent();
+  if (request.guard === null || !request.snapshot || !request.guard.hasLiveMaterial(request.snapshot.sessionId, request.snapshot.pageId)) {
     throw new BrowserSessionError(
-      'Refused: this browser has no card-material redaction installed, so anything typed here '
+      'Refused: this browser has no active card-material redaction for this page, so anything typed here '
       + 'could be read straight back out of a page snapshot.',
-      'Construct the browser engine with a cardFieldGuard before using it to pay for anything.',
+      'Install and arm the page’s cardFieldGuard before using it to pay for anything.',
     );
   }
 
@@ -93,11 +100,13 @@ export async function fillSecretsIntoPage(request: BatchSecretFillRequest): Prom
   // typed yet at this point regardless of which ref in the batch failed to
   // resolve, so `filled` is empty either way; the difference a throw would
   // have made is only that the caller could no longer name WHICH ref it was.
-  const resolved: { readonly ref: string; readonly value: string; readonly locator: Locator; readonly element: BrowserElementRef }[] = [];
-  for (const fill of request.fills) {
+  const resolved: { readonly ref: string; readonly value: string; readonly locator: Locator; readonly element: BrowserElementRef; readonly revalidate: () => Promise<void>; readonly assertCurrent: () => void }[] = [];
+  for (const fill of fills) {
     try {
-      const { locator, element } = await resolveRef(request.page, request.snapshot, fill.ref);
-      resolved.push({ ref: fill.ref, value: fill.value, locator, element });
+      const identity = await resolveRef(request.page, request.snapshot, fill.ref, work, request.assertSnapshotCurrent, () => {
+        throw new Error('Secret targets require exact mechanical identity; semantic retargeting is not allowed.');
+      });
+      resolved.push({ ref: fill.ref, value: fill.value, ...identity });
     } catch (error) {
       void error;
       return { ok: false, filled: [], failedRef: fill.ref };
@@ -107,6 +116,8 @@ export async function fillSecretsIntoPage(request: BatchSecretFillRequest): Prom
   const filled: string[] = [];
   for (const item of resolved) {
     try {
+      await item.revalidate(); item.assertCurrent();
+      if (!request.guard?.hasLiveMaterial(request.snapshot!.sessionId, request.snapshot!.pageId)) throw new Error('Secret redaction is no longer active.');
       await typeOrRefuse(item.locator, item.value, request.timeoutMs, item.element);
     } catch (error) {
       void error;

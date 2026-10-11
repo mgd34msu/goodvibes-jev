@@ -3,7 +3,7 @@
  * The host must supply HTTP and a mapper that admits digest/previews under the
  * InboundChannelItem privacy contract. This module does not redact text, and
  * shape validation does not establish that the host's privacy work is correct.
- * Source/repairs: docs/audit/daemon-slack-inbox-adapter.md.
+ * Source/repairs: docs/contracts/daemon-inbox-and-triage.md#slack-complete-history-window.
  */
 import type { AdapterContext, InboundChannelItem, InboundProviderAdapter, ProviderPollOptions, ProviderPollResult } from '../provider-adapter.js';
 import { POLL_CADENCE_MS } from '../provider-adapter.js';

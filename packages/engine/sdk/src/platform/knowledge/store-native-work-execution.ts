@@ -1,3 +1,4 @@
+import { createNativeCiContinuationStorage } from './store-native-ci-continuation.js';
 import { nativeSettlementDigest, nativeWorkAttestationSchema, nativeWorkSettlementSchema, type NativeWorkSettlementReceipt } from '../workflow/work-ledger/native-settlement-types.js';
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
 import { durableKeyHash, durablePayloadRevision, type DurableContractKey } from '../contract/durable-admission.js';
@@ -177,6 +178,7 @@ export function createNativeWorkExecutionStorage(sqlite: SQLiteStore, projectId:
     pending.add(work); void work.then(() => pending.delete(work), () => pending.delete(work)); return work;
   }
   return {
+    continuations: createNativeCiContinuationStorage(sqlite, projectId, refresh, (db, key) => read(db, projectId, key)),
     current(key) { if (closed) throw new NativeWorkExecutionError('closed'); return sqlite.readPersisted(db => read(db, projectId, key)); },
     currentByAttempt(attemptId) { if (closed) throw new NativeWorkExecutionError('closed'); if (!attemptId || typeof attemptId !== 'string') throw new NativeWorkExecutionError('invalid'); return sqlite.readPersisted(db => read(db, projectId, { attemptId })); },
     transaction,

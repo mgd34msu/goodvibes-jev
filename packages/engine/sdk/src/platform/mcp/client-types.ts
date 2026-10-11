@@ -58,6 +58,8 @@ export type McpElicitationResolver = (input: {
 }) => Promise<{ action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> | undefined }>;
 
 export interface McpClientOptions {
+  /** Live owner check immediately before every initial or restarted process spawn. */
+  beforeProcessStart?: (() => void) | undefined;
   timeout?: number | undefined;
   processSpec?: McpProcessSpec | undefined;
   onNotification?: ((notification: McpClientNotification) => void) | undefined;

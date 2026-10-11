@@ -1,3 +1,5 @@
+import { createKnowledgeFactQualityReader } from './fact-quality.js';
+import { createSemanticWriteGuard } from './primary-source-plan.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
 import { REPAIRS_GAP_RELATION } from '../home-graph/types.js';
 import {
@@ -11,12 +13,12 @@ import type {
   KnowledgeSourceRecord,
 } from '../types.js';
 import { buildKnowledgeSemanticGraphIndex } from './graph-index.js';
-import { canonicalRepairSubjectNodes, repairSubjectIds } from './repair-subjects.js';
+import { canonicalRepairSubjectNodes, captureRepairSubjectReadSet } from './repair-subjects.js';
 import {
   factsForObject,
   factsForSource,
   isConcreteRepairSubject,
-  isUsableSelfImprovementFact,
+  isSelfImprovementFactCandidate,
   linkedObjectsForSource,
   matchingObjectProfiles,
   repairTargetFactCount,
@@ -26,6 +28,7 @@ import {
 import { readString, readStringArray, semanticMetadata, uniqueStrings } from './utils.js';
 
 export interface GapContext {
+  readonly assertCurrent?: (() => void) | undefined;
   readonly gap: KnowledgeNodeRecord;
   readonly sources: readonly KnowledgeSourceRecord[];
   readonly linkedObjects: readonly KnowledgeNodeRecord[];
@@ -34,6 +37,7 @@ export interface GapContext {
 }
 
 export interface GapClassification {
+  readonly assertCurrent?: (() => void) | undefined;
   readonly action: 'repair' | 'skip' | 'suppress';
   readonly reason?: string | undefined;
   readonly status?: string | undefined;
@@ -55,12 +59,13 @@ export function collectCandidateGaps(
     .sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
 }
 
-export function buildGapContext(
+export async function buildGapContext(
   store: KnowledgeStore,
   spaceId: string,
   gap: KnowledgeNodeRecord,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): GapContext {
+  options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined } = {},
+): Promise<GapContext> {
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const edges = graph.edges;
   const sourcesById = graph.sourcesById;
@@ -72,8 +77,10 @@ export function buildGapContext(
       .filter((edge) => edge.toKind === 'node' && edge.toId === gap.id && edge.fromKind === 'source')
       .map((edge) => edge.fromId),
   ]);
+  const guard = captureRepairSubjectReadSet(store, gap, [], options.signal, options.shouldStop);
   const directSources = sourceIds.map((id) => sourcesById.get(id)).filter((source): source is KnowledgeSourceRecord => Boolean(source));
-  const linkedObjects = canonicalRepairSubjectNodes({
+  guard.watch('subject-edges', () => store.listEdges());
+  const selected = await canonicalRepairSubjectNodes({ store, spaceId, context: { gap }, evidenceSources: directSources, ...options,
     text: `${gap.title} ${gap.summary ?? ''}`,
     objectProfiles,
     nodes: [
@@ -85,6 +92,9 @@ export function buildGapContext(
         .filter((node): node is KnowledgeNodeRecord => Boolean(node)),
     ],
   });
+  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  assertCurrent();
+  const linkedObjects = selected.nodes;
   const sources = uniqueById([
     ...directSources,
     ...linkedObjects.flatMap((object) => sourcesForObject(object.id, edges, sourcesById)),
@@ -99,31 +109,47 @@ export function buildGapContext(
       && edge.toId === gap.id
       && edge.relation === REPAIRS_GAP_RELATION)
     .map((edge) => edge.fromId));
-  return { gap, sources, linkedObjects, facts, repairSourceIds };
+  return { gap, sources, linkedObjects, facts, repairSourceIds, assertCurrent };
 }
 
-export function classifyGap(
+export async function classifyGap(
   context: GapContext,
   force: boolean,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): GapClassification {
+  store: KnowledgeStore,
+  options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined } = {},
+): Promise<GapClassification> {
   const status = readString(context.gap.metadata.repairStatus);
   const nextAttemptAt = readNumber(context.gap.metadata.nextRepairAttemptAt);
-  const repairedWithFacts = status === 'repaired' && hasRepairFactEvidence(context);
-  if (!force && repairedWithFacts) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'repaired' };
-  if (!force && status !== 'repaired' && nextAttemptAt && nextAttemptAt > Date.now()) return { action: 'skip', reason: 'Gap repair retry window has not elapsed.', status: 'retry_wait', markAttempt: true };
-  if (!force && hasRepairEdge(context) && hasRepairFactEvidence(context)) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'already_repaired' };
-  if (isDefaultUnanchoredAnswerGap(context)) {
-    return { action: 'skip', reason: 'Default answer gaps without a linked subject are not automatically web-repaired.', status: 'needs_context', markAttempt: true };
+  let usefulEvidence = false;
+  let assertCurrent = context.assertCurrent;
+  assertCurrent?.();
+  if (!force && (status === 'repaired' || hasRepairEdge(context))) {
+    const guard = createSemanticWriteGuard(store, options.signal, options.shouldStop);
+    guard.watch(`gap:${context.gap.id}`, () => store.getNode(context.gap.id), context.gap);
+    const reader = createKnowledgeFactQualityReader(store, { spaceId: getKnowledgeSpaceId(context.gap),
+      purpose: 'repair', query: [context.gap.title, context.gap.summary].filter(Boolean).join('\n\n'),
+      subjects: context.linkedObjects, signal: options.signal, guard });
+    const candidates = repairEvidenceCandidates(context);
+    const quality = await reader.prepare(candidates);
+    assertCurrent = () => { context.assertCurrent?.(); quality.assertCurrent(); };
+    usefulEvidence = quality.facts.length >= repairTargetFactCount(context.gap);
   }
-  if (isNotApplicableGap(context, objectProfiles)) return { action: 'suppress', reason: 'The gap is not applicable to the linked subject.' };
+  const repairedWithFacts = status === 'repaired' && usefulEvidence;
+  if (!force && repairedWithFacts) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'repaired', assertCurrent };
+  if (!force && status !== 'repaired' && nextAttemptAt && nextAttemptAt > Date.now()) return { action: 'skip', reason: 'Gap repair retry window has not elapsed.', status: 'retry_wait', markAttempt: true, assertCurrent };
+  if (!force && hasRepairEdge(context) && usefulEvidence) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'already_repaired', assertCurrent };
+  if (isDefaultUnanchoredAnswerGap(context)) {
+    return { action: 'skip', reason: 'Default answer gaps without a linked subject are not automatically web-repaired.', status: 'needs_context', markAttempt: true, assertCurrent };
+  }
+  if (isNotApplicableGap(context, objectProfiles)) return { action: 'suppress', reason: 'The gap is not applicable to the linked subject.', assertCurrent };
   if (!hasConcreteSubject(context, objectProfiles)) {
-    return { action: 'skip', reason: 'Gap has no concrete source or subject for automatic repair.', status: 'needs_context', markAttempt: true };
+    return { action: 'skip', reason: 'Gap has no concrete source or subject for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
   if (context.sources.length === 0 && context.linkedObjects.length === 0) {
-    return { action: 'skip', reason: 'Gap has no source context for automatic repair.', status: 'needs_context', markAttempt: true };
+    return { action: 'skip', reason: 'Gap has no source context for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
-  return { action: 'repair' };
+  return { action: 'repair', assertCurrent };
 }
 
 function isDefaultUnanchoredAnswerGap(context: GapContext): boolean {
@@ -141,46 +167,29 @@ export async function linkRepairSources(
   query: string,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
   shouldStop: () => boolean = () => false,
+  signal?: AbortSignal,
 ): Promise<number> {
-  let linked = 0;
-  const linkedObjectIds = repairSubjectIdsForGap(store, spaceId, gap, objectProfiles);
-  for (const sourceId of sourceIds) {
-    if (shouldStop()) break;
-    if (!store.getSource(sourceId)) continue;
-    await store.batch(async () => {
-      if (shouldStop()) return;
-      await store.upsertEdge({
-        fromKind: 'source',
-        fromId: sourceId,
-        toKind: 'node',
-        toId: gap.id,
-        relation: REPAIRS_GAP_RELATION,
-        weight: 0.8,
-        metadata: semanticMetadata(spaceId, {
-          query,
-          repairedAt: Date.now(),
-        }),
-      });
-      for (const nodeId of linkedObjectIds) {
-        if (shouldStop()) return;
-        await store.upsertEdge({
-          fromKind: 'source',
-          fromId: sourceId,
-          toKind: 'node',
-          toId: nodeId,
-          relation: 'source_for',
-          weight: 0.78,
-          metadata: semanticMetadata(spaceId, {
-            query,
-            linkedBy: 'semantic-gap-repair',
-            repairedAt: Date.now(),
-          }),
-        });
-      }
-    });
-    linked += 1;
-  }
-  return linked;
+  const guard = createSemanticWriteGuard(store, signal, shouldStop);
+  guard.watch('repair-link-edges', () => store.listEdges());
+  const sources = [...new Set(sourceIds)].flatMap(id => {
+    const source = guard.source(id);
+    return source && getKnowledgeSpaceId(source) === spaceId ? [source] : [];
+  });
+  const selection = await repairSubjectsForGap(store, spaceId, gap, objectProfiles, shouldStop, signal, sourceIds);
+  const assertCurrent = () => { guard.assertCurrent(); selection.assertCurrent(); };
+  const edges = sources.flatMap(source => [
+    { fromKind: 'source' as const, fromId: source.id, toKind: 'node' as const, toId: gap.id,
+      relation: REPAIRS_GAP_RELATION, weight: 0.8,
+      metadata: semanticMetadata(spaceId, { query, repairedAt: Date.now() }) },
+    ...selection.nodes.map(node => ({ fromKind: 'source' as const, fromId: source.id,
+      toKind: 'node' as const, toId: node.id, relation: 'source_for', weight: 0.78,
+      metadata: semanticMetadata(spaceId, { query, linkedBy: 'semantic-gap-repair', repairedAt: Date.now() }) })),
+  ]);
+  assertCurrent();
+  await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+    nodes: [], edges, issues: [], assertCurrent,
+  }), { requireAccepted: true, signal });
+  return sources.length;
 }
 
 function gapMatchesSourceFilter(
@@ -202,16 +211,16 @@ function hasRepairEdge(context: GapContext): boolean {
   return context.repairSourceIds.length > 0;
 }
 
-function hasRepairFactEvidence(context: GapContext): boolean {
+function repairEvidenceCandidates(context: GapContext): KnowledgeNodeRecord[] {
   const repairSourceIds = new Set(context.repairSourceIds);
   const subjectIds = new Set(context.linkedObjects.map((node) => node.id));
   const usableFacts = context.facts.filter((fact) => (
     fact.sourceId
     && repairSourceIds.has(fact.sourceId)
     && readString(fact.metadata.extractor) === 'repair-promotion'
-    && isUsableSelfImprovementFact(fact, subjectIds)
+    && isSelfImprovementFactCandidate(fact, subjectIds)
   ));
-  return usableFacts.length >= repairTargetFactCount(context.gap);
+  return usableFacts;
 }
 
 function isNotApplicableGap(context: GapContext, objectProfiles: readonly KnowledgeObjectProfilePolicy[]): boolean {
@@ -243,12 +252,13 @@ function hasConcreteSubject(context: GapContext, objectProfiles: readonly Knowle
   }) || context.sources.some((source) => Boolean(source.title || source.url || source.sourceUri || source.canonicalUri));
 }
 
-function repairSubjectIdsForGap(
+async function repairSubjectsForGap(
   store: KnowledgeStore,
   spaceId: string,
   gap: KnowledgeNodeRecord,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): string[] {
+  shouldStop: () => boolean, signal?: AbortSignal, evidenceSourceIds: readonly string[] = [],
+) {
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const edges = graph.edges;
   const nodesById = graph.nodesById;
@@ -259,7 +269,9 @@ function repairSubjectIdsForGap(
       .filter((edge) => edge.toKind === 'node' && edge.toId === gap.id && edge.fromKind === 'source')
       .map((edge) => edge.fromId),
   ]);
-  return repairSubjectIds({
+  const guard = captureRepairSubjectReadSet(store, gap, evidenceSourceIds, signal, shouldStop);
+  const selected = await canonicalRepairSubjectNodes({ store, spaceId, context: { gap }, shouldStop, signal,
+    evidenceSources: uniqueStrings([...sourceIds, ...evidenceSourceIds]).map(id => store.getSource(id)).filter((source): source is KnowledgeSourceRecord => source !== null),
     text: `${gap.title} ${gap.summary ?? ''}`,
     objectProfiles,
     nodes: [
@@ -270,6 +282,8 @@ function repairSubjectIdsForGap(
       ...sourceIds.flatMap((sourceId) => linkedObjectsForSource(sourceId, edges, nodesById)),
     ],
   });
+  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  assertCurrent(); return { nodes: selected.nodes, assertCurrent };
 }
 
 function readNumber(value: unknown): number | undefined {

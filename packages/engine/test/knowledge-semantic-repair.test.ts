@@ -36,6 +36,10 @@ useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: web repair and subject links', () => {
   test('web gap repair ingests at least two distinct sources for answer gaps', async () => {
+    answerReadings.set({ webGapQueries: ['what features does the TV have?'], webGapSources: [
+      ['https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv', 0.99, 'official-vendor'],
+      ['https://www.displayspecifications.com/en/model/example', 0.99, 'secondary'],
+    ] });
     const ingested: Array<{
       url: string;
       knowledgeSpaceId?: string | undefined;
@@ -135,11 +139,13 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     expect(ingested[0]?.knowledgeSpaceId).toBe('homeassistant:house');
     expect(ingested[0]?.metadata?.sourceDiscovery).not.toBeUndefined(); // presence-only: sourceDiscovery field
     expect((ingested[0]?.metadata?.sourceDiscovery as Record<string, unknown>).confidence).toBeGreaterThanOrEqual(70);
-    expect((ingested[0]?.metadata?.sourceDiscovery as Record<string, unknown>).confidenceReasons).toContain('model:86NANO90UNA');
+    expect((ingested[0]?.metadata?.sourceDiscovery as Record<string, unknown>).confidenceReasons).toContain('semantic-relevance');
     expect(ingested[0]?.tags).toContain('semantic-gap-repair');
   });
 
   test('web gap repair escalates targeted searches and caps accepted sources at five', async () => {
+    answerReadings.set({ webGapQueries: ['What ports and Bluetooth support does the TV have?', 'What other input/output ports are present on the LG 86NANO90UNA?\nThe manual does not include a complete I/O specification list.'],
+      webGapSources: ['lg.com', 'manualsnet.com', 'zkelectronics.com', 'fullspecs.net', 'displayspecifications.com', 'tab-tv.com'].map((host, index) => [`https://${host}/lg-86nano90una-specs-${index}`, 0.99, 'secondary'] as const) });
     const queries: string[] = [];
     const ingested: Array<{ url: string; metadata?: Record<string, unknown> | undefined }> = [];
     const repairer = createWebKnowledgeGapRepairer({
@@ -220,6 +226,10 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     });
 
     expect(queries.length).toBeGreaterThanOrEqual(2);
+    expect(queries.slice(0, 2)).toEqual([
+      'What ports and Bluetooth support does the TV have?',
+      'What other input/output ports are present on the LG 86NANO90UNA?\nThe manual does not include a complete I/O specification list.',
+    ]);
     expect(result?.ingestedSourceIds).toHaveLength(5);
     expect(ingested).toHaveLength(5);
     expect((ingested[0]?.metadata?.sourceDiscovery as Record<string, unknown>).checkedSourceLimit).toBe(5);
@@ -227,6 +237,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
   });
 
   test('web gap repair reuses pending official sources as accepted evidence', async () => {
+    answerReadings.set({ webGapQueries: ['What Bluetooth and ports does the TV have?'], webGapSources: [['https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv', 0.99, 'official-vendor']] });
     const ingested: unknown[] = [];
     const repairer = createWebKnowledgeGapRepairer({
       searchService: {
@@ -301,6 +312,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
   });
 
   test('self-improvement promotes accepted repair evidence into typed subject facts', async () => {
+    answerReadings.set({ authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']] });
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const official = await store.upsertSource({

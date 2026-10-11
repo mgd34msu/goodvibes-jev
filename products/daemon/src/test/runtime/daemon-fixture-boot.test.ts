@@ -179,3 +179,61 @@ test.each(['benchmarks', 'providers'])('shutdown awaits accepted %s metadata bef
     finally { refresh.mockRestore(); discovery.mockRestore(); }
   }
 }, 30_000);
+
+test('successive owned graphs rebuild after shutdown and repeated shutdown stays inert', async () => {
+  const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
+  const intervals = trackIntervals();
+  const root = rootWithBenchmarks('daemon-helper-reset');
+  let first: DaemonFixture | undefined;
+  let second: DaemonFixture | undefined;
+  const inboxFactory: Parameters<typeof startDaemonFixture>[0]['inboxFactory'] = (context, _routing, options) =>
+    registerInboxSurface(context, { ...options, adapters: new Map() });
+  try {
+    first = await startDaemonFixture({ root, inboxFactory });
+    const oldGraph = first.services;
+    expect(first.services).toBe(oldGraph);
+    expect(intervals.count).toBeGreaterThan(3);
+    await first.stop();
+    expect(intervals.remaining()).toEqual([]);
+    await expect(first.stop()).resolves.toBeUndefined();
+    expect(intervals.remaining()).toEqual([]);
+    second = await startDaemonFixture({ root, inboxFactory });
+    expect(second.services).not.toBe(oldGraph);
+    expect(intervals.count).toBeGreaterThan(3);
+    await second.stop();
+    expect(intervals.remaining()).toEqual([]);
+    await expect(second.stop()).resolves.toBeUndefined();
+    expect(intervals.remaining()).toEqual([]);
+  } finally {
+    try { await second?.stop(); await first?.stop(); }
+    finally { intervals.restore(); discovery.mockRestore(); }
+  }
+}, 30_000);
+
+
+test('owned graph profile cannot follow an inherited daemon-home override', async () => {
+  const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
+  const foreign = makeOwnedTempDir('daemon-foreign-profile');
+  const foreignPath = join(foreign, 'owner-profile.md');
+  const foreignText = '# Owner profile\n\n- name: foreign-fixture-owner\n';
+  writeFileSync(foreignPath, foreignText);
+  const previous = process.env.GOODVIBES_DAEMON_HOME;
+  process.env.GOODVIBES_DAEMON_HOME = foreign;
+  let fixture: DaemonFixture | undefined;
+  try {
+    fixture = await startDaemonFixture({ root: rootWithBenchmarks('daemon-profile-isolation'),
+      inboxFactory: (context, _routing, options) => registerInboxSurface(context, { ...options, adapters: new Map() }),
+    });
+    const profile = await fixture.invoke<{ path: string }>('profile.status');
+    expect(profile.path).toBe(join(fixture.homeDirectory, '.goodvibes', 'daemon', 'owner-profile.md'));
+    expect(profile.path).not.toBe(foreignPath);
+    expect(readFileSync(foreignPath, 'utf8')).toBe(foreignText);
+    expect(process.env.GOODVIBES_DAEMON_HOME).toBe(foreign);
+  } finally {
+    try { await fixture?.stop(); } finally {
+      discovery.mockRestore();
+      if (previous === undefined) delete process.env.GOODVIBES_DAEMON_HOME;
+      else process.env.GOODVIBES_DAEMON_HOME = previous;
+    }
+  }
+}, 30_000);

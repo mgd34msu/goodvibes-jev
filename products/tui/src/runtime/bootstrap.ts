@@ -256,8 +256,10 @@ export async function bootstrapRuntime(
     orchestrator, providerRegistry, sessionLineageTracker: services.sessionLineageTracker, runtimeBus, sessionId: runtime.sessionId,
   }, services.contextAccountingHolder, bootstrapUnsubs);
 
+  const acpLifetime = new AbortController();
+  bootstrapUnsubs.push(() => acpLifetime.abort());
   const acpManager = new AcpManager({
-    requestPermission: (request) => permissionPromptRef.requestPermission(request),
+    permissionHost: { port: services.judgment.port, permissionManager, config: configManager, signal: acpLifetime.signal },
     runtimeBus, hookDispatcher: services.hookDispatcher,
   });
   const acpTaskAdapter = new AcpTaskAdapter(store);

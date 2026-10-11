@@ -171,7 +171,9 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   });
 
   // ── The SDK's client floor: everything a turn needs in this process.
+  const workspaceTrustManager = new WorkspaceTrustManager({ shellPaths, surfaceRoot: GOODVIBES_TUI_SURFACE_ROOT });
   const client = createClientRuntimeServices({
+    workspaceTrust: workspaceTrustManager,
     runtimeBus: options.runtimeBus,
     runtimeStore: options.runtimeStore,
     configManager,
@@ -184,7 +186,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     ...(options.daemonHomeDirectory === undefined ? {} : { daemonHome: options.daemonHomeDirectory }),
   });
   const runtimeDispatch = createDomainDispatch(options.runtimeStore);
-  const workspaceTrustManager = new WorkspaceTrustManager({ shellPaths, surfaceRoot: GOODVIBES_TUI_SURFACE_ROOT });
   const {
     agentManager, agentMessageBus, agentOrchestrator, archetypeLoader, contractRunner,
     contextAccountingHolder, providerRegistry, providerCapabilityRegistry, cacheHitTracker,
@@ -385,7 +386,10 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // own speaker), synthesis reaches `voice.tts.stream` when a daemon serves it
   // and falls back to a local provider otherwise; see audio/spoken-turn-wiring.ts.
   const voiceProviders = new VoiceProviderRegistry();
-  ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
+  ensureBuiltinVoiceProviders(voiceProviders, {
+      readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]),
+      readConfigIncarnation: () => configManager.getConfigurationIncarnation(),
+    });
   const voiceService = new VoiceService(voiceProviders);
   for (const [semantic, ingest] of [[knowledgeSemanticService, knowledgeService], [agentKnowledgeSemanticService, agentKnowledgeService], [homeGraphSemanticService, homeGraphService]] as const) {
     semantic.setGapRepairer(createWebKnowledgeGapRepairer({ searchService: webSearchService, ingestService: ingest }));
@@ -501,7 +505,10 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     runtimeStore: options.runtimeStore, runtimeBus: options.runtimeBus,
     getConversationTitle: options.getConversationTitle,
   });
+  const promptLifetime = new AbortController();
+  disposalScope.registry.add('autonomous tool prompt lifetime', () => promptLifetime.abort());
   const approvalHandlers = createApprovalDerivedHandlers({
+    autonomousHost: { port: client.judgment.port, permissionManager: client.permissionManager, config: configManager, signal: promptLifetime.signal, workspaceTrust: workspaceTrustManager },
     requestApproval,
     configManager,
     featureFlags,

@@ -12,6 +12,7 @@ declare module 'pdfjs-dist/build/pdf.mjs' {
   export interface PdfDocumentProxy {
     readonly numPages: number;
     getPage(pageNumber: number): Promise<PdfPageProxy>;
+    getMetadata(): Promise<{ readonly info: Record<string, unknown>; readonly metadata: { getAll(): Record<string, unknown> } | null }>;
   }
 
   export interface PdfLoadingTask {
@@ -23,6 +24,9 @@ declare module 'pdfjs-dist/build/pdf.mjs' {
   export function getDocument(input: {
     readonly data: Uint8Array;
     readonly useSystemFonts?: boolean | undefined;
+    readonly isEvalSupported?: boolean | undefined;
+    readonly maxImageSize?: number | undefined;
+    readonly stopAtErrors?: boolean | undefined;
   }): PdfLoadingTask;
 }
 

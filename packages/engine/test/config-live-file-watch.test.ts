@@ -174,3 +174,27 @@ describe('config live file watch', () => {
     expect(manager.get('provider.model')).toBe('openai:base');
   }, WATCH_TEST_TIMEOUT_MS);
 });
+
+test('explicit readiness drain consumes each visible generation and preserves later invalidation', () => {
+  const configDir = tempConfigDir();
+  const manager = new ConfigManager({ configDir });
+  manager.set('provider.model', 'openai:before');
+  const stop = manager.watchConfigFiles({ intervalMs: 60_000 });
+  let invalidations = 0;
+  const unsubscribe = manager.onDidInvalidate(() => { invalidations++; });
+  try {
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ provider: { model: 'openai:boot' } }));
+    manager.load(); // The boot migration's existing immediate in-memory reload.
+    manager.flushConfigFileChanges();
+    const readyGeneration = invalidations;
+    expect(readyGeneration).toBe(2);
+    manager.flushConfigFileChanges();
+    expect(invalidations).toBe(readyGeneration);
+    // The next genuine disk edit still invalidates, even for identical values.
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ provider: { model: 'openai:boot' } }, null, 2));
+    manager.flushConfigFileChanges();
+    expect(invalidations).toBe(readyGeneration + 1);
+    manager.set('provider.model', 'openai:boot');
+    expect(invalidations).toBe(readyGeneration + 2);
+  } finally { unsubscribe(); stop(); }
+});

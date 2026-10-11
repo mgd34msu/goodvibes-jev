@@ -1,3 +1,4 @@
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 /**
  * Approval decisions that persist and generalize, the rule side.
  *
@@ -18,6 +19,7 @@ import { dirname } from 'node:path';
 import type { PolicyRule } from '../runtime/permissions/types.js';
 import {
   evaluateArgShapeRule,
+  evaluateArgShapeRuleAsync,
   evaluateNetworkScopeRule,
   evaluatePathScopeRule,
   evaluatePrefixRule,
@@ -183,6 +185,7 @@ export interface DurableRuleMatch {
  * with the policy engine flag on OR off, so it does not go through the full layered
  * evaluator).
  */
+/** @deprecated Synchronous compatibility; production callers use matchDurableRulesAsync. */
 export function matchDurableRules(
   rules: readonly PolicyRule[],
   toolName: string,
@@ -211,6 +214,46 @@ export function matchDurableRules(
         matched = false;
         break;
     }
+    if (matched) return { effect: rule.effect, ruleId: rule.id };
+  }
+  return null;
+}
+
+export async function matchDurableRulesAsync(
+  rules: readonly PolicyRule[],
+  toolName: string,
+  args: Record<string, unknown>,
+  options: JudgmentReadingOptions & { readonly projectRoot?: string | undefined } = {},
+): Promise<DurableRuleMatch | null> {
+  const before = JSON.stringify([rules, args, options.projectRoot]);
+  const current = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (JSON.stringify([rules, args, options.projectRoot]) !== before) throw new Error('Durable permission rules changed while reading');
+  };
+  current();
+  for (const rule of rules) {
+    let matched = false;
+    switch (rule.type) {
+      case 'prefix':
+        matched = evaluatePrefixRule(rule, toolName, args).matched;
+        break;
+      case 'arg-shape':
+        matched = (await evaluateArgShapeRuleAsync(rule, toolName, args, { signal: options.signal, assertCurrent: current })).matched;
+        break;
+      case 'path-scope':
+        matched = evaluatePathScopeRule(rule, toolName, args, options.projectRoot).matched;
+        break;
+      case 'network-scope':
+        matched = evaluateNetworkScopeRule(rule, toolName, args).matched;
+        break;
+      case 'mode-constraint':
+        // Mode-constraint rules are mode-layer policy, not approval-derived,
+        // no remember tier produces one, and mode handling already lives in
+        // checkDetailed before this matcher runs.
+        matched = false;
+        break;
+    }
+    current();
     if (matched) return { effect: rule.effect, ruleId: rule.id };
   }
   return null;

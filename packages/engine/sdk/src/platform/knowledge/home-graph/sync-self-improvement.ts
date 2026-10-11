@@ -5,7 +5,7 @@ import type { KnowledgeSemanticService } from '../semantic/index.js';
 import type { KnowledgeStore } from '../store.js';
 import { edgeIsActive, readHomeAssistantMetadataString } from './helpers.js';
 import { refreshHomeGraphDevicePassport } from './generated-pages.js';
-import { isUsefulHomeGraphPageFact } from './page-quality.js';
+import { isHomeGraphPageFactCandidate } from './page-quality.js';
 import { readHomeGraphSearchState } from './search.js';
 import { readHomeGraphState } from './state.js';
 
@@ -109,8 +109,9 @@ export async function enrichAndImproveHomeGraphSource(
     return;
   }
   await runtime.semanticService.enrichSource(sourceId, { knowledgeSpaceId: spaceId });
-  if (!sourceHasUsefulSemanticFacts(runtime.store, sourceId, spaceId)) return;
-  // The enrichment already produced usable facts, refresh this source's page
+  if (!sourceHasSemanticFactCandidates(runtime.store, sourceId, spaceId)) return;
+  // Structural candidates trigger refresh; the page reader decides usefulness.
+  // Refresh this source's page
   // now; repair-accepted refreshes ride the governed run / next sync pump.
   const installationId = readHomeGraphInstallationIdFromSpace(spaceId);
   if (installationId) {
@@ -127,13 +128,13 @@ export async function enrichAndImproveHomeGraphSource(
   });
 }
 
-function sourceHasUsefulSemanticFacts(store: KnowledgeStore, sourceId: string, spaceId: string): boolean {
+function sourceHasSemanticFactCandidates(store: KnowledgeStore, sourceId: string, spaceId: string): boolean {
   const state = readHomeGraphState(store, spaceId);
   const nodesById = new Map(state.nodes.map((node) => [node.id, node]));
   return state.edges
     .filter((edge) => edge.fromKind === 'source' && edge.fromId === sourceId && edge.toKind === 'node')
     .map((edge) => nodesById.get(edge.toId))
-    .some((node) => Boolean(node && node.kind === 'fact' && isUsefulHomeGraphPageFact(node)));
+    .some((node) => Boolean(node && node.kind === 'fact' && isHomeGraphPageFactCandidate(node)));
 }
 
 export async function refreshHomeGraphDevicePagesForSourceIds(
@@ -165,7 +166,7 @@ export async function refreshHomeGraphDevicePagesForSourceIds(
     if (wanted.size === 0 && edge.fromKind === 'node' && edge.toKind === 'node' && edge.relation === 'describes') {
       const fact = nodesById.get(edge.fromId);
       const device = nodesById.get(edge.toId);
-      if (fact && device?.kind === 'ha_device' && isUsefulHomeGraphPageFact(fact)) deviceNodeIds.add(device.id);
+      if (fact && device?.kind === 'ha_device' && isHomeGraphPageFactCandidate(fact)) deviceNodeIds.add(device.id);
     }
   }
   for (const edge of state.edges) {

@@ -10,6 +10,9 @@ import type { AgentRecord } from './record.js';
 import type { AutonomousToolSource } from '../../permissions/autonomous.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 
+const actionSignals = new WeakMap<object, AbortSignal>();
+export function bindContractActionSignal<T extends object>(target: T, signal: AbortSignal | undefined): T { if (signal) actionSignals.set(target, signal); return target; }
+export function getContractActionSignal(target: object): AbortSignal | undefined { return actionSignals.get(target); }
 const actionSources = new WeakMap<object, () => AutonomousToolSource>();
 export type ContractActionPort = (port: JudgmentPort) => JudgmentPort;
 const actionPorts = new WeakMap<object, ContractActionPort>();
@@ -32,6 +35,7 @@ export interface ContractPlannerBinding {
 }
 
 export interface NativePlannerBinding {
+  readonly autonomousSignal?: AbortSignal | undefined;
   readonly autonomousPort?: ContractActionPort | undefined;
   readonly autonomousSource: () => AutonomousToolSource;
   readonly inputReadAuthority?: ContractInputAuthority | undefined;

@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -67,7 +68,7 @@ function ask(item: Fixture, includeFact = true) {
 function askReadings(serve: number) {
   const fake = fakePort((name, question) => {
     if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.99);
-    if (name === 'useful') return noulAnswer(0.99);
+    if (name === 'useful' || name === 'repairUseful') return noulAnswer(0.99);
     if (name === 'serve') return noulAnswer(serve);
     if (name === 'wanted') return noulAnswer(0.01);
     if (['manufacturerPresent', 'modelPresent', 'batteryApplicable', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01);
@@ -80,36 +81,50 @@ function expectProtected(store: KnowledgeStore, item: Fixture) {
 }
 
 describe('required activation holds across knowledge refresh catches', () => {
-  test('Ask propagates an explicit activation no and never generates a passport or claims a refresh', async () => {
+  test('Ask links an accepted fact without rewriting it or asking for activation again', async () => {
     const item = await fixture('AC-7 supports 4K UHD resolution.'), fake = askReadings(0.01);
-    await expect(ask(item)).rejects.toMatchObject({ name: 'KnowledgeNodeActivationHeldError', reason: 'no' });
-    expect(fake.requests.filter((request) => 'serve' in request.questions)).toHaveLength(1);
+    const rawFact = item.store.getRecordSnapshot('node', item.fact.id).raw;
+    const revisions = item.store.listNodeRevisions(item.fact.id);
+    expect(await ask(item)).toEqual({ requested: true, refreshed: 1 });
+    expect(fake.requests.filter((request) => 'serve' in request.questions)).toHaveLength(0);
+    expect(item.store.getNode(item.fact.id)).toBe(item.fact);
+    expect(item.store.getRecordSnapshot('node', item.fact.id).raw).toEqual(rawFact);
+    expect(item.store.listNodeRevisions(item.fact.id)).toEqual(revisions);
     const reopened = await item.reload();
     expect(reopened.getNode(item.fact.id)).toEqual(item.fact);
+    expect(reopened.getRecordSnapshot('node', item.fact.id).raw).toEqual(rawFact);
+    expect(reopened.listNodeRevisions(item.fact.id)).toEqual(revisions);
     expectProtected(reopened, item);
-    // Source capture/linking settled before the required fact write; retain that prefix.
-    expect(reopened.getSource(item.source.id)).not.toBeNull();
-    expect(reopened.listEdges().map((edge) => edge.relation)).toEqual(['source_for']);
-    expect(reopened.listNodes().filter((node) => node.kind === 'ha_device_passport')).toHaveLength(0);
-    expect(reopened.listSources().filter(isGeneratedPageSource)).toHaveLength(0);
-    expect(item.artifactStore.list()).toHaveLength(0);
+    expect(reopened.listEdges().filter(edge => edge.fromId === item.source.id || edge.fromId === item.fact.id)
+      .map(edge => [edge.fromKind, edge.fromId, edge.toKind, edge.toId, edge.relation]).sort()).toEqual([
+      ['source', item.source.id, 'node', item.device.id, 'source_for'],
+      ['source', item.source.id, 'node', item.fact.id, 'supports_fact'],
+      ['node', item.fact.id, 'node', item.device.id, 'describes'],
+    ].sort());
+    expect(reopened.listNodes().filter((node) => node.kind === 'ha_device_passport')).toHaveLength(1);
+    expect(reopened.listSources().filter(isGeneratedPageSource)).toHaveLength(1);
+    expect(item.artifactStore.list()).toHaveLength(1);
   });
 
-  test('Ask propagates a required profile activation hold from the passport refresh catch too', async () => {
+  test.each([[0.01, 'no'], [0.5, 'uncertain']] as const)('Ask propagates actual profile activation %s/%s after only the accepted source link', async (probability, reason) => {
     const item = await fixture('AC-7 resolution: 4K.');
     const fake = fakePort((name, question, state) => {
       const input = state as { category?: { title: string } };
       if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.99);
       if (name === 'wanted') return noulAnswer(input.category?.title === 'Display and picture specifications' ? 0.99 : 0.01);
-      if (name === 'serve') return noulAnswer(0.5);
+      if (name === 'serve') return noulAnswer(probability);
       if (['useful', 'selected', 'profileSupported', 'supported', 'attached'].includes(name)) return noulAnswer(0.99);
       throw new Error(`Unscripted passport question: ${name}`);
     });
     installJudgmentPort(fake.port);
-    await expect(ask(item, false)).rejects.toMatchObject({ name: 'KnowledgeNodeActivationHeldError', reason: 'uncertain' });
+    await expect(ask(item, false)).rejects.toMatchObject({ name: 'KnowledgeNodeActivationHeldError', reason });
+    expect(fake.requests.filter(request => 'serve' in request.questions).length).toBeGreaterThan(0);
     const reopened = await item.reload();
     expect(reopened.getNode(item.fact.id)).toEqual(item.fact);
     expectProtected(reopened, item);
+    expect(reopened.listEdges().map(edge => [edge.fromKind, edge.fromId, edge.toKind, edge.toId, edge.relation])).toEqual([
+      ['source', item.source.id, 'node', item.device.id, 'source_for'],
+    ]);
     expect(reopened.listNodes().filter((node) => node.kind === 'ha_device_passport')).toHaveLength(0);
     expect(reopened.listSources().filter(isGeneratedPageSource)).toHaveLength(0);
     expect(item.artifactStore.list()).toHaveLength(0);
@@ -121,7 +136,7 @@ describe('required activation holds across knowledge refresh catches', () => {
     let injected = false;
     item.store.applyPreparedIngest = async (input, prepareGraph, options) => applyPreparedIngest(input, async (stage) => {
       const graph = await prepareGraph(stage);
-      if (graph.nodes.some((node) => node.id === item.fact.id)) {
+      if (graph.edges.some((edge) => edge.fromId === item.source.id && edge.toId === item.fact.id && edge.relation === 'supports_fact')) {
         injected = true;
         throw new Error('Synthetic bookkeeping write unavailable');
       }
@@ -129,6 +144,7 @@ describe('required activation holds across knowledge refresh catches', () => {
     }, options);
     expect(await ask(item)).toEqual({ requested: true, refreshed: 1 });
     expect(injected).toBe(true);
+    expect(item.store.listEdges().filter(edge => edge.toId === item.fact.id || edge.fromId === item.fact.id)).toHaveLength(0);
     const reopened = await item.reload();
     expect(reopened.getNode(item.fact.id)).toEqual(item.fact);
     expectProtected(reopened, item);
@@ -203,6 +219,7 @@ async function captureRepairText(item: Fixture) {
 }
 function repairReadings(phase: () => string) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['AC-7', 0.99]]));
     const item = state as { category?: { title: string }; candidate?: { text?: string } };
     if (name === 'authority') return choiceAnswer(question, 'secondary', 0.99);
     if (name === 'wanted') return noulAnswer(phase() === 'fallback' && item.category?.title === 'Display and picture specifications' ? 0.99 : 0.01);

@@ -115,23 +115,58 @@ export interface AccountIdentity {
 /** Supplies the running account's identity. */
 export type AccountIdentityReader = () => AccountIdentity;
 
+// A value-free incarnation: even replacing a reader with itself or clearing an
+// already empty registration retires prior asynchronous redaction proofs.
+let redactionSourceIncarnation: object = Object.freeze({});
+let profileGenerationReader: (() => unknown) | undefined;
+let profileReadCapture: (() => { readonly assertCurrent: () => void }) | undefined;
+let profileRegistration: object = Object.freeze({});
+let identityRegistration: object = Object.freeze({});
+
+/** Capture registration ownership and retain the supplied profile read lifetime. */
+export function captureRedactionSource(): { readonly assertCurrent: () => void } {
+  const incarnation = redactionSourceIncarnation;
+  const readGeneration = profileGenerationReader;
+  const captureRead = profileReadCapture;
+  const unavailable = (): never => { throw new Error('Redaction source is no longer current'); };
+  let generation: unknown;
+  let read: { readonly assertCurrent: () => void } | undefined;
+  try { generation = readGeneration?.(); read = captureRead?.(); } catch { return unavailable(); }
+  const assertCurrent = (): void => {
+    if (redactionSourceIncarnation !== incarnation || profileGenerationReader !== readGeneration || profileReadCapture !== captureRead) return unavailable();
+    let current: unknown;
+    try { current = readGeneration?.(); read?.assertCurrent(); } catch { return unavailable(); }
+    if (current !== generation || redactionSourceIncarnation !== incarnation || profileGenerationReader !== readGeneration || profileReadCapture !== captureRead) return unavailable();
+  };
+  assertCurrent();
+  return Object.freeze({ assertCurrent });
+}
+
 let accountIdentityReader: AccountIdentityReader | null = null;
 let identityPatternCacheKey: string | null = null;
 let identityPatterns: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [];
 
 /**
  * Register (or clear, with `null`) the reader that supplies the running
- * account's home directory and user name.
+ * account's home directory and user name. The returned disposer clears only
+ * its own still-current registration and is safe to call repeatedly.
  *
  * A registered reader rather than an `os` import, for the same reason as
  * {@link registerProfileRedactionValues}: this module runs in browser, worker
  * and mobile bundles that have no operating-system account. With nothing
  * registered, text keeps its paths and names.
  */
-export function registerAccountIdentityRedaction(reader: AccountIdentityReader | null): void {
+export function registerAccountIdentityRedaction(reader: AccountIdentityReader | null): () => void {
+  const registration = Object.freeze({});
+  identityRegistration = registration;
+  redactionSourceIncarnation = Object.freeze({});
   accountIdentityReader = reader;
   identityPatternCacheKey = null;
   identityPatterns = [];
+  return () => {
+    if (identityRegistration !== registration) return;
+    registerAccountIdentityRedaction(null);
+  };
 }
 
 /**
@@ -256,17 +291,33 @@ let profilePatterns: readonly RegExp[] = [];
 
 /**
  * Register (or clear, with `null`) the reader that supplies the loaded
- * profile's closed-tier values.
+ * profile's closed-tier values. The returned disposer clears only its own
+ * still-current registration and never restores an older owner.
  *
  * A registered reader rather than an import: `redaction.ts` must stay usable
  * where no profile exists, a browser bundle, a surface with no daemon, a test
  * that never built a store. With nothing registered this module behaves exactly
  * as it did before the profile existed.
  */
-export function registerProfileRedactionValues(reader: ProfileRedactionValueReader | null): void {
+export function registerProfileRedactionValues(
+  reader: ProfileRedactionValueReader | null,
+  /** Trusted host load-generation identity; no profile value is exposed by the capture. */
+  generationReader?: () => unknown,
+  /** Capture once, then assert this lease across load and write intent, including same-content changes. */
+  captureRead?: () => { readonly assertCurrent: () => void },
+): () => void {
+  const registration = Object.freeze({});
+  profileRegistration = registration;
+  redactionSourceIncarnation = Object.freeze({});
+  profileGenerationReader = reader === null ? undefined : generationReader;
+  profileReadCapture = reader === null ? undefined : captureRead;
   profileValueReader = reader;
   profilePatternCacheKey = null;
   profilePatterns = [];
+  return () => {
+    if (profileRegistration !== registration) return;
+    registerProfileRedactionValues(null);
+  };
 }
 
 /**

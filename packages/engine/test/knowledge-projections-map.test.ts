@@ -6,6 +6,7 @@ import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { listGeneratedKnowledgePages } from '../sdk/src/platform/knowledge/generated-pages.js';
 import { materializeGeneratedKnowledgeProjection } from '../sdk/src/platform/knowledge/generated-projections.js';
+import { createHomeGraphPageFactReader } from '../sdk/src/platform/knowledge/home-graph/page-quality.js';
 import { renderDevicePassportPage } from '../sdk/src/platform/knowledge/home-graph/rendering.js';
 import { buildKnowledgePacket } from '../sdk/src/platform/knowledge/packet.js';
 import { KnowledgeProjectionService } from '../sdk/src/platform/knowledge/projections.js';
@@ -626,6 +627,10 @@ describe('knowledge generated projections and maps', () => {
 
   test('renders generated page facts without raw evidence detail', async () => {
     const { store } = createStores();
+    answerReadings.set({ activation: [['Display features', 0.99], ['Raw evidence fragment', 0.99]],
+      repairUseful: [['Display features', 'Living Room TV supports Dolby Vision.', 'Living Room TV supports Dolby Vision.']] });
+    await store.upsertSource({ id: 'manual-source', connectorId: 'manual', sourceType: 'manual', title: 'Living Room TV manual', status: 'indexed', metadata: knowledgeSpaceMetadata('default') });
+    await store.upsertExtraction({ sourceId: 'manual-source', extractorId: 'synthetic-reference', format: 'text', excerpt: 'Living Room TV supports Dolby Vision. RAW PAGE TABLE SHOULD NOT RENDER', metadata: knowledgeSpaceMetadata('default') });
     const device = await store.upsertNode({
       kind: 'ha_device',
       slug: 'living-room-tv',
@@ -636,6 +641,7 @@ describe('knowledge generated projections and maps', () => {
       kind: 'fact',
       slug: 'display-feature',
       title: 'Display features',
+      summary: 'Living Room TV supports Dolby Vision.',
       status: 'active',
       sourceId: 'manual-source',
       metadata: {
@@ -662,6 +668,9 @@ describe('knowledge generated projections and maps', () => {
       },
     });
 
+    const factPlan = await createHomeGraphPageFactReader(store, {
+      spaceId: 'default', query: 'Living Room TV reference', subjects: [device],
+    }).prepare([fact, rawOnlyFact]);
     const markdown = renderDevicePassportPage({
       spaceId: 'default',
       device,
@@ -669,8 +678,8 @@ describe('knowledge generated projections and maps', () => {
       sources: [],
       issues: [],
       missingFields: [],
-      // Exercise legacy active snapshots too, so the raw-fragment defense cannot pass merely by excluding drafts.
-      semanticFacts: [{ ...fact, status: 'active' }, { ...rawOnlyFact, status: 'active' }],
+      semanticFacts: [fact, rawOnlyFact],
+      factPlan,
     });
 
     expect(markdown).toContain('- Display features: Dolby Vision');

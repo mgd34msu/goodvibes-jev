@@ -53,7 +53,7 @@ describe('browser judgment closed envelope', () => {
   test('publishes the fixed protocol and closed battery IDs', () => {
     expect(BROWSER_JUDGMENT_PROTOCOL_VERSION).toBe(1);
     expect(BROWSER_JUDGMENT_PATH).toBe('/api/judgment/batteries/run');
-    expect(BROWSER_JUDGMENT_BATTERY_IDS).toEqual([ERROR_BATTERY, STATUS_BATTERY, RANK_BATTERY, 'webui.mail.reply-subject']);
+    expect(BROWSER_JUDGMENT_BATTERY_IDS).toEqual(['webui.voice.speech-seams', ERROR_BATTERY, STATUS_BATTERY, RANK_BATTERY, 'webui.mail.reply-subject', 'webui.pwa.install-platform', 'webui.credentials.provider-key', 'webui.code.language', 'webui.config.credential-key', 'webui.settings.card-material-key', 'webui.models.catalog-provider-match']);
     expect(Object.isFrozen(LIMIT)).toBe(true);
   });
 

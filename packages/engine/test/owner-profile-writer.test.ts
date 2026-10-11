@@ -1,3 +1,4 @@
+import type { ProfileProjection } from '../sdk/src/platform/owner-profile/types.ts';
 /**
  * owner-profile-writer.test.ts
  *
@@ -11,7 +12,7 @@
  * writer to be index-addressed rather than a re-serialisation of the model.
  */
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/store.ts';
@@ -21,7 +22,10 @@ import {
   setField,
   type ProfilePersistIo,
 } from '../sdk/src/platform/owner-profile/writer.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
 import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+useSecurityReadings();
 
 // Profile writes ask the content-derivation reading whenever the process
 // ledger holds untrusted text; another test file's reads must not reach these.
@@ -493,9 +497,9 @@ describe('placement and caps', () => {
     // The next section did not move relative to its own content.
     expect(lines[5]).toBe('## Notes');
     expect(lines[7]).toBe('- Allergic to shellfish');
-    expect(store.person('Sarah').map((line) => line.text)).toEqual(['- Sarah, sister']);
-    expect(store.person('Dave')).toHaveLength(1);
-    expect(store.person('Nobody')).toHaveLength(0);
+    expect((await store.person('Sarah')).map((line) => line.text)).toEqual(['- Sarah, sister']);
+    expect(await store.person('Dave')).toHaveLength(1);
+    expect(await store.person('Nobody')).toHaveLength(0);
   });
 
   test('a CRLF document keeps its line endings', async () => {
@@ -529,4 +533,76 @@ describe('an unrecognised field id names what is valid instead of pointing at a 
     expect(result.reason).toContain('location.timezone');
     expect(result.reason).not.toContain('docs/owner-profile.md');
   });
+});
+
+
+function writeGate() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(yes => { resolve = yes; });
+  return { promise, resolve };
+}
+for (const outcome of ['success', 'failure', 'same-content'] as const) {
+  test(`profile read lease retires at own ${outcome} write intent and never resurrects`, async () => {
+    const original = '# Owner profile\n## Identity\nname: Avery Chen\n';
+    const path = tempProfile(original);
+    const entered = writeGate(), release = writeGate(), cleanup = writeGate(), finishCleanup = writeGate();
+    const io: ProfilePersistIo = {
+      mkdir: async () => {},
+      writeFile: async (file, content) => {
+        entered.resolve(); await release.promise;
+        if (outcome === 'failure') throw new Error('synthetic failed profile write');
+        writeFileSync(file, content, 'utf8');
+      },
+      rename: async (from, to) => { renameSync(from, to); },
+      remove: async file => { cleanup.resolve(); await finishCleanup.promise; rmSync(file, { force: true }); },
+    };
+    const store = new OwnerProfileStore({ path, persistIo: io }); store.loadSync();
+    const before = store.captureRead();
+    // Exact same-byte persistence uses the real commit/persist path; public set
+    // deliberately also writes provenance, even when its field value is unchanged.
+    const writing = outcome === 'same-content'
+      ? store['commit']((projection: ProfileProjection) => ({ ok: true, reason: null, lines: projection.rawLines, changes: [] }))
+      : store.set({ ...OWNER, fieldId: 'identity.name', value: 'Avery Chen', date: '2026-07-27' });
+    try {
+      await entered.promise;
+      const during = store.captureRead();
+      expect(() => before.assertCurrent()).toThrow(); expect(() => during.assertCurrent()).toThrow();
+      await store.load(); // Finishing an overlapping load cannot clear the write claim.
+      const afterLoad = store.captureRead();
+      expect(() => afterLoad.assertCurrent()).toThrow();
+      release.resolve();
+      if (outcome === 'failure') {
+        await cleanup.promise;
+        expect(() => store.captureRead().assertCurrent()).toThrow();
+        finishCleanup.resolve();
+      }
+      expect((await writing).ok).toBe(outcome !== 'failure');
+      expect(() => before.assertCurrent()).toThrow(); expect(() => during.assertCurrent()).toThrow();
+      expect(() => afterLoad.assertCurrent()).toThrow();
+      store.captureRead().assertCurrent();
+      if (outcome !== 'success') expect(readFileSync(path, 'utf8')).toBe(original);
+    } finally { release.resolve(); finishCleanup.resolve(); await writing; }
+  });
+}
+
+test('independent own-write claims survive one concurrent completion', async () => {
+  const original = '# Owner profile\n## Identity\nname: Avery Chen\n';
+  const path = tempProfile(original);
+  const entered = [writeGate(), writeGate()], release = [writeGate(), writeGate()]; let index = 0;
+  const store = new OwnerProfileStore({ path, persistIo: {
+    mkdir: async () => {},
+    writeFile: async (file, content) => { const own = index++; entered[own]!.resolve(); await release[own]!.promise; writeFileSync(file, content); },
+    rename: async (from, to) => { renameSync(from, to); },
+    remove: async file => { rmSync(file, { force: true }); },
+  } }); store.loadSync();
+  const before = store.captureRead();
+  const writeSame = () => store['commit']((projection: ProfileProjection) => ({ ok: true, reason: null, lines: projection.rawLines, changes: [] }));
+  const first = writeSame(), second = writeSame();
+  try {
+    await Promise.all(entered.map(gate => gate.promise));
+    release[0]!.resolve(); expect((await first).ok).toBe(true);
+    expect(() => before.assertCurrent()).toThrow(); expect(() => store.captureRead().assertCurrent()).toThrow();
+    release[1]!.resolve(); expect((await second).ok).toBe(true);
+    store.captureRead().assertCurrent(); expect(readFileSync(path, 'utf8')).toBe(original);
+  } finally { for (const gate of release) gate.resolve(); await Promise.all([first, second]); }
 });

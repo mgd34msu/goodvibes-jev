@@ -60,6 +60,8 @@ export type SourceLatency =
  * working mailbox looks like on a slow day.
  */
 export interface InboundMailSource {
+  /** Config/credential retirement requires a new source, never relabelling old cursors. */
+  readonly retired?: boolean | undefined;
   readonly kind: 'imap' | 'gmail-history';
   /** Connect and report capability (§3.4a). Never returns empty-looking success. */
   start(signal: AbortSignal): Promise<InboundCapabilityVerdict>;

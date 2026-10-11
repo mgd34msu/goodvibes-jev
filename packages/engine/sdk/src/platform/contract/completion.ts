@@ -1,4 +1,5 @@
 import { nativeContractSourceData } from './native-source.js';
+import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-source.js';
 /**
  * Groups, the deliverable, and finishing (docs/design/contract-runner.md
  * sections 6.4 and 6.5).
@@ -138,11 +139,13 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     readonly trigger: CheckTrigger;
   }): Promise<TargetReading | null> {
     const { contract } = run;
+    assertOwnedContractSource(contract);
     const tree = contractTree(contract);
     const paths = new Set(contract.units.filter((unit) => input.unitIds.has(unit.id)).flatMap((unit) => unit.touchedPaths));
     const changes = (await collectChanges({ baseline: input.baseline }, { cwd: tree, turns: turnsOf(run, input.unitIds) })).filter((change) => paths.has(change.path));
     const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId });
     if (run.terminal) return null;
+    assertOwnedContractSource(contract);
     const evidence = trimEvidence({ output: input.output, changes, gates, commands: [] }, { goal: input.goal, brief: '', files: [] });
     const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
     const prior = input.checks.at(-1);
@@ -157,12 +160,13 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     try {
       judgment = await judges[config().acceptanceStakes].judge(
         meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
-        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
+        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] }, acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
         { site, signal: run.abort.signal },
       );
     } finally {
       addJudgmentUsage(contract.judgmentUsage, usage);
     }
+    assertOwnedContractSource(contract);
     if (run.terminal) {
       judgment.recordAction('discarded: the contract already ended');
       return null;
@@ -281,9 +285,11 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const { contract } = run;
     if (run.terminal) return;
     assertNativeContractSource(contract);
+    assertOwnedContractSource(contract);
     if (contract.status !== 'judging') run.moveContract('judging');
     context.ownerProgress(run);
     const judgedCriteria = judged(contract.criteria);
+    if (hasDerivedAcceptanceChecks(contract.originalSource) && judgedCriteria.length === 0) throw new Error('Goal-only repair cannot complete without judged acceptance checks');
     if (judgedCriteria.length > 0) {
       const reading = await readTarget(run, {
         scope: 'deliverable',
@@ -312,11 +318,13 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
   async function commitDeliverable(run: ContractRun): Promise<void> {
     const { contract } = run;
     if (run.terminal) return;
+    assertOwnedContractSource(contract);
     const answer = renderContractAnswer(contract);
     run.moveContract('committing');
     context.ownerProgress(run);
     const commit = await commitContract(run);
     if (run.terminal) return;
+    assertOwnedContractSource(contract);
     contract.commit = commit;
     run.decide('committed', contract.id, commit.note);
     run.emit({ type: 'CONTRACT_COMMITTED', contractId: contract.id, status: commit.status, ...(commit.hash === undefined ? {} : { hash: commit.hash }), note: commit.note });

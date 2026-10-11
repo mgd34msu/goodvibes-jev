@@ -1,7 +1,7 @@
 /**
  * find content mode with `ranked: true`: the matched files are ordered by the
  * `engine.tools.content-rank` rerank (a fake port here), every match is kept,
- * and no content ranking is requested when ranking is off or only one file matched.
+ * and no ranking is requested when ranking is off or only one file matched. Regex admission remains independent.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -33,7 +33,8 @@ let previous: ReturnType<typeof installJudgmentPort>;
 
 beforeEach(() => {
   relevance = new Map();
-  const fake = fakePort((_name, _question, state) => {
+  const fake = fakePort((name, _question, state) => {
+    if (name === 'backtracking') return noulAnswer(0.001);
     if ('directories' in (state as object)) return noulAnswer(0.01);
     return noulAnswer(relevance.get((state as { candidate: { path: string } }).candidate.path) ?? 0.03);
   });
@@ -95,5 +96,6 @@ describe('find content ranked by engine.tools.content-rank', () => {
     await runFind({ mode: 'content', pattern: 'parseConfig', path: '.' });
     await runFind({ mode: 'content', pattern: 'uniqueMarkerWord', path: '.', ranked: true });
     expect(requests.filter(request => request.context?.battery === 'engine.tools.content-rank')).toHaveLength(0);
+    expect(requests.filter(request => request.context?.battery === 'engine.regex.backtracking')).toHaveLength(2);
   });
 });

@@ -44,7 +44,7 @@ export interface CheckoutPageDriver {
    * has its own entry point so that no call site can pass one to the other by
    * accident.
    */
-  fill(target: string, value: string): Promise<void>;
+  fill(target: string, value: string, ownership?: { readonly assertCurrent: () => void; readonly signal?: AbortSignal | undefined }): Promise<void>;
 
   /**
    * Type every CARD MATERIAL field in one motion.
@@ -89,7 +89,7 @@ export interface CheckoutPageDriver {
    * other throw means the click may have reached the merchant and the caller
    * cannot tell; only that case is genuinely ambiguous.
    */
-  submitOrder(target: string): Promise<{
+  submitOrder(target: string, ownership?: { readonly assertCurrent: () => void; readonly signal?: AbortSignal | undefined }): Promise<{
     readonly url: string;
     readonly orderId: string | null;
     /**

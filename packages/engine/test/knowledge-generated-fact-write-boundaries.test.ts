@@ -47,7 +47,7 @@ async function fixture() {
 }
 /** Simulate records already on disk before the serving gate, not new automatic approvals. */
 async function loadLegacyFacts(store: KnowledgeStore, facts: readonly KnowledgeNodeRecord[]): Promise<KnowledgeStore> {
-  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 7 });
+  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 9 });
   for (const fact of facts) writeKnowledgeNodeRow(sqlite, fact);
   await sqlite.save();
   const reloaded = new KnowledgeStore({ dbPath: store.storagePath }); await reloaded.init(); return reloaded;
@@ -140,14 +140,16 @@ describe('generated fact support persistence boundaries', () => {
     const outcome = run.catch((error: unknown) => error);
     await started.promise; await store.upsertSource({ ...source, summary: 'Concurrent corrected source.' }); const before = snapshot(store);
     released.resolve(extractionResult()); expect(await outcome).toBeInstanceOf(KnowledgeSourceQualityHeldError);
-    expect(fake.requests).toHaveLength(0); expect(snapshot(store)).toBe(before);
+    expect(fake.requests).toHaveLength(1);
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']); expect(snapshot(store)).toBe(before);
   });
   test('deadline cancellation prevents ignored-signal generation from making late writes', async () => {
     const { store, source } = await fixture(); const fake = readings(); const released = Promise.withResolvers<KnowledgeSemanticExtraction>();
     const before = snapshot(store);
     await expect(withSupportBudget((signal) => enrichKnowledgeSource({ store, llm: { async completeJson() { return released.promise; }, async completeText() { return null; } } }, source, { force: true, signal }), 10)).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
     released.resolve(extractionResult()); await settleEvents(10);
-    expect(snapshot(store)).toBe(before); expect(fake.requests).toHaveLength(0);
+    expect(snapshot(store)).toBe(before); expect(fake.requests).toHaveLength(1);
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']);
   });
   test('a later unsupported legacy active fact prevents all subject-link rewrites', async () => {
     const fixtureState = await fixture(); const { source, subject } = fixtureState;
@@ -261,7 +263,8 @@ describe('generated fact support persistence boundaries', () => {
     const outcome = run.catch((error: unknown) => error);
     await started.promise; stopped = true; released.resolve(extractionResult());
     expect(await outcome).toBeInstanceOf(KnowledgeSourceQualityHeldError);
-    expect(fake.requests).toHaveLength(0); expect(snapshot(store)).toBe(before);
+    expect(fake.requests).toHaveLength(1);
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']); expect(snapshot(store)).toBe(before);
   });
   test('a lifecycle stop invalidates a prepared profile before write entry', async () => {
     const { store, input } = await fixture(); readings(); let stopped = false;

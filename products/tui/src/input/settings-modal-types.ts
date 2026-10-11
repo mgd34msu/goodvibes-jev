@@ -152,6 +152,8 @@ interface SettingEntryState {
   lockReason?: string;
   /** A failed metadata read is unavailable, never evidence that the row is unlocked. */
   metadataUnavailable?: string;
+  /** A held derived value is visible but does not lock explicit edits. */
+  valueUnavailable?: string;
   /**
    * Present when this row is a feature-unit header (a platform capability
    * rendered as one unit with the settings that tune it beneath). The row IS

@@ -395,3 +395,28 @@ describe('rendering a report', () => {
     expect(rendered).not.toContain('docs/google-setup-runbook.md');
   });
 });
+
+// The public executor must report failed semantic observations as failures,
+// never claim sign-in or continue to a later mutation.
+test('an unavailable Google page reading halts setup before later effects', async () => {
+  const { buildGoogleSetupRunners } = await import('../sdk/src/platform/google/setup-actions.ts');
+  const { installJudgmentPort } = await import('@goodvibes-jev/engine/errors');
+  const previous = installJudgmentPort(undefined);
+  let writes = 0;
+  try {
+    const deps = {
+      config: { get: () => undefined, set: () => { writes += 1; } },
+      secrets: { get: async () => null, set: async () => { writes += 1; } },
+      browser: async () => ({ navigate: async (url: string) => ({ url, title: '' }), currentUrl: async () => 'https://myaccount.google.com/', snapshot: async () => [], readText: async () => '', click: async () => { writes += 1; }, type: async () => { writes += 1; } }),
+      commands: { run: async () => { throw new Error('unexpected command'); } },
+      fetchPort: { fetch: async () => { throw new Error('unexpected network'); } },
+      files: { exists: () => false, readText: () => null },
+      loopback: () => { throw new Error('unexpected listener'); }, homeDirectory: '/synthetic',
+    };
+    const report = await runGoogleSetupFlow('app-password', { progress: recordingProgress().port, runners: buildGoogleSetupRunners('app-password', deps) });
+    expect(report.ok).toBe(false);
+    expect(report.steps.some(step => step.outcome === 'failed')).toBe(true);
+    expect(report.steps.find(step => step.id === 'app-password')?.outcome).toBe('skipped');
+    expect(writes).toBe(0);
+  } finally { installJudgmentPort(previous); }
+});

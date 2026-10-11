@@ -115,7 +115,7 @@ function makeRemoteFixture() {
     },
     session: {
       runtime: { sessionId: 'remote-session', provider: 'openai', model: 'gpt-4.1', reasoningEffort: 'medium' },
-      conversationManager: { title: 'Remote test', getMessageCount: () => 0, getTranscriptEventIndex: () => ({ events: [], groups: [] }) },
+      conversationManager: { title: 'Remote test', getMessageCount: () => 0, getMessageSnapshot: () => [], getTranscriptEventIndex: () => ({ events: [], groups: [] }) },
       sessionManager: { list: () => [], search: () => [] },
     },
     provider: {

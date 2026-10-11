@@ -39,6 +39,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 import type { ConfigManager, DaemonConfigPatch } from '@goodvibes-jev/engine/sdk/platform/config';
 import { resolveRuntimeEndpointBinding } from '@goodvibes-jev/engine/terminal-shell';
+import { WEBUI_BINDING_RESULT } from '../cli/machine-contracts.js';
 import { describeOriginPosture, formatHttpOrigin, probeStableHostInputs, stableUrlHostForBindHost, type StableHostInputs } from '@goodvibes-jev/engine/sdk/platform/pairing';
 
 /** The shipped `web.publicBaseUrl` placeholder, a port nothing binds. */
@@ -68,6 +69,7 @@ interface ParsedWebuiArgs {
   readonly subcommand: 'enable' | 'disable' | 'status';
   readonly bundleDir: string | undefined;
   readonly posture: Posture;
+  readonly json: boolean;
   readonly errors: readonly string[];
 }
 
@@ -78,9 +80,14 @@ function parseWebuiArgs(argv: readonly string[]): ParsedWebuiArgs {
   let lan = false;
   let loopback = false;
   let sawSubcommand = false;
+  let json = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? '';
+    if (arg === '--json') {
+      json = true;
+      continue;
+    }
     if (arg === '--lan') {
       lan = true;
       continue;
@@ -128,7 +135,10 @@ function parseWebuiArgs(argv: readonly string[]): ParsedWebuiArgs {
     errors.push('--lan and --loopback ask for opposite things; pass one of them');
   }
   const posture: Posture = lan ? 'lan' : loopback ? 'loopback' : 'unchanged';
-  return { subcommand, bundleDir, posture, errors };
+  if (json && (subcommand !== 'status' || posture !== 'unchanged' || bundleDir !== undefined)) {
+    errors.push('--json only supports the read-only status query, without bundle or exposure flags');
+  }
+  return { subcommand, bundleDir, posture, json, errors };
 }
 
 function readString(config: Pick<ConfigManager, 'get'>, key: 'controlPlane.webui.bundleDir' | 'web.publicBaseUrl' | 'web.staticAssetsDir'): string {
@@ -206,6 +216,25 @@ export function runWebuiCommand(argv: readonly string[], deps: WebuiCommandDeps)
   const absolute = (path: string): string => (isAbsolute(path) ? path : resolve(base, path));
 
   if (parsed.subcommand === 'status') {
+    if (parsed.json) {
+      // Vite needs the declared web endpoint for its own development listener.
+      // The daemon's served bundle uses controlPlane instead; claiming that
+      // listener as the dev port would make the two processes compete for it.
+      const binding = resolveRuntimeEndpointBinding(config, 'web');
+      if (!binding.recognized) return { exitCode: 2, lines: ['webui: unrecognized configured web host mode'] };
+      return {
+        exitCode: 0,
+        lines: [JSON.stringify({
+          ...WEBUI_BINDING_RESULT,
+          enabled: config.get('web.enabled') === true,
+          hostMode: binding.hostMode,
+          configuredHost: binding.configuredHost,
+          host: binding.host,
+          port: binding.port,
+          url: readString(config, 'web.publicBaseUrl'),
+        })],
+      };
+    }
     return renderStatus(config, { directoryExists, fileExists, absolute, probe });
   }
 

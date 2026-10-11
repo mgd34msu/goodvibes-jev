@@ -24,6 +24,9 @@ const CI_JOB_STATUS_SCHEMA = { type: 'string', enum: ['queued', 'in_progress', '
 const CI_OVERALL_SCHEMA = { type: 'string', enum: ['passed', 'failed', 'pending', 'unknown'] } as const;
 
 export const CI_JOB_SCHEMA = objectSchema({
+  headSha: STRING_SCHEMA,
+  runId: STRING_SCHEMA,
+  jobId: STRING_SCHEMA,
   name: STRING_SCHEMA,
   status: CI_JOB_STATUS_SCHEMA,
   conclusion: NULLABLE_STRING_SCHEMA,
@@ -108,7 +111,7 @@ export const builtinGatewayCiMethodDescriptors: readonly GatewayMethodDescriptor
   methodDescriptor({
     id: 'ci.watches.list',
     title: 'List CI Watches',
-    description: 'Return every standing CI watch (repo/ref/PR, delivery channel, and whether a fix-session is opted in on failure).',
+    description: 'Return every standing CI watch. Stored flags are not repair authority; production repair requires current original-source ownership and Jev admission.',
     category: 'ci',
     scopes: ['read:ci'],
     http: { method: 'GET', path: '/api/ci/watches' },
@@ -118,7 +121,7 @@ export const builtinGatewayCiMethodDescriptors: readonly GatewayMethodDescriptor
   methodDescriptor({
     id: 'ci.watches.create',
     title: 'Create CI Watch',
-    description: 'Create a standing watch on a repo/ref or PR. On transition to a terminal verdict it notifies the delivery channel; set triggerFixSession to opt in to starting a fix-session pre-briefed with the failing jobs on failure.',
+    description: 'Create a standing watch on a repo/ref or PR. On a terminal verdict it notifies the channel. Failed jobs request a fresh recorded repair decision from the original source owner; the compatibility flag is not authorization.',
     category: 'ci',
     scopes: ['write:ci'],
     http: { method: 'POST', path: '/api/ci/watches' },
@@ -139,7 +142,7 @@ export const builtinGatewayCiMethodDescriptors: readonly GatewayMethodDescriptor
   methodDescriptor({
     id: 'ci.watches.run',
     title: 'Check CI Watch Now',
-    description: 'Poll a standing watch immediately: returns the per-job report, whether a completion notification fired, and whether an opted-in fix-session was triggered on failure.',
+    description: 'Poll a standing watch immediately: returns the per-job report, whether a completion notification fired, and whether an admitted fix-session started, or an honest refusal/error.',
     category: 'ci',
     scopes: ['write:ci'],
     http: { method: 'POST', path: '/api/ci/watches/{watchId}/run' },

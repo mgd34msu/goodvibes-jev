@@ -72,6 +72,9 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
   const { services, configManager, homeDirectory, resolveSessionId, getLastUserMessage } = deps;
   const toolRegistry = new ToolRegistry(services.permissionManager);
   const { fileCache, projectIndex } = registerAllTools(toolRegistry, {
+    execPromptAnswerHandler: services.execPromptAnswerHandler,
+    localhostFetchApproval: services.localhostFetchApproval,
+    sandboxEscalationHandler: services.sandboxEscalationHandler,
     contractRunner: services.contractRunner,
     projectRoot: services.workingDirectory,
     // Task refs are owned by the REAL runtime session, read fresh on every call:

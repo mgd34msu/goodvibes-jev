@@ -395,7 +395,10 @@ export async function savePersonalOpsReviewArtifact(options: {
     kind: 'data',
     mimeType: 'application/json',
     filename: `${safeTitle}-${nonce}.json`,
-    text: `${redactedPersonalOpsText(JSON.stringify(payload, null, 2))}\n`,
+    // Payload/card keys are fixed schema; connector keys are string elements in
+    // rawKeys/inputFieldKeys. Redact values before JSON escaping so quotes and
+    // backslashes remain data rather than becoming broken JSON delimiters.
+    text: `${JSON.stringify(payload, (_key, value: unknown) => typeof value === 'string' ? redactedPersonalOpsText(value) : value, 2)}\n`,
     acquisitionMode: 'inline-data',
     fetchMode: 'not-applicable',
     metadata: {

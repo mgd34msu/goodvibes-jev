@@ -212,6 +212,7 @@ export type {
   RelayClientWebSocket,
 } from './relay-registration.js';
 export * from './browser-judgment-contract.js';
+export * from './browser-code-languages.js';
 export * from './browser-judgment-validation.js';
 export * from './browser-judgment-routes.js';
 

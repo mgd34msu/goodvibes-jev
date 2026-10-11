@@ -6,11 +6,12 @@ import type { SplashOptions } from '../utils/splash-lines.ts';
 import type { ToolCall, ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ProviderMessage, ContentPart } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import type { TranscriptEventKind } from '@goodvibes-jev/engine/sdk/platform/core';
+import type { TranscriptEventKind, TranscriptReadingOptions } from '@goodvibes-jev/engine/sdk/platform/core';
 // SystemMessageKind imported from runtime directly to avoid cycle: conversation.ts → system-message-router.ts → conversation.ts
 import type { SystemMessageKind } from '@/runtime/index.ts';
 import {
   ConversationManager as SdkConversationManager,
+  TranscriptReadingLifetime,
   type BlockMeta as SdkBlockMeta,
 } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { BlockMeta } from './conversation-types.ts';
@@ -727,14 +728,22 @@ export class ConversationManager extends SdkConversationManager {
    */
   public prevErrorLine(currentLine: number): number { return wrapToLine(this.getErrorLines(), currentLine, 'prev'); }
 
-  public nextTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all'): number {
+  public async nextTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all', options: TranscriptReadingOptions = {}): Promise<number> {
     this.flushHistory();
-    return resolveTranscriptEventLine(this.getTranscriptEventIndex().events, kind, this.messageLineRegistry, currentLine, 'next');
+    const lifetime = options.lifetime ?? new TranscriptReadingLifetime();
+    const index = await this.getTranscriptEventIndex({ ...options, lifetime });
+    lifetime.assertCurrent();
+    this.flushHistory();
+    return resolveTranscriptEventLine(index.events, kind, this.messageLineRegistry, currentLine, 'next');
   }
 
-  public prevTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all'): number {
+  public async prevTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all', options: TranscriptReadingOptions = {}): Promise<number> {
     this.flushHistory();
-    return resolveTranscriptEventLine(this.getTranscriptEventIndex().events, kind, this.messageLineRegistry, currentLine, 'prev');
+    const lifetime = options.lifetime ?? new TranscriptReadingLifetime();
+    const index = await this.getTranscriptEventIndex({ ...options, lifetime });
+    lifetime.assertCurrent();
+    this.flushHistory();
+    return resolveTranscriptEventLine(index.events, kind, this.messageLineRegistry, currentLine, 'prev');
   }
 
   public setSplashSuppressed(suppressed: boolean): void {

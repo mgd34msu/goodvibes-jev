@@ -110,6 +110,11 @@ function memoryIo(seed: Record<string, string> = {}): UpdateFileIo & { readonly 
   const files = new Map<string, string>(Object.entries(seed));
   return {
     files,
+    writeExclusive: (path, data) => {
+      if (files.has(path)) throw new Error(`exclusive file exists: ${path}`);
+      files.set(path, data.toString('utf-8'));
+    },
+    remove: (path) => { files.delete(path); },
     writeFile: (path, data) => {
       files.set(path, Buffer.from(data as Uint8Array).toString('utf-8'));
     },
@@ -271,6 +276,21 @@ describe('performDaemonHandover', () => {
     // 404 that stops the pre-split daemon's own updater.
     expect(requested.some((url) => url.includes('goodvibes-linux-x64'))).toBe(false);
     expect(requested.some((url) => url.includes('sqlite-vec'))).toBe(false);
+  });
+
+  test('late discovery cannot redirect the original target or adapter', async () => {
+    const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes', '/fixture/redirected': 'unowned' });
+    const original = stubDaemonReleaseFetch({});
+    const options = { fetchImpl: original, binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io: { ...io } };
+    options.fetchImpl = async (url, init) => {
+      options.binaryPath = '/fixture/redirected';
+      options.assetName = 'other-asset';
+      options.io.rename = () => { throw new Error('late adapter substitution'); };
+      return original(url, init);
+    };
+    await performDaemonHandover(options);
+    expect(io.files.get(DAEMON_PATH)).toBe('new-daemon-bytes');
+    expect(io.files.get('/fixture/redirected')).toBe('unowned');
   });
 
   test('refuses a release below the split floor rather than installing a downgrade', async () => {
@@ -505,6 +525,35 @@ describe('runDaemonHandover', () => {
     expect(outcome).toEqual({ action: 'swapped-needs-restart', toTag: SPLIT_TAG });
     expect(printed.join('\n')).toContain('restart it');
   });
+
+  for (const fault of ['commit', 'undo', 'cleanup'] as const) {
+    test(`transaction ${fault} failure prints its actual disk state without a false restart`, async () => {
+      const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes', [`${DAEMON_PATH}.previous`]: 'older-daemon-bytes' });
+      const rename = io.rename;
+      const remove = io.remove!;
+      let failed = false;
+      io.rename = (from, to) => {
+        if (fault !== 'cleanup' && !failed && from.endsWith('.update-download')) { failed = true; throw new Error('commit fault'); }
+        if (fault === 'undo' && failed && from.endsWith('.previous') && to === DAEMON_PATH) throw new Error('undo fault');
+        rename(from, to);
+      };
+      io.remove = (path) => { if (fault === 'cleanup') throw new Error('cleanup fault'); remove(path); };
+      let restarts = 0;
+      const { options, printed } = baseOptions({ io, restartDaemon: () => { restarts += 1; throw new Error('must not restart'); } });
+      const result = await runDaemonHandover(options);
+      expect(result.action).toBe('failed');
+      expect(restarts).toBe(0);
+      const receipt = printed.join('\n');
+      if (fault === 'commit') {
+        expect(io.files.get(DAEMON_PATH)).toBe('old-daemon-bytes');
+        expect(receipt).toContain('unchanged');
+      } else {
+        expect(receipt).toContain('automatic retry is fenced');
+        expect(receipt).not.toContain('is unchanged');
+        expect(io.files.has(`${DAEMON_PATH}.update-transaction`)).toBe(true);
+      }
+    });
+  }
 
   test('no daemon beside this install is a silent, reasoned skip', async () => {
     const { options, printed } = baseOptions({ binaryPath: null });

@@ -260,7 +260,7 @@ export class PaymentsGatewayServiceImpl {
    * rather than captured at construction. A budget raised five minutes ago
    * should apply to this purchase.
    */
-  async beginCheckout(input: BeginCheckoutInput): Promise<PaymentBeginResult> {
+  async beginCheckout(input: BeginCheckoutInput, options: { readonly signal?: AbortSignal | undefined } = {}): Promise<PaymentBeginResult> {
     const config = this.deps.config();
     const now = this.deps.now ?? Date.now;
 
@@ -314,6 +314,7 @@ export class PaymentsGatewayServiceImpl {
     };
 
     const outcome = await runCheckout(request, input.reading, controls, {
+      signal: options.signal,
       registry: this.registry,
       cards: this.deps.cards,
       addresses: this.deps.addresses,

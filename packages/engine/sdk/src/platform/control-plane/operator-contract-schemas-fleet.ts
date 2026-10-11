@@ -460,12 +460,26 @@ export const ATTEMPT_JUDGMENT_SCHEMA = objectSchema({
   scoredBy: enumSchema(['model']),
 }, ['proposedWinnerItemId', 'reasons', 'model', 'scoredBy']);
 
+/** Actual unresolved siblings are visible without becoming merge candidates. */
+const UNRESOLVED_ATTEMPT_SCHEMA = objectSchema({
+  itemId: STRING_SCHEMA,
+  attemptIndex: NUMBER_SCHEMA,
+  title: STRING_SCHEMA,
+  // Open scheduling state, as in fleet.graph.get; never a candidate verdict.
+  state: STRING_SCHEMA,
+  reason: nullableSchema(STRING_SCHEMA),
+}, ['itemId', 'attemptIndex', 'title', 'state', 'reason']);
+
 const HELD_MERGE_GROUP_SCHEMA = objectSchema({
   groupId: STRING_SCHEMA,
   workstreamId: STRING_SCHEMA,
   sourceTitle: STRING_SCHEMA,
   ready: BOOLEAN_SCHEMA,
   candidates: arraySchema(ATTEMPT_CANDIDATE_SCHEMA),
+  // Additive metadata: old responses remain valid, current owners supply all three.
+  attemptCount: NUMBER_SCHEMA,
+  selectableCandidateCount: NUMBER_SCHEMA,
+  unresolved: arraySchema(UNRESOLVED_ATTEMPT_SCHEMA),
   autoAccept: BOOLEAN_SCHEMA,
   judgment: nullableSchema(ATTEMPT_JUDGMENT_SCHEMA),
 }, ['groupId', 'workstreamId', 'sourceTitle', 'ready', 'candidates', 'autoAccept', 'judgment']);

@@ -11,6 +11,7 @@ const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepai
 ] });
 useSemanticActivationFixtures(answerReadings);
 
+import type { KnowledgeSemanticGapRepairRequest } from '../sdk/src/platform/knowledge/semantic/types.js';
 import * as crypto from 'node:crypto';
 import { describe, expect, spyOn, test } from 'bun:test';
 import {
@@ -736,14 +737,26 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store, artifactStore } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     let officialSourceId = '';
-    const semantic = new KnowledgeSemanticService(store, {
-      gapRepairer: async (request) => {
+    const officialUri = 'https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv';
+    let officialEvidence: Promise<Awaited<ReturnType<typeof store.upsertSource>>> | undefined;
+    let lastRepairRequest: KnowledgeSemanticGapRepairRequest | undefined;
+    const repairOfficialEvidence = async (request: KnowledgeSemanticGapRepairRequest) => {
+      lastRepairRequest = request;
+      if (officialEvidence) await officialEvidence;
+      // Like production gap repair, an indexed accepted document is reused.
+      // Distinct intrinsic gaps do not make this immutable fixture new evidence.
+      const indexed = request.sources.find(source => source.canonicalUri === officialUri && source.status === 'indexed');
+      if (indexed) {
+        expect(store.getExtractionBySourceId(indexed.id)).toBeTruthy();
+        return { searched: true, evidenceSufficient: true, acceptedSourceIds: [indexed.id], ingestedSourceIds: [], skippedUrls: [] };
+      }
+      officialEvidence ??= (async () => {
         const source = await store.upsertSource({
           connectorId: 'semantic-gap-repair',
           sourceType: 'url',
           title: 'LG 86NANO90UNA official specifications',
-          canonicalUri: 'https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv',
-          sourceUri: 'https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv',
+          canonicalUri: officialUri,
+          sourceUri: officialUri,
           tags: ['semantic-gap-repair', 'tv'],
           status: 'indexed',
           metadata: {
@@ -756,7 +769,6 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
             },
           },
         });
-        officialSourceId = source.id;
         // replaced race-prone setTimeout(..., 120) with an
         // awaited call so the extraction is committed before the gapRepairer returns.
         // The ask() timeout (30 s) is the only deadline that now matters.
@@ -769,21 +781,47 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
           },
           metadata: { knowledgeSpaceId: request.spaceId },
         });
-        return {
-          searched: true,
-          evidenceSufficient: true,
-          acceptedSourceIds: [source.id],
-          ingestedSourceIds: [],
-          skippedUrls: [],
-        };
-      },
-    });
+        return source;
+      })();
+      const source = await officialEvidence;
+      officialSourceId = source.id;
+      return {
+        searched: true,
+        evidenceSufficient: true,
+        acceptedSourceIds: [source.id],
+        ingestedSourceIds: [],
+        skippedUrls: [],
+      };
+    };
+    const semantic = new KnowledgeSemanticService(store, { gapRepairer: repairOfficialEvidence });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
     await service.syncSnapshot({
       installationId: 'house',
       devices: [{ id: 'tv', name: 'LG webOS Smart TV', manufacturer: 'LG', model: '86NANO90UNA' }],
     });
 
+    // Force a distinct intrinsic-gap repair while the foreground page owns
+    // its original source/extraction, rather than depending on the pump timer.
+    let repeatedDuringForeground = false;
+    const createArtifact = artifactStore.create.bind(artifactStore);
+    const repeatAtArtifact = spyOn(artifactStore, 'create').mockImplementation(async (input, ownership) => {
+      if (!repeatedDuringForeground && officialSourceId && lastRepairRequest && input.metadata?.generatedKnowledgePage === true && input.metadata.automation === 'ask-refresh') {
+        repeatedDuringForeground = true;
+        const source = store.getSource(officialSourceId)!;
+        const extraction = store.getExtractionBySourceId(officialSourceId)!;
+        const before = JSON.stringify([source, extraction]);
+        const request = { ...lastRepairRequest,
+          gaps: lastRepairRequest.gaps.map(gap => ({ ...gap, id: 'sem-intrinsic-gap-fixture-repeat' })),
+          sources: [...lastRepairRequest.sources.filter(candidate => candidate.id !== source.id), source],
+        };
+        const repeat = await repairOfficialEvidence(request);
+        expect(repeat.acceptedSourceIds).toEqual([source.id]);
+        expect(store.getSource(source.id)).toBe(source);
+        expect(store.getExtractionBySourceId(source.id)).toBe(extraction);
+        expect(JSON.stringify([store.getSource(source.id), store.getExtractionBySourceId(source.id)])).toBe(before);
+      }
+      return createArtifact(input, ownership);
+    });
     const answer = await service.ask({
       installationId: 'house',
       query: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?',
@@ -791,7 +829,8 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       includeLinkedObjects: true,
       includeConfidence: true,
       timeoutMs: 30_000,
-    });
+    }).finally(() => repeatAtArtifact.mockRestore());
+    expect(repeatedDuringForeground).toBe(true);
     const base = await semantic.answer({
       knowledgeSpaceId: 'homeassistant',
       query: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?',
@@ -1094,25 +1133,44 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(answer.answer.text).not.toContain('semantic-gap-repair');
   });
 
-  test('feature fact quality keeps legitimate port facts and rejects broken fragments', async () => {
-    const { isLowValueFeatureOrSpecText } = await import('../sdk/src/platform/knowledge/semantic/fact-quality.js');
-
-    expect(isLowValueFeatureOrSpecText('4 HDMI ports')).toBe(false);
-    expect(isLowValueFeatureOrSpecText('3 USB ports and Ethernet/LAN')).toBe(false);
-    expect(isLowValueFeatureOrSpecText('2 x 10W speakers')).toBe(false);
-    expect(isLowValueFeatureOrSpecText('18 m (86")')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('series_url nano90 product data')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('01 x Ethernet RJ45 Audio Audio Speakers 2 x 10W Built-in Subwoofer')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('0 Supported Audio Formats TrueHD')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('AMD Freesync Premium and HGiG mode… AMD Freesync Premium and HGiG mode for smoother gameplay')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('Selected Features Nano Cell Technology and webOS marketing copy')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('Amazon affiliate ranking system and latest price comparison')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('HDR10 historical background introduced by the Consumer Technology Association')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('Compatibility line 40W/WF:20W/10W per Channel from a source table')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('Motion interpolation TruMotion 240 motion interpolation TruMotion 240 for smoother scenes')).toBe(true);
-    expect(isLowValueFeatureOrSpecText('Input and output ports: HDMI, USB, Ethernet, optical audio, RF antenna, and RS-232C/external control.')).toBe(false);
-    expect(isLowValueFeatureOrSpecText('Audio capabilities: 2 x 10W speakers with 10W per channel.')).toBe(false);
-    expect(isLowValueFeatureOrSpecText('RS-232C external control setup command table for SERVICE ONLY')).toBe(true);
+  test('feature fact quality uses declared readings for precise values and broken fragments', async () => {
+    const { createKnowledgePageFactUsefulnessReader } = await import('../sdk/src/platform/knowledge/semantic/repair-usefulness/reader.js');
+    const { installJudgmentPort } = await import('@goodvibes-jev/engine/errors');
+    const { fakePort, noulAnswer } = await import('@goodvibes-jev/judgment/testing');
+    const fixtures: readonly (readonly [string, number])[] = [
+      ['4 HDMI ports', 0.99],
+      ['3 USB ports and Ethernet/LAN', 0.99],
+      ['2 x 10W speakers', 0.99],
+      ['18 m (86")', 0.01],
+      ['series_url nano90 product data', 0.01],
+      ['01 x Ethernet RJ45 Audio Audio Speakers 2 x 10W Built-in Subwoofer', 0.01],
+      ['0 Supported Audio Formats TrueHD', 0.01],
+      ['AMD Freesync Premium and HGiG mode… AMD Freesync Premium and HGiG mode for smoother gameplay', 0.01],
+      ['Selected Features Nano Cell Technology and webOS marketing copy', 0.01],
+      ['Amazon affiliate ranking system and latest price comparison', 0.01],
+      ['HDR10 historical background introduced by the Consumer Technology Association', 0.01],
+      ['Compatibility line 40W/WF:20W/10W per Channel from a source table', 0.01],
+      ['Motion interpolation TruMotion 240 motion interpolation TruMotion 240 for smoother scenes', 0.01],
+      ['Input and output ports: HDMI, USB, Ethernet, optical audio, RF antenna, and RS-232C/external control.', 0.99],
+      ['Audio capabilities: 2 x 10W speakers with 10W per channel.', 0.99],
+      ['RS-232C external control setup command table for SERVICE ONLY', 0.01],
+    ];
+    const fake = fakePort((_name, _question, state) => {
+      const value = (state as { fact: { value: string } }).fact.value;
+      const fixture = fixtures.find(([text]) => text === value);
+      if (!fixture) throw new Error('Unscripted full-fact quality fixture');
+      return noulAnswer(fixture[1]);
+    });
+    const previous = installJudgmentPort(fake.port);
+    try {
+      const result = await createKnowledgePageFactUsefulnessReader().read(fixtures.map(([text], index) => ({
+        reference: `fact-${index + 1}`, query: 'Device specification reference', subjects: [{ title: 'Device' }],
+        fact: { title: 'Device specifications', kind: 'specification', value: text, aliases: [] },
+        evidence: [{ source: { sourceType: 'manual' }, text }], pagePolicy: { rejectRemoteAccessoryDetails: true },
+      })));
+      expect(result.map((reading) => reading.useful)).toEqual(fixtures.map(([, probability]) => probability === 0.99));
+      expect(fake.requests).toHaveLength(fixtures.length);
+    } finally { installJudgmentPort(previous); }
   });
 
   test('measured sufficiency accepts sparse evidence and rejects many facts missing the requested detail', async () => {

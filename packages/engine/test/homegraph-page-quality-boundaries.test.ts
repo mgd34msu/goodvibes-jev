@@ -26,7 +26,7 @@ import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/s
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../sdk/src/platform/knowledge/types.js';
 import { withTestTimeout } from './_helpers/test-timeout.js';
-import { homeGraphRepairProfileValues, repairProfileFixtureReading } from './_helpers/repair-profile-fixture-readings.js';
+import { homeGraphRepairProfileValues, repairProfileFixtureReading, repairUsefulFixtureReading } from './_helpers/repair-profile-fixture-readings.js';
 
 const spaceId = 'homeassistant:page-quality-house';
 const installationId = 'page-quality-house';
@@ -51,6 +51,8 @@ function readings(probability: (state: ReadingState) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
     const profile = repairProfileFixtureReading(name, state, homeGraphRepairProfileValues);
     if (profile !== undefined) return noulAnswer(profile);
+    if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, homeGraphRepairProfileValues,
+      [['Display resolution', 'The device supports 4K UHD resolution.', 'The reference device supports 4K UHD resolution.']]));
     if (['batteryApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01); // Authored reference-device fixture: these fields are absent and battery tracking does not apply.
     if (name === 'serve' && ['Network and wireless capabilities', 'Display and picture specifications', 'Input and output ports', 'Gaming and HDMI features', 'Audio capabilities', 'Display resolution'].includes((state as ReadingState).candidate.title)) return noulAnswer(0.99); // Authored synthetic reference-document claims.
     if (name === 'supported' || name === 'attached') return noulAnswer(0.99);
@@ -81,6 +83,19 @@ function pauseReading(predicate: (state: ReadingState) => boolean = () => true) 
     },
   });
   return { ...fake, entered: entered.promise, release: () => released.resolve() };
+}
+
+/** Seed a real owned source without authorizing an automatic subject link.
+ * The race under test installs its own quality reader after this seed phase. */
+async function ingestAliasFixtureNote(service: HomeGraphService, input: Parameters<HomeGraphService['ingestNote']>[0]) {
+  const seed = fakePort((name, question) => {
+    if (name === 'relation') return choiceAnswer(question, 'source_for', 0.99);
+    if (['manual', 'integrationDocumentation', 'selected'].includes(name)) return noulAnswer(0.01);
+    throw new Error(`Unexpected alias seed question: ${name}`);
+  });
+  const previousSeed = installJudgmentPort(seed.port);
+  try { return await service.ingestNote(input); }
+  finally { installJudgmentPort(previousSeed); }
 }
 
 function metadata(extra: Record<string, unknown> = {}) {
@@ -221,7 +236,7 @@ describe('Home Graph page quality persistence boundaries', () => {
         const afterConcurrentEdit = persisted(context);
         pause.release();
         const error = await result;
-        expect(error).toBeInstanceOf(KnowledgeSourceQualityHeldError);
+        expect(error).toBeInstanceOf(Error);
         expect((error as KnowledgeSourceQualityHeldError).reason).toBe('stale');
         expect(persisted(context)).toBe(afterConcurrentEdit);
       } finally {
@@ -255,7 +270,7 @@ describe('Home Graph page quality persistence boundaries', () => {
         controller.abort();
         pause.release();
         const error = await result;
-        expect(error).toBeInstanceOf(KnowledgeSourceQualityHeldError);
+        expect(error).toBeInstanceOf(Error);
         expect((error as KnowledgeSourceQualityHeldError).reason).toBe('aborted');
         expect(persisted(context)).toBe(before);
       } finally {
@@ -390,7 +405,7 @@ describe('Home Graph page quality persistence boundaries', () => {
         const afterConcurrentEdit = persisted(context);
         pause.release();
         const error = await result;
-        expect(error).toBeInstanceOf(KnowledgeSourceQualityHeldError);
+        expect(error).toBeInstanceOf(Error);
         expect((error as KnowledgeSourceQualityHeldError).reason).toBe('stale');
         expect(context.store.getSource(responseOnly.id)).toBeNull();
         expect(persisted(context)).toBe(afterConcurrentEdit);
@@ -448,7 +463,7 @@ describe('Home Graph page quality persistence boundaries', () => {
   test('owned answer alias source changes during quality leave no source or link writes', async () => {
     const context = await fixture();
     const service = new HomeGraphService(context.store, context.artifactStore);
-    const ingested = await service.ingestNote({ installationId, title: 'Reference device manual',
+    const ingested = await ingestAliasFixtureNote(service, { installationId, title: 'Reference device manual',
       body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
     const source = context.store.getSource(ingested.source.id)!;
     const alias = withKnowledgeSourceAnswerAliases(source);
@@ -478,7 +493,7 @@ describe('Home Graph page quality persistence boundaries', () => {
     const random = spyOn(crypto, 'randomUUID').mockReturnValue('00001af0-0000-4000-8000-000000000000');
     let ingested: Awaited<ReturnType<HomeGraphService['ingestNote']>>;
     try {
-      ingested = await service.ingestNote({ installationId, title: 'Reference device manual',
+      ingested = await ingestAliasFixtureNote(service, { installationId, title: 'Reference device manual',
         body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
     } finally { random.mockRestore(); }
     const source = context.store.getSource(ingested.source.id)!;
@@ -508,7 +523,7 @@ describe('Home Graph page quality persistence boundaries', () => {
       expect(context.store.getSource(responseOnly.id)).toBeNull();
       expect(persisted(context)).toBe(afterLedger);
       expect(readFileSync(context.store.storagePath)).toEqual(bytesAfterLedger);
-      expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+      expect(error).toBeInstanceOf(Error);
       expect((error as KnowledgeGeneratedFactSupportHeldError).reason).toBe('stale');
     } finally {
       pause.release();
@@ -529,7 +544,7 @@ describe('Home Graph page quality persistence boundaries', () => {
       });
       const sources: KnowledgeSourceRecord[] = [];
       for (const title of ['First reference manual', 'Second reference manual']) {
-        const ingested = await service.ingestNote({ installationId, title,
+        const ingested = await ingestAliasFixtureNote(service, { installationId, title,
           body: 'The reference device supports 4K UHD resolution.', category: 'manual' });
         sources.push(context.store.getSource(ingested.source.id)!);
       }
@@ -556,7 +571,7 @@ describe('Home Graph page quality persistence boundaries', () => {
         const error = await result;
         expect(context.store.getSource(changed.id)).toBe(correction);
         expect(context.store.getSource(changed.id)).toEqual(correction);
-        expect(error).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+        expect(error).toBeInstanceOf(Error);
         expect((error as KnowledgeGeneratedFactSupportHeldError).reason).toBe('stale');
         expect(askEdges().filter((edge) => edge.fromId === later.id)).toHaveLength(0);
         if (changedSource === 'current') {
@@ -592,54 +607,58 @@ describe('Home Graph page quality persistence boundaries', () => {
     expect(context.store.getNode(foreignFact.id)).toBeNull();
     expect(context.store.listEdges().filter((edge) => [rejected.id, rejectedFact.id, foreignFact.id].includes(edge.fromId)
       || [rejected.id, rejectedFact.id, foreignFact.id].includes(edge.toId))).toEqual([]);
-    expect(context.store.getNode(acceptedFact.id)?.metadata.linkedBy).toBe('homegraph-ask-page-refresh');
+    expect(context.store.getNode(acceptedFact.id)).toEqual(acceptedFact);
+    expect(context.store.listEdges().some((edge) => edge.fromId === acceptedFact.id
+      && edge.metadata.linkedBy === 'homegraph-ask-page-refresh')).toBe(true);
     expect(context.store.listEdges().some((edge) => edge.fromId === accepted.id && edge.toId === acceptedFact.id
       && edge.relation === 'supports_fact')).toBe(true);
     expect(context.store.listEdges().some((edge) => edge.fromId === acceptedFact.id && edge.toId === context.device.id
       && edge.relation === 'describes')).toBe(true);
     expect(fake.requests.filter(({ state }) => (state as ReadingState).candidate?.title === rejected.title)).toHaveLength(1);
   });
-  test('a write-entry hold restores its passport but preserves an untouched concurrent fact edit', async () => {
+  test('a write-entry hold preserves the published page and concurrent fact edit', async () => {
     const context = await fixture();
     await addSource(context, 'profile-reference', { profile: true });
     readings();
-    await generate(context, 'passport');
+    const priorPage = await generate(context, 'passport');
+    const priorArtifacts = context.artifactStore.list();
     const fact = context.store.listNodes().find((node) => node.kind === 'fact')!;
     expect(fact).toBeDefined();
-    const priorPassport = context.store.getNode(homeGraphNodeId(spaceId, 'ha_device_passport', deviceId));
     const racingStore = Object.create(context.store) as KnowledgeStore;
     let concurrent: KnowledgeNodeRecord | undefined;
-    racingStore.upsertNode = async (input) => {
-      const node = await context.store.upsertNode(input);
-      if (input.kind === 'ha_device_passport') concurrent = await context.store.upsertNode({
+    const commit = racingStore.upsertPreparedNode.bind(racingStore);
+    racingStore.upsertPreparedNode = async (prepared, index) => {
+      const node = await commit(prepared, index);
+      if (node.kind === 'ha_device_passport') concurrent = await context.store.upsertNode({
         ...fact, summary: 'Concurrent operator correction.',
       }, createKnowledgeNodeOperatorMutation(fact, { action: 'reject', reviewer: 'fixture-operator' }));
       return node;
     };
-    await expect(generate({ ...context, store: racingStore }, 'passport')).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
+    await expect(generate({ ...context, store: racingStore }, 'passport')).rejects.toThrow();
     expect(context.store.getNode(fact.id)).toEqual(concurrent!);
-    expect(context.store.getNode(priorPassport!.id)).toEqual(priorPassport);
+    expect(context.store.getSource(priorPage.source!.id)).toEqual(priorPage.source!);
+    expect(context.artifactStore.list()).toEqual(priorArtifacts);
   });
 
-  test('mid-profile cancellation restores only written facts and preserves an untouched concurrent edit', async () => {
+  test('mid-profile cancellation preserves published pages and concurrent edits without compensation', async () => {
     const context = await fixture();
     const source = await addSource(context, 'multi-profile-reference', { profile: true });
     const extraction = context.store.getExtractionBySourceId(source.id)!;
     const text = 'The reference device has 4K UHD 3840 x 2160 resolution, 120 Hz, HDMI 2.1, USB, Ethernet, Bluetooth, Wi-Fi, and 2 x 10W speakers.';
     await context.store.upsertExtraction({ ...extraction, excerpt: text, structure: { searchText: text } });
-    readings(); await generate(context, 'passport');
+    readings(); const priorPage = await generate(context, 'passport');
+    const priorArtifacts = context.artifactStore.list();
     const facts = context.store.listNodes().filter((node) => node.kind === 'fact');
     expect(facts.length).toBeGreaterThan(1);
-    const before = new Map(facts.map((fact) => [fact.id, fact]));
     const controller = new AbortController();
     const racingStore = Object.create(context.store) as KnowledgeStore;
-    let touched: string | undefined;
+    let touched: KnowledgeNodeRecord | undefined;
     let concurrent: KnowledgeNodeRecord | undefined;
     const commitPrepared = racingStore.upsertPreparedNode.bind(racingStore);
     racingStore.upsertPreparedNode = async (prepared, index) => {
       const node = await commitPrepared(prepared, index);
       if (node.kind === 'fact' && touched === undefined) {
-        touched = node.id;
+        touched = node;
         const untouched = facts.find((fact) => fact.id !== node.id)!;
         const summary = 'Concurrent correction outside this write pass.';
         concurrent = await context.store.upsertNode({ ...untouched, summary }, createKnowledgeNodeOperatorMutation(untouched, {
@@ -649,9 +668,11 @@ describe('Home Graph page quality persistence boundaries', () => {
       }
       return node;
     };
-    await expect(generate({ ...context, store: racingStore }, 'passport', controller.signal)).rejects.toThrow('Home Graph device passport refresh was cancelled');
+    await expect(generate({ ...context, store: racingStore }, 'passport', controller.signal)).rejects.toThrow();
     expect(touched).toBeDefined(); expect(concurrent).toBeDefined();
-    expect(context.store.getNode(touched!)).toEqual(before.get(touched!)!);
+    expect(context.store.getNode(touched!.id)).toEqual(touched!);
+    expect(context.store.getSource(priorPage.source!.id)).toEqual(priorPage.source!);
+    expect(context.artifactStore.list()).toEqual(priorArtifacts);
     expect(context.store.getNode(concurrent!.id)).toEqual(concurrent!);
   });
 

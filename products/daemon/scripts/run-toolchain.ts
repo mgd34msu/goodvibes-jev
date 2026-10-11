@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withBuildPreparationLock } from './build-preparation-lock.ts';
 
 const COMMANDS = {
   build: 'goodvibes-build-binaries',
@@ -39,15 +40,25 @@ export function resolveWorkspaceToolchain(productRoot: string, command: string):
   return path;
 }
 
+/** Keep version surfaces and native output stable until the real child exits. */
+export async function runWorkspaceToolchain(productRoot: string, command: string, args: readonly string[]): Promise<number> {
+  validateToolchainArguments(command, args);
+  const cli = resolveWorkspaceToolchain(productRoot, command);
+  return withBuildPreparationLock(productRoot, async () => {
+    const child = Bun.spawn([process.execPath, cli, ...args], { cwd: productRoot, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
+    const stop = (): void => { child.kill('SIGTERM'); };
+    process.on('SIGINT', stop); process.on('SIGTERM', stop);
+    try { return await child.exited; }
+    finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
+  });
+}
+
 if (import.meta.main) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   try {
     const command = process.argv[2] ?? '';
     const args = process.argv.slice(3);
-    validateToolchainArguments(command, args);
-    const cli = resolveWorkspaceToolchain(root, command);
-    const child = Bun.spawn([process.execPath, cli, ...args], { cwd: root, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' });
-    process.exit(await child.exited);
+    process.exitCode = await runWorkspaceToolchain(root, command, args);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

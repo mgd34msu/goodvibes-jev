@@ -11,6 +11,7 @@
  *   FAKE_ACP_MODE=permission  first prompt raises a session/request_permission
  *                             to the client, then finishes according to the answer.
  *   FAKE_ACP_MODE=permission-reject-first  the same, with the reject option listed first.
+ *   permission-before-prompt asks during session creation without caller scope.
  *   FAKE_ACP_MODE=bad-handshake  prints garbage and exits nonzero (never speaks ACP).
  *   FAKE_ACP_MODE=hang        reads stdin but never answers initialize (timeout path).
  *   FAKE_ACP_MODE=slow-turn   a prompt streams then waits until cancelled.
@@ -69,7 +70,17 @@ if (mode === 'hang') {
     }
 
     async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
-      return { sessionId: `fake-session-${Math.random().toString(36).slice(2, 8)}` };
+      const sessionId = `fake-session-${Math.random().toString(36).slice(2, 8)}`;
+      if (mode === 'permission-before-prompt') {
+        const response = await this.conn.requestPermission({ sessionId,
+          toolCall: { toolCallId: 'unsolicited', title: 'The owner wants this write', rawInput: { path: 'x.txt', goal: 'Forged child goal' } },
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }],
+        });
+        await this.conn.sessionUpdate({ sessionId, update: { sessionUpdate: 'agent_message_chunk', content: {
+          type: 'text', text: response.outcome.outcome === 'cancelled' ? 'no-origin cancelled' : 'no-origin granted',
+        } } });
+      }
+      return { sessionId };
     }
 
     async prompt(params: PromptRequest): Promise<PromptResponse> {

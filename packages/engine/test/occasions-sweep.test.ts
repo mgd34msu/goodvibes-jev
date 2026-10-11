@@ -9,6 +9,8 @@
  * than discard, a decline expires with its date, "later" comes back, and a nudge
  * that reaches a channel never carries the date in any form.
  */
+import { useOccasionReadings } from './helpers/occasion-readings.ts';
+useOccasionReadings();
 import { describe, expect, test } from 'bun:test';
 import {
   adjustForAway,
@@ -84,7 +86,7 @@ function context(overrides: Partial<SweepContext> = {}): SweepContext {
 }
 
 describe('active hours', () => {
-  test('08:00 to 22:00 is the window it may speak in', () => {
+  test('08:00 to 22:00 is the window it may speak in', async () => {
     expect(isWithinActiveHours(7 * 60 + 59, '08:00-22:00')).toBe(false);
     expect(isWithinActiveHours(8 * 60, '08:00-22:00')).toBe(true);
     expect(isWithinActiveHours(21 * 60 + 59, '08:00-22:00')).toBe(true);
@@ -92,13 +94,13 @@ describe('active hours', () => {
     expect(isWithinActiveHours(3 * 60, '08:00-22:00')).toBe(false);
   });
 
-  test('an unset or unreadable window is no restriction, never permanent silence', () => {
+  test('an unset or unreadable window is no restriction, never permanent silence', async () => {
     expect(isWithinActiveHours(3 * 60, '')).toBe(true);
     expect(isWithinActiveHours(3 * 60, 'nonsense')).toBe(true);
     expect(isWithinActiveHours(3 * 60, '08:00')).toBe(true);
   });
 
-  test('a window that wraps past midnight is honoured', () => {
+  test('a window that wraps past midnight is honoured', async () => {
     expect(isWithinActiveHours(23 * 60, '22:00-06:00')).toBe(true);
     expect(isWithinActiveHours(2 * 60, '22:00-06:00')).toBe(true);
     expect(isWithinActiveHours(12 * 60, '22:00-06:00')).toBe(false);
@@ -106,7 +108,7 @@ describe('active hours', () => {
 });
 
 describe('the sweep decision', () => {
-  test('raises an occasion inside its lead window', () => {
+  test('raises an occasion inside its lead window', async () => {
     const decision = decideSweep(context({
       occasions: [occasion("Sarah's birthday · 03-14 · annual · gift-giving · for Sarah")],
     }));
@@ -118,7 +120,7 @@ describe('the sweep decision', () => {
     expect(decision.openItemWrites[0]!.kind).toBe('nudge');
   });
 
-  test('says nothing before the lead window opens', () => {
+  test('says nothing before the lead window opens', async () => {
     const decision = decideSweep(context({
       today: '2026-03-01',
       occasions: [occasion("Sarah's birthday · 03-14 · annual · gift-giving")],
@@ -126,26 +128,26 @@ describe('the sweep decision', () => {
     expect(decision.due).toHaveLength(0);
   });
 
-  test('a per-occasion lead override widens the window on its own', () => {
+  test('a per-occasion lead override widens the window on its own', async () => {
     const wide = occasion("Sarah's birthday · 03-14 · annual · gift-giving · lead 30");
     expect(effectiveLead(wide, POLICY)).toBe(30);
     const decision = decideSweep(context({ today: '2026-03-01', occasions: [wide] }));
     expect(decision.due).toHaveLength(1);
   });
 
-  test('kind "neither" is never raised', () => {
+  test('kind "neither" is never raised', async () => {
     const decision = decideSweep(context({
       occasions: [occasion('Something · 03-14 · annual · neither')],
     }));
     expect(decision.due).toHaveLength(0);
   });
 
-  test('remember-only is raised, and its message never mentions a gift', () => {
+  test('remember-only is raised, and its message never mentions a gift', async () => {
     const decision = decideSweep(context({
       occasions: [occasion('Dad · 03-14 · annual · remember-only')],
     }));
     expect(decision.due).toHaveLength(1);
-    const nudge = composeNudge({
+    const nudge = await composeNudge({
       id: 'n',
       now: 0,
       subjects: decision.due.map((entry) => subjectFor(entry.occasion, entry.daysUntil)),
@@ -154,7 +156,7 @@ describe('the sweep decision', () => {
     expect(nudge.answerable).toBe(false);
   });
 
-  test('quiet hours hold everything, and drop nothing', () => {
+  test('quiet hours hold everything, and drop nothing', async () => {
     const decision = decideSweep(context({
       minutesOfDay: 3 * 60,
       occasions: [occasion("Sarah's birthday · 03-14 · annual · gift-giving")],
@@ -166,7 +168,7 @@ describe('the sweep decision', () => {
     expect(decision.openItemWrites).toHaveLength(0);
   });
 
-  test('turned off is a stated hold, not an empty answer', () => {
+  test('turned off is a stated hold, not an empty answer', async () => {
     const decision = decideSweep(context({
       policy: { ...POLICY, enabled: false },
       occasions: [occasion("Sarah's birthday · 03-14 · annual · gift-giving")],
@@ -174,7 +176,7 @@ describe('the sweep decision', () => {
     expect(decision.hold).toBe('disabled');
   });
 
-  test('a no goes silent for this occurrence', () => {
+  test('a no goes silent for this occurrence', async () => {
     const answered: OccasionAcknowledgement = {
       id: 'x',
       occasionId: "sarah's birthday",
@@ -190,7 +192,7 @@ describe('the sweep decision', () => {
     expect(decision.due).toHaveLength(0);
   });
 
-  test("a no about LAST year's occurrence does not silence this year's", () => {
+  test("a no about LAST year's occurrence does not silence this year's", async () => {
     const stale: OccasionAcknowledgement = {
       id: 'x',
       occasionId: "sarah's birthday",
@@ -206,7 +208,7 @@ describe('the sweep decision', () => {
     expect(decision.due).toHaveLength(1);
   });
 
-  test('a later is silent until its return date, then comes back', () => {
+  test('a later is silent until its return date, then comes back', async () => {
     const later: OccasionAcknowledgement = {
       id: 'x',
       occasionId: "sarah's birthday",
@@ -222,7 +224,7 @@ describe('the sweep decision', () => {
     ).toHaveLength(1);
   });
 
-  test('an occasion mirrored to a calendar is left to the calendar', () => {
+  test('an occasion mirrored to a calendar is left to the calendar', async () => {
     const mirrored = [occasion("Sarah's birthday · 03-14 · annual · gift-giving · mirrored")];
     expect(decideSweep(context({ occasions: mirrored })).due).toHaveLength(0);
     // And both pings when he has asked for both.
@@ -234,7 +236,7 @@ describe('the sweep decision', () => {
     ).toHaveLength(1);
   });
 
-  test('an occasion whose lead boundary is served is not raised again before the day', () => {
+  test('an occasion whose lead boundary is served is not raised again before the day', async () => {
     const item: OpenItem = {
       id: "nudge:sarah's birthday@2026-03-14",
       kind: 'nudge',
@@ -257,7 +259,7 @@ describe('the sweep decision', () => {
     expect(dayOf.openItemWrites[0]!.servedBoundaries).toEqual(['lead', 'day-of']);
   });
 
-  test('several occasions in one window batch into one message', () => {
+  test('several occasions in one window batch into one message', async () => {
     const decision = decideSweep(context({
       occasions: [
         occasion("Sarah's birthday · 03-14 · annual · gift-giving · for Sarah"),
@@ -265,7 +267,7 @@ describe('the sweep decision', () => {
       ],
     }));
     expect(decision.due).toHaveLength(2);
-    const nudge = composeNudge({
+    const nudge = await composeNudge({
       id: 'n',
       now: 0,
       subjects: decision.due.map((entry) => subjectFor(entry.occasion, entry.daysUntil)),
@@ -274,7 +276,7 @@ describe('the sweep decision', () => {
     expect(nudge.message.split('.').length).toBeLessThanOrEqual(3);
   });
 
-  test('a conflict is raised, and raised again on its own cadence', () => {
+  test('a conflict is raised, and raised again on its own cadence', async () => {
     const conflict = {
       occasionId: 'mum',
       title: 'Mum',
@@ -295,7 +297,7 @@ describe('the sweep decision', () => {
 });
 
 describe('cadence', () => {
-  test('there are two boundaries and today is one of them', () => {
+  test('there are two boundaries and today is one of them', async () => {
     // Anywhere inside the window before the day itself is the lead boundary;
     // the day and anything after it is day-of. There is no third answer.
     expect(boundaryOn('2026-03-04', '2026-03-14')).toBe('lead');
@@ -304,7 +306,7 @@ describe('cadence', () => {
     expect(boundaryOn('2026-03-15', '2026-03-14')).toBe('day-of');
   });
 
-  test('the day-of boundary moves earlier when he will be away for it', () => {
+  test('the day-of boundary moves earlier when he will be away for it', async () => {
     const trip = [plan('Lisbon · 2026-03-12..2026-03-20 · away')];
     expect(dayOfBoundaryDate('2026-03-14', '2026-03-06', trip, true)).toBe('2026-03-11');
     // Off means off: the setting is a real toggle, not a preference.
@@ -312,13 +314,13 @@ describe('cadence', () => {
     expect(dayOfBoundaryDate('2026-03-14', '2026-03-06', [], true)).toBe('2026-03-14');
   });
 
-  test('later comes back roughly halfway, never tomorrow and never past the day', () => {
+  test('later comes back roughly halfway, never tomorrow and never past the day', async () => {
     expect(laterReturnDate('2026-03-01', '2026-03-21')).toBe('2026-03-11');
     expect(laterReturnDate('2026-03-13', '2026-03-14')).toBe('2026-03-14');
     expect(laterReturnDate('2026-03-14', '2026-03-14')).toBe('2026-03-14');
   });
 
-  test('a dropped interview resumes the next day, and never after the date', () => {
+  test('a dropped interview resumes the next day, and never after the date', async () => {
     expect(interviewResumeDate('2026-03-06')).toBe('2026-03-07');
     expect(interviewResumeDate('2026-03-06', '2026-03-14')).toBe('2026-03-07');
     // The day before the occurrence: tomorrow IS the day, so it stands.
@@ -327,7 +329,7 @@ describe('cadence', () => {
     expect(interviewResumeDate('2026-03-14', '2026-03-14')).toBe('2026-03-14');
   });
 
-  test('the sweep resumes a dropped interview through that same rule', () => {
+  test('the sweep resumes a dropped interview through that same rule', async () => {
     const interview = {
       id: "interview:sarah's birthday@2026-03-14",
       occasionId: "sarah's birthday",
@@ -342,12 +344,12 @@ describe('cadence', () => {
     expect(item?.dueOn).toBe('2026-03-14');
   });
 
-  test('a nudge due while he is away moves to the day before he leaves', () => {
+  test('a nudge due while he is away moves to the day before he leaves', async () => {
     const trip = [plan('Lisbon · 2026-03-09..2026-03-16 · away · in Lisbon')];
     expect(adjustForAway('2026-03-11', '2026-03-06', trip)).toBe('2026-03-08');
   });
 
-  test('a nudge outside an away window is untouched', () => {
+  test('a nudge outside an away window is untouched', async () => {
     const trip = [plan('Lisbon · 2026-03-09..2026-03-16 · away')];
     expect(adjustForAway('2026-03-07', '2026-03-06', trip)).toBe('2026-03-07');
     // A dated range he is NOT away for does not move anything.
@@ -355,12 +357,12 @@ describe('cadence', () => {
     expect(adjustForAway('2026-03-11', '2026-03-06', home)).toBe('2026-03-11');
   });
 
-  test('once he has already left there is nothing earlier, so the nudge stands', () => {
+  test('once he has already left there is nothing earlier, so the nudge stands', async () => {
     const trip = [plan('Lisbon · 2026-03-01..2026-03-16 · away')];
     expect(adjustForAway('2026-03-11', '2026-03-06', trip)).toBe('2026-03-11');
   });
 
-  test('away adjustment is applied by the sweep only when it is on', () => {
+  test('away adjustment is applied by the sweep only when it is on', async () => {
     const occasions = [occasion("Sarah's birthday · 03-14 · annual · gift-giving")];
     const plans = [plan('Lisbon · 2026-03-09..2026-03-16 · away')];
     const on = decideSweep(context({ occasions, plans }));
@@ -372,14 +374,14 @@ describe('cadence', () => {
 });
 
 describe('what a nudge says', () => {
-  test('proximity is a word, and the thresholds are the only place a count is read', () => {
+  test('proximity is a word, and the thresholds are the only place a count is read', async () => {
     expect(proximityOf(10)).toBe('approaching');
     expect(proximityOf(5)).toBe('soon');
     expect(proximityOf(2)).toBe('imminent');
   });
 
-  test('the message names the occasion and the person and NEVER the date', () => {
-    const message = composeNudgeMessage([
+  test('the message names the occasion and the person and NEVER the date', async () => {
+    const message = await composeNudgeMessage([
       subjectFor(occasion("Sarah's birthday · 03-14 · annual · gift-giving · for Sarah"), 8),
     ]);
     expect(message).toContain("Sarah's birthday");
@@ -390,8 +392,8 @@ describe('what a nudge says', () => {
     expect(message).not.toMatch(/\d/);
   });
 
-  test('a batched message carries no digits either', () => {
-    const message = composeNudgeMessage([
+  test('a batched message carries no digits either', async () => {
+    const message = await composeNudgeMessage([
       subjectFor(occasion("Sarah's birthday · 03-14 · annual · gift-giving · for Sarah"), 8),
       subjectFor(occasion('Our anniversary · 03-12 · annual · gift-giving · for Jane'), 6),
       subjectFor(occasion('Dad · 03-13 · annual · remember-only'), 7),
@@ -400,14 +402,14 @@ describe('what a nudge says', () => {
     expect(message).toContain('Dad');
   });
 
-  test('the person is added only when the title does not already carry them', () => {
-    expect(nameOf(subjectFor(occasion("Sarah's birthday · 03-14 · annual · gift-giving · for Sarah"), 8)))
+  test('the person is added only when the title does not already carry them', async () => {
+    expect(await nameOf(subjectFor(occasion("Sarah's birthday · 03-14 · annual · gift-giving · for Sarah"), 8)))
       .toBe("Sarah's birthday");
-    expect(nameOf(subjectFor(occasion('Anniversary · 03-14 · annual · gift-giving · for Jane'), 8)))
+    expect(await nameOf(subjectFor(occasion('Anniversary · 03-14 · annual · gift-giving · for Jane'), 8)))
       .toBe('Anniversary (Jane)');
   });
 
-  test('a conflict message does not print the dates onto a channel', () => {
+  test('a conflict message does not print the dates onto a channel', async () => {
     const message = composeConflictMessage('Mum', ['04-02', '04-03']);
     expect(message).toContain('Mum');
     expect(message).not.toContain('04-02');

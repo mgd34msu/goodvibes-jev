@@ -23,6 +23,9 @@ export const pendingApproval = defineBattery({
     ),
   },
   fixtures: [
+    { name: 'negated resolution wording', state: '[Approval] This has not been approved; the action is still waiting for your decision.', expect: { pending: 'yes' } },
+    { name: 'resolved without old resolution keywords', state: '[Approval] The operator decided against this action. The request is closed.', expect: { pending: 'no' } },
+    { name: 'previous rejection with new pending ask', state: '[Approval] The previous request was denied; this new request is waiting for a decision.', expect: { pending: 'yes' } },
     { name: 'waiting for operator input', state: '[Approval] Waiting for operator input', expect: { pending: 'yes' } },
     {
       name: 'exec awaiting a decision',

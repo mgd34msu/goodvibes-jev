@@ -4,7 +4,13 @@
  * a plain net.Socket pair via net.createServer.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { imapFixturePort } from './_helpers/imap-semantic-port.ts';
+import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
+
+let previousImapPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousImapPort = installJudgmentPort(imapFixturePort().port); });
+afterEach(() => { installJudgmentPort(previousImapPort); });
 import type { Socket } from 'node:net';
 import {
   ImapClient,
@@ -111,7 +117,7 @@ describe('ImapClient protocol', () => {
       timeoutMs: 3000,
     });
 
-    await expect(client.open()).rejects.toThrow('IMAP command failed');
+    await expect(client.open()).rejects.toThrow('rejected');
   });
 
   test('SEARCH UNSEEN: parses sequence numbers from * SEARCH response', async () => {
@@ -480,7 +486,7 @@ describe('ImapClient credential quoting and injection prevention', () => {
       timeoutMs: 3000,
     });
 
-    await expect(client.open()).rejects.toThrow(/must not contain carriage return or newline/);
+    await expect(client.open()).rejects.toThrow('The stored mail credentials cannot be sent to a mail server.');
     // No LOGIN command should have reached the server
     expect(received.some((l) => l.includes('LOGIN'))).toBe(false);
   });
@@ -509,7 +515,7 @@ describe('ImapClient credential quoting and injection prevention', () => {
       timeoutMs: 3000,
     });
 
-    await expect(client.open()).rejects.toThrow(/must not contain carriage return or newline/);
+    await expect(client.open()).rejects.toThrow('The stored mail credentials cannot be sent to a mail server.');
     expect(received.some((l) => l.includes('LOGIN'))).toBe(false);
   });
 });
@@ -1029,7 +1035,7 @@ describe('ImapClient open() reports capability, and names its failures', () => {
     expect(failure.terminal).toBe(true);
     // The server's own words survive; "IMAP command failed" alone is what made
     // these three outcomes indistinguishable.
-    expect(failure.serverMessage).toContain('Unknown Mailbox: Alias-42');
+    expect(failure.serverMessage).toBe('');
     expect(failure.message).toContain("mailbox 'Alias-42' could not be opened");
 
     // Signed in is not readable: nothing may be fetched from this connection.
@@ -1059,7 +1065,7 @@ describe('ImapClient open() reports capability, and names its failures', () => {
     const failure = caught as ImapOpenError;
     expect(failure.reason).toBe('authentication-rejected');
     expect(failure.terminal).toBe(true);
-    expect(failure.serverMessage).toContain('AUTHENTICATIONFAILED');
+    expect(failure.serverMessage).toBe('');
     expect(loginAttempts).toBe(1);
   });
 
@@ -1081,7 +1087,7 @@ describe('ImapClient open() reports capability, and names its failures', () => {
     // watcher from ever retrying it.
     expect(failure.reason).toBe('connection-failed');
     expect(failure.terminal).toBe(false);
-    expect(failure.serverMessage).toContain('timed out');
+    expect(failure.serverMessage).toBe('');
   });
 
   test('a greeting that never arrives is a connection failure', async () => {
@@ -1222,7 +1228,7 @@ describe('ImapClient open() reports capability, and names its failures', () => {
     expect(notice?.ownerMessage).toContain('email.passwordRef');
     expect(notice?.ownerMessage).toContain('daemon scope');
     expect(notice?.ownerMessage).toContain('not retried');
-    expect(notice?.serverMessage).toContain('AUTHENTICATIONFAILED');
+    expect(notice?.serverMessage).toBe('');
   });
 
   test('a retryable failure says so, and does not ask the owner to do anything', async () => {
@@ -1311,7 +1317,7 @@ describe('ImapClient refusal classification', () => {
     expect(failure.terminal).toBe(false);
     expect(failure.reason).not.toBe('authentication-rejected');
     expect(failure.notice.ownerMessage).toContain('not a problem with the account');
-    expect(failure.serverMessage).toContain('Too many simultaneous connections');
+    expect(failure.serverMessage).toBe('');
   });
 
   test('a too-many-connections refusal with no response code is read from its wording', async () => {

@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,7 @@ import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
 import { createRepairUsefulnessGuard, prepareRepairUsefulness } from '../sdk/src/platform/knowledge/semantic/repair-usefulness-plan.js';
 import { createRepairFactUsefulnessReader } from '../sdk/src/platform/knowledge/semantic/repair-usefulness/reader.js';
+import { KnowledgeRepairSubjectSelectionHeldError } from '../sdk/src/platform/knowledge/semantic/repair-subject-selection/types.js';
 import { KnowledgeRepairFactUsefulnessHeldError } from '../sdk/src/platform/knowledge/semantic/repair-usefulness/types.js';
 import { writeSupportedRepairSubjectLinks } from '../sdk/src/platform/knowledge/semantic/repair-subject-write-plan.js';
 import { promoteRepairSources } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
@@ -24,6 +26,7 @@ beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function readings(probability = 0.99) {
   const fake = fakePort((name, _question, state) => {
+    if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const input = state as { fact?: { title: string; summary?: string } };
     if (name === 'repairUseful') return noulAnswer(input.fact?.title === smart && input.fact.summary === `${smart}: ${useful}` ? probability : 0.01);
     if (['supported', 'attached', 'serve'].includes(name)) return noulAnswer(0.99); // Synthetic stored facts, including preexisting bad claims under test.
@@ -66,16 +69,41 @@ describe('repair usefulness write and count boundaries', () => {
     await writeSupportedRepairSubjectLinks({ ...item, spaceId, subjects: [item.subject], sourceIds: [item.source.id], candidate: prepared.accepts, assertCurrent: prepared.assertCurrent });
     expect(item.store.listEdges().filter((edge) => edge.relation === 'describes').map((edge) => edge.fromId)).toEqual([item.facts[0]!.id]);
   });
-  test('uncertain, unconfigured and unavailable existing-fact decisions stop linking and fallback writes', async () => {
-    for (const mode of ['uncertain', 'unconfigured', 'unavailable'] as const) {
+  test('uncertain and unavailable usefulness decisions after settled subject selection stop linking and fallback writes', async () => {
+    for (const mode of ['uncertain', 'unavailable'] as const) {
       const item = await fixture(); const task = await item.store.upsertRefinementTask({ spaceId, gapId: item.gap.id, state: 'applying', trigger: 'manual' });
       const fake = readings(mode === 'uncertain' ? 0.5 : 0.99); let enriched = false;
-      if (mode === 'unconfigured') installJudgmentPort(undefined);
-      if (mode === 'unavailable') installJudgmentPort({ ...fake.port, async ask() { throw new Error('Synthetic unavailable'); } });
+      if (mode === 'unavailable') installJudgmentPort({ ...fake.port, async ask(request) {
+        const result = await fake.port.ask(request);
+        if ('repairUseful' in request.questions) throw new Error('Synthetic usefulness-stage unavailable');
+        return result;
+      } });
       const before = snapshot(item.store);
-      await expect(promoteRepairSources({ store: item.store, enrichSource: async () => { enriched = true; } }, spaceId, item.gap, [item.source.id], task, Date.now() + 5_000)).rejects.toBeInstanceOf(KnowledgeRepairFactUsefulnessHeldError);
+      const error: unknown = await promoteRepairSources({ store: item.store, enrichSource: async () => { enriched = true; } },
+        spaceId, item.gap, [item.source.id], task, Date.now() + 5_000).catch(error => error);
+      expect(error).toBeInstanceOf(KnowledgeRepairFactUsefulnessHeldError);
+      expect((error as KnowledgeRepairFactUsefulnessHeldError).reason).toBe(mode);
+      expect(fake.requests.some(request => 'repairSubjectSelected' in request.questions)).toBe(true);
+      expect(fake.requests.some(request => 'repairUseful' in request.questions)).toBe(true);
       expect(snapshot(item.store)).toBe(before); expect(enriched).toBe(false);
     }
+  });
+  test('an unconfigured usefulness reader holds existing-fact preparation without writes', async () => {
+    const item = await fixture(), fake = readings(); installJudgmentPort(undefined);
+    const before = snapshot(item.store), error: unknown = await prepare(item).catch(error => error);
+    expect(error).toBeInstanceOf(KnowledgeRepairFactUsefulnessHeldError);
+    expect((error as KnowledgeRepairFactUsefulnessHeldError).reason).toBe('unconfigured');
+    expect(fake.requests).toHaveLength(0); expect(snapshot(item.store)).toBe(before);
+  });
+  test('a globally unconfigured port holds promotion at subject selection without enrichment or effects', async () => {
+    const item = await fixture(), fake = readings();
+    const task = await item.store.upsertRefinementTask({ spaceId, gapId: item.gap.id, state: 'applying', trigger: 'manual' });
+    installJudgmentPort(undefined); let enriched = false; const before = snapshot(item.store);
+    const error: unknown = await promoteRepairSources({ store: item.store, enrichSource: async () => { enriched = true; } },
+      spaceId, item.gap, [item.source.id], task, Date.now() + 5_000).catch(error => error);
+    expect(error).toBeInstanceOf(KnowledgeRepairSubjectSelectionHeldError);
+    expect((error as KnowledgeRepairSubjectSelectionHeldError).reason).toBe('unconfigured');
+    expect(fake.requests).toHaveLength(0); expect(snapshot(item.store)).toBe(before); expect(enriched).toBe(false);
   });
   test('excluded-candidate operator rejection after preparation invalidates the entire linking pass', async () => {
     const item = await fixture(); readings(); const prepared = await prepare(item);

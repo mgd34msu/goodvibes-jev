@@ -1,7 +1,7 @@
 # Inbound original-source and held-delivery prerequisite
 
-Status: source-only, injected qualification for THE-105. No live ingress is
-migrated or enabled by this change. THE-105 remains In Progress.
+Scope: source preservation with injected offline validation. Live ingress requires
+its own integration and authority boundary; source capture alone does not enable it.
 
 ## Construction boundary
 

@@ -87,7 +87,7 @@ describe('redactAtRestLine: masks credentials, preserves content, stays valid JS
     installJudgmentPort(port);
     const line = JSON.stringify({ body: `see ${DOC_NAME}; key ${API_KEY}; the bearer of bad news` });
     await readAtRestCredentialSpans([line, line], 'test.at-rest');
-    // One request per distinct span, even across lines: the doc name, the key, and "of".
+    // One request per candidate in this complete source, deduplicating identical lines.
     expect(requests).toHaveLength(3);
     const out = redactAtRestLine(line);
     expect(out).toContain(DOC_NAME);

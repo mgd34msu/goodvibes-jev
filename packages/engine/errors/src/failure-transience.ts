@@ -4,6 +4,7 @@ import {
   type FailureCategory,
   type FailureConclusions,
   type FailureEvidence,
+  type FailureReadOptions,
 } from './failure-reading.js';
 
 /**
@@ -31,6 +32,8 @@ export interface FailureTransience {
 }
 
 export interface TransienceOptions {
+  /** Owned port, cancellation and current-source checks; bypasses shared wording memoization. */
+  readonly reading?: FailureReadOptions;
   /**
    * The failure came from an LLM provider's API. Providers report a spent
    * account under a 429 (OpenAI `insufficient_quota`), which its status alone
@@ -156,6 +159,15 @@ export function transienceFromReading(failure: FailureConclusions): FailureTrans
  * no pattern-list fallback.
  */
 export async function readFailureTransience(error: unknown, site: string, options: TransienceOptions = {}): Promise<FailureTransience> {
+  const assertCurrent = () => {
+    options.reading?.signal?.throwIfAborted();
+    const checked: unknown = options.reading?.beforeAttempt?.();
+    if (checked !== undefined) {
+      void Promise.resolve(checked).catch(() => {});
+      throw new Error('Failure reading authority checks must be synchronous');
+    }
+  };
+  assertCurrent();
   const describe = options.describe ?? describeFallback;
   const structured = structuredTransience(error);
   if (structured !== undefined) {
@@ -163,7 +175,8 @@ export async function readFailureTransience(error: unknown, site: string, option
     if (options.fromProvider !== true || structured.basis !== 'status' || status !== 429) return structured;
     const evidence = { ...failureWording(error, describe), status };
     if (evidence.message.trim().length === 0) return structured;
-    const failure = await readFailure(evidence, site);
+    const failure = await readFailure(evidence, site, options.reading);
+    assertCurrent();
     return failure.billing
       ? { failureClass: 'terminal', basis: 'reading', detail: 'HTTP 429 read as billing: the account cannot pay for the request' }
       : structured;
@@ -172,5 +185,7 @@ export async function readFailureTransience(error: unknown, site: string, option
   if (evidence.message.trim().length === 0) {
     return { failureClass: 'retryable', basis: 'no-wording', detail: 'the failure carries no wording' };
   }
-  return transienceFromReading(await readFailure(evidence, site));
+  const failure = await readFailure(evidence, site, options.reading);
+  assertCurrent();
+  return transienceFromReading(failure);
 }

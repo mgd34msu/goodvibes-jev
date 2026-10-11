@@ -180,27 +180,42 @@ const BUILTIN_GATEWAY_METHODS: readonly GatewayMethodDescriptor[] = [
 function normalizeDescriptor(descriptor: GatewayMethodDescriptor): GatewayMethodDescriptor {
   const id = descriptor.id.trim();
   if (!id) throw new Error('Gateway method id is required');
-  return {
+  return Object.freeze({
     ...descriptor,
     id,
-    transport: [...new Set(descriptor.transport)],
-    scopes: [...new Set(descriptor.scopes)],
-    events: descriptor.events ? [...new Set(descriptor.events)] : undefined,
+    transport: Object.freeze([...new Set(descriptor.transport)]),
+    scopes: Object.freeze([...new Set(descriptor.scopes)]),
+    events: descriptor.events ? Object.freeze([...new Set(descriptor.events)]) : undefined,
+    ...(descriptor.http ? { http: Object.freeze({ ...descriptor.http }) } : {}),
     invokable: descriptor.invokable ?? true,
-  };
+  });
 }
 
 function normalizeEventDescriptor(descriptor: GatewayEventDescriptor): GatewayEventDescriptor {
   const id = descriptor.id.trim();
   if (!id) throw new Error('Gateway event id is required');
-  return {
+  return Object.freeze({
     ...descriptor,
     id,
-    transport: [...new Set(descriptor.transport)],
-    scopes: [...new Set(descriptor.scopes)],
-    domains: descriptor.domains ? [...new Set(descriptor.domains)] : undefined,
-    wireEvents: descriptor.wireEvents ? [...new Set(descriptor.wireEvents)] : undefined,
-  };
+    transport: Object.freeze([...new Set(descriptor.transport)]),
+    scopes: Object.freeze([...new Set(descriptor.scopes)]),
+    domains: descriptor.domains ? Object.freeze([...new Set(descriptor.domains)]) : undefined,
+    wireEvents: descriptor.wireEvents ? Object.freeze([...new Set(descriptor.wireEvents)]) : undefined,
+  });
+}
+
+/** The actual grant ceiling used by authenticated transport and native recovery. */
+export function grantedGatewayScopes(catalog: Pick<GatewayMethodCatalog, 'getAllScopes'>, includeWrite: boolean): string[] {
+  const scopes = new Set(catalog.getAllScopes({ includeWrite }));
+  scopes.add('read:events'); scopes.add('read:control-plane'); scopes.add('read:telemetry');
+  if (includeWrite) { scopes.add('read:telemetry-sensitive'); scopes.add('write:control-plane'); }
+  return [...scopes].sort();
+}
+
+export interface GatewayScopePolicyOwner {
+  /** Exact immutable registered scope state. Requires this still-attached owner. */
+  current(): Readonly<{ revision: string; scopes: readonly string[] }>;
+  close(): void;
 }
 
 function pathMatchesTemplate(template: string, pathname: string): boolean {
@@ -217,6 +232,55 @@ function pathMatchesTemplate(template: string, pathname: string): boolean {
 export class GatewayMethodCatalog {
   private readonly methods = new Map<string, RegisteredGatewayMethod>();
   private readonly events = new Map<string, RegisteredGatewayEvent>();
+  private scopePolicyOwner: { readonly beforeMutation: () => void } | undefined;
+  private scopePolicyChanging = false;
+  private scopePolicyRetired = false;
+
+  /**
+   * Called after initial host construction. Startup registration is hydration,
+   * while all subsequent mutations persist revocation before changing scopes.
+   * The callback is an owner precondition, never an authority reconstructed from
+   * a stored watch, grant identifier, or caller-supplied scope list.
+   */
+  attachScopePolicyOwner(beforeMutation: () => void): GatewayScopePolicyOwner {
+    if (this.scopePolicyOwner || this.scopePolicyRetired) throw new Error('Gateway scope policy owner is already attached or retired');
+    const owner = { beforeMutation }; this.scopePolicyOwner = owner;
+    return Object.freeze({
+      current: () => {
+        if (this.scopePolicyOwner !== owner || this.scopePolicyChanging) throw new Error('Gateway scope policy owner is unavailable');
+        const methods = [...this.methods].sort(([a], [b]) => a.localeCompare(b)).map(([id, entry]) => {
+          const value = entry.descriptor;
+          return [id, value.source, value.pluginId ?? null, value.access, [...value.transport].sort(), [...value.scopes].sort(),
+            value.http ? [value.http.method, value.http.path] : null, value.invokable, value.dangerous ?? false, typeof entry.handler === 'function'];
+        });
+        const events = [...this.events].sort(([a], [b]) => a.localeCompare(b)).map(([id, entry]) => {
+          const value = entry.descriptor;
+          return [id, value.source, value.pluginId ?? null, [...value.transport].sort(), [...value.scopes].sort(),
+            [...(value.domains ?? [])].sort(), [...(value.wireEvents ?? [])].sort()];
+        });
+        return Object.freeze({ revision: createHash('sha256').update(JSON.stringify({ methods, events })).digest('hex'),
+          scopes: Object.freeze(grantedGatewayScopes(this, true)) });
+      },
+      close: () => {
+        if (this.scopePolicyOwner !== owner) return;
+        // Daemon retirement is not a policy withdrawal. Reconstructed startup
+        // may recover unchanged durable grants. This instance cannot reattach
+        // or mint durable custody after teardown starts.
+        this.scopePolicyRetired = true; this.scopePolicyOwner = undefined;
+      },
+    });
+  }
+
+  private beforeScopeMutation(): void {
+    const owner = this.scopePolicyOwner; if (!owner) return;
+    if (this.scopePolicyChanging) throw new Error('Gateway scope policy mutation is reentrant');
+    this.scopePolicyChanging = true;
+    try {
+      const result: unknown = owner.beforeMutation();
+      if (result && typeof result === 'object' && typeof (result as { then?: unknown }).then === 'function') throw new Error('Gateway scope policy mutation must be synchronous');
+      if (this.scopePolicyOwner !== owner) throw new Error('Gateway scope policy owner changed');
+    } finally { this.scopePolicyChanging = false; }
+  }
 
   constructor(options: { readonly includeBuiltins?: boolean } = {}) {
     if (options.includeBuiltins !== false) {
@@ -238,10 +302,12 @@ export class GatewayMethodCatalog {
     if (this.methods.has(normalized.id) && !options.replace) {
       throw new Error(`Gateway method already registered: ${normalized.id}`);
     }
-    this.methods.set(normalized.id, { descriptor: normalized, handler });
+    const registered = { descriptor: normalized, handler };
+    this.beforeScopeMutation();
+    this.methods.set(normalized.id, registered);
     return () => {
       const current = this.methods.get(normalized.id);
-      if (current && current.descriptor.pluginId === normalized.pluginId && current.descriptor.source === normalized.source) {
+      if (current === registered) {
         this.unregister(normalized.id);
       }
     };
@@ -255,24 +321,32 @@ export class GatewayMethodCatalog {
     if (this.events.has(normalized.id) && !options.replace) {
       throw new Error(`Gateway event already registered: ${normalized.id}`);
     }
-    this.events.set(normalized.id, { descriptor: normalized });
+    const registered = { descriptor: normalized };
+    this.beforeScopeMutation();
+    this.events.set(normalized.id, registered);
     return () => {
       const current = this.events.get(normalized.id);
-      if (current && current.descriptor.pluginId === normalized.pluginId && current.descriptor.source === normalized.source) {
+      if (current === registered) {
         this.unregisterEvent(normalized.id);
       }
     };
   }
 
   unregister(id: string): boolean {
+    if (!this.methods.has(id)) return false;
+    this.beforeScopeMutation();
     return this.methods.delete(id);
   }
 
   unregisterEvent(id: string): boolean {
+    if (!this.events.has(id)) return false;
+    this.beforeScopeMutation();
     return this.events.delete(id);
   }
 
   clearPluginMethods(pluginId: string): void {
+    if (![...this.methods.values(), ...this.events.values()].some(entry => entry.descriptor.pluginId === pluginId)) return;
+    this.beforeScopeMutation();
     for (const [id, entry] of this.methods.entries()) {
       if (entry.descriptor.pluginId === pluginId) {
         this.methods.delete(id);
@@ -383,3 +457,4 @@ export class GatewayMethodCatalog {
     return entry.handler(invocation);
   }
 }
+import { createHash } from 'node:crypto';

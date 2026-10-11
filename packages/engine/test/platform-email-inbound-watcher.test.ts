@@ -10,7 +10,13 @@
  * failure the capability exists to eliminate.
  */
 
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { imapFixturePort } from './_helpers/imap-semantic-port.ts';
+import { beforeEach, afterAll, afterEach, describe, expect, test } from 'bun:test';
+
+let previousImapPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousImapPort = installJudgmentPort(imapFixturePort().port); });
+afterEach(() => { installJudgmentPort(previousImapPort); });
 import {
   InboundMailboxWatcher,
   imapMailboxConnectionPort,
@@ -473,7 +479,7 @@ describe('inbound watcher: capability sufficiency', () => {
 
     const verdict = harness.watcher.status.verdict;
     expect(verdict.state).toBe('degraded');
-    expect(verdict.detail).toContain('Too many simultaneous connections');
+    expect(verdict.detail).not.toContain('Too many simultaneous connections');
     expect(harness.observer.terminals).toEqual([]);
 
     // It keeps trying, the limit clears on its own, but on a longer ceiling.
@@ -606,7 +612,7 @@ describe('inbound watcher: connect-time body probe', () => {
     expect(count(harness.mailbox.commands, SEARCH_COMMAND)).toBe(0);
     expect(harness.sink.attempts).toEqual([]);
     // The server's own wording is carried through, not paraphrased away.
-    expect(harness.observer.terminals[0]?.notice?.serverMessage).toContain('Server error');
+    expect(harness.observer.terminals[0]?.notice?.serverMessage).toBe('');
   });
 
   test('a server that serves the body probe reports readable and runs normally', async () => {
@@ -677,7 +683,7 @@ describe('inbound watcher: can it read message content at all', () => {
     // Not `fetch-refused`: that one means the server said no to handing over
     // message DATA and points at IMAP access and folder restrictions. This one
     // is about what the account may READ, and the fix has to say so.
-    expect(verdict.detail).toContain('Not permitted');
+    expect(verdict.detail).not.toContain('Not permitted');
 
     const failure = harness.observer.terminals[0];
     expect(failure?.reason).toBe('bodies-unfetchable');
@@ -705,7 +711,7 @@ describe('inbound watcher: can it read message content at all', () => {
 
     expect(harness.watcher.status.verdict.reason).toBe('bodies-unfetchable');
     expect(harness.watcher.status.verdict.state).toBe('insufficient');
-    expect(harness.watcher.status.verdict.detail).toContain('120');
+    expect(harness.watcher.status.verdict.detail).toBe('The mail connection failed; server details withheld.');
     expect(harness.observer.terminals[0]?.fix).toContain('access');
     expect(count(harness.mailbox.commands, SEARCH_COMMAND)).toBe(0);
     expect(harness.sink.delivered).toEqual([]);

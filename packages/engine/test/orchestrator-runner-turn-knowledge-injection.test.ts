@@ -1,3 +1,6 @@
+import { installJudgmentPort, judgmentPort } from '../errors/src/index.js';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { createCanonicalLiveCodeSource } from './_helpers/code-injection-readings.js';
 /**
  * Orchestrator-runner integration: per-turn passive knowledge
  * injection wiring inside `runAgentTask`.
@@ -218,6 +221,23 @@ function makeRegistryDeps(record: AgentRecord, messageBus: Pick<AgentMessageBus,
   };
 }
 
+/** These fixtures intentionally repeat a failed lookup while testing memory reuse.
+ * Supply the canonical observation explicitly; absence must still hold real runs. */
+async function withSettledRepeatStuck(work: () => Promise<void>): Promise<void> {
+  const original = judgmentPort('test.orchestrator-repeat-stuck');
+  const repeat = fakePort(() => noulAnswer(.99));
+  const port: typeof original = {
+    model: original.model,
+    ...(original.recorder ? { recorder: original.recorder } : {}),
+    ask(request) {
+      return request.context?.battery === 'engine.agents.repeat-stuck'
+        ? repeat.port.ask(request) : original.ask(request);
+    },
+  };
+  const previous = installJudgmentPort(port);
+  try { await work(); } finally { installJudgmentPort(previous); }
+}
+
 describe('orchestrator-runner: per-turn passive knowledge injection', () => {
   let tmpDir: string | undefined;
 
@@ -332,7 +352,7 @@ describe('orchestrator-runner: per-turn passive knowledge injection', () => {
     };
 
     const context = makeContext({ workingDirectory: tmpDir, runtimeBus, messageBus, provider, memoryRegistry });
-    await runAgentTask(context, record);
+    await withSettledRepeatStuck(() => runAgentTask(context, record));
     await flushMicrotasks();
 
     expect(chatCallCount).toBe(4);
@@ -589,6 +609,7 @@ test('captured same-line generations refresh without reranking memory and old at
       generation: () => active ? String(generation) : undefined,
       assertCurrent: async (expected) => { if (!active || (expected !== undefined && expected !== String(generation))) throw new Error('stale code generation'); },
       finishTurn: () => { active = false; }, dispose: () => { disposed = true; },
+      rankForInjection: async (_query, hits) => ({ ranked: hits.map(hit => ({ hit, probability: 0.99 })), assertCurrent: async () => {} }),
       stats: () => ({ available: true, indexedChunks: 1, semanticRetrievalAvailable: true }),
       search: async () => [{ chunk: { chunkId: String(generation), path: 'same.ts', lang: 'typescript', symbol: `symbolGeneration${generation}`, kind: 'function', startLine: 1, endLine: 3, contentHash: String(generation), fileHash: String(generation), mtimeMs: generation }, distance: 0, similarity: 1, label: 'semantic' }],
     };
@@ -656,6 +677,7 @@ test('disabling the global passive flag after a captured turn cannot reuse relea
     const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, memoryRegistry: makeCountingMemoryRegistry([]).registry, featureFlagManager: flags });
     await runAgentTask({ ...base, codeIndex: {
       prepare: async () => { prepares++; active = true; }, generation: () => active ? 'generation-1' : undefined, finishTurn: () => { active = false; },
+      rankForInjection: async (_query, hits) => ({ ranked: hits.map(hit => ({ hit, probability: 0.99 })), assertCurrent: async () => {} }),
       stats: () => ({ available: true, indexedChunks: 1, semanticRetrievalAvailable: true }),
       search: async () => [{ chunk: { chunkId: 'a', path: 'old.ts', lang: 'typescript', symbol: 'oldSymbol', kind: 'function', startLine: 1, endLine: 3, contentHash: 'old', fileHash: 'old', mtimeMs: 1 }, distance: 0, similarity: 1, label: 'semantic' }],
     } }, record);
@@ -690,10 +712,10 @@ test.each([false, true])('new-input zero-budget turn clears memory through later
         usage: { inputTokens: 1, outputTokens: 1 }, stopReason: continuing ? 'tool_call' : 'completed' };
     } };
     const base = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus, provider, memoryRegistry, featureFlagManager: flags });
-    await runAgentTask({ ...base, get passiveKnowledgeInjectionBudgetTokens() { return budget; }, ...(captured ? { codeIndex: {
+    await withSettledRepeatStuck(() => runAgentTask({ ...base, get passiveKnowledgeInjectionBudgetTokens() { return budget; }, ...(captured ? { codeIndex: {
       prepare: async () => { preparations++; },
       stats: () => ({ available: false, indexedChunks: 0, semanticRetrievalAvailable: false }), search: async () => [],
-    } } : {}) }, record);
+    } } : {}) }, record));
     expect(record.status).toBe('completed');
     expect(prompts).toHaveLength(3);
     expect(prompts[0]).toContain('deployment docs use deployment templates');
@@ -706,4 +728,32 @@ test.each([false, true])('new-input zero-budget turn clears memory through later
     processRegistry.dispose();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test.each(['success', 'retry', 'continuation', 'policy-retry', 'file-continuation'] as const)('agent runner retains per-reading authority for code %s', async mode => {
+  const root = mkdtempSync(join(tmpdir(), 'code-authority-runner-'));
+  const live = await createCanonicalLiveCodeSource();
+  try {
+    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    let dispatched = 0;
+    const flags = createFeatureFlagManager(); flags.enable('agent-passive-code-injection');
+    const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+      dispatched++;
+      expect(request.systemPrompt).toContain('backoff.ts');
+      expect(request.beforeAttempt).toBeDefined();
+      await request.beforeAttempt!();
+      if (mode === 'success') return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    if (mode === 'policy-retry') live.deny();
+      else if (mode === 'file-continuation') live.mutate();
+      else installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+      if (mode === 'retry' || mode === 'policy-retry') await request.beforeAttempt!();
+      return { content: '', toolCalls: [{ id: 'next', name: 'nonexistent_tool', arguments: {} }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' };
+    } };
+    const record = makeRecord({ id: `code-authority-${mode}` });
+    const context = makeContext({ workingDirectory: root, runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider,
+      memoryRegistry: makeCountingMemoryRegistry([]).registry, featureFlagManager: flags });
+    await runAgentTask({ ...context, codeIndex: live.store, codeReadAccessFilter: live.readAccessFilter }, record);
+    expect(record.status).toBe(mode === 'success' ? 'completed' : 'failed');
+    expect(dispatched).toBe(1);
+  } finally { live.dispose(); rmSync(root, { recursive: true, force: true }); }
 });

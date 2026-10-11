@@ -1,11 +1,24 @@
+import type { WebuiCodeLanguage } from './browser-code-languages.js';
 /** Closed browser judgment protocol. No prompt, model, route, or credential input. */
 export const BROWSER_JUDGMENT_PROTOCOL_VERSION = 1;
+/** Version-one speech-seam evidence band, shared by the reader and wire validators. */
+export const BROWSER_SPEECH_SEAM_BAND = Object.freeze({
+  yes: Object.freeze({ actAt: 0.6, confirmAt: 0.55 }),
+  no: Object.freeze({ actAt: 0.6, confirmAt: 0.55 }),
+});
 export const BROWSER_JUDGMENT_PATH = '/api/judgment/batteries/run';
 export const BROWSER_JUDGMENT_BATTERY_IDS = [
-  'webui.errors.daemon-refusal', 'webui.status.badge-tone', 'webui.palette.command-rank', 'webui.mail.reply-subject',
+  'webui.voice.speech-seams', 'webui.errors.daemon-refusal', 'webui.status.badge-tone', 'webui.palette.command-rank', 'webui.mail.reply-subject', 'webui.pwa.install-platform', 'webui.credentials.provider-key', 'webui.code.language', 'webui.config.credential-key', 'webui.settings.card-material-key', 'webui.models.catalog-provider-match',
 ] as const;
 export type BrowserJudgmentBatteryId = typeof BROWSER_JUDGMENT_BATTERY_IDS[number];
 export interface BrowserJudgmentInputMap {
+  'webui.models.catalog-provider-match': { readonly providerId: string; readonly keys: readonly string[] };
+  'webui.voice.speech-seams': { readonly sessionId: string; readonly messageId: string; readonly start: number; readonly end: number; readonly contentDigest: string; readonly cursor: number };
+  'webui.settings.card-material-key': { readonly keys: readonly string[] };
+  'webui.config.credential-key': { readonly keys: readonly string[] };
+  'webui.code.language': { readonly sessionId: string; readonly messageId: string; readonly start: number; readonly end: number; readonly contentDigest: string };
+  'webui.credentials.provider-key': { readonly providerId: string; readonly keys: readonly string[] };
+  'webui.pwa.install-platform': { readonly userAgent: string; readonly platform: string; readonly maxTouchPoints: number };
   'webui.mail.reply-subject': { readonly subjectRef: string };
   'webui.errors.daemon-refusal': { readonly errorRef: string };
   'webui.status.badge-tone': {
@@ -19,6 +32,13 @@ export interface BrowserJudgmentInputMap {
   };
 }
 export interface BrowserJudgmentValueMap {
+  'webui.models.catalog-provider-match': { readonly matches: readonly boolean[] };
+  'webui.settings.card-material-key': { readonly matches: readonly boolean[] };
+  'webui.voice.speech-seams': { readonly endOffsets: readonly number[]; readonly nextCursor: number | null };
+  'webui.config.credential-key': { readonly matches: readonly boolean[] };
+  'webui.code.language': { readonly language: WebuiCodeLanguage };
+  'webui.credentials.provider-key': { readonly matches: readonly boolean[] };
+  'webui.pwa.install-platform': { readonly platform: 'ios-share-menu' | 'other' };
   'webui.mail.reply-subject': { readonly alreadyReply: boolean };
   'webui.errors.daemon-refusal': {
     readonly session_not_found: boolean; readonly session_closed: boolean; readonly session_active: boolean;

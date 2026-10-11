@@ -343,11 +343,11 @@ export const AGENT_HARNESS_PARAMETER_PROPERTIES = {
   },
   confirm: {
     type: 'boolean',
-    description: 'Required true for confirmed harness effects.',
+    description: 'Required true for documented confirmed harness effects; settings set/reset use recorded admission instead.',
   },
   explicitUserRequest: {
     type: 'string',
-    description: 'User request authorizing a confirmed harness effect.',
+    description: 'Request context for documented confirmed harness effects; never authority for settings set/reset.',
   },
   peerId: {
     type: 'string',

@@ -19,6 +19,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 let _credentialsGet: () => Promise<unknown> = () => Promise.resolve({ available: true, credentials: [] });
 
 mock.module('../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic credential reading in this display fixture.')),
   sdk: {
     operator: {
       credentials: {

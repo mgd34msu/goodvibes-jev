@@ -172,3 +172,29 @@ describe('contract rows', () => {
     expect(buildWorkItems({ ...EMPTY, contracts: [contract('done', 'passed')], archived: true })).toEqual([]);
   });
 });
+
+describe('unresolved attempt accounting', () => {
+  for (const selectable of [0, 1]) {
+    test(`${selectable} selectable candidates retain the two-attempt group and visible repository hold`, () => {
+      const group = {
+        groupId: 'g-held', sourceTitle: 'Repository work', ready: false, judgment: null, attemptCount: 2,
+        selectableCandidateCount: selectable,
+        candidates: selectable ? [{ state: 'held-merge' }] : [],
+        unresolved: Array.from({ length: 2 - selectable }, (_, index) => ({
+          itemId: `held-${index}`, attemptIndex: index, title: `Attempt ${index + 1}`,
+          state: 'blocked-bookkeeping', reason: 'Commit failed; repository reading unavailable.',
+        })),
+      } as unknown as FleetAttemptGroup;
+      const items = buildWorkItems({ ...EMPTY, attemptGroups: [group] });
+      const row = items[0]!;
+      expect(row.title).toBe('Best of 2: Repository work');
+      expect(row.meta).toContain(`${selectable} of 2 selectable`);
+      expect(row.meta).toContain(`${2 - selectable} held: repository condition unresolved`);
+      expect(row.meta).toContain('Commit failed; repository reading unavailable.');
+      expect(row.status).toBe('Held: repository condition unresolved');
+      expect(row.tone).toBe('warn');
+      expect(groupWorkItems(items, 'all').needs).toEqual([row]);
+      expect(groupWorkItems(items, 'all').running).toHaveLength(0);
+    });
+  }
+});

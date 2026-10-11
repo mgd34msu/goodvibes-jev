@@ -26,6 +26,7 @@
  * effects the ports below describe, a store write, a delivered notice, a
  * status change, and no others, because there is nothing else to call.
  */
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { ImapBodyProbe } from '../imap-body-probe.js';
 
 import { IMAP_MAX_FETCH_UIDS } from '../imap-client.js';
@@ -276,6 +277,8 @@ export type MailboxReaderIsPinnedToClient = AssertTrue<MailboxReaderMatchesClien
  * client's method surface.
  */
 export interface MailboxConnection {
+  /** Connection/account lifetime retained through refusal readings. */
+  readonly reading?: JudgmentReadingOptions | undefined;
   /** Capabilities and mailbox facts as of the moment it opened. */
   readonly report: MailboxOpenReport;
   readonly reader: MailboxReader;
@@ -331,7 +334,7 @@ export type MailboxWire = ImapConnection;
 
 /** Opens connections to one mailbox. One call, one fresh connection. */
 export interface MailboxConnectionPort {
-  open(): Promise<MailboxConnection>;
+  open(reading?: JudgmentReadingOptions): Promise<MailboxConnection>;
 }
 
 // ---------------------------------------------------------------------------

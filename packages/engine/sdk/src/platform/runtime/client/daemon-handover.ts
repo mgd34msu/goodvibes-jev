@@ -25,8 +25,7 @@
  * The surface performs the handover itself. It reads the version of the
  * `goodvibes-daemon` binary installed beside it; if that binary predates the
  * split it downloads the current daemon from the daemon repository,
- * checksum-verifies it against that release's SHA256SUMS.txt, swaps it
- * atomically with the outgoing build kept at `<path>.previous`, and restarts the
+ * checksum-verifies it against that release's SHA256SUMS.txt, replaces it with the outgoing build kept at `<path>.previous`, and restarts the
  * service so the running process is the new one. After that the installed daemon
  * is at or above the split floor, its own baked default already names its own
  * repository, and this path goes quiet permanently.
@@ -59,6 +58,8 @@
 import { spawnSync } from 'node:child_process';
 import {
   applyVerifiedUpdate,
+  captureUpdateFileIo,
+  UpdateTransactionError,
   compareVersions,
   normalizeVersion,
   realUpdateFileIo,
@@ -198,9 +199,8 @@ export function decideDaemonHandover(input: DaemonHandoverDecisionInput): Daemon
 }
 
 /**
- * Tracks whether the swap has begun, so a budget that runs out can say what is
- * actually true: cancelled before anything was touched, or the file WAS
- * replaced and only the restart is outstanding. Reads leave the flag alone.
+ * Compatibility progress flag: true only after the disk cohort committed.
+ * Staging or a compensated failed commit must not claim a replacement.
  */
 export interface DaemonHandoverProgress {
   begun: boolean;
@@ -209,31 +209,6 @@ export interface DaemonHandoverProgress {
 
 export function createDaemonHandoverProgress(): DaemonHandoverProgress {
   return { begun: false, tag: null };
-}
-
-function trackHandoverProgress(io: UpdateFileIo, progress: DaemonHandoverProgress): UpdateFileIo {
-  const begin = (): void => {
-    progress.begun = true;
-  };
-  return {
-    writeFile: (path, data) => {
-      begin();
-      io.writeFile(path, data);
-    },
-    rename: (from, to) => {
-      begin();
-      io.rename(from, to);
-    },
-    chmod: (path, mode) => {
-      begin();
-      io.chmod(path, mode);
-    },
-    mkdir: (path) => {
-      begin();
-      io.mkdir(path);
-    },
-    exists: (path) => io.exists(path),
-  };
 }
 
 /** The failure an aborted handover ends with, raised only while nothing has been written. */
@@ -246,7 +221,7 @@ function abortableFetch(fetchImpl: UpdateFetchLike, signal: AbortSignal | undefi
   const withSignal = fetchImpl as (url: string, init?: AbortableFetchInit) => ReturnType<UpdateFetchLike>;
   return async (url, init) => {
     if (signal.aborted) throw new Error(HANDOVER_ABORTED_MESSAGE);
-    return await withSignal(url, { ...init, signal });
+    return await withSignal(url, { ...init, signal: init?.signal ?? signal });
   };
 }
 
@@ -280,11 +255,12 @@ export interface PerformDaemonHandoverOptions {
 export async function performDaemonHandover(
   options: PerformDaemonHandoverOptions,
 ): Promise<{ readonly tag: string }> {
+  options = { ...options, io: captureUpdateFileIo(options.io ?? realUpdateFileIo) };
   const progress = options.progress ?? createDaemonHandoverProgress();
   const fetchImpl = abortableFetch(options.fetchImpl, options.signal);
   const releasesLatestUrl = options.releasesLatestUrl ?? DAEMON_REPO_RELEASES_LATEST_URL;
   const floorVersion = options.floorVersion ?? DAEMON_SPLIT_FLOOR_VERSION;
-  const tag = await resolveLatestReleaseTag(fetchImpl, releasesLatestUrl);
+  const tag = await resolveLatestReleaseTag(fetchImpl, releasesLatestUrl, options.signal ? { signal: options.signal } : {});
   if (compareVersions(tag, floorVersion) < 0) {
     throw new Error(
       `the daemon repository's current release is ${tag}, below the ${floorVersion} split floor, refusing to hand over to it`,
@@ -293,19 +269,26 @@ export async function performDaemonHandover(
   progress.tag = tag;
   if (options.signal?.aborted) throw new Error(HANDOVER_ABORTED_MESSAGE);
   const baseIo = options.io ?? realUpdateFileIo;
-  await applyVerifiedUpdate({
-    fetchImpl,
-    downloadBaseUrl: (options.downloadBaseUrl ?? daemonReleaseDownloadBaseUrl)(tag),
-    targets: [
-      {
-        label: 'daemon binary',
-        path: options.binaryPath,
-        assetName: options.assetName,
-        executable: true,
-      },
-    ],
-    io: trackHandoverProgress(baseIo, progress),
-  });
+  try {
+    await applyVerifiedUpdate({
+      fetchImpl,
+      downloadBaseUrl: (options.downloadBaseUrl ?? daemonReleaseDownloadBaseUrl)(tag),
+      targets: [
+        {
+          label: 'daemon binary',
+          path: options.binaryPath,
+          assetName: options.assetName,
+          executable: true,
+        },
+      ],
+      io: baseIo,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    progress.begun = true;
+  } catch (error) {
+    if (error instanceof UpdateTransactionError) progress.begun = error.receipt.committed;
+    throw error;
+  }
   return { tag };
 }
 
@@ -431,6 +414,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'tim
  * surface's launch is never held hostage by the state of the daemon beside it.
  */
 export async function runDaemonHandover(options: RunDaemonHandoverOptions): Promise<DaemonHandoverOutcome> {
+  options = { ...options, io: captureUpdateFileIo(options.io ?? realUpdateFileIo),
+    configManager: { get: options.configManager.get.bind(options.configManager) } };
   const runCommand = options.runCommand ?? defaultRunCommand;
   const installedVersion = options.binaryPath
     ? readInstalledDaemonVersion(options.binaryPath, runCommand)
@@ -501,9 +486,14 @@ export async function runDaemonHandover(options: RunDaemonHandoverOptions): Prom
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    options.print(
-      `daemon handover failed: ${detail}, the installed daemon v${from} is unchanged and will be retried next launch`,
-    );
+    const state = error instanceof UpdateTransactionError && error.receipt.recoveryRequired
+      ? error.receipt.committed
+        ? 'the new daemon is installed on disk, but cleanup needs inspection; automatic retry is fenced'
+        : 'the installed files need recovery inspection; automatic retry is fenced'
+      : progress.begun
+        ? 'the new daemon is installed on disk; its restart has not been confirmed'
+        : `the installed daemon v${from} is unchanged and will be retried next launch`;
+    options.print(`daemon handover failed: ${detail}; ${state}`);
     return { action: 'failed', detail };
   }
 }

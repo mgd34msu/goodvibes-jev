@@ -74,6 +74,8 @@ function makeDeadlineBoundRunner(
 
 export interface ReconcileRedundantLegacyUnitInput {
   readonly homeDir: string;
+  /** Startup owner cancellation; checked again after asynchronous endpoint observation. */
+  readonly signal?: AbortSignal;
   /** The unit name this tool manages (e.g. 'goodvibes'). */
   readonly trackedServiceName: string;
   /**
@@ -114,6 +116,7 @@ export interface ReconcileRedundantLegacyUnitInput {
 }
 
 export type ReconcileRedundantLegacyUnitReason =
+  | 'aborted'
   | 'no-legacy-unit'
   | 'canonical-not-active'
   | 'canonical-mainpid-not-alive'
@@ -202,6 +205,8 @@ function defaultReadOwnCgroup(): string {
 export async function reconcileRedundantLegacyUnit(
   input: ReconcileRedundantLegacyUnitInput,
 ): Promise<ReconcileRedundantLegacyUnitResult> {
+  const aborted = (): ReconcileRedundantLegacyUnitResult => ({ action: 'noop', reason: 'aborted', lines: [] });
+  if (input.signal?.aborted) return aborted();
   const path = legacyUnitPath(input.homeDir);
   const fileExists = input.legacyUnitFileExists ?? existsSync;
   if (!fileExists(path)) return { action: 'noop', reason: 'no-legacy-unit', lines: [] };
@@ -328,6 +333,8 @@ export async function reconcileRedundantLegacyUnit(
       };
     }
   }
+
+  if (input.signal?.aborted) return aborted();
 
   const readFile = input.legacyUnitFileRead ?? ((p: string) => readFileSync(p, 'utf-8'));
   let marked = false;

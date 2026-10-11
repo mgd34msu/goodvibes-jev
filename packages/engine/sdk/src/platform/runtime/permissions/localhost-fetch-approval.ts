@@ -1,6 +1,8 @@
 /**
- * localhost-fetch-approval.ts, the one-tap "allow for this project" ask for
- * fetches to loopback dev servers.
+ * Localhost fetch admission: autonomous operations require one exact-hop,
+ * recorded capability; ordinary interactive callers retain the one-tap
+ * "allow for this project" ask. Autonomous operations never consume or write
+ * that persistent grant.
  *
  * STANDING RULE (same as sandbox escalations and MCP elicitations): the ask
  * rides the ONE approval broker so every surface's existing approval UI
@@ -13,12 +15,17 @@
  * targets are refused absolutely, with the reason in the tool result and no
  * ask, notification, or any other user-facing surface.
  */
+import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
+import type { FetchUrlInput } from '../../tools/fetch/schema.js';
+import type { AutonomousToolPromptHost } from './autonomous-tool-prompts.js';
+import { admitLocalhostFetch } from './autonomous-localhost-fetch.js';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../utils/logger.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { PermissionPromptDecision, PermissionPromptRequest } from '../../permissions/prompt.js';
 
 export interface LocalhostFetchApprovalDeps {
+  readonly autonomousHost?: AutonomousToolPromptHost | undefined;
   readonly requestApproval: (input: {
     readonly request: PermissionPromptRequest;
     readonly metadata?: Record<string, unknown> | undefined;
@@ -26,13 +33,35 @@ export interface LocalhostFetchApprovalDeps {
   readonly configManager: Pick<ConfigManager, 'get' | 'setProjectValue'>;
 }
 
-/** Resolves whether a loopback fetch may proceed; see module docs. */
-export type LocalhostFetchApproval = (input: { url: string; host: string }) => Promise<boolean>;
+/** A live, one-use capability, retained until response consumption completes. */
+export interface LocalhostFetchPermit {
+  readonly signal: AbortSignal;
+  assertCurrent(): void;
+  claim(): void;
+  close(): void;
+}
+export interface LocalhostFetchApprovalInput {
+  readonly url: string;
+  readonly host: string;
+  readonly request?: FetchUrlInput | undefined;
+  readonly originalRequest?: FetchUrlInput | undefined;
+  readonly credentialHeaders?: readonly string[] | undefined;
+}
+export interface LocalhostFetchExecutionContext {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
+export type LocalhostFetchApproval = (input: LocalhostFetchApprovalInput,
+  context?: LocalhostFetchExecutionContext) => Promise<boolean | LocalhostFetchPermit>;
 
 export function buildLocalhostFetchApproval(deps: LocalhostFetchApprovalDeps): LocalhostFetchApproval {
   let inFlight: Promise<boolean> | null = null;
 
-  return async (input) => {
+  return async (input, context) => {
+    // An autonomous hop never consumes a human grant or persists a new one.
+    if (currentExternalOperationSource()) {
+      return deps.autonomousHost ? admitLocalhostFetch(deps.autonomousHost, input, context) : false;
+    }
     // Already approved for this project (possibly by a concurrent ask).
     if (deps.configManager.get('fetch.allowLocalhost') === true) return true;
     // Single-flight: concurrent URLs in one batch share the ask.

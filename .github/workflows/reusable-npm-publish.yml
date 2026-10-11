@@ -1,3 +1,5 @@
+name: Reusable npm publish
+
 # Reusable: npm publish (staged, provenance, propagation poll)
 #
 # Consumer contract

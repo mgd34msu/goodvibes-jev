@@ -73,3 +73,5 @@ export { AutomationManager } from './manager.js';
 
 export { readNaturalLanguageSchedule } from './schedule-reading.js';
 export type { ScheduleReading, ScheduleReadingInput } from './schedule-reading.js';
+
+export { automationActionBinding } from './action-source.js';

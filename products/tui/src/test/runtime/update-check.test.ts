@@ -53,10 +53,10 @@ describe('parseReleaseTagFromLocation', () => {
 });
 
 function stubFetch(response: { location?: string | null; url?: string }): UpdateFetchLike {
-  return async () => ({
-    ok: true,
+  return async (url) => ({
+    ok: false,
     status: 302,
-    url: response.url ?? '',
+    url: response.url ?? url,
     headers: { get: (name: string) => (name.toLowerCase() === 'location' ? response.location ?? null : null) },
     text: async () => '',
     arrayBuffer: async () => new ArrayBuffer(0),

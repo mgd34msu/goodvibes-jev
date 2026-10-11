@@ -67,12 +67,12 @@ export function nativeContractSourceData(source: NativeContractSource) {
 }
 
 /** Stable positional ids bind derived work to the original ordered native criteria. */
-export function nativeSourcePlan(source: NativeContractSource): Pick<ContractPlan, 'goal' | 'criteria'> {
+export function nativeSourcePlan(source: Pick<NativeContractSource, 'goal' | 'criteria'>): Pick<ContractPlan, 'goal' | 'criteria'> {
   return { goal: source.goal, criteria: source.criteria.map((text, index) => ({ id: `c${index + 1}`, text, quote: text })) };
 }
 
 /** No model, owner reply or later plan may rewrite, omit, add or reorder native roots. */
-export function checkNativeSourcePlan(plan: { readonly goal: string; readonly criteria: readonly { readonly id: string; readonly text: string; readonly quote?: string | undefined }[] }, source: NativeContractSource): PlanProblem[] {
+export function checkNativeSourcePlan(plan: { readonly goal: string; readonly criteria: readonly { readonly id: string; readonly text: string; readonly quote?: string | undefined }[] }, source: Pick<NativeContractSource, 'goal' | 'criteria'>): PlanProblem[] {
   const expected = nativeSourcePlan(source);
   const same = plan.goal === expected.goal && plan.criteria.length === expected.criteria.length
     && plan.criteria.every((criterion, index) => {

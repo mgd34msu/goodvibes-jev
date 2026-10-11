@@ -1,3 +1,4 @@
+import { postalConfigKey, readConfigSettingForDisplay } from '@goodvibes-jev/engine/sdk/platform/config';
 /** SettingsModal state for the /settings and /config fullscreen workspace. */
 
 import type { ModelPickerTarget } from './model-picker.ts';
@@ -709,14 +710,15 @@ export class SettingsModal {
       if (isAgentHiddenSettingKey(setting.key)) continue;
       const rawCat = setting.key.split('.')[0] as string;
       const cat = rawCat as SettingsCategory;
-      const currentValue = setting.kind === 'host' ? configManager.getHostBooleanSetting(setting.key).get() : configManager.get(setting.key);
+      const display = readConfigSettingForDisplay(() => setting.kind === 'host' ? configManager.getHostBooleanSetting(setting.key).get() : configManager.get(setting.key));
+      const currentValue = display.value;
       const resolved = setting.kind === 'host' || policyError ? undefined : getResolvedSettingLookup(configManager, setting.key)?.entry;
       const entry: SettingEntry = {
         setting,
         currentValue,
         isDefault: currentValue === setting.default,
-        effectiveSource: policyError ? 'unavailable' : resolved?.effectiveSource,
-        metadataUnavailable: policyError,
+        effectiveSource: policyError || display.held ? 'unavailable' : resolved?.effectiveSource,
+        metadataUnavailable: policyError ?? display.held,
         // `locked`/`lockReason` now come only from a genuine higher-priority
         // config layer. The blanket host-owned lock that used to force them here
         // is gone, those keys route to the daemon that owns them.
@@ -798,7 +800,9 @@ export class SettingsModal {
     for (const entries of this.groups.values()) {
       for (const entry of entries) {
         if (entry.setting.kind === 'host') { this._refreshHostEntry(entry); continue; }
-        entry.currentValue = this.configManager.get(entry.setting.key);
+        const display = readConfigSettingForDisplay(() => this.configManager!.get(entry.setting.key as never));
+        entry.currentValue = display.value;
+        entry.metadataUnavailable = display.held;
         entry.isDefault = entry.currentValue === entry.setting.default;
         this._refreshHostEntry(entry);
       }
@@ -842,7 +846,7 @@ export class SettingsModal {
         return false;
       }
     }
-    const previousValue = this.configManager.get(key);
+    const previousValue = postalConfigKey(key) ? this.configManager.getStored(key) : this.configManager.get(key);
     // A setting the DAEMON acts on is written where it is acted on. Writing it
     // into this process's own store is the defect this routing exists to end:
     // the modal accepted the value, reported success, and configured nothing,
@@ -862,7 +866,9 @@ export class SettingsModal {
       for (const entries of this.groups.values()) {
         const entry = entries.find((candidate) => candidate.setting.key === key);
         if (entry) {
-          entry.currentValue = this.configManager!.get(key);
+          const display = readConfigSettingForDisplay(() => this.configManager!.get(key));
+          entry.currentValue = display.value;
+          entry.metadataUnavailable = display.held;
           entry.isDefault = entry.currentValue === entry.setting.default;
           this._refreshHostEntry(entry);
         }

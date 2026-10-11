@@ -1,3 +1,4 @@
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { readExternalRequestEvidence, type ExternalRequestEvidence } from './external-request-evidence.js';
 import { readSettingsWriteEvidence } from '../gate/policy/settings-write-evidence.js';
 import { readAgentReadEvidence } from '../gate/policy/agent-read-evidence.js';
@@ -23,7 +24,7 @@ import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approv
 import type { UntrustedContentLedger } from '../security/untrusted-content.js';
 import { currentTurnSurfaceId } from '../security/turn-boundary.js';
 import { isStateMutation } from '../gate/policy/state-policy.js';
-import { buildDurableRuleForDecision, buildRememberOptions, commandClassOf, matchDurableRules } from './approval-rules.js';
+import { buildDurableRuleForDecision, buildRememberOptions, commandClassOf, matchDurableRulesAsync } from './approval-rules.js';
 import type { UserPermissionRuleStore } from './user-rule-store.js';
 import { extractCommandArgs } from '../runtime/permissions/rules/prefix.js';
 import { extractPathArgs } from '../runtime/permissions/rules/path-scope.js';
@@ -31,7 +32,7 @@ import type { PolicyRuntimeState } from '../runtime/permissions/policy-runtime.j
 import { LayeredPolicyEvaluator } from '../runtime/permissions/evaluator.js';
 import { exportDecisions } from '../runtime/permissions/decision-otlp.js';
 import type { DecisionOtlpConfig } from '../runtime/permissions/decision-otlp.js';
-import type { CommandClassification, PermissionDecision as LayeredPermissionDecision } from '../runtime/permissions/types.js';
+import type { CommandClassification, PolicyRule, PermissionDecision as LayeredPermissionDecision } from '../runtime/permissions/types.js';
 import type { FeatureFlagManager } from '../runtime/feature-flags/index.js';
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookCategory, HookEventPath, HookPhase } from '../hooks/types.js';
@@ -71,6 +72,20 @@ export type {
  * that only implement the legacy configuration interface.
  */
 type PermissionConfigSnapshot = Readonly<Pick<ReturnType<typeof getConfigSnapshot>, 'permissions'>>;
+
+/** Owned fields from the already captured autonomous authority frame. */
+interface AutonomousPermissionOwner {
+  readonly directory: string | null;
+  readonly rules: readonly PolicyRule[];
+  readonly policyRules: readonly PolicyRule[];
+  readonly sessionGrants: readonly (readonly [string, boolean])[];
+  readonly policyEnabled: boolean;
+}
+type AutonomousPermissionReading = Readonly<{
+  frame: AutonomousPermissionOwner;
+  assertCurrent(): void;
+}>;
+
 
 export interface PermissionConfigReader {
   /** Coherent owner-held frame. Must read owned state without invoking observers or host callbacks. */
@@ -171,6 +186,9 @@ const TOOL_CONFIG_KEYS: Record<string, keyof PermissionsToolConfig> = {
 
 /** How the gate learns who is asking and what the turn has read. */
 export interface GateOptions {
+  /** Explicit null declares no workspace policy. Explicit undefined refuses
+   * non-read effects; absent property preserves raw embedding compatibility. */
+  readonly workspaceTrust?: Pick<import('../runtime/workspace-trust.js').WorkspaceTrustManager, 'prepareAutonomousConstraint'> | null | undefined;
   /** Trusted host alternatives; never populated from model-authored executable prose. */
   readonly autonomousChoices?: ((sourceId: string) => AutonomousToolChoices) | undefined;
   /**
@@ -269,6 +287,7 @@ interface AuthenticAutonomousAdmission {
   readonly call: PreparedToolCall;
   readonly claim: () => void;
   readonly assertCurrent: () => void;
+  readonly assertWorkspace: () => void;
   readonly assertConfigTransition?: ((binding: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => void) | undefined;
   readonly settingsPresentation?: Readonly<{ previous: unknown; current: unknown }> | undefined;
   consumed: boolean;
@@ -278,6 +297,13 @@ interface AuthenticAutonomousAdmission {
 // Public admission objects and claim callbacks are not themselves capabilities.
 const authenticAutonomousAdmissions = new WeakMap<AutonomousPermissionAdmission, AuthenticAutonomousAdmission>();
 const authenticConfigTransitions = new WeakMap<() => void, NonNullable<AuthenticAutonomousAdmission['assertConfigTransition']>>();
+const workspaceConstraints = new WeakMap<() => void, () => void>();
+
+/** @internal Restriction-only capability for captured jobs with a separate owner lifetime. */
+export function readAutonomousWorkspaceConstraint(guard: () => void): (() => void) | undefined {
+  return workspaceConstraints.get(guard);
+}
+
 const settingsPresentations = new WeakMap<() => void, Readonly<{ previous: unknown; current: unknown }>>();
 
 /** @internal Data-only display result from the same recorded pre-admission observations. */
@@ -290,7 +316,8 @@ export function assertAutonomousConfigTransition(assertCurrent: () => void, bind
   transition: PreparedConfigMutationTransition): void {
   const check = authenticConfigTransitions.get(assertCurrent);
   if (!check) throw new Error('Autonomous settings transition has no authentic execution owner');
-  authenticConfigTransitions.delete(assertCurrent);
+  // The exact mutation transition may fence several companion effects; the
+  // effect owner and registry each consume their handles once. No generation waiver.
   check(binding, transition);
 }
 
@@ -312,6 +339,7 @@ export function consumeAutonomousAdmission(admission: AutonomousPermissionAdmiss
   }
   record.consumed = true;
   record.claim();
+  workspaceConstraints.set(record.assertCurrent, record.assertWorkspace);
   if (record.assertConfigTransition) authenticConfigTransitions.set(record.assertCurrent, record.assertConfigTransition);
   if (record.settingsPresentation) settingsPresentations.set(record.assertCurrent, record.settingsPresentation);
   return record.assertCurrent;
@@ -325,6 +353,7 @@ export class PermissionManager {
   private readonly autonomousDeferred = new Map<string, { readonly inputRevision: string; readonly until: JevVersionRef }>();
   /** Explicit session-tier decisions only; durable rules are always matched live. */
   private sessionApprovals = new Map<string, boolean>();
+  private readonly policyDecisionOwners = new WeakMap<LayeredPermissionDecision, () => void>();
   private sessionApprovalRevision = 0;
   private readonly requestPermission: PermissionRequestHandler;
   private readonly configReader: PermissionConfigReader;
@@ -455,6 +484,22 @@ export class PermissionManager {
     finally { this.autonomousPending.delete(sourceId); }
   }
 
+  private async autonomousWorkspaceConstraint(category: PermissionCategory, signal?: AbortSignal): Promise<() => void> {
+    if (!Object.prototype.hasOwnProperty.call(this.gate, 'workspaceTrust')) return () => {};
+    const owner = this.gate.workspaceTrust;
+    const prepare = owner?.prepareAutonomousConstraint;
+    if (owner === undefined && category !== 'read') throw new Error('Autonomous execution requires an explicit workspace trust capability');
+    if (owner != null && typeof prepare !== 'function') throw new Error('Workspace trust capability cannot enforce current policy');
+    const guard = await prepare?.call(owner, category, signal);
+    const assertCurrent = () => {
+      assertPermissionActive(signal);
+      if (this.gate.workspaceTrust !== owner || owner?.prepareAutonomousConstraint !== prepare) throw new Error('Workspace trust capability changed');
+      guard?.();
+    };
+    assertCurrent();
+    return assertCurrent;
+  }
+
   private async decideAutonomous(sourceId: string, toolName: string, preparedArgs: Record<string, unknown>, options: AutonomousPermissionOptions, epoch: number): Promise<AutonomousPermissionAdmission> {
     const signal = options.signal;
     assertPermissionActive(signal);
@@ -478,6 +523,8 @@ export class PermissionManager {
         || preparedCall.call.schemaRevision !== schemaRevision) throw new Error('Autonomous admission prepared call binding changed');
     }
     const admissionEvidence = preparedCall?.registry.readPreparedOwnedAdmissionEvidence(preparedCall.call);
+    const category = admissionEvidence?.kind === 'agent-settings' ? 'write' : this.getCategory(toolName, args);
+    const assertWorkspace = await this.autonomousWorkspaceConstraint(category, signal);
     const settingsMutation = preparedCall?.registry.readPreparedSettingsMutation(preparedCall.call);
     const ledger = this.gate.ledger ?? getProcessUntrustedContentLedger();
     const authority = () => this.autonomousAuthority(sourceId, sourceOf, choiceProjection);
@@ -486,7 +533,7 @@ export class PermissionManager {
     const rawAuthority = this.autonomousAuthority(sourceId, sourceOf);
     const rawAuthorityRevision = hashState(rawAuthority as unknown as EntryType);
     const capturedAuthority = (choiceProjection === undefined ? rawAuthority : Object.freeze({ ...rawAuthority,
-      autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, rawAuthority) })) as {
+      autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, rawAuthority) })) as AutonomousPermissionOwner & {
         source: AutonomousToolSource; autonomousChoices: AutonomousToolChoices; directory: string | null; permissions: PermissionConfigSnapshot['permissions'];
       };
     const source = capturedAuthority.source;
@@ -522,7 +569,7 @@ export class PermissionManager {
     });
     const assertPrepared = options.assertPrepared;
     const assertCurrent = () => {
-      assertPermissionActive(signal);
+      assertPermissionActive(signal); assertWorkspace();
       if (this.autonomousEpochs.get(sourceId) !== epoch) throw new Error('Autonomous admission was superseded');
       // Stage the compatibility callback before the final owner snapshot: it
       // may publish a revocation even when it returns normally.
@@ -534,9 +581,9 @@ export class PermissionManager {
       if (this.autonomousClaims.has(sourceId)) throw new Error('Autonomous tool source was already claimed');
       const latestDeferral = this.autonomousDeferred.get(sourceId);
       if (latestDeferral && latestDeferral !== deferred) throw new Error('A concurrent admission deferred this source');
+      assertWorkspace();
     };
     assertCurrent();
-    const category = this.getCategory(toolName, args);
     let analysis = analyzePermissionRequest(toolName, args, category);
     this.policyRuntimeState.recordPermissionRequest({ callId: sourceId, tool: toolName, category, analysis });
     assertCurrent();
@@ -566,21 +613,27 @@ export class PermissionManager {
     const agentRead = admissionEvidence?.kind === 'agent-read'
       ? await readAgentReadEvidence(admissionEvidence, source, scopedPort, signal) : null;
     assertCurrent();
-    const settings = toolName === 'goodvibes_settings' ? await readSettingsWriteEvidence(args, scopedPort, signal,
+    const settings = toolName === 'goodvibes_settings' || declaredMutation ? await readSettingsWriteEvidence(
+      admissionEvidence?.kind === 'agent-settings' ? { ...args, key: admissionEvidence.key, mode: admissionEvidence.operation } : args, scopedPort, signal,
       admissionEvidence?.kind === 'agent-settings' ? { source: autonomousSourceEvidence(source), effect: admissionEvidence.effect } : undefined) : null;
     assertCurrent();
     if (settings && !settings.judgmentDecisionId) throw new Error('Settings evidence has no recorded judgment provenance');
     const permissions = capturedAuthority.permissions;
     const mode = permissions?.mode ?? 'prompt';
     const preset = presetForMode(mode);
-    const explicitToolDeny = preset.perTool && TOOL_CONFIG_KEYS[toolName] !== undefined
-      && permissions?.tools?.[TOOL_CONFIG_KEYS[toolName]!] === 'deny';
-    const durable = this.rememberedDecision(this.getApprovalKey(toolName, args), toolName, args);
+    const configTool = declaredMutation ? 'write' : TOOL_CONFIG_KEYS[toolName];
+    const explicitToolDeny = preset.perTool && configTool !== undefined
+      && permissions?.tools?.[configTool] === 'deny';
+    // Reuse this owner frame through rule evaluation; legacy readers can expose
+    // a different scope and must not be consulted on autonomous admission.
+    const owner = { frame: capturedAuthority, assertCurrent };
+    const durable = await this.rememberedDecision(this.getApprovalKey(toolName, args), toolName, args, { signal, assertCurrent }, owner);
     const observedClassification = reading ? classificationFromReading(reading) : 'read';
     const policyClassification = declaredMutation && observedClassification === 'read' ? 'write' : observedClassification;
-    const policy = this.featureFlags?.isEnabled('permissions-policy-engine') === true
-      ? this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, policyClassification), analysis)
+    const policy = capturedAuthority.policyEnabled
+      ? this.mapEvaluatorDecision(await this.evaluateRuntimePolicy(toolName, args, mode, policyClassification, { signal, assertCurrent }, owner), analysis)
       : null;
+    durable?.assertCurrent();
     const allowAct = boundary.passed && !explicitToolDeny && durable?.approved !== false && policy?.approved !== false
       && agentRead?.allowed !== false
       && !(preset.readOnly && (declaredMutation || (reading !== null && (reading.mutates || reading.outward))));
@@ -642,10 +695,10 @@ export class PermissionManager {
     });
     if (receipt.outcome === 'act' && preparedCall) {
       authenticAutonomousAdmissions.set(admission, {
-        issuer: this, registry: preparedCall.registry, call: preparedCall.call, claim: admission.claim, consumed: false,
+        issuer: this, registry: preparedCall.registry, call: preparedCall.call, claim: admission.claim, consumed: false, assertWorkspace,
         ...(settings?.presentation ? { settingsPresentation: settings.presentation } : {}),
         ...(settingsMutation ? { assertConfigTransition: (actual: ToolPreparedSettingsMutation, transition: PreparedConfigMutationTransition) => {
-          assertPermissionActive(signal);
+          assertPermissionActive(signal); assertWorkspace();
           if (actual !== settingsMutation || permissionConfigOwners.get(this.configReader) !== actual.owner
             || this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
             throw new Error('Autonomous settings owner or invocation changed');
@@ -662,10 +715,10 @@ export class PermissionManager {
             || hashState({ ...current, incarnation: before } as unknown as EntryType) !== rawAuthorityRevision) {
             throw new Error('Autonomous settings authority, source or scope changed');
           }
-          assertPermissionActive(signal);
+          assertPermissionActive(signal); assertWorkspace();
         } } : {}),
         assertCurrent: () => {
-          assertPermissionActive(signal);
+          assertPermissionActive(signal); assertWorkspace();
           if (this.autonomousEpochs.get(sourceId) !== epoch || !this.autonomousClaims.has(sourceId)) {
             throw new Error('Autonomous execution admission is stale');
           }
@@ -674,6 +727,7 @@ export class PermissionManager {
           if (hashState(current as unknown as EntryType) !== rawAuthorityRevision) {
             throw new Error('Autonomous execution authority, source or scope changed');
           }
+          assertWorkspace();
         },
       });
     }
@@ -748,7 +802,7 @@ export class PermissionManager {
       return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
     }
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, reading === null ? 'read' : classificationFromReading(reading)), analysis);
+      const mapped = this.mapEvaluatorDecision(await this.evaluateRuntimePolicy(toolName, args, mode, reading === null ? 'read' : classificationFromReading(reading), { signal }), analysis);
       if (mapped) return done({ ...mapped, ...base });
     }
     let forceAsk = false;
@@ -759,7 +813,8 @@ export class PermissionManager {
       forceAsk = true;
     }
     const key = this.getApprovalKey(toolName, args);
-    const remembered = this.rememberedDecision(key, toolName, args);
+    const remembered = await this.rememberedDecision(key, toolName, args, { signal });
+    remembered?.assertCurrent();
     // Plan is read-only: a remembered allow does not carry a change into it.
     if (remembered && !(preset.readOnly && remembered.approved)) {
       return done(this.result(remembered.approved, true, remembered.source, remembered.reason, analysis, base));
@@ -880,21 +935,36 @@ export class PermissionManager {
   }
 
   /** Explicit session decisions, then current durable rules with their own scope. */
-  private rememberedDecision(
+  private async rememberedDecision(
     key: string,
     toolName: string,
     args: Record<string, unknown>,
-  ): { approved: boolean; source: PermissionDecisionSource; reason: PermissionDecisionReasonCode } | null {
-    if (this.sessionApprovals.has(key)) {
-      const approved = this.sessionApprovals.get(key)!;
-      return { approved, source: 'session_override', reason: approved ? 'session_cached_allow' : 'session_cached_deny' };
+    options: JudgmentReadingOptions = {},
+    owner?: AutonomousPermissionReading,
+  ): Promise<{ approved: boolean; source: PermissionDecisionSource; reason: PermissionDecisionReasonCode; assertCurrent(): void } | null> {
+    const legacyRevision = () => JSON.stringify([this.sessionApprovalRevision, this.userRuleStore?.getPublicationRevision?.(), this.userRuleStore?.rules(), this.configReader.getAutonomousSnapshot?.().incarnation, this.configReader.getSnapshot().permissions, this.configReader.getWorkingDirectory()]);
+    const before = owner ? undefined : legacyRevision();
+    const current = () => {
+      options.signal?.throwIfAborted();
+      if (owner) { owner.assertCurrent(); return; }
+      options.assertCurrent?.();
+      if (legacyRevision() !== before) throw new Error('Remembered permission owner changed while reading');
+    };
+    current();
+    const sessions = owner ? new Map(owner.frame.sessionGrants) : this.sessionApprovals;
+    if (sessions.has(key)) {
+      const approved = sessions.get(key)!;
+      return { approved, source: 'session_override', reason: approved ? 'session_cached_allow' : 'session_cached_deny', assertCurrent: current };
     }
-    const durable = this.userRuleStore
-      ? matchDurableRules(this.userRuleStore.rules(), toolName, args, { projectRoot: this.configReader.getWorkingDirectory() ?? undefined })
+    const rules = owner ? owner.frame.rules : this.userRuleStore?.rules();
+    const projectRoot = owner ? owner.frame.directory : rules ? this.configReader.getWorkingDirectory() : undefined;
+    const durable = rules
+      ? await matchDurableRulesAsync(rules, toolName, args, { ...options, assertCurrent: current, projectRoot: projectRoot ?? undefined })
       : null;
+    current();
     if (!durable) return null;
     const approved = durable.effect === 'allow';
-    return { approved, source: 'user_rule', reason: approved ? 'user_rule_allow' : 'user_rule_deny' };
+    return { approved, source: 'user_rule', reason: approved ? 'user_rule_allow' : 'user_rule_deny', assertCurrent: current };
   }
 
   /** Asks the owner through the surface's prompt, and remembers the answer at the tier they chose. */
@@ -976,7 +1046,7 @@ export class PermissionManager {
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode, 'read'), analyzePermissionRequest('read', args, 'read'));
+      const mapped = this.mapEvaluatorDecision(await this.evaluateRuntimePolicy('read', args, mode, 'read'), analyzePermissionRequest('read', args, 'read'));
       if (mapped) return mapped.approved ? 'allow' : 'restricted';
     }
     const preset = presetForMode(mode);
@@ -1059,15 +1129,26 @@ export class PermissionManager {
     return { ...extra, approved, persisted, sourceLayer, reasonCode, analysis };
   }
 
-  private evaluateRuntimePolicy(
+  private async evaluateRuntimePolicy(
     toolName: string,
     args: Record<string, unknown>,
     mode: PermissionConfigSnapshot['permissions']['mode'],
     classification: CommandClassification,
-  ): LayeredPermissionDecision {
+    options: JudgmentReadingOptions = {},
+    owner?: AutonomousPermissionReading,
+  ): Promise<LayeredPermissionDecision> {
     // User-origin rules are evaluated before managed (registry) rules by the
     // evaluator, so a user allow-rule wins over a managed one.
-    const rules = [
+    const legacyRevision = () => JSON.stringify([this.userRuleStore?.getPublicationRevision?.(), this.policyRuntimeState.getRegistry().getPublicationRevision?.(), this.userRuleStore?.rules(), this.policyRuntimeState.getRegistry().getCurrent(), this.configReader.getAutonomousSnapshot?.().incarnation, this.configReader.getSnapshot().permissions, this.configReader.getWorkingDirectory()]);
+    const before = owner ? undefined : legacyRevision();
+    const current = () => {
+      options.signal?.throwIfAborted();
+      if (owner) { owner.assertCurrent(); return; }
+      options.assertCurrent?.();
+      if (legacyRevision() !== before) throw new Error('Permission configuration changed while reading');
+    };
+    current();
+    const rules = owner ? [...owner.frame.rules, ...owner.frame.policyRules] : [
       ...(this.userRuleStore?.rules() ?? []),
       ...(this.policyRuntimeState.getRegistry().getCurrent()?.rules ?? []),
     ];
@@ -1078,12 +1159,15 @@ export class PermissionManager {
         : mode === 'plan' ? 'plan'
         : mode === 'accept-edits' ? 'accept-edits'
         : 'default',
-      projectRoot: this.configReader.getWorkingDirectory() ?? undefined,
+      projectRoot: (owner ? owner.frame.directory : this.configReader.getWorkingDirectory()) ?? undefined,
       rules,
       defaultEffect: 'deny',
     });
-    const decision = evaluator.evaluate(toolName, args, classification);
+    const decision = await evaluator.evaluateAsync(toolName, args, classification, { ...options, assertCurrent: current });
+    current(); evaluator.assertCurrent(decision);
     this.exportDecisionRecords(evaluator, mode);
+    current(); evaluator.assertCurrent(decision);
+    this.policyDecisionOwners.set(decision, () => { current(); evaluator.assertCurrent(decision); });
     return decision;
   }
 
@@ -1125,6 +1209,9 @@ export class PermissionManager {
     decision: LayeredPermissionDecision,
     analysis: PermissionRequestAnalysis,
   ): PermissionCheckResult | null {
+    const current = this.policyDecisionOwners.get(decision);
+    if (!current) throw new Error('Policy decision has no current owner');
+    current();
     if (decision.sourceLayer === 'policy') {
       return decision.allowed
         ? this.result(true, false, 'managed_policy', 'managed_policy_allow', analysis)

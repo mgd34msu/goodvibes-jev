@@ -14,7 +14,7 @@
  * record or a channel's history; a wrong yes hides a harmless number. Code
  * treats anything but a confident no as yes.
  */
-import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
+import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment/decisions';
 
 /** The message with every digit replaced by `#`, which is all the reading is shown. */
 export function maskDigits(text: string): string {

@@ -28,7 +28,8 @@
  * Sweeps are idempotent and safe to run from more than one process: each one
  * re-reads the file, recomputes removals from scratch, and writes atomically.
  */
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
 import { PersistentStore } from '../state/persistent-store.js';
 import { isDeviceCapabilityId, type DeviceCapabilityId, type DeviceNodeKind } from './device-capability-contract.js';
 import { resolveDevicePolicySource, type DevicePolicySource } from './device-policy-source.js';
@@ -215,6 +216,23 @@ export class DeviceGrantStore {
   private readonly now: () => number;
   private readonly ownership: DeviceGrantOwnership;
   private writeChain: Promise<void> = Promise.resolve();
+  private revocationGeneration = 0;
+  private pendingRevocations = 0;
+  private memoryGeneration = 0;
+  private readonly publicationReceipts = new WeakMap<object, string>();
+
+  getRevocationGeneration(): number { return this.revocationGeneration; }
+  hasPendingRevocations(): boolean { return this.pendingRevocations > 0; }
+  /** Observed file incarnation plus contents, not a universal cross-process lock. */
+  getObservationRevision(): string {
+    const lock = this.store.lockPath;
+    if (!lock) return `memory:${this.memoryGeneration}`;
+    const path = lock.slice(0, -5);
+    try {
+      const stat = statSync(path, { bigint: true });
+      return `${stat.dev}:${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent"; throw error; }
+  }
 
   constructor(storeOrPath: PersistentStore<DeviceGrantSnapshot> | string, options: DeviceGrantStoreOptions = {}) {
     this.store = typeof storeOrPath === 'string'
@@ -223,6 +241,12 @@ export class DeviceGrantStore {
     this.resolvePolicy = resolveDevicePolicySource(options.policy, DEFAULT_DEVICE_GRANT_POLICY);
     this.now = options.now ?? (() => Date.now());
     this.ownership = options.ownership ?? {};
+  }
+
+  /** The exact receipt minted at this store's publication boundary, before fsync awaits. */
+  assertObservedGrant(expected: DeviceCapabilityGrant): void {
+    const receipt = this.publicationReceipts.get(expected);
+    if (!receipt || receipt !== this.getObservationRevision()) throw new Error('Admitted device grant publication changed');
   }
 
   /**
@@ -254,11 +278,21 @@ export class DeviceGrantStore {
   /** Serialise writes within this process; across processes the write is atomic. */
   private async mutate<T>(
     fn: (snapshot: DeviceGrantSnapshot, malformed: number) => Promise<{ next: DeviceGrantSnapshot; result: T }>,
+    beforePublish?: () => void,
   ): Promise<T> {
     const run = this.writeChain.then(async () => {
       const { snapshot, malformed } = await this.readWithDrops();
       const { next, result } = await fn(snapshot, malformed);
-      await this.store.persist(next);
+      await this.store.persist(next, { beforePublish, afterPublish: () => {
+        this.memoryGeneration++;
+        if (result && typeof result === 'object') {
+          const lock = this.store.lockPath;
+          if (lock && JSON.stringify(JSON.parse(readFileSync(lock.slice(0, -5), 'utf8'))) !== JSON.stringify(next)) {
+            throw new Error('Device ledger changed at publication');
+          }
+          this.publicationReceipts.set(result, this.getObservationRevision());
+        }
+      } });
       return result;
     });
     this.writeChain = run.then(() => undefined, () => undefined);
@@ -317,6 +351,7 @@ export class DeviceGrantStore {
     readonly sessionId?: string | undefined;
     readonly grantedBy: string;
     readonly ttlMs?: number | undefined;
+    readonly beforePersist?: (() => void) | undefined;
   }): Promise<DeviceCapabilityGrant> {
     const now = this.now();
     const ttl = input.ttlMs && input.ttlMs > 0 ? input.ttlMs : this.getPolicy().grantTtlMs;
@@ -353,11 +388,11 @@ export class DeviceGrantStore {
         next: { version: 1, grants: [...kept, grant], audit: [...snapshot.audit, audit] },
         result: grant,
       };
-    });
+    }, input.beforePersist);
   }
 
   /** Note a use of a grant (drives "last used" in the grants surface). */
-  async markUsed(grantId: string): Promise<void> {
+  async markUsed(grantId: string, beforePersist?: () => void): Promise<void> {
     const now = this.now();
     await this.mutate(async (snapshot) => {
       const existing = snapshot.grants.find((grant) => grant.id === grantId);
@@ -374,7 +409,7 @@ export class DeviceGrantStore {
         actor: used.grantedBy,
       };
       return { next: { version: 1, grants, audit: [...snapshot.audit, audit] }, result: undefined };
-    });
+    }, beforePersist);
   }
 
   /**
@@ -389,8 +424,11 @@ export class DeviceGrantStore {
     readonly actor: string;
     readonly note?: string | undefined;
   }): Promise<readonly DeviceGrantRemoval[]> {
+    this.revocationGeneration++;
+    this.pendingRevocations++;
+    try {
     const now = this.now();
-    return this.mutate(async (snapshot) => {
+    return await this.mutate(async (snapshot) => {
       const removals: DeviceGrantRemoval[] = [];
       const kept: DeviceCapabilityGrant[] = [];
       for (const grant of snapshot.grants) {
@@ -428,6 +466,7 @@ export class DeviceGrantStore {
       ];
       return { next: { version: 1, grants: kept, audit }, result: removals };
     });
+    } finally { this.pendingRevocations--; }
   }
 
   /**
@@ -436,11 +475,14 @@ export class DeviceGrantStore {
    * result atomically, so running it twice removes nothing extra.
    */
   async sweep(): Promise<DeviceGrantSweepReport> {
+    this.revocationGeneration++;
+    this.pendingRevocations++;
+    try {
     const now = this.now();
     // Read once for the whole pass, so the caps and cutoffs one sweep applies
     // are internally consistent even if the configuration changes mid-sweep.
     const policy = this.getPolicy();
-    return this.mutate(async (snapshot, malformedCount) => {
+    return await this.mutate(async (snapshot, malformedCount) => {
       const removals: DeviceGrantRemoval[] = [];
       if (malformedCount > 0) {
         removals.push({
@@ -534,5 +576,6 @@ export class DeviceGrantStore {
         } satisfies DeviceGrantSweepReport,
       };
     });
+    } finally { this.pendingRevocations--; }
   }
 }

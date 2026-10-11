@@ -8,3 +8,6 @@ registry.register(planningRecommendationSpecific);
 
 import { repairFailureCause } from './semantic/self-improvement-failure-battery.js';
 registry.register(repairFailureCause);
+
+import { planningGoalSpecified } from './project-planning/batteries/readiness.js';
+registry.register(planningGoalSpecified);

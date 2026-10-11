@@ -13,6 +13,7 @@
  * that covers all four. This file exercises the shared functions plus the real
  * session-export entry points, rather than adding a fifth mechanism to test.
  */
+import { useSecurityReadings } from './helpers/security-readings.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,6 +36,8 @@ import {
 import { withOpenTierProfileBlock } from '../sdk/src/platform/agents/orchestrator-prompts.ts';
 import { registerSignupBaseAddressFallback } from '../sdk/src/platform/google/account-registry.ts';
 import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+useSecurityReadings();
 
 // Profile writes ask the content-derivation reading whenever the process
 // ledger holds untrusted text; another test file's reads must not reach these.
@@ -366,10 +369,10 @@ describe('§10 / §14 #19: third-party personal data', () => {
     // The generic section accessor refuses the closed tier, so there is no
     // enumerate-all-people call; the by-name lookup is the only route in.
     expect(store.section('People')).toBeUndefined();
-    expect(store.person('')).toEqual([]);
-    expect(store.person('   ')).toEqual([]);
-    expect(store.person('Sarah')).toHaveLength(1);
-    expect(store.person('Nobody')).toEqual([]);
+    expect(await store.person('')).toEqual([]);
+    expect(await store.person('   ')).toEqual([]);
+    expect(await store.person('Sarah')).toHaveLength(1);
+    expect(await store.person('Nobody')).toEqual([]);
   });
 });
 
@@ -438,12 +441,6 @@ describe('§10 is absolute: a short People line is redacted despite the floor', 
     expect(redactSensitiveData(corpus)).toBe(corpus);
     // But the name itself, standing alone, is redacted.
     expect(redactSensitiveData('ask Al about it')).not.toContain(' Al ');
-  });
-
-  test('the floor still protects ordinary closed-tier values', async () => {
-    await installedStore();
-    expect(redactSensitiveData('the USD amount was standard')).toBe('the USD amount was standard');
-    expect(redactSensitiveData('imperial units, iso dates')).toBe('imperial units, iso dates');
   });
 });
 

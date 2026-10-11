@@ -4,13 +4,14 @@ import { createHttpTransport, type HttpTransport, type HttpTransportOptions } fr
 import {
   createPeerRemoteClient,
   type PeerRemoteClient,
+  type PeerRemoteClientOptions,
   type PeerRemoteClientInvokeOptions,
 } from './client-core.js';
 
 /**
  * Peer-SDK-specific behaviour flags (not transport configuration).
  */
-export interface PeerSdkBehaviorOptions {
+export interface PeerSdkBehaviorOptions extends Pick<PeerRemoteClientOptions, 'regexReading' | 'getRegexReading'> {
   /**
    * When `true` (default), response bodies are checked against the peer
    * contract's JSON Schema shape before typed calls return.
@@ -82,6 +83,8 @@ export function createPeerSdk(options: PeerSdkOptions): PeerSdk {
   const transport = createHttpTransport(options);
   const remote = createPeerRemoteClient(transport, getPeerContract(), {
     validateResponses: options.validateResponses !== false,
+    regexReading: options.regexReading,
+    getRegexReading: options.getRegexReading,
   });
   return {
     ...remote,

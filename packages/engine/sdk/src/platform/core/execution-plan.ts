@@ -6,6 +6,9 @@
  * orchestrator dependency.
  */
 
+import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { planItemStatus } from './batteries/plan-item-status.js';
 import { existsSync, readdirSync } from 'node:fs';
 import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
@@ -73,6 +76,8 @@ export interface ExecutionPlanParseIssue {
 
 export type ParsedExecutionPlan = Partial<ExecutionPlan> & {
   parseIssues?: ExecutionPlanParseIssue[] | undefined;
+  /** Revalidate the reading source immediately before consuming parsed items. */
+  assertCurrent?: (() => void) | undefined;
 };
 
 // ---------------------------------------------------------------------------
@@ -95,14 +100,17 @@ const STATUS_LABEL: Record<PlanItemStatus, string> = {
   skipped: 'SKIPPED',
 };
 
-function parseItemStatus(checkbox: string, label?: string): PlanItemStatus {
-  if (label) {
-    const upper = label.toUpperCase().trim();
-    if (upper === 'COMPLETE' || upper === 'DONE') return 'complete';
-    if (upper === 'IN_PROGRESS' || upper === 'IN PROGRESS' || upper === 'ACTIVE') return 'in_progress';
-    if (upper === 'FAILED' || upper === 'ERROR') return 'failed';
-    if (upper === 'SKIPPED' || upper === 'SKIP') return 'skipped';
-  }
+/** A recoverable, value-free refusal; never includes model text or provider errors. */
+export class PlanStatusUnavailableError extends Error {
+  readonly recoverable = true;
+  constructor() { super('Plan status reading is unavailable. The existing plan was retained; retry when the reader is available.'); this.name = 'PlanStatusUnavailableError'; }
+}
+
+function canonicalStatus(label: string | undefined): PlanItemStatus | undefined {
+  return (Object.keys(STATUS_LABEL) as PlanItemStatus[]).find(status => label === STATUS_LABEL[status] || label === status);
+}
+
+function checkboxStatus(checkbox: string): PlanItemStatus {
   const c = checkbox.trim();
   if (c === '[x]' || c === '[X]') return 'complete';
   if (c === '[~]') return 'in_progress';
@@ -147,6 +155,10 @@ export class ExecutionPlanManager {
   private readonly plansDir: string;
   private readonly activeFile: string;
   private lastCreatedAtMs = 0;
+  private incarnation: object = {};
+
+  /** Mutation intent invalidates in-flight parsing, including same-value/ABA saves. */
+  getIncarnation(): object { return this.incarnation; }
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
@@ -180,6 +192,7 @@ export class ExecutionPlanManager {
 
   /** Save plan to disk. Creates directories as needed. */
   save(plan: ExecutionPlan): void {
+    this.incarnation = {};
     writeJsonFileAtomic(join(this.plansDir, `${plan.id}.json`), plan);
   }
 
@@ -213,6 +226,7 @@ export class ExecutionPlanManager {
   }
 
   private setActive(planId: string | null, sessionId?: string | null): void {
+    this.incarnation = {};
     if (planId === null) {
       // Only rewrite an existing pointer, absence already means "no active plan".
       if (existsSync(this.activeFile)) {
@@ -397,125 +411,153 @@ export class ExecutionPlanManager {
    * Parse a markdown execution plan written by the model into structured format.
    * Robust to minor formatting variations models may produce.
    */
-  parseFromMarkdown(markdown: string): ParsedExecutionPlan {
-    const lines = markdown.split('\n');
-    const items: PlanItem[] = [];
-    const parseIssues: ExecutionPlanParseIssue[] = [];
-    let title = '';
-    let currentPhase = '';
+  async parseFromMarkdown(markdown: string, options: JudgmentReadingOptions = {}): Promise<ParsedExecutionPlan> {
+    let authority: JudgmentPortCapture | undefined;
+    const controller = new AbortController();
+    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    const assertCurrent = () => { signal.throwIfAborted(); options.assertCurrent?.(); authority?.assertCurrent(); };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const readStatus = async (checkbox: string, label?: string): Promise<PlanItemStatus> => {
+      assertCurrent();
+      const canonical = canonicalStatus(label);
+      if (canonical !== undefined) return canonical;
+      if (!label) return checkboxStatus(checkbox);
+      // Screen the COMPLETE markdown before the first projection/transmission,
+      // including unrelated lines and later items; never send a partial safe prefix.
+      assertJudgmentInput({ markdown });
+      timer ??= setTimeout(() => controller.abort(), 15_000);
+      authority ??= captureJudgmentPort('engine.core.plan-item-status', { signal, assertCurrent: options.assertCurrent });
+      const run = await planItemStatus.run(authority.port, { label }, { site: 'engine.core.plan-item-status', signal: authority.signal });
+      assertCurrent();
+      if (run.readings.status.outcome !== 'act' || !Object.hasOwn(STATUS_LABEL, run.readings.status.choice)) throw new PlanStatusUnavailableError();
+      run.recordAction(`Read plan item state: ${run.readings.status.choice}`);
+      assertCurrent();
+      return run.readings.status.choice;
+    };
+    try {
+      assertCurrent();
+      const lines = markdown.split('\n');
+      const items: PlanItem[] = [];
+      const parseIssues: ExecutionPlanParseIssue[] = [];
+      let title = '';
+      let currentPhase = '';
 
-    // Phase heading: ## Phase N: Name [STATUS] or ## Name [STATUS] or ## Name
-    const phaseRe = /^##\s+(.+?)(?:\s+\[([^\]]+)\])?\s*$/;
-    // Checkbox prefix: - [x], - [ ], - [~], - [!], - [-]
-    const checkboxRe = /^-\s+(\[[\sxX~!\-]\])\s+(.+)$/;
+      // Phase heading: ## Phase N: Name [STATUS] or ## Name [STATUS] or ## Name
+      const phaseRe = /^##\s+(.+?)(?:\s+\[([^\]]+)\])?\s*$/;
+      // Checkbox prefix: - [x], - [ ], - [~], - [!], - [-]
+      const checkboxRe = /^-\s+(\[[\sxX~!\-]\])\s+(.+)$/;
 
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      const line = lines[lineIndex]!;
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex]!;
+        const trimmed = line.trim();
+        if (!trimmed) continue;
 
-      // Title
-      if (trimmed.startsWith('# ') && !trimmed.startsWith('## ') && !title) {
-        title = trimmed.replace(/^#\s+/, '').trim();
-        continue;
-      }
+        // Title
+        if (trimmed.startsWith('# ') && !trimmed.startsWith('## ') && !title) {
+          title = trimmed.replace(/^#\s+/, '').trim();
+          continue;
+        }
 
-      // Phase heading
-      const phaseMatch = phaseRe.exec(trimmed);
-      if (phaseMatch && trimmed.startsWith('## ')) {
-        currentPhase = phaseMatch[1]?.trim() ?? '';
-        continue;
-      }
+        // Phase heading
+        const phaseMatch = phaseRe.exec(trimmed);
+        if (phaseMatch && trimmed.startsWith('## ')) {
+          currentPhase = phaseMatch[1]?.trim() ?? '';
+          continue;
+        }
 
-      // Item
-      if (trimmed.startsWith('- ') && currentPhase) {
-        const cbMatch = checkboxRe.exec(trimmed);
-        if (cbMatch) {
-          const [, checkbox, rest] = cbMatch;
+        // Item
+        if (trimmed.startsWith('- ') && currentPhase) {
+          const cbMatch = checkboxRe.exec(trimmed);
+          if (cbMatch) {
+            const [, checkbox, rest] = cbMatch;
 
-          // Split from the RIGHT on a dash separator to separate description from metadata.
-          // Accepts em-dash (—), en-dash (–), or double-hyphen (--) for model output variants.
-          // Only the last occurrence splits, so em-dashes in descriptions are preserved.
-          const restStr = rest ?? '';
-          const { index: sepIdx, sepLen } = findLastSeparator(restStr);
-          let description: string;
-          let metaPart: string | undefined;
+            // Split from the RIGHT on a dash separator to separate description from metadata.
+            // Accepts em-dash (—), en-dash (–), or double-hyphen (--) for model output variants.
+            // Only the last occurrence splits, so em-dashes in descriptions are preserved.
+            const restStr = rest ?? '';
+            const { index: sepIdx, sepLen } = findLastSeparator(restStr);
+            let description: string;
+            let metaPart: string | undefined;
 
-          if (sepIdx !== -1) {
-            description = restStr.slice(0, sepIdx).trim();
-            metaPart = restStr.slice(sepIdx + sepLen).trim();
-          } else {
-            description = restStr.trim();
-          }
-
-          let statusLabel: string | undefined;
-          let agentId: string | undefined;
-          let rawDeps: string | undefined;
-
-          if (metaPart) {
-            // Extract trailing (depends: ...) first
-            const depsMatch = /\(depends:\s*([^)]+)\)\s*$/.exec(metaPart);
-            if (depsMatch) {
-              rawDeps = depsMatch[1] ?? '';
-              metaPart = metaPart.slice(0, depsMatch.index).trim();
+            if (sepIdx !== -1) {
+              description = restStr.slice(0, sepIdx).trim();
+              metaPart = restStr.slice(sepIdx + sepLen).trim();
+            } else {
+              description = restStr.trim();
             }
 
-            // Extract trailing (agent-id)
-            const agentMatch = /\(([^)]+)\)\s*$/.exec(metaPart);
-            if (agentMatch) {
-              const candidate = agentMatch[1]?.trim() ?? '';
-              if (/^depends:/i.test(candidate)) {
-                rawDeps = rawDeps ?? candidate.replace(/^depends:\s*/i, '');
-              } else {
-                agentId = candidate;
+            let statusLabel: string | undefined;
+            let agentId: string | undefined;
+            let rawDeps: string | undefined;
+
+            if (metaPart) {
+              // Extract trailing (depends: ...) first
+              const depsMatch = /\(depends:\s*([^)]+)\)\s*$/.exec(metaPart);
+              if (depsMatch) {
+                rawDeps = depsMatch[1] ?? '';
+                metaPart = metaPart.slice(0, depsMatch.index).trim();
               }
-              metaPart = metaPart.slice(0, agentMatch.index).trim();
+
+              // Extract trailing (agent-id)
+              const agentMatch = /\(([^)]+)\)\s*$/.exec(metaPart);
+              if (agentMatch) {
+                const candidate = agentMatch[1]?.trim() ?? '';
+                if (/^depends:/i.test(candidate)) {
+                  rawDeps = rawDeps ?? candidate.replace(/^depends:\s*/i, '');
+                } else {
+                  agentId = candidate;
+                }
+                metaPart = metaPart.slice(0, agentMatch.index).trim();
+              }
+
+              // What remains is the status label
+              if (metaPart) statusLabel = metaPart;
             }
 
-            // What remains is the status label
-            if (metaPart) statusLabel = metaPart;
-          }
+            const dependencies = rawDeps
+              ? rawDeps.split(',').map((d) => d.trim()).filter(Boolean)
+              : undefined;
 
-          const dependencies = rawDeps
-            ? rawDeps.split(',').map((d) => d.trim()).filter(Boolean)
-            : undefined;
-
-          items.push({
-            id: randomUUID(),
-            phase: currentPhase,
-            description,
-            status: parseItemStatus(checkbox!, statusLabel),
-            ...(agentId ? { agentId } : {}),
-            ...(dependencies && dependencies.length > 0 ? { dependencies } : {}),
-          });
-        } else {
-          const descMatch = /^-\s+(?:\[[\s\w~!-]\]\s+)?(.+)$/.exec(trimmed);
-          if (descMatch) {
             items.push({
               id: randomUUID(),
               phase: currentPhase,
-              description: descMatch[1]?.trim() ?? '',
-              status: 'pending',
+              description,
+              status: await readStatus(checkbox!, statusLabel),
+              ...(agentId ? { agentId } : {}),
+              ...(dependencies && dependencies.length > 0 ? { dependencies } : {}),
             });
-            parseIssues.push({
-              line: lineIndex + 1,
-              text: trimmed,
-              reason: 'Plan item did not include a recognized checkbox status; parsed as pending.',
-            });
+          } else {
+            const descMatch = /^-\s+(?:\[[\s\w~!-]\]\s+)?(.+)$/.exec(trimmed);
+            if (descMatch) {
+              items.push({
+                id: randomUUID(),
+                phase: currentPhase,
+                description: descMatch[1]?.trim() ?? '',
+                status: 'pending',
+              });
+              parseIssues.push({
+                line: lineIndex + 1,
+                text: trimmed,
+                reason: 'Plan item did not include a recognized checkbox status; parsed as pending.',
+              });
+            }
           }
         }
       }
-    }
 
-    const now = new Date().toISOString();
-    return {
-      ...(title ? { title } : {}),
-      createdAt: now,
-      updatedAt: now,
-      status: 'draft',
-      items,
-      ...(parseIssues.length > 0 ? { parseIssues } : {}),
-    };
+      assertCurrent();
+      const now = new Date().toISOString();
+      return {
+        ...(title ? { title } : {}),
+        createdAt: now,
+        updatedAt: now,
+        status: 'draft',
+        items,
+        ...(parseIssues.length > 0 ? { parseIssues } : {}),
+        assertCurrent,
+      };
+    } catch { throw new PlanStatusUnavailableError(); }
+    finally { if (timer !== undefined) clearTimeout(timer); }
   }
 
   // --------------------------------------------------------------------------
@@ -553,7 +595,7 @@ export class ExecutionPlanManager {
    * Used when the model provides a detailed plan in response to /plan.
    * Dependencies expressed as description strings are resolved to item IDs.
    */
-  replaceItems(planId: string, items: Omit<PlanItem, 'id' | 'status'>[]): void {
+  replaceItems(planId: string, items: (Omit<PlanItem, 'id' | 'status'> & { status?: PlanItemStatus })[], options: { preserveReportedStatuses?: boolean } = {}): void {
     const plan = this.load(planId);
     if (!plan) {
       logger.debug(`[ExecutionPlanManager] replaceItems: plan not found for id=${planId}`);
@@ -564,7 +606,8 @@ export class ExecutionPlanManager {
     const newItems: PlanItem[] = items.map((item) => ({
       ...item,
       id: randomUUID(),
-      status: 'pending' as PlanItemStatus,
+      // Only the current model-plan intake opts in; proposals always begin pending.
+      status: options.preserveReportedStatuses ? item.status ?? 'pending' : 'pending',
     }));
     // Reset dependencies, will be resolved in second pass
     for (const item of newItems) {

@@ -52,6 +52,8 @@ export type AutomationExternalContentSource =
     };
 
 export interface AutomationExecutionPolicy {
+  /** A persisted refusal marker, never serialized authority. */
+  readonly requiresSourceOwner?: boolean | undefined;
   readonly prompt?: string | undefined;
   readonly template?: string | undefined;
   readonly target: AutomationSessionTarget;

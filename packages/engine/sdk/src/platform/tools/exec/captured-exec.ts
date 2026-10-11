@@ -8,7 +8,7 @@ import { assertCapturedPublicationOwner, type CapturedPublicationLease } from '.
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { publishCapturedProjection } from './captured-exec-publication.js';
 import { executeCapturedFileOperations } from './captured-exec-file-ops.js';
-import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
+import { createSafeRegex } from '../../utils/safe-regex.js';
 import { runInteractiveCommand, type ExecInteractionRuntime } from './interactive.js';
 import { projectCapturedExecDependencies, type CapturedExecDependencyInput } from './captured-exec-dependencies.js';
 /** Commands see a permission-filtered disposable copy, never the host workspace.
@@ -154,6 +154,10 @@ export interface CapturedExecutionLease {
   readonly readOutput: () => Promise<ExecCommandResult>;
 }
 export interface CapturedExecutionObserver {
+  /** Final construction-owned command admission, after all async preparation. */
+  readonly beforeSpawn?: (() => void) | undefined;
+  /** Final publication restriction; retained jobs supply their independent owner constraint. */
+  readonly beforePublish?: (() => void) | undefined;
   /** Construction-only repair candidate. Never publishes projection changes. */
   readonly repairCandidate?: { readonly path: string; readonly content: string; readonly receive: (content: string) => void } | undefined;
   /** Construction-only owner for nested write/edit validators, never model input. */
@@ -253,7 +257,7 @@ export async function runCapturedCommand(
       captured_exec_unsupported_options: unsupported,
     };
     if (input.background) throw new Error('captured background must be retained by its ProcessManager owner');
-    const untilPattern = input.until ? compileSafeRegExp(input.until.pattern, '', { operation: 'exec until pattern' }) : undefined;
+    await using untilPattern = input.until ? await createSafeRegex(input.until.pattern, '', { operation: 'exec until pattern', maxInputChars: 500_000, signal: operationSignal }) : undefined;
     await check();
     const availability = await probeCapturedExecAvailability();
     await check();
@@ -358,7 +362,7 @@ export async function runCapturedCommand(
         modeResult = await runInteractiveCommand({
           cmdStr: command, cwd: undefined, env: environment, timeoutMs, startTime: start,
           sandboxArgv: ['/usr/bin/bwrap', ...argv, '--'], interaction: observer.interaction,
-          signal: executionSignal, extraStdio: [fd], beforeOutput: check, maxOutputChars: MAX_OUTPUT,
+          signal: executionSignal, beforeSpawn: observer.beforeSpawn, extraStdio: [fd], beforeOutput: check, maxOutputChars: MAX_OUTPUT,
         });
         stdout = modeResult.stdout; stderr = modeResult.stderr; exitCode = modeResult.exit_code;
         timedOut = modeResult.timed_out === true;
@@ -371,6 +375,7 @@ export async function runCapturedCommand(
       try {
         executionSignal.throwIfAborted();
         if (candidate) assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);
+        observer.beforeSpawn?.();
         child = spawn('/usr/bin/bwrap', argv, { env: environment, stdio: ['ignore', 'pipe', 'pipe', fd] });
       } finally { closeSync(fd); }
       childCompletion = new Promise<number | null>((resolveExit, reject) => {
@@ -383,18 +388,31 @@ export async function runCapturedCommand(
       if (executionSignal.aborted) onAbort();
       const timeout = (): void => { timedOut = true; stop(); };
       timer = setTimeout(timeout, input.until?.timeout_ms ?? timeoutMs);
+      let untilDirty = false;
+      let checkingUntil = false;
+      let untilCompletion: Promise<void> = Promise.resolve();
       const capture = (data: Buffer, output: 'stdout' | 'stderr'): void => {
         if (output === 'stdout') stdout += data.toString(); else stderr += data.toString();
-        if (stdout.length + stderr.length > MAX_OUTPUT) { invalid = true; stop(); }
-        try {
-          if (untilPattern && !untilMatched && safeRegExpTest(untilPattern, stdout + stderr, { operation: 'exec until pattern', maxInputChars: 500_000 })) {
-            untilMatched = true;
-            clearTimeout(timer);
-            if (input.until?.kill_after) child.kill('SIGKILL');
-            else timer = setTimeout(timeout, timeoutMs);
-            observer.onUntilMatched?.();
-          }
-        } catch { invalid = true; stop(); }
+        if (stdout.length + stderr.length > MAX_OUTPUT) { invalid = true; stop(); return; }
+        untilDirty = true;
+        if (checkingUntil || !untilPattern || untilMatched) return;
+        checkingUntil = true;
+        untilCompletion = (async () => {
+          try {
+            while (untilDirty && !untilMatched) {
+              untilDirty = false;
+              if (await untilPattern.test(stdout + stderr)) {
+                await check();
+                untilMatched = true;
+                clearTimeout(timer);
+                if (input.until?.kill_after) child.kill('SIGKILL');
+                else timer = setTimeout(timeout, timeoutMs);
+                observer.onUntilMatched?.();
+              }
+            }
+          } catch { invalid = true; stop(); }
+          finally { checkingUntil = false; }
+        })();
       };
       child.stdout!.on('data', (data: Buffer) => capture(data, 'stdout'));
       child.stderr!.on('data', (data: Buffer) => capture(data, 'stderr'));
@@ -404,7 +422,9 @@ export async function runCapturedCommand(
         await check();
         return snapshot;
       } });
-      exitCode = await childCompletion.finally(() => { clearInterval(monitor); clearTimeout(timer); executionSignal.removeEventListener('abort', onAbort); });
+      exitCode = await childCompletion;
+      await untilCompletion;
+      clearInterval(monitor); clearTimeout(timer); executionSignal.removeEventListener('abort', onAbort);
     }
     await validation;
     await check();
@@ -445,8 +465,9 @@ export async function runCapturedCommand(
     };
     await inspect('');
     await check();
+    untilPattern?.assertCurrent();
     if (!candidate && contractInputAuthorityMutable(binding.authority))
-      await publishCapturedProjection(binding, originals, originalDirectories, present, directories, changes, combined, observer.publicationLease);
+      await publishCapturedProjection(binding, originals, originalDirectories, present, directories, changes, combined, observer.publicationLease, observer.beforePublish);
     await check();
     if (candidate && candidateRelative) {
       assertCapturedPublicationOwner(observer.publicationLease!, binding.authority);

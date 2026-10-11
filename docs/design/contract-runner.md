@@ -1199,7 +1199,7 @@ Every task: typecheck is `timeout 300 bun run typecheck` at the repository root,
 
 **R.13 Proof and post-part audit.** Goal: a runnable proof shows the runner completing real multi-unit work end to end, and the part is audited.
 - `packages/engine/scripts/contract-proof.ts`, run with `timeout 300 bun run --cwd packages/engine contract-proof` (script entry added to the engine `package.json`), live Jev and a configured model provider: it creates a temporary git repository with a small TypeScript project and a `test` gate, runs `goodvibes-contract run` with an ask that needs at least two implementation units and an integration unit (for example, add a parser module and a formatter module with tests, then wire them into a CLI command), and asserts from the contract store and the decision log that: the plan has at least three units with traced criteria; at least one unit received a nudge at completion and a later check of the same unit read every criterion met (the proof's ask includes a criterion the first attempt commonly misses, and if no natural nudge occurs the proof fails rather than passing silently); the group and deliverable checks passed; the deliverable was committed on the base branch with the gate passing; every Jev reading has a decision-log entry; the answer reached the owner record and the status line only the operator audience.
-- The post-part audit note is written in `docs/audit/contract-runner.md` with every further place the judgment foundation applies in the runner and the files it touched, and each is implemented before the task closes.
+- The post-part audit note is written in [the preserved post-part audit in THE-13](https://linear.app/the-artificery/issue/TA-13/complete-remaining-engine-judgments-and-shared-hoists) with every further place the judgment foundation applies in the runner and the files it touched, and each is implemented before the task closes.
 - Depends on: R.12.
 
 Points resolved when this was built (R.13):
@@ -1213,7 +1213,7 @@ Points resolved when this was built (R.13):
 - **Claims** are read from the report format the unit prompt dictates only (its last fenced JSON block), checked by the unit's plan role, and corroborated by the unit's own baseline-scoped changes; the report is kept on the unit for a resume check.
 - **The deliverable judge** reads the deliverable unit's whole final output and any deliverable fix units' answers, never a sentence code wrote.
 - **Gemini thought signatures** are kept by tool call id, so agents that share the provider never drop each other's.
-- The full list, with calibration, is `docs/audit/contract-runner.md`.
+- The full list, with calibration, is [the preserved post-part audit in THE-13](https://linear.app/the-artificery/issue/TA-13/complete-remaining-engine-judgments-and-shared-hoists).
 
 ## Decisions taken in this design
 

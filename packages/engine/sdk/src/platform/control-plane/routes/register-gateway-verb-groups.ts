@@ -204,7 +204,7 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
    * read/write. A set flows to surfaces as runtime.permissions via the
    * already-wired mode-change binding.
    */
-  readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'onDidInvalidate'>>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'onDidInvalidate' | 'attachProfilePostalFallback'>>;
   /**
    * Runtime store backing sessions.contextUsage.get and the local-session
    * resolution the session-runtime verbs gate on (getState().session.id).
@@ -288,6 +288,9 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
    * tool-execution seam, work pushed through the platform then mints its own
    * CI watch with no ceremony. Absent → only the scripted ci.watches.create.
    */
+  readonly ciNativeContinuationRevocation?: ((watch: import('../../ci-watch/types.js').CiWatchSubscription) => Promise<void>) | undefined;
+  readonly ciNativeContinuationOwner?: ((watch: import('../../ci-watch/types.js').CiWatchSubscription) => Promise<import('../../permissions/external-request.js').ExternalOperationSource | undefined>) | undefined;
+  readonly ciAutonomousHost?: (() => import('../../permissions/external-request.js').ExternalPermissionHost | undefined) | undefined;
   readonly onCiAutoWatch?: ((observer: (toolName: string, args: Record<string, unknown>, success: boolean) => void) => void) | undefined;
   /**
    * Optional: a daemon-side conversation store port for the conversation half of
@@ -453,6 +456,7 @@ export function registerGatewayVerbGroups(catalog: GatewayMethodCatalog, deps: G
   if (deps.configManager?.attachProfileFallback !== undefined) {
     const ownerProfile = composeOwnerProfile(catalog, {
       configManager: deps.configManager,
+      postalProviders: deps.providerRegistry,
       occasions: deps,
       ...(deps.personalCapture === undefined ? {} : { personalCapture: deps.personalCapture }),
       // The runtime's own home, so an injected home resolves the profile under

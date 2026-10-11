@@ -1,3 +1,5 @@
+import { types as nodeTypes } from 'node:util';
+import { captureOwnedJson } from '../gate/judgment-input.js';
 /**
  * Driving the Google setup pages with the platform browser.
  *
@@ -27,6 +29,7 @@ import type {
   BrowserLaunchOptions,
   BrowserTarget,
 } from '../browser/index.js';
+import { admitGoogleControlMetadata, googleControlSnapshot } from './browser-readings.js';
 import { deriveTagFromRole } from './browser-elements.js';
 import type { GoogleBrowserElement, GoogleBrowserPort } from './types.js';
 
@@ -65,6 +68,7 @@ function requireStringField(record: Record<string, unknown>, field: string): str
 }
 
 function toGoogleElement(raw: unknown): GoogleBrowserElement {
+  raw = captureOwnedJson(raw, nodeTypes.isProxy);
   if (!isRecord(raw)) {
     throw new Error('google browser port: expected a snapshot element to be an object.');
   }
@@ -72,7 +76,7 @@ function toGoogleElement(raw: unknown): GoogleBrowserElement {
   const role = requireStringField(raw, 'role');
   const name = requireStringField(raw, 'name');
   const value = typeof raw.value === 'string' ? raw.value : undefined;
-  return { ref, role, name, tag: deriveTagFromRole(role), value };
+  return { ref, role, name, tag: deriveTagFromRole(role), value, ...(typeof raw.disabled === 'boolean' ? { disabled: raw.disabled } : {}) };
 }
 
 function toGoogleElements(rawElements: unknown): readonly GoogleBrowserElement[] {
@@ -87,6 +91,8 @@ export function createGoogleBrowserPort(
   engine: BrowserEngine,
   options: GoogleBrowserPortOptions = {},
 ): GoogleBrowserPort {
+  let generation = 0;
+  let snapshotId: string | undefined;
   let sessionId: string | undefined;
   let pageId: string | undefined;
 
@@ -95,12 +101,22 @@ export function createGoogleBrowserPort(
   }
 
   function adopt(result: Record<string, unknown>): void {
-    sessionId = requireStringField(result, 'sessionId');
-    pageId = requireStringField(result, 'pageId');
+    const nextSession = requireStringField(result, 'sessionId');
+    const nextPage = requireStringField(result, 'pageId');
+    if (nextSession !== sessionId || nextPage !== pageId) generation += 1;
+    sessionId = nextSession;
+    pageId = nextPage;
   }
 
   return {
+    captureAuthority() {
+      const captured = generation, capturedSnapshot = snapshotId, capturedSession = sessionId, capturedPage = pageId;
+      return { assertCurrent: () => {
+        if (capturedSnapshot !== undefined) engine.assertSnapshotCurrent(capturedSession, capturedPage, capturedSnapshot);
+        if (captured !== generation) throw new Error('The Google browser page changed.'); } };
+    },
     async navigate(url) {
+      generation += 1;
       const result = await engine.navigate(target(), {
         url,
         ...(options.launch === undefined ? {} : { launch: options.launch }),
@@ -118,22 +134,44 @@ export function createGoogleBrowserPort(
     },
 
     async snapshot() {
-      const result = await engine.snapshot(target());
+      const result = captureOwnedJson(await engine.snapshot(target(), {}, { admit: elements => { admitGoogleControlMetadata(elements); googleControlSnapshot(elements); } }), nodeTypes.isProxy) as Record<string, unknown>;
       adopt(result);
+      if (result.truncated === true) throw new Error('The Google page snapshot is incomplete; no setup control can be chosen.');
+      snapshotId = typeof result.snapshotId === 'string' ? result.snapshotId : undefined;
       return toGoogleElements(result.elements);
     },
 
-    async click(ref) {
-      const result = await engine.click(target(), { ref });
+    async verifySnapshot() {
+      if (snapshotId === undefined) throw new Error('There is no Google control snapshot to verify.');
+      const expected = snapshotId;
+      const result = captureOwnedJson(await engine.snapshot(target(), {}, {
+        admit: elements => { admitGoogleControlMetadata(elements); googleControlSnapshot(elements); }, verifySnapshotId: expected,
+      }), nodeTypes.isProxy) as Record<string, unknown>;
+      if (snapshotId !== expected || result.snapshotId !== expected || result.truncated === true) throw new Error('The Google control snapshot was replaced.');
+      return toGoogleElements(result.elements);
+    },
+
+    async click(ref, ownership) {
+      const at = generation, expectedSnapshot = snapshotId, assertCurrent = ownership?.assertCurrent;
+      const result = await engine.click(target(), { ref }, { snapshotId: expectedSnapshot, assertCurrent: () => {
+        assertCurrent?.();
+        if (at !== generation || expectedSnapshot !== snapshotId) throw new Error('The Google browser action is no longer current.');
+      } });
+      generation += 1;
       adopt(result);
     },
 
     async type(ref, text, typeOptions) {
+      const at = generation, expectedSnapshot = snapshotId, assertCurrent = typeOptions?.assertCurrent;
       const result = await engine.type(target(), {
         ref,
         text,
         ...(typeOptions?.submit === undefined ? {} : { submit: typeOptions.submit }),
-      });
+      }, { snapshotId: expectedSnapshot, assertCurrent: () => {
+        assertCurrent?.();
+        if (at !== generation || expectedSnapshot !== snapshotId) throw new Error('The Google browser action is no longer current.');
+      } });
+      generation += 1;
       adopt(result);
     },
 

@@ -1,9 +1,34 @@
 # Daemon command executable and explicit host (partial migration)
 
+Package: `@goodvibes-jev/daemon` · product version `1.28.25` · `private: true`.
+The repository root is separately versioned `2.0.23`; these manifest facts do not
+choose a shared or product-specific release policy. [MIT license](LICENSE),
+Copyright (c) 2026 Mike Davis.
+
+## Operator guides
+
+- [Command reference](docs/commands-reference.md): complete vocabulary, flags, refusals and remote conventions
+- [Configuration](docs/configuration.md): exact homes, layers, persistent keys and runtime overlays
+- [Hosted sessions](docs/hosted-sessions.md): Jev authority, trust, detach/kill, leases and recovery
+- [Testing and validation](docs/testing-and-validation.md): actual scripts, official runner and proof limits
+- [Local native installation and rollback](docs/local-native-installation.md): explicit offline prefix operations for the qualified Linux cohort
+- [Troubleshooting](docs/troubleshooting.md): startup, authentication, binding, services and tool refusals
+
+These guides reconstruct pinned upstream responsibilities against current source,
+not a claim that lost executor documentation or validation receipts were recovered
+byte-for-byte. Configured standalone screening bootstrap, the configured Discord
+inbox/DM catalog, release/update policy and final native/live calibration remain gates.
+
+## Product boundary
+
 This private workspace preserves the pinned daemon's 20-command vocabulary and
 now builds the canonical `goodvibes-daemon` Bun command. Its checked-in
-executable launcher imports the emitted CLI, so frozen installation can create
-consumer links before build. It dispatches the
+executable launcher prefers the emitted CLI, so frozen installation can create
+consumer links before build. If emitted output is absent, a verified private
+`goodvibes-jev` monorepo checkout can run `src/cli/entrypoint.ts` in the same Bun
+process. A package merely containing `src` is not a source checkout; missing
+installed output reports the required root build command. Emitted runtime errors
+remain errors and never trigger a fallback to different code. It dispatches the
 existing config, status/update, sessions, pairing, cluster, WebUI, wake-model,
 completion, help and version adapters. Standalone `send` uses the canonical
 channel router and requires no running daemon. Its service inspection, stop and removal
@@ -24,6 +49,10 @@ From this directory:
 
 - `bun run build` emits JavaScript and declarations into `dist/`
 - `bun run start -- --help` invokes `dist/cli/entrypoint.js`
+- `bun src/cli/entrypoint.ts --help` explicitly exercises current source, even
+  when older emitted output exists; the bin launcher always prefers `dist`
+- `bun bin/goodvibes-daemon --help` uses emitted output or, only when absent in
+  this source checkout, the source fallback
 - `bun dist/cli/entrypoint.js config get controlPlane.port --json`
 - `bun run typecheck` checks source and tests
 - `bun run test` rebuilds and runs the guarded suites, including the emitted CLI
@@ -41,6 +70,11 @@ repository root to build the installed engine toolchain):
   no checkout or `node_modules`, real config persistence and synthetic loopback
   sends through argv and stdin. Missing artifacts or isolation fail the command.
 
+The script launcher never silently selects a binary from `native/` or `vendor/`
+and never fetches a missing binary. Invoke a locally built native artifact by its
+explicit path when that is the artifact you intend to exercise. Its distribution,
+installation and updater activation remain separately unconfigured.
+
 Keep the binary together with its `lib/` addon directory and, on Linux, the
 adjacent `.bun`, `.bun.json` and `.bun.LICENSE.md` runtime files. Linux builds
 require ordinary Bun 1.3.14. Native output is excluded from the script package's
@@ -57,12 +91,13 @@ host power and wake-model provisioning through the same runtime object. Serving
 then constructs the real `createDaemonHost` and runs its signal/deadline owner;
 shutdown awaits admitted work and complete owned-resource drainage. There is no
 empty production inbox, dynamic composition-module loader or detached server.
-`createProductionDaemonRuntime({ slack?, email? })` supplies the pinned complete
-membership with canonical protected Slack/email account owners when explicitly
-admitted. The shipped executable uses it without inferred account grants. No
-fixture factory is installed. A configured Discord account remains refused until
-a supported complete catalog and trusted screening owner are supplied. See
-`docs/audit/daemon-production-bootstrap.md` for the configured deployment boundary.
+`createProductionDaemonRuntime({ slack?, discord?, email? })` supplies complete
+membership with canonical protected account owners when explicitly admitted.
+The shipped executable uses it without inferred account grants. No fixture
+factory is installed. Explicit Discord admission requires an authenticated bot,
+a trusted intended-channel scope and a protected screening owner; it does not
+discover exhaustive historical DMs. See
+[production intake contract](../../docs/contracts/daemon-runtime-ownership.md#production-intake-and-selected-transport) for the configured deployment boundary.
 
 `createEmailDaemonInboxFactory({ account, screening })` supplies an explicit
 TLS mailbox inbox for single-node or account-eligible clustered operation, with
@@ -71,7 +106,7 @@ and durable UIDVALIDITY/UID progress. The root supplies its owned mail-service
 constructor and, in cluster mode, awaitable election gates. First polling records
 a typed history boundary; content starts on the next ordinary cadence. Omitted history
 and remaining backlog are disclosed separately from provider failures. See
-`docs/audit/daemon-email-inbox-composition.md` for prerequisites and limits. This
+[email inbox contract](../../docs/contracts/daemon-inbox-and-triage.md#email-complete-source-reads) for prerequisites and limits. This
 does not infer a grant for configured standalone accounts.
 
 Before constructing its server, the explicit host awaits initial custom-provider
@@ -87,7 +122,7 @@ workspace floor also awaits its own initial custom load before copying the
 daemon registry's current discovery snapshot and admitting a model selection.
 Shutdown drains pending floor acquisition and its cleanup. Floors do not launch
 their own LAN scans or watch the cache for updates. Cache membership
-provides no protected-source authority. See `docs/audit/daemon-provider-preload.md`.
+provides no protected-source authority. See [provider preload contract](../../docs/contracts/daemon-runtime-ownership.md#provider-preload-and-background-discovery).
 
 Once explicit startup is admitted, the launcher loads or creates the shared
 `operator-tokens.json` in the selected daemon home. The same token authenticates
@@ -96,14 +131,15 @@ requiring `--token`. `GOODVIBES_DAEMON_TOKEN` overrides the running server token
 `GOODVIBES_HTTP_TOKEN` overrides the optional HTTP listener token. These overrides
 do not rewrite the shared identity. A corrupt store is preserved beside the
 replacement when possible, with an explicit warning that clients must pair
-again. See `docs/audit/daemon-companion-token-bootstrap.md` for the boundaries.
+again. See [companion token bootstrap contract](docs/cli-and-package-contracts.md#companion-identity-and-startup-pairing) for the boundaries.
 
 `status` and `update` use the selected configuration's `network.outboundTls.*`
 policy for HTTPS requests. Relative custom CA paths resolve beneath that
 configuration's control-plane directory. These commands do not replace the
-embedding process's global transport. Status reports its separate WebSocket
-session query independently; this HTTPS policy does not configure WSS trust.
-See `docs/audit/daemon-cli-http-trust.md`.
+embedding process's global transport. The selected socket factory also applies these settings to WSS upgrades for
+status/session queries, which are reported independently of the HTTP subqueries.
+This does not establish equivalent trust behavior for every delegated command.
+See [cli http trust contract](docs/cli-and-package-contracts.md#selected-config-https-trust).
 
 After the listener settles, an interactive terminal receives the shared pairing
 QR and copyable link using the effective daemon token. Redirected/service stdout
@@ -114,7 +150,7 @@ bundles and unusable URLs produce a value-free notice instead of a dead QR.
 `pair` is an explicit credential reveal: pass the same daemon-token environment
 override (or `--token`) and any overridden nonzero `--port` to reproduce the link.
 A separate command cannot discover an unrelated process's ephemeral binding.
-See `docs/audit/daemon-functional-pairing-startup.md`.
+See [functional pairing startup contract](docs/cli-and-package-contracts.md#effective-token-and-served-origin).
 
 `goodvibes-daemon send "message" --channel ntfy` sends through one of the thirteen
 configured channels; omit the message to read stdin. `send --list` shows enabled
@@ -125,7 +161,7 @@ missing canonical capability gates refuse without falling back to another target
 The result confirms acceptance of the send request, not arrival at the recipient;
 uncertain failures exit nonzero and are not retried. Provider IDs, private failure
 text and credential-bearing destination URLs are not printed. The existing
-per-channel formatting and length limits apply. See `docs/audit/daemon-standalone-send.md`.
+per-channel formatting and length limits apply. See [standalone send contract](docs/cli-and-package-contracts.md#standalone-send).
 
 For an explicitly configured Slack account, the same CLI export provides
 `createSlackDaemonInboxFactory({ account, screening, timeoutMs? })`.
@@ -136,9 +172,9 @@ must enable Slack and select that workspace; credentials come from the existing
 daemon credential resolver. This factory owns real Slack history polling,
 protected content previews, an account-specific SQLite mirror
 and authenticated reads, including token rotation and awaited shutdown. See
-`docs/audit/daemon-slack-inbox-composition.md` for the exact trusted inputs,
+[Slack inbox contract](../../docs/contracts/daemon-inbox-and-triage.md#slack-account-and-transport) for the exact trusted inputs,
 transport and live-proof requirements. It does not compose other providers or
-remove default serving's all-provider refusal.
+infer admission for configured standalone accounts.
 
 In cluster mode, these explicit factories authenticate expected account metadata
 before enrolling through the canonical root's owned election gates. Slack also
@@ -162,16 +198,16 @@ first argument; use the documented environment homes for relocated one-shot send
 are runtime-only and never saved as settings.
 
 The package remains a private Bun script package with an opt-in local native
-build. No native release is published. It keeps its historical version. Source
+build. The local tooling does not publish a native release or activate automatic
+updates. Product/root version ownership and the release feed remain undecided. Source
 and emitted modules are included because the existing Bun export condition uses
 source. Use the supported Bun 1.3.14 runtime and built engine workspace.
 
-See `docs/audit/daemon-cli-entrypoint.md` in the repository for exact caller
-mapping, tests and outstanding parity, and `docs/audit/daemon-native-packaging.md`
-for local artifact proof and release limitations. The strict `migration:complete` gate must
-continue to reject this partial workspace. The original source is
-`mgd34msu/goodvibes-daemon` at `443e5ee4d6cda0d36d57e2886398d0836074a4a9`,
-reconciled through `254699bf5d834cdca41436211ada1ae32bf89258`.
+See [cli entrypoint contract](docs/cli-and-package-contracts.md#command-grammar-and-dispatch) for caller contracts and validation, and [native packaging contract](docs/cli-and-package-contracts.md#native-build-and-artifact-verification)
+for artifact requirements and release boundaries. Source accounting and remaining
+product acceptance are maintained in [THE-18](https://linear.app/the-artificery/issue/TA-18/port-daemon-composition-and-remote-cluster-infrastructure).
+Use `bun run products:check` for executable workspace checks; it does not certify
+behavioral parity, native platform qualification or release acceptance.
 
 ### Multiple explicitly owned inbox sources
 
@@ -182,5 +218,29 @@ boundary. The composite registers one canonical `channels.inbox.list` timeline;
 each source retains its own account database, lock, read proof and cluster gate.
 Duplicate wire provider IDs are rejected. Explicit provider membership is still
 required for custom composition. The production constructor includes explicit
-unconfigured membership, but does not supply an active Discord adapter. See `docs/audit/daemon-multiowner-inbox-composition.md` for lifecycle,
+unconfigured membership and explicit account-bound Slack, Discord and email
+sources. See [multi-owner inbox contract](../../docs/contracts/daemon-inbox-and-triage.md#aggregation-and-multi-owner-read-fencing) for lifecycle,
 pagination and protected-read contracts.
+
+## Explicit local release preparation
+
+`bun run release:prepare --no-bump --no-changelog` synchronizes the compiled
+version fallback with this product's manifest (and a README version badge if
+one exists). It is opt-in; ordinary builds still only validate the fallback.
+
+After a product release/version policy is chosen, the same mechanics accept one
+explicit `--patch`, `--minor`, `--major`, or `--version X.Y.Z` instead of
+`--no-bump`. To scaffold notes, provide a product-owned `CHANGELOG.md` and
+`--date YYYY-MM-DD` instead of `--no-changelog`. The section is inserted above
+the first existing section, preserving old notes. Review and complete the notes.
+Exact-version and no-bump runs are byte-idempotent; another arithmetic bump is
+a new bump. Missing/ambiguous inputs fail before writes. Ordinary write failures
+attempt to restore every touched file, reporting incomplete restoration. This
+is not a crash-safe or concurrent multi-file transaction; use a clean, exclusive
+checkout and inspect the diff before continuing.
+
+These mechanics do not select shared versus daemon-specific version ownership,
+migrate saved updater settings, configure release-cut, publish, tag, commit,
+install or deploy anything. See [release preparation contracts](docs/cli-and-package-contracts.md#explicit-release-preparation).
+
+Historical upstream release notes are preserved in [the provenance-labelled archive](docs/history/README.md); they are not current product release claims.

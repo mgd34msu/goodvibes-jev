@@ -28,7 +28,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -312,15 +312,15 @@ describe('the compiled daemon says why it will not start', () => {
   // file-level cleanup removes them along with every throwaway home. One
   // registry rather than two removal paths is what stopped the homes leaking.
 
-  test('the shape that shipped writes NOTHING to either stream: the baseline', () => {
-    // Not an assumption about how a compiled binary flushes: a fatal handler
-    // that only calls logger.error has no descriptor to flush. This is what an
-    // operator saw for 77 crash-loops, held still so nobody restores it.
+  test('the log-only caller still discloses malformed settings through real ingestion', () => {
     const home = homeWithDaemonSettings({}, 'legacy-home');
+    const settingsPath = join(home, '.goodvibes', 'daemon', 'settings.json');
+    writeFileSync(settingsPath, '{ "controlPlane": { "port": 39153 }');
     const run = runDaemon(legacy.binary, home);
     expect(run.status).toBe(1);
     expect(run.stdout).toHaveLength(0);
-    expect(run.stderr).toHaveLength(0);
+    expect(run.stderr).toContain(settingsPath);
+    expect(run.stderr).toContain('could not be read as JSON');
   });
 
   test('an unparseable settings file names the file and the parse error on stderr', () => {
@@ -335,6 +335,12 @@ describe('the compiled daemon says why it will not start', () => {
     expect(run.stderr.length).toBeGreaterThan(0);
     expect(run.stderr).toContain(settingsPath);
     expect(run.stderr).toContain('could not be read as JSON');
+    expect(run.stderr).toContain('JSON Parse error');
+    expect(run.stderr).toContain('at ');
+    const logDir = join(home, 'work', '.goodvibes', 'logs');
+    const logged = readdirSync(logDir).map(name => readFileSync(join(logDir, name), 'utf8')).join('\n');
+    expect(logged).toContain('goodvibes daemon host failed');
+    expect(logged).toContain(settingsPath);
   });
 
   test('a safety-gate refusal names the key and the reason on stderr', () => {
@@ -361,6 +367,7 @@ describe('the compiled daemon says why it will not start', () => {
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('RESOLVED controlPlane.port=31111');
     expect(run.stdout).toContain('QUARANTINE=[]');
+    expect(run.stderr).toHaveLength(0);
   });
 
   test('--daemon-home moves the daemon tier: the real home\'s value does not surface', () => {

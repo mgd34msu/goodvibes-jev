@@ -48,10 +48,12 @@ export async function pushNudge(
   deliverer: OccasionNudgeDeliverer | undefined,
   nudge: OccasionNudge,
   destinations: readonly string[],
+  assertCurrent: () => void = () => {},
 ): Promise<readonly NudgeDelivery[]> {
   if (deliverer === undefined) return [];
   const results: NudgeDelivery[] = [];
   for (const channel of destinations) {
+    assertCurrent();
     try {
       const deliveryId = (await deliverer.deliver({ channel, nudge })) ?? null;
       results.push({ channel, delivered: true, deliveryId, failure: null });
@@ -59,6 +61,7 @@ export async function pushNudge(
       results.push({ channel, delivered: false, deliveryId: null, failure: summarizeError(error) });
     }
   }
+  assertCurrent();
   return results;
 }
 

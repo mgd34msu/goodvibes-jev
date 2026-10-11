@@ -42,6 +42,9 @@
  * source.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertImapReadingCurrent, ImapReadingError } from '../imap-readings.js';
+import { beginImapSourceReading } from './imap-source-lifetime.js';
 import { imapMailboxConnectionPort } from './connection.js';
 import { ImapMailSource } from './imap-source.js';
 import {
@@ -132,6 +135,8 @@ export type GmailSourceBuilder = (input: GmailPollIntervals & {
 }) => Promise<InboundMailSource | null>;
 
 export interface InboundMailSourceFactoryDeps {
+  readonly getConfigurationIncarnation?: (() => unknown) | undefined;
+  readonly onDidChangeConfiguration?: ((listener: () => void) => () => void) | undefined;
   /** Reads `surfaces.email.*`. The daemon tier, and only the daemon tier. */
   readonly getConfig: ConfigReader;
   /** Where the mail password is read from. One store, see `resolveEmailPassword`. */
@@ -238,48 +243,42 @@ function readGmailPollIntervals(getConfig: ConfigReader): GmailPollIntervals {
   };
 }
 
-/**
- * A connection port that resolves host, account and password afresh on every
- * `open()`.
- *
- * Not a `MailboxConnectionPort` built once around captured values: the whole
- * reason the watcher re-opens is that the previous attempt failed, and half
- * the reasons it failed are settings the owner has just changed.
- */
+/** Reconnect only within one source's creation identity and credential lifetime. */
 function liveConnectionPort(
   deps: InboundMailSourceFactoryDeps,
   secrets: SecretReader,
   mailbox: string,
+  source: JudgmentReadingOptions,
 ): MailboxConnectionPort {
   return {
-    async open(): Promise<MailboxConnection> {
+    async open(owner: JudgmentReadingOptions = {}): Promise<MailboxConnection> {
+      const reading = { signal: AbortSignal.any([...(source.signal ? [source.signal] : []), ...(owner.signal ? [owner.signal] : [])]),
+        assertCurrent: () => { assertImapReadingCurrent(source); assertImapReadingCurrent(owner); } };
+      assertImapReadingCurrent(reading);
       const settings = readSurfaceEmailSettings(deps.getConfig);
-      if (settings.imapHost === undefined || settings.username === undefined) {
-        throw new Error(
-          'No IMAP host or account is configured for the daemon mailbox, so inbound mail has '
-          + 'nothing to connect to. Set surfaces.email.imap.host and surfaces.email.user.',
-        );
-      }
-      const host = settings.imapHost;
-      const username = settings.username;
+      if (settings.imapHost === undefined || settings.username === undefined) throw new ImapReadingError();
+      const password = await resolveEmailPassword(SURFACE_EMAIL_PASSWORD_REF, secrets);
+      assertImapReadingCurrent(reading);
       return imapMailboxConnectionPort({
-        connect: () => imapSocketFactoryFor(
-          deps.transport,
-          settings.imapSecure ? 'tls' : 'plaintext',
-        )(host, settings.imapPort),
-        username,
-        password: await resolveEmailPassword(SURFACE_EMAIL_PASSWORD_REF, secrets),
-        mailbox,
-        timeoutMs: deps.settings.operationTimeoutMs,
-      }).open();
+        connect: () => imapSocketFactoryFor(deps.transport, settings.imapSecure ? 'tls' : 'plaintext')(settings.imapHost!, settings.imapPort),
+        username: settings.username, password, mailbox, timeoutMs: deps.settings.operationTimeoutMs,
+      }).open(reading);
     },
   };
+}
+
+/** The old supervisor's sinks/cursors cannot be rebound by a connection setting. */
+function sourceIdentity(deps: InboundMailSourceFactoryDeps): string {
+  const settings = readSurfaceEmailSettings(deps.getConfig);
+  return JSON.stringify([settings.imapHost, settings.imapPort, settings.imapSecure, settings.username,
+    settings.mailbox, deps.getConfig('surfaces.email.inbound.accounts')]);
 }
 
 export function createInboundMailSourceFactory(
   deps: InboundMailSourceFactoryDeps,
 ): InboundMailSourceFactory {
   const secrets = createSurfaceEmailSecretReader(deps.secrets);
+  const identity = sourceIdentity(deps);
   return {
     async create(input): Promise<InboundMailSource | null> {
       if (input.kind === 'gmail') {
@@ -309,16 +308,22 @@ export function createInboundMailSourceFactory(
       // a mailbox nobody configured. Answering `null` puts that in status with
       // the step that fixes it, rather than opening a socket to nothing and
       // reporting the resulting DNS failure as a capability verdict.
+      if (sourceIdentity(deps) !== identity) return null;
       const settings = readSurfaceEmailSettings(deps.getConfig);
       if (settings.imapHost === undefined || settings.username === undefined) return null;
+      const lifetime = beginImapSourceReading(deps, { assertCurrent: () => {
+        if (sourceIdentity(deps) !== identity) throw new ImapReadingError();
+      } });
 
       return new ImapMailSource({
+        reading: lifetime.reading,
+        disposeReading: lifetime.dispose,
         settings: resolveWatcherSettings({
           ...deps.settings,
           account: input.account,
           mailbox: input.mailbox,
         }),
-        connections: liveConnectionPort(deps, secrets, input.mailbox),
+        connections: liveConnectionPort(deps, secrets, input.mailbox, lifetime.reading),
         cursors: deps.cursors,
         sink: input.sink,
         clock: deps.clock ?? systemWatcherClock,

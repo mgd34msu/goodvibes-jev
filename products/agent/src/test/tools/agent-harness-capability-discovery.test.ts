@@ -33,7 +33,7 @@ import { SETTING_DOMAIN_VOCABULARY } from '../../config/settings-search-vocabula
 import { searchCatalog } from '../../tools/agent-harness-catalog-search.ts';
 
 interface SettingsPage {
-  readonly settings: readonly { readonly key: string }[];
+  readonly settings: readonly { readonly key: string; readonly judgment: { readonly reading: { readonly verdict: string; readonly probability: number } } }[];
   readonly returned: number;
   readonly total: number;
   readonly note?: string;
@@ -41,12 +41,35 @@ interface SettingsPage {
   readonly relatedCommands?: readonly { readonly command: string; readonly why: string }[];
 }
 
+// Synthetic per-query judgments exercise discovery metadata, not a lexical matcher.
+const settingsReadings: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  payment: { 'payments.enabled': 0.99, 'payments.defaultCardId': 0.95, 'payments.budget.dailyItem': 0.95 },
+  'spending limit': { 'payments.budget.dailyItem': 0.99 },
+  'credit card': { 'payments.defaultCardId': 0.99, 'payments.billingAddress.country': 0.95 },
+  'where do my packages go': { 'payments.billingAddress.country': 0.5 },
+  'zzz-no-such-setting-anywhere': {},
+};
+
 async function settingsPage(query: string, extra: Record<string, unknown> = {}): Promise<SettingsPage> {
   const managers = createTestManagers();
-  return await harnessSettingsCatalog(
-    managers.configManager,
-    { query, ...extra } as never,
-  ) as unknown as SettingsPage;
+  const fake = fakePort((_name, _question, rawState) => {
+    const state = rawState as unknown as { query: string; candidate: { name: string } };
+    return noulAnswer(settingsReadings[state.query]?.[state.candidate.name] ?? 0.01);
+  });
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const page = await harnessSettingsCatalog(
+      managers.configManager,
+      { query, ...extra } as never,
+      rankingOptions(),
+    ) as unknown as SettingsPage;
+    // The complete real catalog must reach the reader, including rejected rows.
+    expect(fake.requests).toHaveLength(CONFIG_SCHEMA.length);
+    expect(fake.requests.every(request => request.context?.battery === 'engine.tools.registry-rank')).toBe(true);
+    expect(new Set(fake.requests.map(request => (request.state as unknown as { candidate: { name: string } }).candidate.name)))
+      .toEqual(new Set(CONFIG_SCHEMA.map(setting => setting.key)));
+    return page;
+  } finally { installJudgmentPort(previous); }
 }
 
 const rankingOptions = () => ({ sourceOwner: ordinaryResearchOwner() });
@@ -77,8 +100,7 @@ describe('capability discovery: the settings catalog answers in plain words', ()
     const keys = page.settings.map((setting) => setting.key);
     expect(keys.filter((key) => key.startsWith('payments.budget.')).length).toBeGreaterThan(0);
     expect(keys).toContain('payments.budget.dailyItem');
-    // The whole phrase was found (in the domain vocabulary), so these are not
-    // near misses and must not be labelled as such.
+    // A recorded positive reading is not a lexical near-miss classification.
     expect(page.queryMatch).toBeUndefined();
   });
 
@@ -115,11 +137,14 @@ describe('capability discovery: the settings catalog answers in plain words', ()
     expect(missed.note).toContain('"commands"');
   });
 
-  test('a page that matched only single words says so', async () => {
+  test('an uncertain reading is retained without inventing lexical near misses', async () => {
     const page = await settingsPage('where do my packages go');
     expect(page.returned).toBeGreaterThan(0);
-    expect(page.queryMatch).toBe('relaxed');
-    expect(page.note).toContain('near misses');
+    expect(page.settings.map(setting => setting.key)).toEqual(['payments.billingAddress.country']);
+    expect(page.settings[0]!.judgment.reading.verdict).toBe('uncertain');
+    expect(page.settings[0]!.judgment.reading.probability).toBe(0.5);
+    expect(page.queryMatch).toBeUndefined();
+    expect(page.note ?? '').not.toContain('near misses');
   });
 
   test('every vocabulary domain is a real CONFIG_SCHEMA domain', () => {

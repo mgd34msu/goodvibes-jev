@@ -94,7 +94,12 @@ export function createNativeLegacyImportHost(deps: NativeLegacyImportDependencie
           if (realpathSync(deps.projectRoot) !== projectRoot || scope.root !== projectRoot) throw new NativeImportPrecommitError('conflict', 'Native import workspace changed.');
           const currentScope = deps.scopes.currentScope(projectRoot);
           if (currentScope.scopeId !== scope.scopeId || currentScope.scopeRevision !== scope.scopeRevision || currentScope.root !== scope.root) throw new NativeImportPrecommitError('conflict', 'Native import workspace registration changed.');
-          const sources = command.manifest.sources.map(source => ({ ...deps.readSource(String(source.source.id)), digest: source.digest }));
+          const sources = command.manifest.sources.map((capture): { source: unknown; generation: string | null; digest: string } => {
+            const current = deps.readSource(String(capture.source.id));
+            // Rebuild the canonical manifest envelope, not the store snapshot envelope.
+            // The complete-row generation still binds every persisted source byte.
+            return { source: current.source, generation: current.generation, digest: capture.digest };
+          });
           try { validateLegacyWorkLedgerManifest({ ...command.manifest, sources }); }
           catch { throw new NativeImportPrecommitError('stale_source', 'Complete persisted import sources changed.'); }
         };

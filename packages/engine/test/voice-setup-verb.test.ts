@@ -336,3 +336,19 @@ describe('the install/boot provisioning path on the setup service', () => {
     expect(runs).toBe(0);
   });
 });
+
+
+test('voice install forwards trusted cancellation and rechecks write authorization', async () => {
+  const controller = new AbortController();
+  let lifetime: Parameters<VoiceSetupGatewayService['install']>[0];
+  let allowed = true;
+  const handler = createVoiceInstallHandler({ ...service, install: async options => {
+    lifetime = options; return stubInstall;
+  } });
+  await handler({ context: {}, signal: controller.signal, isAuthorized: scopes => {
+    expect(scopes).toEqual(['write:config']); return allowed;
+  } });
+  expect(lifetime?.signal).toBe(controller.signal);
+  lifetime?.assertCurrent?.(); allowed = false;
+  expect(() => lifetime?.assertCurrent?.()).toThrow('no longer authorized');
+});

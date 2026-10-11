@@ -1,3 +1,5 @@
+import { commitExecPromptAnswer, discardExecPromptAnswer } from '../../runtime/permissions/autonomous-tool-prompts.js';
+import { snapshotJudgmentInput } from '../../gate/judgment-input.js';
 import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 /**
  * interactive.ts, PTY-backed prompt-answer path for the exec tool.
@@ -144,6 +146,7 @@ export function pendingPromptLine(transcript: string): string | null {
  * surfaces it, since surfacing it is itself asking the owner.
  */
 export async function readPendingPrompt(command: string, transcript: string, signal?: AbortSignal): Promise<string | null> {
+  snapshotJudgmentInput({ command, transcript });
   const line = pendingPromptLine(transcript);
   if (line === null) return null;
   const recentOutput = transcript.slice(0, transcript.lastIndexOf('\n') + 1).slice(-RECENT_OUTPUT_CONTEXT_CHARS);
@@ -183,6 +186,11 @@ export interface ExecPromptAsk {
 }
 
 /** The surface's answer. `answered: false` means the ask was declined. */
+export interface ExecPromptExecution {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent: () => void;
+}
+
 export interface ExecPromptAnswer {
   readonly answered: boolean;
   /** The text to feed the waiting child (a trailing newline is appended). */
@@ -202,7 +210,7 @@ export interface ExecInteractionRuntime {
    * absent, prompts are still detected and reported on the result, but cannot
    * be answered.
    */
-  readonly requestPromptAnswer?: ((ask: ExecPromptAsk) => Promise<ExecPromptAnswer>) | undefined;
+  readonly requestPromptAnswer?: ((ask: ExecPromptAsk, execution?: ExecPromptExecution) => Promise<ExecPromptAnswer>) | undefined;
   /** Quiet window before an unterminated last line is read as a possible prompt. Default 1200ms. */
   readonly quietWindowMs?: number | undefined;
 }
@@ -233,6 +241,7 @@ export async function shouldRunInteractive(
 // ── The interactive runner ────────────────────────────────────────────────────
 
 interface InteractiveRunInput {
+  readonly beforeSpawn?: (() => void) | undefined;
   /** Trusted boundary resources and delivery checks; never model arguments. */
   readonly extraStdio?: readonly number[] | undefined;
   readonly beforeOutput?: (() => Promise<void>) | undefined;
@@ -261,6 +270,8 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
   const lifetime = new AbortController();
   const policySignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
 
+  signal?.throwIfAborted();
+  input.beforeSpawn?.();
   const proc = Bun.spawn([...input.sandboxArgv, ...ptyArgv], {
     ...(cwd !== undefined ? { cwd } : {}),
     env,
@@ -342,17 +353,24 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
 
   const brokerPrompt = async (prompt: string): Promise<void> => {
     askInFlight = true;
+    const expectedTranscript = transcript;
+    const assertCurrent = () => {
+      policySignal.throwIfAborted();
+      if (exited || timedOut || cancelled || transcript !== expectedTranscript || pendingPromptLine(transcript) !== prompt) throw new Error('Terminal prompt changed before response');
+    };
+    let answer: ExecPromptAnswer | undefined;
     try {
       await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
-      const answer = await executePolicyCheck(() => interaction.requestPromptAnswer!({
+      answer = await executePolicyCheck(() => interaction.requestPromptAnswer!({
         command: cmdStr,
         prompt,
         recentOutput: transcript.slice(-RECENT_OUTPUT_CONTEXT_CHARS),
         ...(cwd !== undefined ? { workingDirectory: cwd } : {}),
-      }), policySignal);
+      }, { signal: policySignal, assertCurrent }), policySignal);
       await executePolicyCheck(() => input.beforeOutput?.(), policySignal);
       if (exited || timedOut || cancelled) return;
       if (answer.answered && typeof answer.text === 'string') {
+        commitExecPromptAnswer(answer, assertCurrent);
         pendingPrompt = undefined;
         promptsAnswered += 1;
         writeAnswer(answer.text);
@@ -366,6 +384,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
       if (policySignal.aborted) return;
       logger.warn('[ExecInteractive] prompt-answer broker failed; prompt left pending', { error: summarizeError(err) });
     } finally {
+      if (answer) discardExecPromptAnswer(answer);
       askInFlight = false;
     }
   };

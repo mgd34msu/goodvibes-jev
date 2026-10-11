@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { describe, expect, test } from 'bun:test';
 import {
   MAX_SETTING_LIMIT,
@@ -77,6 +79,7 @@ function syntheticConfigManager(count: number) {
   return {
     get: () => undefined,
     getSchema: () => schema,
+    getConfigurationIncarnation: () => 0,
     getHomeDirectory: () => null,
     getConfigPath: () => '/nonexistent/synthetic-config.json',
     getDaemonTierPath: () => '/nonexistent/synthetic-daemon.json',
@@ -89,7 +92,9 @@ function expectNonempty(value: unknown): asserts value is string {
 }
 
 describe('UI product surface gate', () => {
-  test('supports line-accurate conversation navigation by transcript event family', () => {
+  test('supports line-accurate conversation navigation by transcript event family', async () => {
+    const previous = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    try {
     const conversation = new ConversationManager(() => 100);
     conversation.addUserMessage('review the file');
     conversation.addAssistantMessage('Running checks.', {
@@ -100,9 +105,10 @@ describe('UI product surface gate', () => {
     conversation.addToolResults([{ callId: 'call-1', success: true, output: '1 file changed' }]);
     conversation.addSystemMessage('[Approval] Waiting for operator input');
 
-    const toolLine = conversation.nextTranscriptEventLine(0, 'tool_result');
+    const toolLine = await conversation.nextTranscriptEventLine(0, 'tool_result');
     expect(toolLine).toBeGreaterThanOrEqual(0);
-    expect(conversation.prevTranscriptEventLine(999, 'tool_result')).toBe(toolLine);
+    expect(await conversation.prevTranscriptEventLine(999, 'tool_result')).toBe(toolLine);
+    } finally { installJudgmentPort(previous); }
   });
 
   test('routes panel openers through the Agent workspace path', () => {

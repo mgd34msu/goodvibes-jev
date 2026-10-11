@@ -189,6 +189,11 @@ export async function runDaemonBootGuarantees(
   await migrateDaemonNeededCredentialsOnBoot(services.secretsManager, services.shellPaths.homeDirectory);
   await repairGoogleConnectionOnBoot(configManager, services);
   await sweepPlaintextCredentialsOnBoot(configManager, services);
+  // The live watch was armed during graph acquisition, before these owned
+  // migrations. Consume their disk generations before readiness. This uses
+  // the ordinary reload/invalidation path and also observes external edits
+  // that arrived during boot; no same-value or ABA invalidation is suppressed.
+  configManager.flushConfigFileChanges();
 }
 
 /**

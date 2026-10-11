@@ -1,3 +1,4 @@
+import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeNodeRecord, KnowledgeNodeUpsertInput, KnowledgeSourceRecord } from '../types.js';
 import type { KnowledgeSemanticExtraction, KnowledgeSemanticFactInput } from './types.js';
@@ -31,13 +32,15 @@ export async function persistWikiPage(
   store: KnowledgeStore, source: KnowledgeSourceRecord, semantic: KnowledgeSemanticExtraction,
   spaceId: string, input: KnowledgeNodeUpsertInput | undefined,
   writePrepared?: (() => Promise<KnowledgeNodeRecord>) | undefined,
+  assertCurrent: () => void = () => {},
 ): Promise<KnowledgeNodeRecord | undefined> {
   if (!input) return undefined;
   const page = await (writePrepared ? writePrepared() : store.upsertNode(input));
-  await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: page.id,
+  await store.upsertEdge(guardKnowledgeEdgeInput({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: page.id,
     relation: 'compiled_into_page', weight: semantic.extractor === 'llm' ? 1 : 0.6,
     metadata: semanticMetadata(spaceId, { extractor: semantic.extractor }),
-  });
+  }, assertCurrent));
+  assertCurrent();
   return page;
 }
 

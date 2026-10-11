@@ -11,6 +11,8 @@
  * gated write path, the machine's bookkeeping never lands in it, and nothing
  * unresolved is dropped.
  */
+import { useOccasionReadings } from './helpers/occasion-readings.ts';
+useOccasionReadings();
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -114,7 +116,8 @@ function harness(options: { readonly profileText?: string; readonly now?: number
     profile: {
       importantDates: () => profile.importantDates(),
       plans: () => profile.plans(),
-      person: (name) => profile.person(name),
+      person: (name, options) => profile.person(name, options),
+      captureRead: () => profile.captureRead(),
     },
     writer: {
       append: (input) => profile.append(input),
@@ -622,7 +625,8 @@ describe('the calendar mirror', () => {
       profile: {
         importantDates: () => profile.importantDates(),
         plans: () => profile.plans(),
-        person: (name) => profile.person(name),
+        person: (name, options) => profile.person(name, options),
+      captureRead: () => profile.captureRead(),
       },
       writer: {
         append: (input) => profile.append(input),

@@ -6,7 +6,7 @@ This closes the remaining knowledge self-improvement failure-cause site in the
 original THE-13 engine inventory, not THE-19 consolidation, THE-21 ranking, or
 THE-35 calibration. The checked baseline is JEV main `4907f783`.
 
-The original inventory is `docs/inventory/engine.md:1709,1985`. Its decision
+The original inventory is [`docs/inventory/engine.md:1709,1985` preserved in Linear](https://linear.app/the-artificery/issue/TA-13/complete-remaining-engine-judgments-and-shared-hoists). Its decision
 row describes “isBudgetError classifies whether a caught repair error is budget
 or time exhaustion (defer and retry in 6 hours) rather than a real failure” and
 asks for the failure-transience reading pattern. We reuse that structural-first,

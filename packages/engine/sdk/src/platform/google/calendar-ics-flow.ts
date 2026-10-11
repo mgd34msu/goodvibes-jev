@@ -12,6 +12,9 @@
 
 import { CALENDAR_SETTINGS_URL } from './setup-plan.js';
 import { describeElements, looksLikeGoogleSignIn, requireElement } from './browser-elements.js';
+import { consumeGoogleElement } from './browser-elements.js';
+import { ownGoogleBrowser } from './browser-readings.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { GoogleBrowserElement, GoogleBrowserPort } from './types.js';
 
 export type CalendarIcsReason =
@@ -43,8 +46,8 @@ export interface CalendarIcsFailed {
 
 export type CaptureIcsAddressResult = CalendarIcsOk | CalendarIcsNeedsHuman | CalendarIcsFailed;
 
-export interface CaptureIcsAddressOptions {
-  /** When omitted, the first calendar entry in the settings panel is used. */
+export interface CaptureIcsAddressOptions extends JudgmentReadingOptions {
+  /** When omitted, select the primary calendar only when the page makes it unambiguous. */
   readonly calendarName?: string;
 }
 
@@ -55,34 +58,6 @@ function signInNeeded(url: string): CalendarIcsNeedsHuman {
     problem: `Google is asking to sign in instead of showing the calendar settings page (currently at ${url}).`,
     fix: 'Sign in to the Google account by hand in the open browser window, then re-run this step.',
   };
-}
-
-/**
- * Labels that appear in the calendar settings left panel alongside the
- * calendar list itself (section headers and unrelated nav items), so the
- * "pick the first calendar" heuristic below does not grab one of these
- * instead of an actual calendar. This list is a best-effort guess at Google's
- * current copy, not something verified against a live account in this change.
- */
-const NON_CALENDAR_LABELS = new Set([
-  'general',
-  'add calendar',
-  'import & export',
-  'settings for my calendars',
-  'other calendars',
-  'event settings',
-  'view options',
-  'accessibility',
-]);
-
-function isCalendarEntry(element: GoogleBrowserElement): boolean {
-  if (element.role !== 'link' && element.role !== 'button') return false;
-  const normalized = element.name.trim().toLowerCase();
-  return normalized.length > 0 && !NON_CALENDAR_LABELS.has(normalized);
-}
-
-function findDefaultCalendar(elements: readonly GoogleBrowserElement[]): GoogleBrowserElement | null {
-  return elements.find(isCalendarEntry) ?? null;
 }
 
 /** Google's private iCal address shape, per the calendar CalDAV/iCal guide. */
@@ -119,36 +94,36 @@ export async function captureIcsAddress(
   browser: GoogleBrowserPort,
   options: CaptureIcsAddressOptions = {},
 ): Promise<CaptureIcsAddressResult> {
+  browser = ownGoogleBrowser(browser, options).browser;
+  const calendarName = options.calendarName;
   await browser.navigate(CALENDAR_SETTINGS_URL);
   const url = await browser.currentUrl();
   let elements = await browser.snapshot();
 
-  if (looksLikeGoogleSignIn(url, elements)) {
+  if (await looksLikeGoogleSignIn(url, elements, { browser })) {
     return signInNeeded(url);
   }
 
-  const calendarElement = options.calendarName
-    ? (() => {
-        const lookup = requireElement(elements, { nameIncludes: options.calendarName });
-        return lookup.found ? lookup.element : null;
-      })()
-    : findDefaultCalendar(elements);
+  const calendarLookup = await requireElement(elements, {
+    purpose: calendarName ? `Open the calendar requested as ${calendarName} in calendar settings` : 'Open the primary calendar under Settings for my calendars',
+  }, { browser });
+  const calendarElement = calendarLookup.found ? calendarLookup.element : null;
 
   if (!calendarElement) {
     return {
       kind: 'failed',
       reason: 'calendar-not-found',
-      problem: options.calendarName
-        ? `Looked for a calendar named "${options.calendarName}" in the settings panel, but the page showed ${describeElements(elements)}.`
+      problem: calendarName
+        ? `Looked for a calendar named "${calendarName}" in the settings panel, but the page showed ${describeElements(elements)}.`
         : `Could not find any calendar entry in the settings panel. The page showed ${describeElements(elements)}.`,
       fix: `Open ${CALENDAR_SETTINGS_URL} by hand, click the calendar you want under "Settings for my calendars", click "Integrate calendar", and copy the address under "Secret address in iCal format".`,
     };
   }
 
-  await browser.click(calendarElement.ref);
+  await consumeGoogleElement(browser, calendarElement);
   elements = await browser.snapshot();
 
-  const integrateLookup = requireElement(elements, { nameIncludes: 'integrate calendar' });
+  const integrateLookup = await requireElement(elements, { purpose: 'Open the selected calendar integration settings', nameIncludes: 'integrate calendar' }, { browser });
   if (!integrateLookup.found) {
     return {
       kind: 'failed',
@@ -158,7 +133,7 @@ export async function captureIcsAddress(
     };
   }
 
-  await browser.click(integrateLookup.element.ref);
+  await consumeGoogleElement(browser, integrateLookup.element);
   elements = await browser.snapshot();
   const text = await browser.readText();
 

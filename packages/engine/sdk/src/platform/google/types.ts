@@ -1,3 +1,4 @@
+import type { GoogleMutationOwnership } from './setup-effect.js';
 /**
  * Shared contracts for the Google (Gmail + Calendar) setup flows.
  *
@@ -165,6 +166,7 @@ export interface GoogleBrowserElement {
   readonly name: string;
   readonly tag: string;
   readonly value?: string | undefined;
+  readonly disabled?: boolean | undefined;
 }
 
 /**
@@ -172,11 +174,15 @@ export interface GoogleBrowserElement {
  * the full browser tool so the flows can be exercised against a fake.
  */
 export interface GoogleBrowserPort {
+  /** Optional adapter-owned page identity/revision guard; not action permission. */
+  captureAuthority?(): { readonly assertCurrent: () => void };
   navigate(url: string): Promise<{ readonly url: string; readonly title: string }>;
   currentUrl(): Promise<string>;
   snapshot(): Promise<readonly GoogleBrowserElement[]>;
-  click(ref: string): Promise<void>;
-  type(ref: string, text: string, options?: { readonly submit?: boolean }): Promise<void>;
+  /** Fresh contents without superseding the offered snapshot identity. */
+  verifySnapshot?(): Promise<readonly GoogleBrowserElement[]>;
+  click(ref: string, ownership?: { readonly assertCurrent: () => void }): Promise<void>;
+  type(ref: string, text: string, options?: { readonly submit?: boolean; readonly assertCurrent?: () => void }): Promise<void>;
   readText(options?: { readonly maxChars?: number }): Promise<string>;
 }
 
@@ -211,7 +217,7 @@ export interface GoogleCommandPort {
  */
 export interface GoogleConfigPort {
   get(key: string): unknown;
-  set(key: string, value: unknown): void;
+  set(key: string, value: unknown, ownership?: GoogleMutationOwnership): void;
 }
 
 /**
@@ -225,7 +231,7 @@ export interface GoogleConfigPort {
  */
 export interface GoogleSecretPort {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
+  set(key: string, value: string, ownership?: GoogleMutationOwnership): Promise<void>;
   /**
    * Removes a stored value.
    *

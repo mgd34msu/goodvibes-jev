@@ -1,26 +1,10 @@
+import type { AutonomousToolPromptHost } from './autonomous-tool-prompts.js';
 /**
- * permission-composition.ts, the permission side of a runtime composition,
- * written once for both the daemon-grade graph and a pure-client surface.
- *
- * Four things belong together and kept drifting apart when each composition
- * spelled them out itself:
- *
- * 1. the durable user-origin rule store (remembered approvals) and its
- *    fail-safe init, a store that failed to load must make asks PROMPT, never
- *    make them fail;
- * 2. the permission manager built over one ask seam, carrying the
- *    background-agent attribution so a subagent's ask surfaces as that
- *    subagent's ask rather than an anonymous one;
- * 3. the three handlers that must ride the SAME ask seam as a tool permission
- *    (sandbox-boundary escalation, a blocked exec prompt, a loopback fetch),
- *    one learned pattern for a person, not four;
- * 4. the announce-once containment receipt attached to the first contained run.
- *
- * The ask seam is a function, not a broker. A daemon-grade composition hands
- * its in-process `ApprovalBroker.requestApproval`; a surface that has adopted a
- * daemon hands one that raises the ask over the wire and prompts locally. Both
- * get identical behaviour out of everything below, because the difference
- * begins and ends at that one function.
+ * Shared permission composition for client and daemon graphs: durable owner
+ * rules, PermissionManager, sandbox escalation and owned tool sub-operations.
+ * Canonical localhost/PTY callbacks carry the recorded autonomous owner and
+ * explicit workspace constraint. Sandbox escalations carry a final-spawn permit.
+ * The broker callback remains for compatibility APIs outside autonomous calls.
  */
 
 import { join } from 'node:path';
@@ -92,6 +76,7 @@ export function createPolicyRuntimeState(
 }
 
 export interface BrokeredPermissionManagerOptions {
+  readonly workspaceTrust?: AutonomousToolPromptHost['workspaceTrust'];
   readonly requestApproval: ApprovalRaiser;
   readonly configManager: ConfigManager;
   readonly policyRuntimeState: PolicyRuntimeState;
@@ -130,10 +115,12 @@ export function createBrokeredPermissionManager(options: BrokeredPermissionManag
     options.hookDispatcher,
     options.featureFlags,
     options.userRuleStore,
+    { workspaceTrust: options.workspaceTrust },
   );
 }
 
 export interface ApprovalDerivedHandlerOptions {
+  readonly autonomousHost?: AutonomousToolPromptHost | undefined;
   readonly requestApproval: ApprovalRaiser;
   readonly configManager: ConfigManager;
   readonly featureFlags: FeatureFlagManager;
@@ -150,11 +137,10 @@ export interface ApprovalDerivedHandlers {
 }
 
 export function createApprovalDerivedHandlers(options: ApprovalDerivedHandlerOptions): ApprovalDerivedHandlers {
-  // Sandbox boundary escalations ride the SAME ask seam as a permission ask and
-  // an MCP elicitation, one learned pattern, not five. The Jev advisory
-  // tier (dark flag) annotates or opt-in auto-approves the ask;
-  // it never converts allow→deny and never touches the frozen catastrophic block.
+  // The same recorded owner admits exact sandbox plans; final spawn consumes
+  // the permit without widening argv, network, or filesystem containment.
   const sandboxEscalationHandler = buildSandboxEscalationHandler({
+    autonomousHost: options.autonomousHost,
     requestApproval: options.requestApproval,
     configManager: options.configManager,
     featureFlags: options.featureFlags,
@@ -164,11 +150,13 @@ export function createApprovalDerivedHandlers(options: ApprovalDerivedHandlerOpt
   // every surface's approval machinery and the typed answer feeds the same
   // continuing run.
   const execPromptAnswerHandler = buildExecPromptAnswerHandler({
+    autonomousHost: options.autonomousHost,
     requestApproval: options.requestApproval,
   });
   // Localhost dev-server fetches ride the same seam: ask once, one-tap
   // "allow for this project", persisted as fetch.allowLocalhost.
   const localhostFetchApproval = buildLocalhostFetchApproval({
+    autonomousHost: options.autonomousHost,
     requestApproval: options.requestApproval,
     configManager: options.configManager,
   });

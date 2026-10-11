@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { KnowledgeStore, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
@@ -22,13 +22,14 @@ async function fixture() {
   const path = join(root, 'planning.sqlite');
   const store = new KnowledgeStore({ dbPath: path });
   const service = new ProjectPlanningService(store);
-  await service.upsertState({ projectId: 'fixture', state: {
+  const authored: ProjectPlanningStateUpsertInput['state'] = {
     goal: '  Inspect retries\nwithout widening scope  ', scope: 'Only retry helpers', knownContext: ['Keep requests local'],
     openQuestions: [{ id: '2', prompt: 'Which retry helpers belong in scope?', status: 'open' }, { id: 'other', prompt: 'Which tests should run?', status: 'open' }],
     tasks: [{ id: 'inspect', title: 'Inspect retry behavior', verification: ['Run retry tests'] }],
     verificationGates: [{ id: 'tests', description: 'Retry tests pass' }], executionApproved: false,
     metadata: { savedOwner: 'historical fixture', custom: { retain: true } },
-  } });
+  };
+  await service.upsertState({ projectId: 'fixture', state: authored });
   const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
   const output: string[] = []; const opened: string[] = [];
   const ctx = {
@@ -37,7 +38,7 @@ async function fixture() {
     dispatchNativeIntakeTurn: async () => { throw new Error('Historical record edits cannot dispatch native intake'); },
   } as unknown as CommandContext;
   const execute = (args: string[]) => registry.execute('project-plan', args, ctx);
-  return { path, store, service, execute, output, opened };
+  return { path, store, service, execute, output, opened, authored };
 }
 
 async function reopened(path: string) {
@@ -51,8 +52,8 @@ for (const action of ['approve', 'answer']) {
     try {
       const f = await fixture();
       const selected = await f.service.getState({ projectId: 'fixture' });
-      await f.service.upsertState({ projectId: 'fixture', state: { ...selected.state!, goal: 'A replacement goal', executionApproved: true,
-        metadata: { ...selected.state!.metadata, approvedAt: 42, approvedFrom: 'previous-owner' } } });
+      await f.service.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'A replacement goal', executionApproved: true,
+        metadata: { ...f.authored.metadata, approvedAt: 42, approvedFrom: 'previous-owner' } } });
       const before = await reopened(f.path); const bytes = readFileSync(f.path);
       expect(before.state.state!.updatedAt).toBe(selected.state!.updatedAt);
       expect(before.state.revision).not.toEqual(selected.revision);

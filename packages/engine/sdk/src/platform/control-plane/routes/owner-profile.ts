@@ -49,6 +49,7 @@
  * handlers below for the read receipt. The trust gate is not policy and is not
  * here: it lives in the store, and nothing in this file can turn it off.
  */
+import { captureOwnedJson, snapshotJudgmentInput } from '../../gate/judgment-input.js';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { GatewayMethodHandler, GatewayMethodInvocation } from '../method-catalog-shared.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
@@ -223,13 +224,39 @@ function createPersonHandler(
   service: OwnerProfileGatewayService,
   policy: OwnerProfilePolicy,
 ): GatewayMethodHandler {
-  return (invocation) => {
+  return async (invocation) => {
+    const { signal, isAuthorized } = invocation;
+    // Validate original query/body before the merged params view can hide a
+    // shadowed credential or invoke a getter. Context is compared locally only.
+    const input = () => snapshotJudgmentInput({ body: invocation.body ?? null, query: invocation.query ?? null });
+    const original = JSON.stringify(input());
+    const originalContext = invocation.context;
+    const context = JSON.stringify(captureOwnedJson(originalContext));
+    const retained: (() => void)[] = [];
+    const person = service.person;
+    const discloseRead = policy.discloseClosedTierReads;
+    const disclosure = discloseRead();
+    const assertCurrent = () => {
+      signal?.throwIfAborted();
+      if (invocation.signal !== signal || invocation.isAuthorized !== isAuthorized || service.person !== person
+        || (isAuthorized !== undefined && isAuthorized(['read:profile']) !== true)
+        || invocation.context !== originalContext || policy.discloseClosedTierReads !== discloseRead || discloseRead() !== disclosure
+        || JSON.stringify(input()) !== original || JSON.stringify(captureOwnedJson(invocation.context)) !== context) {
+        throw new GatewayVerbError('The profile person request is no longer current.', 'INVALID_ARGUMENT', 400);
+      }
+      signal?.throwIfAborted();
+    };
+    assertCurrent();
     const name = requireString(readInvocationParams(invocation).name, 'name');
-    const lines = service.person(name);
+    const lines = await person.call(service, name, { signal, assertCurrent, retain: check => { retained.push(check); } });
+    assertCurrent();
+    for (const check of retained) check();
+    // Retained source checks may invoke callbacks; fence the caller once more.
+    assertCurrent();
     // Disclosed only when something was actually found: "Used Sarah's details"
     // for a Sarah who is not in the profile would be a false receipt. `People`
     // is closed tier, so the same switch governs it.
-    const disclose = lines.length > 0 && policy.discloseClosedTierReads();
+    const disclose = lines.length > 0 && disclosure;
     return {
       name,
       lines,

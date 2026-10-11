@@ -23,3 +23,24 @@ for (const host of ['user:private-password@127.0.0.1', 'http://user:private-pass
     } finally { await child.close(); }
   });
 }
+
+
+test('the emitted production entrypoint discloses malformed selected-home settings before readiness without echoing parser content', async () => {
+  const f = companionCliFixture();
+  mkdirSync(f.daemonHome, { recursive: true });
+  const settingsPath = join(f.daemonHome, 'settings.json');
+  const malformed = '{ "controlPlane": { "token": "private-malformed-value" }';
+  writeFileSync(settingsPath, malformed);
+  // No composed test launcher: this is the emitted real production entrypoint.
+  const child = f.launch(['--daemon-home', 'selected-daemon', 'serve']);
+  try {
+    expect(await child.waitForExit()).toBe(1);
+    const { stdout, stderr } = child.output();
+    expect(stderr).toContain(settingsPath);
+    expect(stderr).toContain('could not be read as JSON');
+    expect(stdout).not.toContain(' bound:');
+    expect(stdout).not.toContain('host started');
+    expect(stdout + stderr).not.toContain('private-malformed-value');
+    expect(readFileSync(settingsPath, 'utf8')).toBe(malformed);
+  } finally { await child.close(); }
+});

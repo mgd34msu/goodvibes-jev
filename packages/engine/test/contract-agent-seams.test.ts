@@ -8,6 +8,8 @@
  * provider, and the real AgentManager, AgentMessageBus and RuntimeEventBus.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -454,19 +456,37 @@ describe('waking a stopped unit agent', () => {
   }
 
   test('a circuit-breaker stop fails the unit agent with the structured reason the runner wakes on, never holding it', async () => {
-    const taps: LoopTaps = { completed: [], failed: [], cancelled: [] };
-    const failingTurn = () => reply('', [{ id: 'call-x', name: 'nonexistent_tool', arguments: {} }]);
-    const provider = scriptedProvider(Array.from({ length: CONSECUTIVE_ERROR_BREAK }, () => failingTurn));
-    const hooks = scriptedHooks([]);
-    const record = makeRecord({ id: 'agent-breaker', contractId: 'ctr-00000001', contractRole: 'unit', contractUnitId: 'u1' });
+    // Repeated unknown-tool failures are a recorded stuck reading. The
+    // circuit breaker still owns its original error budget and terminal reason.
+    const recorded = fakePort((name) => {
+      if (name !== 'stuck') throw new Error(`Unexpected repeat question: ${name}`);
+      return noulAnswer(.99);
+    });
+    const previous = installJudgmentPort(undefined);
+    installJudgmentPort({ ...recorded.port, async ask(request) {
+      if (request.context?.battery === 'engine.agents.repeat-stuck'
+        && request.context.site === 'agents.repeat-stuck') return recorded.port.ask(request);
+      if (previous) return previous.ask(request);
+      throw new Error('Unexpected judgment outside repeat-stuck fixture');
+    } });
+    try {
+      const taps: LoopTaps = { completed: [], failed: [], cancelled: [] };
+      const failingTurn = () => reply('', [{ id: 'call-x', name: 'nonexistent_tool', arguments: {} }]);
+      const provider = scriptedProvider(Array.from({ length: CONSECUTIVE_ERROR_BREAK }, () => failingTurn));
+      const hooks = scriptedHooks([]);
+      const record = makeRecord({ id: 'agent-breaker', contractId: 'ctr-00000001', contractRole: 'unit', contractUnitId: 'u1' });
 
-    await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, contractHooks: hooks, taps }), record);
+      await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, contractHooks: hooks, taps }), record);
 
-    expect(record.status).toBe('failed');
-    expect(record.failureReason).toBe(CIRCUIT_BREAKER_TRIPPED);
-    expect(hooks.holdCalls).toHaveLength(0);
-    expect(hooks.turns).toHaveLength(CONSECUTIVE_ERROR_BREAK);
-    expect(taps.failed).toEqual([record.id]);
+      expect(record.status).toBe('failed');
+      expect(record.failureReason).toBe(CIRCUIT_BREAKER_TRIPPED);
+      expect(hooks.holdCalls).toHaveLength(0);
+      expect(hooks.turns).toHaveLength(CONSECUTIVE_ERROR_BREAK);
+      expect(taps.failed).toEqual([record.id]);
+      expect(recorded.requests.length).toBeGreaterThan(0);
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 
   test('a completed contract unit is woken only with allowCompleted, and reruns with the nudge', async () => {

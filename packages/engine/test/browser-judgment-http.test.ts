@@ -437,3 +437,14 @@ describe('browser judgment route dispatch', () => {
       { postBrowserJudgment: handler }))!, 'JUDGMENT_INVALID_INPUT');
   });
 });
+
+test('an in-place original principal change while the HTTP body is suspended cannot adopt the replacement actor', async () => {
+  const actor = { ...PRINCIPAL };
+  const body = new ReadableStream<Uint8Array>({ pull(controller) {
+    actor.principalId = 'replacement-body-owner';
+    controller.enqueue(new TextEncoder().encode(JSON.stringify(REQUEST))); controller.close();
+  } }, { highWaterMark: 0 });
+  const { handler, calls } = fixture({ authenticate: () => actor });
+  await expectHeld(await handler(request({ body })), 'JUDGMENT_AUTH_REQUIRED');
+  expect(calls).toHaveLength(0);
+});

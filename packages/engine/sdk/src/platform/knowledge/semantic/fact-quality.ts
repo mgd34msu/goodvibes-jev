@@ -1,4 +1,15 @@
-import type { KnowledgeNodeRecord } from '../types.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import type { KnowledgeNodeRecord, KnowledgeEdgeRecord } from '../types.js';
+import type { KnowledgeStore } from '../store.js';
+import { getKnowledgeSpaceId } from '../spaces.js';
+import { isActiveKnowledgeEdge } from '../projection-utils.js';
+import { isGeneratedKnowledgeSource } from '../generated-projections.js';
+import { captureKnowledgeSourceReferences } from '../source-structural-references.js';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { projectRepairProfileInput, repairProfileSourceText, repairProfileSubject } from './repair-profile.js';
+import { createSemanticWriteGuard, type SemanticWriteGuard } from './primary-source-plan.js';
+import { createRepairFactUsefulnessReader, createKnowledgePageFactUsefulnessReader,
+  KnowledgeRepairFactUsefulnessHeldError as Held, type RepairFactUsefulnessInput } from './repair-usefulness/reader.js';
 import { readString, readStringArray } from './utils.js';
 
 const USEFUL_PAGE_FACT_KINDS = new Set([
@@ -34,7 +45,7 @@ export function semanticFactText(fact: KnowledgeNodeRecord): string {
   ]);
 }
 
-function semanticPageFactText(fact: KnowledgeNodeRecord): string {
+export function semanticPageFactText(fact: KnowledgeNodeRecord): string {
   return semanticFactTextFromParts([
     fact.title,
     fact.summary,
@@ -67,246 +78,184 @@ function normalizeComparableFactPart(value: string): string {
     .replace(/^(?:the|this|these|a|an)\s+/, '');
 }
 
-export function isLowValueFeatureOrSpecText(text: string): boolean {
-  const lower = text.toLowerCase();
-  const remoteAccessoryDetail = /\bremote(?: control)?\b/.test(lower) || /\bbluetooth\b/.test(lower);
-  const nonRemoteFeatureSignal = hasNonRemoteFeatureSignal(lower);
-  if (/\?\s*$/.test(text.trim())) return true;
-  if (/\b(?:semantic-gap-repair|source-backed facts identify|matching sources? (?:exist|identify)|available source-backed details|canonical fact|routing fragments?)\b/.test(lower)) return true;
-  if (isUrlOrPathFragment(lower) && !hasConcreteFeatureSignal(lower)) return true;
-  if (isUrlOrPathFragment(lower) && /\b(source-backed facts identify|current page|database|manuals? database|loading|semantic-gap-repair)\b/.test(lower)) return true;
-  if (isTruncatedManualFragment(lower)) return true;
-  if (/\b(items? supplied|supplied items?|included accessories|optional extras?|sold separately|separate purchase|accessories may vary|contents? of (this )?manual|may be changed|may change|subject to change|without prior notice|available menus? and options?|certified cable|unapproved items?)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(new features? may be added|features? may be added|specifications? may change|product upgrades?|due to product upgrades?)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(recommended hdmi cable types?|hdmi cable types?|ultra high speed hdmi cables?|usb extension cable|extension cable|physically fit)\b/.test(lower)) {
-    return true;
-  }
-  if (/^\s*\d+\s*(yes|no)\b/.test(lower)
-    || /^\s*0?\d+\s*x\s+(?:ethernet|audio|features?|os|webos|ports?)\b/.test(lower)
-    || /^\s*\d+\s*m\s*\(/.test(lower)
-    || /^\s*\d+(hdmi|usb|audio|ports?|features?|smart)\b/.test(lower)
-    || /^\s*0\s+ports\b/.test(lower)
-    || /\b\d+\s+features such as\b/.test(lower)
-    || /\b(case color|hardware cpu cores|hardware gpu cores)\b/.test(lower)
-    || /^\s*\d+\s*kg\d*/.test(lower)) {
-    return true;
-  }
-  if (/\b(series_url|exhibition display|supported audio formats|supported video formats|supported picture formats)\b/.test(lower)) {
-    return true;
-  }
-  if (/\.\.\.|…/.test(text)) {
-    return true;
-  }
-  if (hasRepeatedLeadingPhrase(lower)) {
-    return true;
-  }
-  if (/\b(?:amd\s+freesync|motion interpolation|selected features?|nano cell technology|hdmi quantity|ports quantity)\b[\s\S]{0,220}\b(?:amd\s+freesync|motion interpolation|selected features?|nano cell technology|hdmi quantity|ports quantity)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(selected features?|ranking system|ranked by|affiliate|associate program|latest price|view latest|buy now|add to cart|marketplace|retailer|store listing|seller listing|sponsored listing)\b/.test(lower)) {
-    return true;
-  }
-  if (/(^|\.)amazon\.[a-z.]+\b|(^|\.)ebay\.[a-z.]+\b|(^|\.)walmart\.[a-z.]+\b|(^|\.)bestbuy\.[a-z.]+\b|(^|\.)target\.[a-z.]+\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(energy monitoring cutoff|quantity table|table fragment|table debris)\b/.test(lower)) {
-    return true;
-  }
-  if (/^\s*\|/.test(text) || /\|\s*-{2,}\s*\|/.test(text) || (text.match(/\|/g)?.length ?? 0) >= 2) {
-    return true;
-  }
-  if (/\bquantity\b/.test(lower) && /\b(table|cutoff|energy monitoring|source list|series_url)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bcompatibility line\b.*\bper channel\b/.test(lower)) {
-    return true;
-  }
-  if (hasConcreteFeatureSignal(lower)
-    && /\b(history|historical|introduced|developed by|royalty[- ]free|consumer technology association|generic)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(button|buttons|remote control)\b/.test(lower) && /[\u25b2\u25bc\u25c4\u25ba]|[▲▼◄►]|\\u25/.test(text)) {
-    return true;
-  }
-  if (!remoteAccessoryDetail && /\b(may vary|depending (upon|on) (the )?model|depending on country|depending on region)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(fasten|screws?|stand|tip over|overturn|fall over|transporting|move the tv|moving the tv|oils?|lubricants?|cleaning cloth|dry cloth|power cord|electric shock|fire hazard|near water|ventilation|antenna grounding|qualified personnel|qualified service personnel|service personnel|customer service|servicing|repair is required|refer all servicing)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(platform|cabinet|furniture|supporting furniture|television placement|child safety|proper television placement|wall mount|mounting bracket|stand hole)\b/.test(lower)
-    && /\b(support|supports|safe|safely|recommended|install|installation|place|placement|mount|mounting)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(infrared light|remote control sensor|point (the )?remote|aim (the )?remote)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bremote(?: control)?\b/.test(lower)
-    && /\b(accessor(y|ies)|battery|batteries|button|environment|infrared|mr20ga|point|pointer|remote sensor|sap|sensor|shake|voice recognition)\b/.test(lower)
-    && !nonRemoteFeatureSignal) {
-    return true;
-  }
-  if (/\b(speaker\s*compare|equal[- ]power|equal[- ]volume|speaker shopping|speaker recommendations?)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(compare sonic characteristics|listening modes?|listening room|auditioning speakers|speakers side-by-side|same amount of power|money-back guarantee|advisors have listened|best choice for your system|speaker\s*compare listening kit|headphones? brand model)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(more direct comparison|direct comparison|compare products?|product comparison)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(prices? & features?|smart tv prices?|latest price|view latest|check .* specifications.*price|current page|loading\.?)\b/.test(lower)) {
-    return true;
-  }
-  if (/^\s*\d{1,2}\s+(inch|inches)\b/.test(lower) || /^\s*00\s+inch\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(connectivity options include multiple hdmi 2|receive and respond to metadata transmitted through hdmi 2)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(use a certified cable with the hdmi logo|certified hdmi cable|screen may not display|connection error may occur)\b/.test(lower)
-    && /\b(hdmi|cable|connection error|screen may not display)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bultra hd broadcast standards?\b/.test(lower) && /\b(not confirmed|may not|vary|depending)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(usb to serial|service only|external control setup)\b/.test(lower)) {
-    return true;
-  }
-  if (/\brs-?232c\b/.test(lower) && /\b(setup|service only|command|usb to serial)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bexternal devices supported\b/.test(lower)) {
-    return true;
-  }
-  if (/\bsupported codec\b/.test(lower) && /\bexternal devices supported\b/.test(lower)) {
-    return true;
-  }
-  if (/\bhdmi\s+2\.?\s*$/.test(lower) || /\bmultiple hdmi\s+2\.?\s*(ports?)?\s*$/.test(lower)) {
-    return true;
-  }
-  if (/\b(specifications and in the end|present for both models|technical parameters are slightly different|pros and cons in this section|overall \d{2}\b|source list|page title|database entry)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(more actions?|more remote functions?|remote functions?|remote control buttons?|button map|button functions?)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bremote\b/.test(lower)
-    && /\b(shake|pointer|cursor appears|environment|operating environment|voice recognition|recognition performance|point|sensor|press|button|sap|more actions?)\b/.test(lower)
-    && !nonRemoteFeatureSignal) {
-    return true;
-  }
-  if (/\b(sap|secondary audio program)\b/.test(lower) && /\b(button|press|enabled|audio)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(press|pressing|pressed|hold|holding)\b/.test(lower) && /\b(button|remote|key)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bremote\b/.test(lower)
-    && /\b(compatib|mr20ga|wireless module|bluetooth|separate purchase|sold separately|accessor(y|ies))\b/.test(lower)
-    && !/\b(voice|microphone|cursor|pointer|gesture|motion control|universal control)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bif (the )?device (doesn'?t|does not) support\b/.test(lower) && /\bmay not work properly\b/.test(lower)) {
-    return true;
-  }
-  if (/\bdevice (doesn'?t|does not|may not) support it\b/.test(lower) && /\b(work properly|support it)\b/.test(lower)) {
-    return true;
-  }
-  if (/\bchange\b/.test(lower) && /\bsetting to off\b/.test(lower)) {
-    return true;
-  }
-  if (/\bbatter(y|ies)\b/.test(lower) && /\b(remote|button)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(bezel|less than \d+(?:\.\d+)?\s*(mm|cm|inches?)|does not fit|will not fit|fit your tv'?s usb port|usb port may not fit|usb flash drive does not fit|usb cable does not fit)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(warning|caution|risk|hazard|do not|never)\b/.test(lower) && !/\b(feature|supports?|hdmi|usb|hdr|remote|bluetooth)\b/.test(lower)) {
-    return true;
-  }
-  if (/\b(do not place|keep .* away from direct sunlight|high humidity|heat source|ac power source|damage to screen|osd|on screen display|screen should face away|holding the tv|transparent part|speaker grille|avoid touching the screen|failure to do so|connect .* regardless about the order|refer to the manual provided|noise associated with the resolution)\b/.test(lower)) {
-    return true;
-  }
-  return false;
-}
+const FEATURE_KINDS = new Set(['feature', 'capability', 'specification', 'compatibility', 'configuration']);
 
-function hasNonRemoteFeatureSignal(text: string): boolean {
-  return /\b(hdmi|earc|arc|hdr|hdr10|dolby vision|hlg|filmmaker|game optimizer|game mode|gaming|freesync|vrr|allm|4k|uhd|resolution|refresh|webos|airplay|homekit|wi-?fi|ethernet|usb|optical|tuner|atsc|qam|speaker|audio)\b/.test(text);
-}
-
-function isUrlOrPathFragment(value: string): boolean {
-  return /https?:\/\//.test(value)
-    || /\b[a-z0-9-]+\.(com|net|org|io|dev|tv|ca|co\.uk)\/[a-z0-9/_?=&.#-]+/.test(value)
-    || /\b[a-z]{2}\/[a-z0-9/_-]+\/[a-z0-9._-]+/.test(value)
-    || /\b[a-z0-9._-]+\/(specifications?|manuals?|products?|support|features?)\/[a-z0-9._-]+/.test(value);
-}
-
-function isTruncatedManualFragment(value: string): boolean {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return false;
-  const openParens = trimmed.match(/\(/g)?.length ?? 0;
-  const closeParens = trimmed.match(/\)/g)?.length ?? 0;
-  if (openParens > closeParens && /[\w\d]$/.test(trimmed)) return true;
-  return false;
-}
-
-function hasRepeatedLeadingPhrase(value: string): boolean {
-  const words = value
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length < 8) return false;
-  for (let size = 2; size <= Math.min(8, Math.floor(words.length / 2)); size++) {
-    const phrase = words.slice(0, size).join(' ');
-    if (!hasConcreteFeatureSignal(phrase) && size < 3) continue;
-    const rest = words.slice(size).join(' ');
-    if (rest.includes(phrase) && hasConcreteFeatureSignal(phrase)) return true;
-  }
-  return false;
-}
-
-export function hasConcreteFeatureSignal(text: string): boolean {
-  return /\b(hdmi|usb|hdr|hdr10|dolby|vision|earc|arc|bluetooth|wi-?fi|wireless lan|ethernet|voice|remote|game|filmmaker|airplay|chromecast|resolution|4k|8k|refresh|ports?|speakers?|audio|display|screen|apps?|streaming|matter|energy monitoring|scheduling|sensor|battery|z-?wave|zigbee|thread|motion|temperature|humidity|camera|recording|lock|garage|local control|api|automation|atsc|ntsc|qam|tuner|broadcast|rs-?232c|external control)\b/.test(text.toLowerCase());
-}
-
-export function isUsefulKnowledgePageFact(
-  fact: KnowledgeNodeRecord,
-  options: KnowledgePageFactQualityOptions = {},
-): boolean {
-  if (fact.status !== 'active') return false;
-  if (fact.metadata.semanticKind !== 'fact') return false;
+/** Schema/provenance eligibility only. This never authorizes a semantic fact. */
+export function isKnowledgePageFactCandidate(fact: KnowledgeNodeRecord, options: KnowledgePageFactQualityOptions = {}): boolean {
+  if (fact.status !== 'active' || fact.metadata.semanticKind !== 'fact') return false;
   const kind = readString(fact.metadata.factKind) ?? 'note';
   if (!(options.allowedFactKinds ?? USEFUL_PAGE_FACT_KINDS).has(kind)) return false;
-  const text = semanticPageFactText(fact);
-  if (isLowValueFeatureOrSpecText(text)) return false;
-  if (['feature', 'capability', 'specification', 'compatibility', 'configuration'].includes(kind)) {
-    if (!hasPersistedFactSource(fact)) return false;
-    if (!hasConcreteFeatureSignal(text)) return false;
-  }
-  if (options.rejectRemoteAccessoryDetails === true
-    && /\bremote(?: control)?\b/.test(text)
-    && /\b(accessor(y|ies)|battery|batteries|button|environment|infrared|mr20ga|point|pointer|remote sensor|sap|sensor|shake|voice recognition)\b/.test(text)) {
-    return false;
-  }
-  const extractor = readString(fact.metadata.extractor);
-  const confidence = typeof fact.confidence === 'number' ? fact.confidence : 0;
-  if (extractor === 'deterministic' && confidence <= 60 && ['feature', 'capability', 'specification', 'compatibility', 'configuration'].includes(kind)) {
-    return hasConcreteFeatureSignal(text);
-  }
-  return true;
+  return true; // Actual provenance includes graph edges and is resolved by prepare().
 }
 
-function hasPersistedFactSource(fact: KnowledgeNodeRecord): boolean {
-  return Boolean(
-    readString(fact.metadata.sourceId)
-    || fact.sourceId
-    || readStringArray(fact.metadata.sourceIds).length > 0,
-  );
+export interface KnowledgeFactQualityOptions extends KnowledgePageFactQualityOptions {
+  readonly spaceId: string;
+  readonly purpose?: 'knowledge-page' | 'repair' | undefined;
+  readonly query: string;
+  readonly subjects: readonly KnowledgeNodeRecord[];
+  readonly signal?: AbortSignal | undefined;
+  readonly guard?: SemanticWriteGuard | undefined;
+  /** Exact prepared proposals. Their current target rows, including absence, remain guarded. */
+  readonly proposedFacts?: ReadonlySet<KnowledgeNodeRecord> | undefined;
+}
+export interface KnowledgeFactQualityPlan {
+  readonly facts: readonly KnowledgeNodeRecord[];
+  accepts(fact: KnowledgeNodeRecord): boolean;
+  assertCurrent(): void;
+  /** Advance only a successfully persisted, semantically identical prepared proposal. */
+  acknowledgeWritten(fact: KnowledgeNodeRecord): void;
+  acknowledgeEdgeWritten(edge: KnowledgeEdgeRecord): void;
+}
+
+/** Only a changed candidate fact or its support edges can issue this recovery signal. */
+export class KnowledgeFactReadSetStaleError extends Held {
+  constructor(readonly factId: string) { super('stale'); }
+}
+
+function claimFor(fact: KnowledgeNodeRecord): RepairFactUsefulnessInput['fact'] {
+  const labels = fact.metadata.labels;
+  if (labels !== undefined && (!Array.isArray(labels) || !labels.every((item) => typeof item === 'string'))) throw new Held('malformed');
+  return { title: fact.title, kind: readString(fact.metadata.factKind) ?? fact.kind,
+    summary: fact.summary, value: fact.metadata.value, evidence: fact.metadata.evidence,
+    subject: fact.metadata.subject, labels: labels as readonly string[] | undefined, aliases: fact.aliases };
+}
+
+/** Operation-scoped shared factuality + page usefulness. No record is changed by this reader. */
+export function createKnowledgeFactQualityReader(store: KnowledgeStore, options: KnowledgeFactQualityOptions) {
+  const signal = options.signal;
+  const guard = options.guard ?? createSemanticWriteGuard(store, options.signal);
+  const repair = createRepairFactUsefulnessReader({ signal: options.signal });
+  const page = createKnowledgePageFactUsefulnessReader({ signal: options.signal });
+  const ownership: (() => void)[] = [];
+  const policy = () => JSON.stringify({ spaceId: options.spaceId, query: options.query,
+    purpose: options.purpose, allowed: [...(options.allowedFactKinds ?? USEFUL_PAGE_FACT_KINDS)].sort(),
+    rejectRemoteAccessoryDetails: options.rejectRemoteAccessoryDetails === true,
+    subjects: options.subjects, proposed: [...(options.proposedFacts ?? [])] });
+  const originalPolicy = policy();
+  let ports: { site: string; port: ReturnType<typeof judgmentPort>; model: string }[] | undefined;
+  function capture<T>(read: () => T, expected: T = read()): () => void {
+    const identity = read(), version = JSON.stringify(expected);
+    if (JSON.stringify(identity) !== version) throw new Held('stale');
+    const check = () => { if (read() !== identity || JSON.stringify(read()) !== version) throw new Held('stale'); };
+    ownership.push(check); return check;
+  }
+  for (const subject of options.subjects) {
+    if (getKnowledgeSpaceId(subject) !== options.spaceId || subject.status === 'stale') throw new Held('stale');
+    capture(() => store.getNode(subject.id), subject);
+  }
+  function assertCurrent() {
+    if (options.signal !== signal) throw new Held('stale');
+    if (signal?.aborted) throw new Held('aborted');
+    if (policy() !== originalPolicy) throw new Held('stale');
+    guard.assertCurrent(); repair.assertCurrent(); page.assertCurrent();
+    for (const check of ownership) check();
+    for (const { site, port, model } of ports ?? []) {
+      try { if (judgmentPort(site) !== port || port.model !== model) throw new Held('stale'); }
+      catch { throw new Held('stale'); }
+    }
+  }
+  function sourceIdsFor(fact: KnowledgeNodeRecord): readonly string[] {
+    return [...new Set([fact.sourceId, readString(fact.metadata.sourceId), ...readStringArray(fact.metadata.sourceIds),
+      ...store.listEdges().filter((edge) => isActiveKnowledgeEdge(edge) && edge.fromKind === 'source'
+        && edge.toKind === 'node' && edge.toId === fact.id && edge.relation === 'supports_fact').map((edge) => edge.fromId)]
+      .filter((id): id is string => typeof id === 'string' && id.length > 0))].sort();
+  }
+  function factEdges(id: string) {
+    return store.listEdges().filter((edge) => (edge.toKind === 'node' && edge.toId === id && edge.fromKind === 'source' && edge.relation === 'supports_fact')
+      || (edge.fromKind === 'node' && edge.fromId === id && edge.toKind === 'node' && edge.relation === 'describes')).sort((a, b) => a.id.localeCompare(b.id));
+  }
+  async function prepare(candidates: readonly KnowledgeNodeRecord[]): Promise<KnowledgeFactQualityPlan> {
+    assertCurrent();
+    const rows = candidates.map((fact) => {
+      const proposed = options.proposedFacts?.has(fact) === true;
+      const expected = store.getNode(fact.id);
+      let identity = expected;
+      const snapshot = JSON.stringify(fact);
+      if (!proposed && JSON.stringify(expected) !== snapshot) throw new Held('stale');
+      let version = JSON.stringify(expected);
+      let sourceIds = sourceIdsFor(fact);
+      let edges = factEdges(fact.id), edgeVersion = JSON.stringify(edges);
+      const check = () => {
+        const currentEdges = factEdges(fact.id);
+        if (currentEdges.length !== edges.length || currentEdges.some((edge, index) => edge !== edges[index]) || JSON.stringify(currentEdges) !== edgeVersion) throw new KnowledgeFactReadSetStaleError(fact.id);
+        if (JSON.stringify(fact) !== snapshot || store.getNode(fact.id) !== identity || JSON.stringify(store.getNode(fact.id)) !== version
+          || JSON.stringify(sourceIdsFor(fact)) !== JSON.stringify(sourceIds)) throw new KnowledgeFactReadSetStaleError(fact.id);
+      };
+      ownership.push(check);
+      return { fact, proposed, snapshot, sourceIds, check,
+        adoptEdge(edge: KnowledgeEdgeRecord) {
+          const currentEdges = factEdges(fact.id);
+          if (!currentEdges.includes(edge) || !isActiveKnowledgeEdge(edge)
+            || !(edge.relation === 'supports_fact' && edge.toId === fact.id && sourceIds.includes(edge.fromId)
+              || edge.relation === 'describes' && edge.fromId === fact.id && options.subjects.some((subject) => subject.id === edge.toId))) throw new Held('stale');
+          const unaffected = currentEdges.filter((current) => current.id !== edge.id);
+          const expected = edges.filter((current) => current.id !== edge.id);
+          if (unaffected.length !== expected.length || unaffected.some((current, index) => current !== expected[index])) throw new Held('stale');
+          edges = currentEdges; edgeVersion = JSON.stringify(edges);
+        },
+        adopt(written: KnowledgeNodeRecord) {
+          if (!proposed || store.getNode(written.id) !== written || written.id !== fact.id
+            || JSON.stringify(claimFor(written)) !== JSON.stringify(claimFor(fact))
+            || getKnowledgeSpaceId(written) !== options.spaceId || written.status !== 'active'
+            || written.metadata.semanticKind !== 'fact'
+            || sourceIdsFor(written).some((id) => !sourceIds.includes(id))) throw new Held('stale');
+          identity = written; version = JSON.stringify(written);
+          sourceIds = sourceIdsFor(fact);
+        } };
+    });
+    const selected = rows.filter(({ fact }) => getKnowledgeSpaceId(fact) === options.spaceId && isKnowledgePageFactCandidate(fact, options));
+    const subjects = options.subjects.map(repairProfileSubject);
+    const inputs: RepairFactUsefulnessInput[] = selected.map(({ fact, sourceIds }, index) => {
+      const evidence = sourceIds.flatMap((id) => {
+        const source = store.getSource(id), extraction = store.getExtractionBySourceId(id);
+        capture(() => store.getSource(id)); capture(() => store.getExtractionBySourceId(id));
+        if (!source || !extraction || getKnowledgeSpaceId(source) !== options.spaceId || getKnowledgeSpaceId(extraction) !== options.spaceId
+          || (source.status !== 'indexed' && source.status !== 'pending') || isGeneratedKnowledgeSource(source)) return [];
+        const projected = projectRepairProfileInput({ query: options.query, source, extraction, subjects,
+          text: repairProfileSourceText(extraction), structuralReferences: captureKnowledgeSourceReferences(store, source, extraction) });
+        return [{ source: projected.source, extraction: projected.extraction, text: projected.text }];
+      });
+      return { reference: `fact-${index + 1}`, query: options.query, subjects, fact: claimFor(fact), evidence,
+        pagePolicy: { rejectRemoteAccessoryDetails: options.rejectRemoteAccessoryDetails === true } };
+    });
+    // Whole candidate/source batch precedes missing-data checks, caps and the first request.
+    assertJudgmentInput(inputs);
+    if (inputs.some((input) => !input.evidence.length || !input.evidence.some((evidence) => evidence.text.trim()))) throw new Held('unavailable');
+    if (inputs.length) {
+      const sites = [...(options.purpose === 'repair' ? [] : ['engine.knowledge.page-fact-quality']), ...(inputs.some((input) => FEATURE_KINDS.has(input.fact.kind)) || options.purpose === 'repair' ? ['engine.knowledge.repair-fact-usefulness'] : [])];
+      if (!ports) {
+        try { ports = sites.map((site) => { const port = judgmentPort(site); return { site, port, model: port.model }; }); }
+        catch { throw new Held('unconfigured'); }
+      } else for (const site of sites) if (!ports.some((entry) => entry.site === site)) {
+        try { const port = judgmentPort(site); ports.push({ site, port, model: port.model }); } catch { throw new Held('unconfigured'); }
+      }
+    }
+    const featureInputs = inputs.filter((input) => options.purpose === 'repair' || FEATURE_KINDS.has(input.fact.kind)).map(({ pagePolicy: _policy, ...input }) => input);
+    repair.preflight(featureInputs);
+    if (options.purpose !== 'repair') page.preflight(inputs);
+    const featureReadings = await repair.read(featureInputs);
+    assertCurrent();
+    const pageReadings = options.purpose === 'repair' ? featureReadings : await page.read(inputs);
+    assertCurrent();
+    const usefulFeatures = new Set(featureReadings.filter((reading) => reading.useful).map((reading) => reading.reference));
+    const usefulPages = new Set(pageReadings.filter((reading) => reading.useful).map((reading) => reading.reference));
+    const accepted = new Set(selected.filter((_row, index) => {
+      const input = inputs[index]!;
+      return usefulPages.has(input.reference) && (options.purpose !== 'repair' && !FEATURE_KINDS.has(input.fact.kind) || usefulFeatures.has(input.reference));
+    }).map(({ fact }) => fact));
+    return Object.freeze({ facts: Object.freeze([...accepted]), assertCurrent,
+      accepts(fact: KnowledgeNodeRecord) { assertCurrent(); return accepted.has(fact); },
+      acknowledgeEdgeWritten(edge: KnowledgeEdgeRecord) {
+        const row = rows.find((candidate) => accepted.has(candidate.fact) && (edge.relation === 'supports_fact' ? edge.toId : edge.fromId) === candidate.fact.id);
+        if (!row) throw new Held('stale');
+        row.adoptEdge(edge); assertCurrent();
+      },
+      acknowledgeWritten(fact: KnowledgeNodeRecord) {
+        // Check every other lifetime before advancing this one authorized proposal.
+        const row = rows.find((candidate) => candidate.fact.id === fact.id);
+        if (!row || !accepted.has(row.fact)) throw new Held('stale');
+        row.adopt(fact); assertCurrent();
+      } });
+  }
+  return Object.freeze({ prepare, assertCurrent });
 }

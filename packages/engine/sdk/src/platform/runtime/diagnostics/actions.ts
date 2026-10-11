@@ -442,7 +442,7 @@ export class DiagnosticActionDispatcher {
 
     // What the call does is read by Jev, as the gate does; a JudgmentError propagates.
     const classification = await readCallClassification(payload.toolName, payload.args, 'engine.gate.policy-simulation');
-    const result = this._simulator.evaluate(payload.toolName, payload.args, classification);
+    const result = await this._simulator.evaluateAsync(payload.toolName, payload.args, classification);
 
     const diverged = result.diverged;
     const actual = result.actualDecision.allowed ? 'allowed' : 'denied';

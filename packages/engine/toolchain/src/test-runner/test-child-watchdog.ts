@@ -50,10 +50,18 @@ function installParentDeathWatchdog(): void {
     try {
       // Signal 0 delivers nothing; it asks whether the process still exists.
       process.kill(parentPid, 0);
-    } catch {
+    } catch (error) {
+      // Permission and unknown probe failures do not prove parent death. Only
+      // the operating system's no-such-process result authorizes teardown.
+      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) return;
       process.stderr.write(
         `\ngoodvibes: test runner (pid ${parentPid}) is gone; ending this suite rather than outliving it\n`,
       );
+      // Only the parent-created dedicated group may be signalled. Detached
+      // descendants and Windows remain outside this POSIX guarantee.
+      if (process.platform !== 'win32' && process.env.GOODVIBES_TEST_OWN_PROCESS_GROUP === '1') {
+        process.kill(-process.pid, 'SIGKILL');
+      }
       process.exit(PARENT_GONE_EXIT_CODE);
     }
   }, PARENT_POLL_MS);

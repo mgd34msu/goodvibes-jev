@@ -158,7 +158,12 @@ function inlineProblem(text: string): JudgmentInputProblem | undefined {
   const assignments = /(?:^|[\s{[,;&?"'])--?([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|\s)\s*(?=([^\s,;}]+))/g;
   const fields = /(?:^|[\s{[,;&?"'])([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[:=]\s*(?=([^\s,;}]+))/g;
   for (const pattern of [assignments, fields]) {
-    for (const match of text.matchAll(pattern)) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      // A preceding ordinary label can consume the boundary of a credential
+      // declaration in its value ("note: password=..."). Inspect overlaps,
+      // retaining the exact declaration grammar and advancing on every match.
+      pattern.lastIndex = match.index + 1;
       const problem = protectedKey(match[1]!);
       if (problem && literalValue(match[2]!)) return problem;
     }

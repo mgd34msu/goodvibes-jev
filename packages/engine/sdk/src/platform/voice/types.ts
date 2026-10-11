@@ -66,6 +66,7 @@ export interface VoiceSynthesisStreamResult {
 }
 
 export interface VoiceTranscriptionRequest {
+  readonly signal?: AbortSignal | undefined;
   readonly audio: VoiceAudioArtifact;
   readonly language?: string | undefined;
   readonly modelId?: string | undefined;

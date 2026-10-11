@@ -10,10 +10,20 @@ const NOTIFICATION_PRIVACY_SETTING: HostBooleanSetting = Object.freeze({
   description: 'Keep notifications metadata-only. Only explicit false permits details on supported notification paths.',
 });
 
+// This switch is consumed by the TUI terminal notifier and exposed in its
+// settings workspace. Register it before ingestion so an enabled OSC 9 feature
+// is not sent to the unknown-setting classifier as a possible renamed SDK key.
+const TERMINAL_TURN_END_SETTING: HostBooleanSetting = Object.freeze({
+  key: 'behavior.terminalNotifyTurnEnd',
+  type: 'boolean',
+  default: false,
+  description: 'Send an in-terminal (OSC 9) desktop notification when a turn finishes. Off by default. Fires only when the terminal window is unfocused.',
+});
+
 /** Register TUI-owned settings without changing the shared SDK schema or defaults. */
 export class TuiConfigManager extends ConfigManager {
   constructor(options: ConstructorParameters<typeof ConfigManager>[0]) {
-    super({ ...options, hostSettings: [...(options.hostSettings ?? []), NOTIFICATION_PRIVACY_SETTING] });
+    super({ ...options, hostSettings: [...(options.hostSettings ?? []), NOTIFICATION_PRIVACY_SETTING, TERMINAL_TURN_END_SETTING] });
   }
 }
 

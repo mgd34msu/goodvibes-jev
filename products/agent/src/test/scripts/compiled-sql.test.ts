@@ -10,10 +10,11 @@ import { compileAgent } from '../../../scripts/compile.ts';
 const product = resolve(import.meta.dir, '../../..');
 
 for (const dependencyOwner of ['product', 'engine'] as const) test(`pristine ${dependencyOwner}-owned sql.js embeds WASM and runs a query without runtime files`, async () => {
-  const installed = dirname(createRequire(join(product, 'package.json')).resolve('sql.js/package.json'));
+  const installed = dirname(dirname(createRequire(join(product, 'package.json')).resolve('sql.js/dist/sql-wasm.js')));
+  const installedVersion = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')).version as string;
   const installedSource = readFileSync(join(installed, 'dist/sql-wasm.js'), 'utf8');
   const wasm = readFileSync(join(installed, 'dist/sql-wasm.wasm'));
-  const injection = `if(!Ea&&typeof Buffer!=="undefined"){Ea=new Uint8Array(Buffer.from("${wasm.toString('base64')}","base64"));}`;
+  const injection = `if(!Fa&&typeof Buffer!=="undefined"){Fa=new Uint8Array(Buffer.from("${wasm.toString('base64')}","base64"));}`;
   // Older prebuilds may have patched a developer's install already. Always
   // exercise the pristine upstream shape, entirely inside this owned fixture.
   const pristine = installedSource.replace(injection, '');
@@ -25,12 +26,12 @@ for (const dependencyOwner of ['product', 'engine'] as const) test(`pristine ${d
   try {
     mkdirSync(join(sql, 'dist'), { recursive: true });
     mkdirSync(isolated);
-    const dependencies = dependencyOwner === 'engine' ? { '@goodvibes-jev/engine': 'workspace:*' } : { 'sql.js': '1.14.1' };
+    const dependencies = dependencyOwner === 'engine' ? { '@goodvibes-jev/engine': 'workspace:*' } : { 'sql.js': installedVersion };
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'synthetic-sql-consumer', dependencies }));
     if (dependencyOwner === 'engine') {
       mkdirSync(join(dir, 'node_modules/@goodvibes-jev'), { recursive: true });
       symlinkSync(engine, join(dir, 'node_modules/@goodvibes-jev/engine'));
-      writeFileSync(join(engine, 'package.json'), JSON.stringify({ name: '@goodvibes-jev/engine', version: '1.0.0', main: 'index.js', dependencies: { 'sql.js': '1.14.1' } }));
+      writeFileSync(join(engine, 'package.json'), JSON.stringify({ name: '@goodvibes-jev/engine', version: '1.0.0', main: 'index.js', dependencies: { 'sql.js': installedVersion } }));
       writeFileSync(join(engine, 'index.js'), `export { default } from 'sql.js';`);
     }
     copyFileSync(join(installed, 'package.json'), join(sql, 'package.json'));

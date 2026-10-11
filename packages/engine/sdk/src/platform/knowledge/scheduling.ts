@@ -30,6 +30,7 @@ export class KnowledgeScheduleService {
    * composed a graph, answered one question and disposed.
    */
   private disposed = false;
+  private readonly initialization: Promise<void>;
 
   constructor(private readonly context: KnowledgeSchedulingContext) {
     this.jobs = [
@@ -44,10 +45,14 @@ export class KnowledgeScheduleService {
       { id: 'knowledge-light-consolidation', kind: 'light-consolidation', title: 'Light Consolidation', description: 'Score recent usage, refresh candidate promotions, and write a deterministic consolidation report.', defaultMode: 'background', metadata: { category: 'consolidation' } },
       { id: 'knowledge-deep-consolidation', kind: 'deep-consolidation', title: 'Deep Consolidation', description: 'Run the full consolidation loop, including high-confidence memory promotion and deterministic reporting.', defaultMode: 'background', metadata: { category: 'consolidation' } },
     ];
-    void this.initializeSchedules().catch((error) => {
+    this.initialization = this.initializeSchedules();
+    void this.initialization.catch((error) => {
       logger.warn('Knowledge schedule initialization failed', { error: summarizeError(error) });
     });
   }
+
+  /** Completes after bootstrap writes and initial timer reconciliation. */
+  whenReady(): Promise<void> { return this.initialization; }
 
   listJobs(): readonly KnowledgeJobRecord[] {
     return this.jobs;

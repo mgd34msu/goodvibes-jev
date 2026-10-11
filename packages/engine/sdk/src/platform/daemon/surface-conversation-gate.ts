@@ -1,3 +1,7 @@
+import { inboundIntent } from './batteries/conversation-gate.js';
+import { assertSynchronousCurrent, daemonReadingPort } from './reading-lifetime.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { CallOptions } from '@goodvibes-jev/judgment/decisions';
 /**
  * The conversation-first spawn gate, at the shared surface spawn boundary.
  *
@@ -27,7 +31,6 @@ import type { RouteBindingManager } from '../channels/index.js';
 import type { SharedSessionBroker } from '../control-plane/index.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
 import {
-  classifyInboundIntent,
   isGatedSurface,
   readConversationGateConfig,
   renderWorkProposalMessage,
@@ -64,6 +67,8 @@ export interface SurfaceIngressOrigin {
 export type SpawnInput = Parameters<AgentManager['spawn']>[0];
 
 export interface ConversationGateDeps {
+  readonly readingOptions?: CallOptions | undefined;
+  readonly captureReadingSource?: ((origin: SurfaceIngressOrigin | null) => () => void) | undefined;
   readonly configManager: ConversationGateConfigReader;
   readonly routeBindings: Pick<RouteBindingManager, 'getBinding' | 'resolve'>;
   readonly sessionBroker: Pick<SharedSessionBroker, 'getSession' | 'bindAgent'>;
@@ -91,13 +96,13 @@ export interface ConversationGateDeps {
  * early-returns on, so no adapter needs gate-specific code and a new adapter
  * cannot forget to participate.
  */
-export function gateSurfaceSpawn(
+export async function gateSurfaceSpawn(
   deps: ConversationGateDeps,
   origin: SurfaceIngressOrigin | null,
   input: SpawnInput,
   logLabel?: string,
   sessionId?: string,
-): AgentRecord | Response {
+): Promise<AgentRecord | Response> {
   const store = deps.workProposals;
   if (!store) return deps.trySpawnAgent(input, logLabel, sessionId);
 
@@ -108,9 +113,33 @@ export function gateSurfaceSpawn(
 
   // Classify the message the OWNER sent, not the enriched prompt the broker
   // built from it, the enrichment adds framing that would read as work.
-  const inboundText = origin?.text ?? input.task;
-  const intent = classifyInboundIntent(inboundText);
-  const needsAgreement = config.mode === 'confirm-all' || intent.kind === 'work';
+  const options = deps.readingOptions ?? {};
+  const source = JSON.stringify(captureOwnedJson(origin));
+  const sourceCurrent = deps.captureReadingSource?.(origin);
+  const inputSource = JSON.stringify(captureOwnedJson(input));
+  const configSource = JSON.stringify(config);
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted();
+    assertSynchronousCurrent(options.beforeAttempt);
+    assertSynchronousCurrent(sourceCurrent);
+    if (JSON.stringify(origin) !== source || JSON.stringify(input) !== inputSource
+      || JSON.stringify(readConversationGateConfig(deps.configManager)) !== configSource) {
+      throw new Error('Conversation gate source is no longer current');
+    }
+  };
+  assertCurrent();
+  const inboundText = snapshotJudgmentInput(origin?.text ?? input.task ?? '') as string;
+  // Also screen the actual task before retaining it in a pending proposal.
+  snapshotJudgmentInput(input.task);
+  const result = await inboundIntent.read(daemonReadingPort('daemon.inbound-intent', assertCurrent, options.signal), null, inboundText, { ...options, beforeAttempt: assertCurrent });
+  assertCurrent();
+  if (result.reading.outcome !== 'act') {
+    result.recordAction('held: inbound intent unsettled');
+    return Response.json({ acknowledged: true, queued: false, outcome: 'work-intent-unsettled' }, { status: 202 });
+  }
+  const needsAgreement = config.mode === 'confirm-all' || result.reading.choice === 'work';
+  result.recordAction(needsAgreement ? 'propose-work' : 'conversational-response');
+  assertCurrent();
 
   if (!needsAgreement) {
     // Conversation still gets a real reply, it just must not become a
@@ -135,7 +164,7 @@ export function gateSurfaceSpawn(
     );
   }
 
-  const summary = intent.kind === 'work' ? intent.summary : summarizeWorkRequest(inboundText ?? '');
+  const summary = summarizeWorkRequest(inboundText);
   const binding = resolveOriginBinding(deps, origin, sessionId);
   const proposal = store.create({
     surfaceKind: origin?.surface ?? 'unknown',
@@ -155,19 +184,22 @@ export function gateSurfaceSpawn(
   // wire. Until then listPending excludes it, so a message arriving in the
   // meantime is treated as what it is rather than as an answer to something
   // the owner was never shown. Fails closed: any refusal drops the proposal.
-  void deliverProposalNotice(deps, binding, renderWorkProposalMessage({ summary, expiresInMs: config.proposalTtlMs }))
-    .then((outcome) => {
-      if (outcome.delivered) {
-        store.markDelivered(proposal.id);
-        return;
-      }
-      store.markUndeliverable(proposal.id, outcome.reason);
-    });
+  const delivery = await deliverProposalNotice(deps, binding, renderWorkProposalMessage({ summary, expiresInMs: config.proposalTtlMs }));
+  try { assertCurrent(); }
+  catch (error) { store.markUndeliverable(proposal.id, 'source-invalidated'); throw error; }
+  if (!delivery.delivered) {
+    store.markUndeliverable(proposal.id, delivery.reason);
+    return Response.json({ acknowledged: true, queued: false, outcome: 'work-proposal-undelivered' }, { status: 202 });
+  }
+  const delivered = store.markDelivered(proposal.id);
+  if (!delivered || !store.listPending().includes(delivered)) {
+    return Response.json({ acknowledged: true, queued: false, outcome: 'work-proposal-expired' }, { status: 202 });
+  }
 
   logger.info('Conversation gate proposed a workstream instead of starting one', {
     surface: origin?.surface ?? 'unknown',
     proposalId: proposal.id,
-    reason: config.mode === 'confirm-all' ? 'confirm-all-mode' : intent.reason,
+    reason: config.mode === 'confirm-all' ? 'confirm-all-mode' : 'jev-work-intent',
   });
 
   return Response.json({
@@ -216,15 +248,20 @@ export function resolveOriginBinding(
     const session = deps.sessionBroker.getSession(sessionId);
     for (const routeId of session?.routeIds ?? []) {
       const binding = deps.routeBindings.getBinding(routeId);
-      if (binding?.surfaceKind === origin.surface) return binding;
+      if (binding?.surfaceKind === origin.surface
+        && (binding.channelId ?? binding.externalId) === origin.channelId
+        && binding.threadId === origin.threadId) return binding;
     }
   }
   if (!origin.channelId) return undefined;
-  return deps.routeBindings.resolve(
+  const resolved = deps.routeBindings.resolve(
     origin.surface as Parameters<RouteBindingManager['resolve']>[0],
     origin.channelId,
     origin.threadId,
   );
+  return resolved?.surfaceKind === origin.surface
+    && (resolved.channelId ?? resolved.externalId) === origin.channelId
+    && resolved.threadId === origin.threadId ? resolved : undefined;
 }
 
 /**

@@ -285,7 +285,7 @@ describe('remote command', () => {
       },
     });
 
-    await remote!.handler(['dispatch', 'researcher', 'Inspect', 'deployment', 'logs'], ctx);
+    await registry.executeFromOwner('remote', ['dispatch', 'researcher', 'Inspect', 'deployment', 'logs'], ctx, '/remote dispatch researcher Inspect deployment logs');
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(out.join('\n')).toContain('Dispatched remote runner remote-runner-1');
 
@@ -478,7 +478,7 @@ describe('remote command', () => {
     expect(out.join('\n')).toContain('Created remote runner pool ops');
 
     out.length = 0;
-    await remote!.handler(['dispatch-pool', 'ops', 'engineer', 'Triage', 'incident'], ctx);
+    await registry.executeFromOwner('remote', ['dispatch-pool', 'ops', 'engineer', 'Triage', 'incident'], ctx, '/remote dispatch-pool ops engineer Triage incident');
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(out.join('\n')).toContain('Dispatched remote runner remote-runner-pool-1 via pool ops');
 
@@ -547,4 +547,61 @@ describe('remote command', () => {
     await teleport!.handler(['import', bundlePath], ctx);
     expect(out.join('\n')).toContain('Imported teleport bundle');
   });
+});
+
+import { AcpManager } from '@goodvibes-jev/engine/sdk/platform/acp';
+import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PolicyRuntimeState } from '@/runtime/index.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fileURLToPath } from 'node:url';
+
+for (const pooled of [false, true]) test(`direct owner /remote ${pooled ? 'dispatch-pool' : 'dispatch'} carries exact command source to real ACP subprocess`, async () => {
+  resetTestRuntimeServices();
+  const registry = new CommandRegistry(); registerBuiltinCommands(registry);
+  const ctx = createRemoteCommandContext(createRuntimeStore(), []);
+  if (pooled) getTestRemoteRunnerRegistry().createPool({ id: 'proof', label: 'Proof' });
+  const report = join(makeProjectTempDir('acp-command-wire'), 'result.json');
+  const log = new SqliteDecisionLog(':memory:');
+  const synthetic = fakePort((name, question) => {
+    if (question.type === 'noul') return noulAnswer(name === 'mutates' ? 0.97 : 0.03);
+    const answers: Record<string, string> = { disposition: 'act', family: 'generic', kind: 'other', capability: 'generic', hazard: 'none' };
+    return choiceAnswer(question, answers[name] ?? 'none', 0.99);
+  });
+  const port = withDecisionLog(synthetic.port, log);
+  const previous = installJudgmentPort(port); let humans = 0;
+  const config = {
+    isAutoApproveEnabled: () => false, getWorkingDirectory: () => '/synthetic/project',
+    getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
+    getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic/project' }),
+  } as PermissionConfigReader;
+  const manager = new AcpManager({ permissionHost: { port,
+    permissionManager: new PermissionManager(async () => { humans++; throw new Error('No human'); }, config, new PolicyRuntimeState()),
+    signal: new AbortController().signal, config: { onDidInvalidate: () => () => {} },
+  } });
+  (manager as unknown as { agentCmd: string[] }).agentCmd = [process.execPath, '--no-env-file',
+    fileURLToPath(new URL('../../../../../packages/engine/test/fixtures/acp/subagent-permission.ts', import.meta.url)), report];
+  ctx.ops.acpManager = manager;
+  const raw = pooled ? ' /remote dispatch-pool proof engineer  Preserve exact whitespace\n  and boundaries  ' : ' /remote dispatch engineer  Preserve exact whitespace\n  and boundaries  ';
+  const args = pooled ? ['dispatch-pool', 'proof', 'engineer', 'Preserve', 'exact', 'whitespace', 'and', 'boundaries'] : ['dispatch', 'engineer', 'Preserve', 'exact', 'whitespace', 'and', 'boundaries'];
+  const spawn = manager.spawn.bind(manager);
+  let original: string | undefined;
+  manager.spawn = async (task, operation) => { original = operation?.sourceOf().goal; return spawn(task, operation); };
+  try {
+    await registry.executeFromOwner('remote', args, ctx, raw);
+    const results = await manager.waitAll(); expect(results[0]?.success).toBe(true);
+    expect(original).toBe(raw);
+    expect(JSON.parse(readFileSync(report, 'utf8')).result).toEqual({ outcome: { outcome: 'selected', optionId: 'wire-allow' } });
+    expect(humans).toBe(0);
+  } finally { await manager.cancelAll(); installJudgmentPort(previous); log[Symbol.dispose](); }
+}, 10_000);
+
+test('remote dispatch from a model or source-less command cannot fabricate authority from task prose', async () => {
+  resetTestRuntimeServices(); const registry = new CommandRegistry(); registerBuiltinCommands(registry);
+  const ctx = createRemoteCommandContext(createRuntimeStore(), []);
+  const spawn = mock(async () => 'should-not-spawn'); ctx.ops.acpManager = { spawn, cancel: async () => {} };
+  await registry.execute('remote', ['dispatch', 'read', 'the', 'project'], ctx);
+  await registry.executeFromOwner('remote', ['dispatch', 'read', 'the', 'project'], { ...ctx, invokedByModel: true }, '/remote dispatch read the project');
+  expect(spawn).not.toHaveBeenCalled();
 });

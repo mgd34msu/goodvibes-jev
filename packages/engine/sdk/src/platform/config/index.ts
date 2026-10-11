@@ -1,3 +1,5 @@
+export { PostalAddressHeldError, postalConfigKey, readConfigSettingForDisplay } from './postal-address.js';
+export type { PostalKind, PostalParts, PostalReadOptions, PreparedPostalAddress } from './postal-address.js';
 /**
  * Config system barrel export.
  *
@@ -364,12 +366,15 @@ export {
 } from './connector-config-sections.js';
 export {
   SecretsManager,
+  SecretWriteCommittedError,
   SecretStoreUnreadableError,
   describeSecretWriteScope,
   resolveSecretWriteScope,
   secretWriteScopeWasOverridden,
 } from './secrets.js';
 export type {
+  PreparedScopedSecretDeletion,
+  PreparedScopedSecretDeletionFacts,
   LegacyStoreIdentity,
   SecretDeleteOptions,
   SecretRecord,
@@ -379,6 +384,9 @@ export type {
   SecretStorageMode,
   SecretStorageReview,
   SecretWriteOptions,
+  SecretWriteTransition,
+  SecretWriteTransitionFacts,
+  SecretWriteEffectOwner,
   SecretsManagerOptions,
 } from './secrets.js';
 export { ServiceRegistry } from './service-registry.js';
@@ -431,3 +439,8 @@ export type {
 
 export { createAtRestCipher, createDaemonCredentialStore } from './daemon-credential-store.js';
 export type { AtRestCipher, DaemonCredentialStore } from './daemon-credential-store.js';
+
+// Prepared remote SETTINGS substrate. No capture/reference conveys admission.
+export { captureRemoteSettingsPrecondition, inspectRemoteSettingsPrecondition, assertRemoteSettingsPrecondition,
+  applyRemoteSettingsPrecondition, resolvePreparedConfigWriteRoute, assertPreparedConfigWriteRoute } from './settings-precondition-client.js';
+export type { RemoteSettingsPrecondition, RemoteSettingsPreconditionFacts, SettingsPreconditionRequest, SettingsPreconditionReceipt } from './settings-precondition-client.js';

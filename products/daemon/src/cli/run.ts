@@ -17,7 +17,7 @@ import type { DaemonProcessOptions } from '../daemon/process-lifecycle.js';
 import { VERSION } from '../version.js';
 import { createDaemonCliConfiguration, resolveDaemonCliOwnership } from './configuration.js';
 import { parseDaemonCli } from './parser.js';
-import { renderGoodVibesDaemonHelp, renderDaemonCommandHelp, renderGoodVibesVersion } from './help.js';
+import { renderGoodVibesDaemonHelp, renderDaemonCommandHelp, renderGoodVibesVersion, renderDaemonCliCatalog } from './help.js';
 import { runCompletionCommand } from './completion.js';
 import { isRawInterceptCommand } from './command-catalog.js';
 import type { DaemonCliRuntime } from './serve.js';
@@ -54,6 +54,10 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
     for (const warning of cli.warnings) stderr(`[goodvibes-daemon] warning: ${warning}`);
     if (cli.flags.help || cli.command === 'help') {
       const topic = cli.command === 'help' ? cli.commandArgs[0] : cli.rawCommand;
+      if (cli.flags.json) {
+        if (topic !== undefined) return refuse('Machine help requires: goodvibes-daemon --help --json');
+        return result({ exitCode: 0, lines: [renderDaemonCliCatalog()] });
+      }
       const page = topic === undefined ? renderGoodVibesDaemonHelp() : renderDaemonCommandHelp(topic);
       return page === null ? refuse(`Unknown command: ${topic}`) : result({ exitCode: 0, lines: [page, '', PARTIAL] });
     }
@@ -90,6 +94,12 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
       // Provisioning and service commands preserve their stdout receipt even when
       // a nonzero status carries a degraded/absent state.
       return result(await runProvisionWakeModelCommand(cli.commandArgs, { homeDirectory, env }), stdout);
+    }
+    if (cli.command === 'webui' && cli.commandArgs.includes('--json')) {
+      // Machine discovery is an inspection: no migration, settings bootstrap,
+      // network transport, runtime composition, token acquisition or listener.
+      const configuration = createDaemonCliConfiguration(cli.flags, env, options.cwd, { readOnly: true, diagnosticMode: 'structural' });
+      return result(runWebuiCommand(cli.commandArgs, { configManager: configuration.config, baseDirectory: configuration.workingDirectory }));
     }
     const configuration = createDaemonCliConfiguration(cli.flags, env, options.cwd,
       cli.command === 'serve' ? { diagnosticMode: 'structural' } : {});

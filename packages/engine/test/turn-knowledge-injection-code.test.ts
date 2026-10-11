@@ -5,13 +5,13 @@
  * SAME token budget / relevance floor as memory records, tagging each injected line with
  * its source. These are pure-function tests: a fake TurnCodeIndexSource supplies hits +
  * stats, so every honesty gate (empty / provider-mismatch / no-semantic-provider), the
- * similarity→floor projection, budget competition, dedupe, and the flag gate are exercised
+ * supplied-relevance→floor projection, budget competition, dedupe, and the flag gate are exercised
  * directly.
  */
 import { describe, expect, test } from 'bun:test';
 import {
   buildPerTurnKnowledgeInjection,
-  CODE_SIMILARITY_TO_SCORE_SCALE,
+  CODE_RELEVANCE_TO_SCORE_SCALE,
   DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR,
   type TurnCodeIndexSource,
 } from '../sdk/src/platform/agents/turn-knowledge-injection.js';
@@ -66,6 +66,8 @@ const HEALTHY_STATS: Pick<CodeIndexStats, 'available' | 'indexedChunks' | 'embed
 function fakeCodeIndex(hits: CodeContextResult[], statsOverride: Partial<typeof HEALTHY_STATS> = {}): TurnCodeIndexSource {
   return {
     search: async () => hits,
+    // These budget-only fixtures explicitly supply readings; canonical contrary-vector behavior has its own caller suite.
+    rankForInjection: async (_query, hits) => ({ ranked: hits.map(hit => ({ hit, probability: hit.similarity })), assertCurrent: async () => {} }),
     stats: () => ({ ...HEALTHY_STATS, ...statsOverride }),
   };
 }
@@ -87,7 +89,7 @@ function baseInput(over: Partial<Parameters<typeof buildPerTurnKnowledgeInjectio
 
 describe('code injection: honest source labeling within the shared budget', () => {
   test('a code hit above the floor is injected, labeled source=code-index, ingestMode=its match label', async () => {
-    // similarity 0.8 → score 160, above the default floor 95
+    // supplied probability 0.8 → score 152, above the default floor 95
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.8, { label: 'semantic', symbol: 'verify' })]);
     const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
 
@@ -103,7 +105,7 @@ describe('code injection: honest source labeling within the shared budget', () =
 
   test('memory and code compete in one merged, best-first list with parallel source labels', async () => {
     const memory = fakeMemory([makeRecord({ id: 'mem_auth', summary: 'auth module uses JWT rotation', tags: ['auth'], reviewState: 'reviewed', confidence: 90 })]);
-    // code similarity 0.6 → score 120
+    // supplied probability 0.6 → score 114
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.6)]);
     const result = await buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true }));
 
@@ -119,11 +121,11 @@ describe('code injection: honest source labeling within the shared budget', () =
   });
 });
 
-describe('code injection: similarity → floor projection (scale 200)', () => {
+describe('code injection: supplied relevance → floor projection (scale 190)', () => {
   test('boundary: score exactly at the floor is admitted, just under is rejected', async () => {
-    const floor = 100;
-    const atFloor = 0.5; // 0.5 * 200 = 100 === floor
-    const belowFloor = 0.49; // 98 < 100
+    const floor = 95;
+    const atFloor = 0.5; // 0.5 * 190 = 95 === floor
+    const belowFloor = 0.49; // 93.1 < 95
     const inRange = await buildPerTurnKnowledgeInjection(baseInput({
       codeIndex: fakeCodeIndex([makeCodeHit('src/at.ts', atFloor)]),
       codeInjectionEnabled: true,
@@ -141,11 +143,11 @@ describe('code injection: similarity → floor projection (scale 200)', () => {
     expect(under.record.codeInjectionSkipped).toBe('no code chunks cleared the relevance floor');
   });
 
-  test('an unrelated (orthogonal) chunk at similarity ~0.29 never clears the default floor', async () => {
-    const orthogonal = fakeCodeIndex([makeCodeHit('src/unrelated.ts', 0.29)]); // 0.29*200 = 58 < 95
+  test('a supplied low relevance probability never clears the default floor', async () => {
+    const orthogonal = fakeCodeIndex([makeCodeHit('src/unrelated.ts', 0.29)]); // 0.29*190 = 55.1 < 95
     const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: orthogonal, codeInjectionEnabled: true }));
     expect(result.block).toBeNull();
-    expect(CODE_SIMILARITY_TO_SCORE_SCALE).toBe(200);
+    expect(CODE_RELEVANCE_TO_SCORE_SCALE).toBe(190);
   });
 });
 
@@ -211,7 +213,7 @@ describe('code injection: flag/gate off is a hard no-op', () => {
 describe('code injection: budget competition and dedupe', () => {
   test('a lower-scored code hit is dropped for budget before a higher-scored memory record', async () => {
     const memory = fakeMemory([makeRecord({ id: 'mem_hi', summary: 'auth module JWT rotation reviewed and trusted', tags: ['auth'], reviewState: 'reviewed', confidence: 95 })]);
-    const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.5)]); // score 100, lower than the memory record
+    const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.5)]); // score 95, lower than the memory record
     // First measure the full cost, then set budget one token short.
     const full = await buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true, budgetTokens: 100_000 }));
     expect(full.record.injectedIds).toContain('src/auth.ts:10-30');

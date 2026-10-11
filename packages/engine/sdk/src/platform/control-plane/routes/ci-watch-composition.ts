@@ -1,20 +1,5 @@
-/**
- * ci-watch-composition.ts, the CI-watch verb group's construction, as a free
- * function over the same deps object the registrar receives.
- *
- * Split out of routes/register-gateway-verb-groups.ts, which had reached the
- * hand-authored source cap: this was its longest single block, and it is a
- * self-contained composition (one service, its verbs, its auto-minter, its
- * poller) with no shared local state, so it is the one that moves. Same
- * convention as session-broker.ts → session-broker-intent.ts: a free function
- * taking an explicit deps object, with a one-line call left behind.
- *
- * Nothing about the behaviour changes. The order of construction, every
- * optional-dependency degrade, and every comment explaining one are carried
- * over verbatim.
- */
-
-import { randomUUID } from 'node:crypto';
+/** CI gateway composition. Every repair uses a live source owner and recorded Jev admission. */
+import { startAdmittedCiRepair } from '../../ci-watch/autonomous.js';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { ConfigKey } from '../../config/schema.js';
 import { registerCiGatewayMethods } from './ci.js';
@@ -25,7 +10,6 @@ import {
   CiWatchStore,
   createGhCliCiSource,
   registerCiWatchPolling,
-  type FixSessionBrief,
 } from '../../ci-watch/index.js';
 import { parseChannelDeliveryTarget } from '../../channels/delivery/types.js';
 import { logger } from '../../utils/logger.js';
@@ -41,6 +25,9 @@ export type CiWatchCompositionDeps = Pick<
   | 'automationManager'
   | 'stampFixSessionOnApproval'
   | 'requestApproval'
+  | 'ciAutonomousHost'
+  | 'ciNativeContinuationOwner'
+  | 'ciNativeContinuationRevocation'
   | 'onCiAutoWatch'
   | 'workingDirectory'
   | 'watcherRegistry'
@@ -50,12 +37,13 @@ export type CiWatchCompositionDeps = Pick<
 /**
  * CI-watch: the per-job status tool + standing subscriptions. The gh-CLI
  * source and the watch store are always available; the completion notifier
- * binds to the channel delivery router when present, and the opt-in fix-session
- * starts a one-shot isolated automation job when the automation manager is
- * present (absent → the trigger is recorded honestly but no session starts).
+ * binds to the channel delivery router when present. Missing source ownership,
+ * judgment, or automation refuses repair without creating an approval ask.
  */
 export function composeCiWatchGatewayVerbs(catalog: GatewayMethodCatalog, deps: CiWatchCompositionDeps): void {
   const ciWatchService = new CiWatchService({
+    recoverOwner: deps.ciNativeContinuationOwner,
+    revokeOwner: deps.ciNativeContinuationRevocation,
     source: createGhCliCiSource(),
     store: new CiWatchStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'ci-watches.json')),
     ...(deps.channelDeliveryRouter
@@ -71,53 +59,9 @@ export function composeCiWatchGatewayVerbs(catalog: GatewayMethodCatalog, deps: 
           }),
       }
       : {}),
-    ...(deps.automationManager
-      ? { fixSessionStarter: (brief) => startCiFixSession(deps.automationManager!, brief) }
-      : {}),
-    // "Fix this?" on a red run: the offer rides the SAME approval broker as a
-    // permission ask, so every surface's attention machinery renders it;
-    // acceptance starts the fix-session seeded with the failing jobs' logs.
-    // The accepted offer's started session id is stamped back onto the
-    // RESOLVED approval record (broker seam, published live) so the surface
-    // that accepted has an in-process handle, the offerCallId returned below
-    // is what ties the started session to its approval record.
-    ...(deps.stampFixSessionOnApproval
-      ? { stampFixSession: deps.stampFixSessionOnApproval }
-      : {}),
-    ...(deps.requestApproval
-      ? {
-        fixSessionOffer: async (brief: FixSessionBrief): Promise<{ accepted: boolean; offerCallId: string }> => {
-          const where = brief.prNumber !== undefined ? `PR #${brief.prNumber}` : (brief.ref ?? 'watched ref');
-          const offerCallId = `ci-fix-${randomUUID().slice(0, 8)}`;
-          const decision = await deps.requestApproval!({
-            request: {
-              callId: offerCallId,
-              tool: 'ci:fix-session',
-              args: {
-                repo: brief.repo,
-                ...(brief.ref ? { ref: brief.ref } : {}),
-                ...(brief.prNumber !== undefined ? { prNumber: brief.prNumber } : {}),
-                failingJobs: [...brief.failingJobs],
-              },
-              category: 'delegate',
-              analysis: {
-                classification: 'ci-fix-session',
-                riskLevel: 'medium',
-                summary: `CI went red on ${brief.repo} (${where}), start a fix session for ${brief.failingJobs.join(', ') || 'the failing jobs'}?`,
-                reasons: [
-                  `The watched CI run on ${brief.repo} reached a failed verdict.`,
-                  'Accepting starts an isolated fix session seeded with the failing jobs\' logs; declining leaves the red run untouched.',
-                ],
-                surface: 'orchestration',
-                blastRadius: 'delegated',
-              },
-            },
-            metadata: { source: 'ci-watch', repo: brief.repo },
-          });
-          return { accepted: decision.approved, offerCallId };
-        },
-      }
-      : {}),
+    autonomousRepair: input => startAdmittedCiRepair(deps.ciAutonomousHost?.(), input,
+      brief => deps.automationManager ? startCiFixSession(deps.automationManager, brief)
+        : Promise.resolve({ error: 'CI repair automation is unavailable' })),
   });
   registerCiGatewayMethods(catalog, ciWatchService);
   // Self-minting at the push seam: a successful exec containing `git push` /

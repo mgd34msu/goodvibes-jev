@@ -1,3 +1,8 @@
+import { assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
+import { captureOwnedJson } from '../../gate/judgment-input.js';
+import { KnowledgeRepairSourceAuthorityHeldError } from './repair-source-authority/types.js';
+import { createKnowledgeFactQualityReader } from './fact-quality.js';
+import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import { createSemanticNodeSlugPlanner } from './node-slug.js';
 import { writeSupportedRepairSubjectLinks } from './repair-subject-write-plan.js';
 import { createGeneratedClaimReferenceScope, type GeneratedClaimRelinking } from './verification/structural-references.js';
@@ -15,17 +20,15 @@ import type {
 } from '../types.js';
 import { KnowledgeRepairFactUsefulnessHeldError } from './repair-usefulness/types.js';
 import { createRepairFactUsefulnessReader } from './repair-usefulness/reader.js';
-import { createRepairUsefulnessGuard, prepareRepairUsefulness, prepareProposedRepairUsefulness } from './repair-usefulness-plan.js';
+import { createRepairUsefulnessGuard, prepareRepairUsefulness } from './repair-usefulness-plan.js';
 import { deriveRepairProfileFactPass, repairProfileSourceText, repairProfileSubject, type RepairProfileFact } from './repair-profile.js';
 import { captureKnowledgeSourceReferences } from '../source-structural-references.js';
 import { buildKnowledgeSemanticGraphIndex } from './graph-index.js';
 import { factsForSource, linkedObjectsForSource } from './self-improvement-graph.js';
 import { updateRefinementTask } from './self-improvement-tasks.js';
-import { canonicalRepairSubjectNodes, repairSubjectHints } from './repair-subjects.js';
+import { canonicalRepairSubjectNodes, captureRepairSubjectReadSet, repairSubjectHints } from './repair-subjects.js';
 import {
-  classifyRepairFact,
-  selectRepairFactSentences,
-  sourceAuthority,
+  prepareRepairSourceAuthorities,
   type RepairFactClassification,
 } from './repair-fact-selection.js';
 import { isKnowledgeSourceQualityFailure, KnowledgeSourceQualityHeldError } from '../source-quality.js';
@@ -75,17 +78,37 @@ async function promoteRepairSourcesWithinBudget(
   task: KnowledgeRefinementTaskRecord, deadlineAt: number, signal: AbortSignal,
 ): Promise<PromoteRepairSourcesResult> {
   assertSemanticWriteAllowed(signal, context.shouldStop);
+  const requestStore = context.store, requestEnrich = context.enrichSource, requestStop = context.shouldStop;
+  const requestData = () => captureOwnedJson({ spaceId, gap, sourceIds, taskId: task.id, deadlineAt, objectProfiles: context.objectProfiles });
+  const requestVersion = JSON.stringify(requestData());
+  const assertRequestCurrent = () => {
+    assertSemanticWriteAllowed(signal, requestStop);
+    if (context.store !== requestStore || context.enrichSource !== requestEnrich || context.shouldStop !== requestStop
+      || JSON.stringify(requestData()) !== requestVersion) throw new KnowledgeRepairSourceAuthorityHeldError('stale');
+  };
   const targetUsableFactCount = repairTargetUsableFactCount(gap);
-  const subjects = linkedRepairSubjects(context.store, spaceId, gap, context.objectProfiles ?? []);
-  const subjectIds = new Set(subjects.map((subject) => subject.id));
   const usefulness = createRepairFactUsefulnessReader({ signal });
   const generatedClaims = createGeneratedClaimReferenceScope(context.store);
-  const countUsable = (ids: readonly string[]) => countUsableRepairFacts(context.store, spaceId, ids, subjectIds,
-    gap, subjects, usefulness, signal, context.shouldStop);
+  const countUsable = async (ids: readonly string[]) => {
+    // Zero structurally eligible facts is an exact count, not a semantic no.
+    // Keep the complete count read-set live through subsequent task bookkeeping.
+    const emptyGuard = createRepairUsefulnessGuard(context.store, spaceId, gap, [], signal, context.shouldStop);
+    for (const id of ids) { emptyGuard.source(id); emptyGuard.extraction(id); }
+    if (repairSourceFactCandidates(context.store, spaceId, ids).length === 0) {
+      const assertAdmissionCurrent = admitEmptyRepairCount(context.store, spaceId, gap, ids, context.objectProfiles);
+      const assertCurrent = () => { assertRequestCurrent(); emptyGuard.assertCurrent(); assertAdmissionCurrent(); };
+      assertCurrent(); return { count: 0, assertCurrent };
+    }
+    const selected = await linkedRepairSubjects(context.store, spaceId, gap, context.objectProfiles ?? [], signal, context.shouldStop, ids);
+    const prepared = await countUsableRepairFacts(context.store, spaceId, ids, new Set(selected.nodes.map(node => node.id)),
+      gap, selected.nodes, usefulness, signal, context.shouldStop);
+    const assertCurrent = () => { assertRequestCurrent(); selected.assertCurrent(); prepared.assertCurrent(); };
+    assertCurrent(); return { ...prepared, assertCurrent };
+  };
   const linkSubjects = (ids: readonly string[]) => linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
     usefulness, signal, context.shouldStop, generatedClaims.relinking);
   const promote = (ids: readonly string[]) => promoteRepairEvidenceFacts(context.store, spaceId, gap, ids,
-    usefulness, signal, context.shouldStop, generatedClaims.rememberGenerated);
+    usefulness, signal, context.shouldStop, generatedClaims.rememberGenerated, assertRequestCurrent);
   const processedSourceIds: string[] = [];
   if (context.enrichSource) {
     for (const [index, sourceId] of sourceIds.entries()) {
@@ -119,7 +142,7 @@ async function promoteRepairSourcesWithinBudget(
           await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Repair source enrichment did not finish for one accepted source.', {
             sourceId, enrichmentError: error instanceof Error ? error.message : String(error),
             promotedSourceIds: processedSourceIds, promotedFactCount: recoveryUsefulness.count,
-          });
+          }, recoveryUsefulness.assertCurrent);
         });
         if (deadlineAt - Date.now() < 1_000) break;
         continue;
@@ -147,18 +170,18 @@ async function promoteRepairSourcesWithinBudget(
       await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'verified', 'Accepted repair sources were semantically enriched.', {
         promotedSourceIds: promotionSourceIds,
         promotedFactCount: usableFactCount,
-      });
+      }, finalUsefulness.assertCurrent);
     } else if (usableFactCount > 0) {
       await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Accepted repair sources yielded partial subject-linked facts.', {
         promotedSourceIds: promotionSourceIds,
         promotedFactCount: usableFactCount,
         targetPromotedFactCount: targetUsableFactCount,
-      });
+      }, finalUsefulness.assertCurrent);
     } else {
       await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Accepted repair sources did not yield usable subject-linked facts.', {
         promotedSourceIds: promotionSourceIds,
         promotedFactCount: usableFactCount,
-      });
+      }, finalUsefulness.assertCurrent);
     }
   });
   return { promotedFactCount: usableFactCount, repairComplete, promotedSourceIds: promotionSourceIds };
@@ -219,17 +242,17 @@ async function promoteRepairEvidenceFacts(
   reader: ReturnType<typeof createRepairFactUsefulnessReader>,
   signal?: AbortSignal, shouldStop?: () => boolean,
   rememberGenerated?: (fact: KnowledgeNodeRecord) => void,
+  assertRequestCurrent?: () => void,
 ): Promise<number> {
   assertSemanticWriteAllowed(signal, shouldStop);
+  assertRequestCurrent?.();
   const guard = createSemanticWriteGuard(store, signal, shouldStop);
+  guard.watch('repair-request', () => { assertRequestCurrent?.(); return true; });
   // Repeated foreground reads may upsert the identical gap while search runs.
   // Rebase only that timestamp; every intent/provenance/status field must match,
   // and the complete current row is guarded through subsequent judgment awaits.
   const currentGap = store.getNode(gap.id);
   guard.watch(`node:${gap.id}`, () => store.getNode(gap.id), { ...gap, updatedAt: currentGap?.updatedAt ?? gap.updatedAt });
-  guard.watch('repair-subjects', () => linkedRepairSubjects(store, spaceId, gap, []));
-  const subjects = linkedRepairSubjects(store, spaceId, gap, []);
-  if (subjects.length === 0) return 0;
   const inputs: SourceLinkedRepairProfileFactInput[] = [];
   const entries = sourceIds.flatMap((sourceId) => {
     const source = guard.source(sourceId);
@@ -238,14 +261,27 @@ async function promoteRepairEvidenceFacts(
     if (!extraction) return [];
     const text = repairProfileSourceText(extraction);
     if (!text.trim()) return [];
-    return [{ source, extraction, text, authority: sourceAuthority(source) }];
+    return [{ source, extraction, text }];
   });
+  // No extraction text means no fact can be derived or written in this pass.
+  // This is deliberately before subject meaning is read; it does not select a
+  // subject, reject evidence semantically, or authorize any write.
+  if (entries.length === 0) { guard.assertCurrent(); return 0; }
+  const subjectSelection = await linkedRepairSubjects(store, spaceId, gap, [], signal, shouldStop, sourceIds);
+  guard.watch('repair-subject-selection', () => { subjectSelection.assertCurrent(); return true; });
+  const subjects = subjectSelection.nodes;
+  if (subjects.length === 0) return 0;
+  const authorityPlan = await prepareRepairSourceAuthorities({ store, spaceId, gap, subjects, sources: entries,
+    signal, shouldStop, assertCurrent: guard.assertCurrent });
+  guard.assertCurrent(); authorityPlan.assertCurrent();
   const profiles = await deriveRepairProfileFactPass(entries.map(({ source, extraction, text }) => ({
     query: gap.title, source, extraction, text, subjects: subjects.map(repairProfileSubject),
     structuralReferences: captureKnowledgeSourceReferences(store, source, extraction),
   })), { signal });
   guard.assertCurrent();
-  for (const [index, { source, extraction, text, authority }] of entries.entries()) {
+  authorityPlan.assertCurrent();
+  for (const [index, { source, extraction }] of entries.entries()) {
+    const { authority } = authorityPlan.sources[index]!;
     const profileFacts = profiles[index]!;
     for (const profileFact of profileFacts) {
       inputs.push(promotedRepairFactInput({
@@ -262,50 +298,35 @@ async function promoteRepairEvidenceFacts(
         evidence: profileFact.evidence,
       }));
     }
-    const sentences = selectRepairFactSentences({
-      query: gap.title,
-      source,
-      text,
-    });
-    for (const sentence of sentences) {
-      // A selected exact span already represents this evidence. Do not run it
-      // through the separate legacy canonical-value classifier a second time.
-      if (profileFacts.some((fact) => fact.evidence.split('\n\n').includes(sentence))) continue;
-      const classification = classifyRepairFact(sentence);
-      if (!classification) continue;
-      inputs.push(promotedRepairFactInput({
-        store,
-        spaceId,
-        gap,
-        source,
-        extraction,
-        subjects,
-        authority,
-        title: classification.title,
-        summary: classification.summary,
-        classification,
-        evidence: sentence,
-      }));
-    }
   }
-  const usefulnessGuard = createRepairUsefulnessGuard(store, spaceId, gap, subjects, signal, shouldStop);
-  const prepared = await prepareSourceLinkedRepairProfileFacts(inputs, { signal, shouldStop });
-  guard.assertCurrent(); prepared.assertCurrent(); usefulnessGuard.assertCurrent();
-  const useful = await prepareProposedRepairUsefulness({ store, spaceId, gap, subjects, guard: usefulnessGuard, reader,
-    proposals: prepared.plans.map((plan) => ({ factId: plan.factId, sourceIds: plan.sourceIds, claim: {
-      title: plan.input.title, kind: plan.input.classification.kind, summary: plan.input.summary,
-      value: plan.writeData.factMetadata.value, evidence: plan.writeData.factMetadata.evidence,
-      subject: plan.writeData.factMetadata.subject, labels: plan.input.classification.labels, aliases: plan.input.classification.aliases,
-    } })),
-  });
-  // A stored fact may be excluded from a later count. These are newly selected
-  // claims: disagreement holds this complete proposed pass before any writes.
-  if (useful.count !== prepared.plans.length) throw new KnowledgeRepairFactUsefulnessHeldError('not-useful');
+
+  let assertUsefulCurrent = () => { reader.assertCurrent(); };
+  const assertPublicationCurrent = () => { guard.assertCurrent(); authorityPlan.assertCurrent(); assertUsefulCurrent(); };
+  const prepared = await prepareSourceLinkedRepairProfileFacts(inputs, { signal, shouldStop, assertCurrent: assertPublicationCurrent });
+  guard.assertCurrent(); prepared.assertCurrent(); reader.assertCurrent();
+  const proposals = [...new Map(prepared.plans.map((plan) => {
+    const node = repairProfileNodeInput(plan), existing = store.getNode(plan.factId);
+    const fact: KnowledgeNodeRecord = { ...node, id: plan.factId, kind: 'fact', title: plan.input.title,
+      aliases: node.aliases ?? [], status: 'active', confidence: node.confidence ?? 0, metadata: node.metadata ?? {},
+      createdAt: existing?.createdAt ?? 0, updatedAt: existing?.updatedAt ?? 0 };
+    return [fact.id, fact] as const;
+  })).values()];
+  const qualityGuard = createSemanticWriteGuard(store, signal, shouldStop);
+  qualityGuard.watch(`gap:${gap.id}`, () => store.getNode(gap.id), store.getNode(gap.id));
+  qualityGuard.watch('original-usefulness-owner', () => { reader.assertCurrent(); return true; });
+  const quality = await createKnowledgeFactQualityReader(store, { spaceId, purpose: 'repair',
+    query: [gap.title, gap.summary].filter(Boolean).join('\n\n'), subjects, signal, guard: qualityGuard,
+    proposedFacts: new Set(proposals) }).prepare(proposals);
+  guard.assertCurrent(); reader.assertCurrent();
+  if (quality.facts.length !== proposals.length) throw new KnowledgeRepairFactUsefulnessHeldError('not-useful');
+  assertUsefulCurrent = quality.assertCurrent;
   await store.batch(async () => {
-    guard.assertCurrent(); prepared.assertCurrent(); useful.assertCurrent();
-    await prepared.write(rememberGenerated ? { nodeWritten: rememberGenerated } : undefined);
+    guard.assertCurrent(); prepared.assertCurrent(); quality.assertCurrent();
+    await prepared.write({ nodeWritten: (fact) => { quality.acknowledgeWritten(fact); rememberGenerated?.(fact); },
+      edgeWritten: quality.acknowledgeEdgeWritten });
   });
-  return inputs.length;
+  quality.assertCurrent();
+  return proposals.length;
 }
 
 function promotedRepairFactInput(input: {
@@ -384,7 +405,7 @@ export interface PreparedSourceLinkedRepairProfileFacts {
 /** Resolve the entire pass before opening a batch. write() performs no judgments. */
 export async function prepareSourceLinkedRepairProfileFacts(
   inputs: readonly SourceLinkedRepairProfileFactInput[],
-  options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined } = {},
+  options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined; readonly assertCurrent?: (() => void) | undefined } = {},
 ): Promise<PreparedSourceLinkedRepairProfileFacts> {
   assertSemanticWriteAllowed(options.signal, options.shouldStop);
   const store = inputs[0]?.store;
@@ -437,21 +458,21 @@ export async function prepareSourceLinkedRepairProfileFacts(
     plans.push(Object.freeze({ input, factId, sourceIds: Object.freeze([...sourceIds]), primarySourceId, writeData }));
   }
   const nodeSlug = createSemanticNodeSlugPlanner(store);
-  const activation = await store.prepareNodeWrites(plans.map(repairProfileNodeInput).map(nodeSlug), { signal: options.signal, requireAccepted: true });
+  const activation = await store.prepareNodeWrites(plans.map(repairProfileNodeInput).map(nodeSlug), { signal: options.signal, requireAccepted: true, assertCurrent: options.assertCurrent });
   guard.assertCurrent();
   return {
     plans: Object.freeze(plans),
-    assertCurrent: () => { guard.assertCurrent(); store.assertPreparedNodeWrites(activation); },
+    assertCurrent: () => { options.assertCurrent?.(); guard.assertCurrent(); store.assertPreparedNodeWrites(activation); },
     async write(observer?: RepairProfileWriteObserver): Promise<KnowledgeNodeRecord[]> {
       // Callers may have awaited other prepared work since this plan resolved.
       // Validate once at entry, before this pass intentionally changes its rows.
-      guard.assertCurrent();
+      options.assertCurrent?.(); guard.assertCurrent();
       store.assertPreparedNodeWrites(activation);
       const facts: KnowledgeNodeRecord[] = [];
       for (const [index, plan] of plans.entries()) {
         assertSemanticWriteAllowed(options.signal, options.shouldStop);
         facts.push(await writeResolvedSourceLinkedRepairProfileFact(plan, observer,
-          () => assertSemanticWriteAllowed(options.signal, options.shouldStop), () => store.upsertPreparedNode(activation, index)));
+          () => { assertSemanticWriteAllowed(options.signal, options.shouldStop); options.assertCurrent?.(); }, () => store.upsertPreparedNode(activation, index)));
       }
       return facts;
     },
@@ -486,7 +507,7 @@ async function writeResolvedSourceLinkedRepairProfileFact(
   const fact = await (writePrepared ? writePrepared() : input.store.upsertNode(repairProfileNodeInput(plan)));
   observer?.nodeWritten?.(fact);
   assertActive();
-  const supportEdge = await input.store.upsertEdge({
+  const supportEdge = await input.store.upsertEdge(guardKnowledgeEdgeInput({
     fromKind: 'source',
     fromId: input.source.id,
     toKind: 'node',
@@ -494,11 +515,11 @@ async function writeResolvedSourceLinkedRepairProfileFact(
     relation: 'supports_fact',
     weight: supportWeight,
     metadata: writeData.supportMetadata,
-  });
+  }, assertActive));
   observer?.edgeWritten?.(supportEdge);
   for (const subject of input.subjects) {
     assertActive();
-    const describesEdge = await input.store.upsertEdge({
+    const describesEdge = await input.store.upsertEdge(guardKnowledgeEdgeInput({
       fromKind: 'node',
       fromId: fact.id,
       toKind: 'node',
@@ -506,7 +527,7 @@ async function writeResolvedSourceLinkedRepairProfileFact(
       relation: 'describes',
       weight: describesWeight,
       metadata: writeData.describesMetadata,
-    });
+    }, assertActive));
     observer?.edgeWritten?.(describesEdge);
   }
   return fact;
@@ -517,7 +538,13 @@ async function linkPromotedFactsToRepairSubjects(
   reader: ReturnType<typeof createRepairFactUsefulnessReader>, signal?: AbortSignal, shouldStop?: () => boolean,
   generatedClaims?: GeneratedClaimRelinking,
 ): Promise<void> {
-  const subjects = linkedRepairSubjects(store, spaceId, gap, []);
+  // A synchronous empty candidate set has no links to publish. Do not ask for
+  // subject meaning merely to return from an effect-free pass.
+  if (repairSourceFactCandidates(store, spaceId, sourceIds).length === 0) {
+    assertSemanticWriteAllowed(signal, shouldStop); return;
+  }
+  const subjectSelection = await linkedRepairSubjects(store, spaceId, gap, [], signal, shouldStop, sourceIds);
+  const subjects = subjectSelection.nodes;
   if (!subjects.length) return;
   const guard = createRepairUsefulnessGuard(store, spaceId, gap, subjects, signal, shouldStop);
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
@@ -528,16 +555,74 @@ async function linkPromotedFactsToRepairSubjects(
   ]).map((fact) => [fact.id, fact])).values()].filter((fact) => isRepairFactKind(fact) && isRepairFactCompatibleWithSubjects(fact, subjects));
   const prepared = await prepareRepairUsefulness({ store, spaceId, gap, subjects, candidates, guard, reader });
   await writeSupportedRepairSubjectLinks({ store, spaceId, gap, sourceIds, subjects, signal, shouldStop,
-    candidate: prepared.accepts, assertCurrent: prepared.assertCurrent, generatedClaims,
+    candidate: prepared.accepts, assertCurrent: () => { subjectSelection.assertCurrent(); prepared.assertCurrent(); }, generatedClaims,
   });
 }
 
-function linkedRepairSubjects(
+/** Empty counting still authorizes bookkeeping. Retain full raw-row admission
+ * and exact current identities, including replacement/restore ABA, without
+ * asking a model to choose a subject for a fact set that does not exist. */
+function admitEmptyRepairCount(store: KnowledgeStore, spaceId: string, gap: KnowledgeNodeRecord,
+  sourceIds: readonly string[], objectProfiles: readonly KnowledgeObjectProfilePolicy[] | undefined) {
+  const admit = (...args: Parameters<typeof prepareKnowledgeRecordAdmission>) => {
+    try { return prepareKnowledgeRecordAdmission(...args); }
+    catch (error) { if (error instanceof KnowledgeRecordAdmissionHeldError) throw new KnowledgeRepairSourceAuthorityHeldError(error.reason); throw error; }
+  };
+  const evidence = sourceIds.map(id => ({ id, source: store.getSource(id), extraction: store.getExtractionBySourceId(id) }));
+  const admissions = [admit(store, 'node', gap), ...evidence.flatMap(({ source, extraction }) => {
+    const references = source ? { source, extraction, proof: captureKnowledgeSourceReferences(store, source, extraction) } : undefined;
+    return [...(source ? [admit(store, 'source', source, references)] : []),
+      ...(extraction ? [admit(store, 'extraction', extraction, references)] : [])];
+  })];
+  assertKnowledgeRecordContainers({ gap, sourceIds, evidence, objectProfiles }, admissions);
+  for (const record of [gap, ...evidence.flatMap(({ source, extraction }) => [...(source ? [source] : []), ...(extraction ? [extraction] : [])])]) {
+    if (getKnowledgeSpaceId(record) !== spaceId) throw new KnowledgeRepairSourceAuthorityHeldError('foreign-space');
+    for (const key of ['knowledgeSpaceId', 'spaceId', 'namespace']) {
+      const value = record.metadata[key];
+      if (value !== undefined && (typeof value !== 'string' || value.trim() !== spaceId)) throw new KnowledgeRepairSourceAuthorityHeldError('foreign-space');
+    }
+  }
+  return () => {
+    try { store.assertRecordSnapshotFrame(() => {
+      for (const admission of admissions) {
+        try { admission.assertCurrent(); }
+        catch (error) { if (error instanceof KnowledgeRecordAdmissionHeldError) throw new KnowledgeRepairSourceAuthorityHeldError(error.reason); throw error; }
+      }
+      for (const { id, source, extraction } of evidence) {
+        if (store.getSource(id) !== source || store.getExtractionBySourceId(id) !== extraction) throw new KnowledgeRepairSourceAuthorityHeldError('stale');
+      }
+    }); } catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError) throw new KnowledgeRepairSourceAuthorityHeldError(error.reason);
+      throw error;
+    }
+  };
+}
+
+/** A deliberately broad structural superset of link/count candidates. This
+ * never decides usefulness or alignment: only an empty set short-circuits work.
+ * All nonempty sets still use the existing semantic and support readers. */
+function repairSourceFactCandidates(store: KnowledgeStore, spaceId: string, sourceIds: readonly string[]): KnowledgeNodeRecord[] {
+  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  const sources = new Set(sourceIds);
+  const linked = new Set(graph.edges.filter(edge => edge.fromKind === 'source' && sources.has(edge.fromId) && edge.toKind === 'node')
+    .map(edge => edge.toId));
+  const countSourcesByFactId = new Map<string, Set<string>>();
+  for (const edge of graph.edges) {
+    if (edge.fromKind !== 'source' || edge.toKind !== 'node' || edge.relation !== 'supports_fact') continue;
+    const ids = countSourcesByFactId.get(edge.toId) ?? new Set<string>(); ids.add(edge.fromId); countSourcesByFactId.set(edge.toId, ids);
+  }
+  return [...graph.nodesById.values()].filter(node => node.kind === 'fact' && node.status === 'active' && isRepairFactKind(node)
+    && (linked.has(node.id) || exactKnowledgeIds([node.sourceId, readString(node.metadata.sourceId), ...readStringArray(node.metadata.sourceIds)])
+      .some(id => sources.has(id)) || factSourceIds(node, countSourcesByFactId).some(id => sources.has(id))));
+}
+
+async function linkedRepairSubjects(
   store: KnowledgeStore,
   spaceId: string,
   gap: KnowledgeNodeRecord,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): KnowledgeNodeRecord[] {
+  signal?: AbortSignal, shouldStop?: () => boolean, evidenceSourceIds: readonly string[] = [],
+) {
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const edges = graph.edges;
   const nodesById = graph.nodesById;
@@ -548,7 +633,10 @@ function linkedRepairSubjects(
       .filter((edge) => edge.toKind === 'node' && edge.toId === gap.id && edge.fromKind === 'source')
       .map((edge) => edge.fromId),
   ]);
-  return canonicalRepairSubjectNodes({
+  const guard = captureRepairSubjectReadSet(store, gap, evidenceSourceIds, signal, shouldStop);
+  const selected = await canonicalRepairSubjectNodes({ store, spaceId, context: { gap }, signal, shouldStop,
+    evidenceSources: uniqueStrings([...sourceIds, ...evidenceSourceIds]).map(id => store.getSource(id))
+      .filter((source): source is KnowledgeSourceRecord => source !== null),
     text: `${gap.title} ${gap.summary ?? ''}`,
     objectProfiles,
     nodes: [
@@ -559,6 +647,8 @@ function linkedRepairSubjects(
       ...sourceIds.flatMap((sourceId) => linkedObjectsForSource(sourceId, edges, nodesById)),
     ],
   });
+  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  assertCurrent(); return { nodes: selected.nodes, assertCurrent };
 }
 
 async function countUsableRepairFacts(

@@ -1,3 +1,7 @@
+import { captureModelReadingInput } from '../tools/agent-harness-model-reading-source.ts';
+import { types as nodeTypes } from 'node:util';
+import type { Ranked } from '@goodvibes-jev/judgment';
+import { PostalAddressHeldError, postalConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager, ConfigSetting } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../config/host-settings.ts';
 import { getAgentSettingsSchema, type AgentConfigSetting, type AgentHostReader, type AgentSettingsCatalog } from '../config/settings-catalog.ts';
@@ -14,9 +18,11 @@ import {
 import {
   isAgentHiddenSettingKey,
 } from '../config/agent-settings-policy.ts';
-import { settingDomainAliasText } from '../config/settings-search-vocabulary.ts';
-import { catalogSearchTokens, searchCatalog, type CatalogSearchResult } from '../tools/agent-harness-catalog-search.ts';
+import { rankHarnessCatalog, captureCatalogData, type CatalogRankingOptions } from '../tools/agent-harness-catalog-ranking.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import {
+  agentDaemonConfigClient,
+  agentDaemonConfigClientRevision,
   configKeyScope,
   openEffectiveConfigView,
   routeConfigWrite,
@@ -75,6 +81,7 @@ export type HarnessSettingResolution =
   };
 
 export interface HarnessSettingDescriptor {
+  readonly judgment?: Ranked;
   readonly key: string;
   readonly category: string;
   readonly type: ConfigSetting['type'];
@@ -104,6 +111,7 @@ export interface HarnessSettingDescriptor {
 }
 
 export interface HarnessSettingSummary {
+  readonly judgment?: Ranked;
   readonly key: string;
   readonly category: string;
   readonly type: ConfigSetting['type'];
@@ -211,61 +219,6 @@ function findSetting(configManager: AgentSettingsCatalog, rawKey: string): Agent
   return getAgentSettingsSchema(configManager).find((setting) => setting.key === rawKey) ?? null;
 }
 
-/**
- * A key as words: `payments.shippingAddress.line1` -> `payments shipping
- * address line1`. A dotted camel-case identifier is the one part of a setting
- * written in no human's vocabulary, and splitting it is what lets "shipping
- * address" find the seven keys that hold one.
- */
-function settingKeyWords(key: string): string {
-  return key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[._]/g, ' ');
-}
-
-/**
- * Everything a search may match a setting on: the key, the key as words, the
- * description, the type and its allowed values, the validation hint, and the
- * plain words for the key's domain (see config/settings-search-vocabulary.ts).
- *
- * The aliases are indexed, never displayed. A row's `description` is still the
- * schema's own sentence.
- */
-function settingLookupText(setting: AgentConfigSetting): string {
-  return [
-    setting.key,
-    settingKeyWords(setting.key),
-    setting.description,
-    setting.type,
-    ...(setting.enumValues ?? []),
-    setting.validationHint ?? '',
-    settingDomainAliasText(setting.key),
-  ].filter(Boolean).join('\n').toLowerCase();
-}
-
-function matchedTokenCount(tokens: readonly string[], text: string): number {
-  const haystack = text.toLowerCase();
-  return tokens.reduce((count, token) => count + (haystack.includes(token) ? 1 : 0), 0);
-}
-
-/**
- * How well a setting answers the query. A hit on the key outranks a hit on the
- * description, which outranks a hit on a domain alias, an alias is what got
- * the row into the page at all, so it should not also push it to the top over a
- * key that literally says the word.
- */
-function settingRelevance(setting: AgentConfigSetting, query: string): number {
-  const tokens = catalogSearchTokens(query);
-  if (tokens.length === 0) return 0;
-  const keyText = `${setting.key}\n${settingKeyWords(setting.key)}`.toLowerCase();
-  const normalized = query.toLowerCase().trim();
-
-  let score = 0;
-  if (keyText.includes(normalized)) score += 5_000;
-  score += 1_000 * matchedTokenCount(tokens, keyText);
-  score += 100 * matchedTokenCount(tokens, setting.description ?? '');
-  score += 10 * matchedTokenCount(tokens, settingDomainAliasText(setting.key));
-  return score;
-}
-
 function settingCandidate(setting: AgentConfigSetting): HarnessSettingCandidate {
   return {
     key: setting.key,
@@ -335,7 +288,10 @@ function resolveSettingValue(
       return { value, unavailable: false, source: 'local', writable: false, metadataUnavailable: summarizeError(error) };
     }
   }
-  if (!view) return { value: configManager.get(setting.key), unavailable: false };
+  if (!view) {
+    try { return { value: configManager.get(setting.key), unavailable: false }; }
+    catch (error) { if (!(error instanceof PostalAddressHeldError)) throw error; return { value: undefined, unavailable: true, metadataUnavailable: error.message }; }
+  }
   const entry = view.describe(setting.key);
   if (entry.status === 'unavailable') {
     return { value: undefined, unavailable: true, source: entry.source, store: entry.store };
@@ -404,12 +360,14 @@ function harnessSettingCatalog(
   configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
 ): readonly AgentConfigSetting[] {
+  return filterSettingCatalog(getAgentSettingsSchema(configManager), filters);
+}
+
+function filterSettingCatalog(schema: readonly AgentConfigSetting[], filters: HarnessSettingFilters) {
   const key = filters.key?.trim();
   const category = filters.category?.trim();
   const prefix = filters.prefix?.trim();
-
-  return getAgentSettingsSchema(configManager)
-    .filter((setting) => {
+  return schema.filter((setting) => {
       if (key && setting.key !== key) return false;
       if (category && setting.key.split('.')[0] !== category) return false;
       if (prefix && !setting.key.startsWith(prefix)) return false;
@@ -418,35 +376,127 @@ function harnessSettingCatalog(
     });
 }
 
-/**
- * The catalog narrowed by the structural filters, then searched.
- *
- * The search is the shared two-tier one (tools/agent-harness-catalog-search.ts):
- * the whole phrase or every word first, single words only if that found
- * nothing. Matches come back ranked, because a search that returns the right
- * key 400 rows down has not answered anything.
- */
-function searchHarnessSettingSchema(
-  configManager: AgentSettingsCatalog,
-  filters: HarnessSettingFilters = {},
-): CatalogSearchResult<AgentConfigSetting> {
-  const narrowed = harnessSettingCatalog(configManager, filters);
-  const query = filters.query?.trim() ?? '';
-  if (!query) return { matches: narrowed, relaxed: false };
-
-  const found = searchCatalog(narrowed, query, settingLookupText);
-  const ranked = found.matches
-    .map((setting, index) => ({ setting, index, score: settingRelevance(setting, query) }))
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .map(({ setting }) => setting);
-  return { matches: ranked, relaxed: found.relaxed };
+export class SettingsSearchRequiresReadingError extends ToolInputProjectionError {
+  constructor() {
+    super('unavailable');
+    this.message = 'Natural-language settings search requires the asynchronous protected settings reader.';
+  }
 }
 
-function filterHarnessSettingSchema(
-  configManager: AgentSettingsCatalog,
-  filters: HarnessSettingFilters = {},
-): readonly AgentConfigSetting[] {
-  return searchHarnessSettingSchema(configManager, filters).matches;
+/** Synchronous callers may enumerate structural filters, never interpret prose. */
+function filterHarnessSettingSchema(configManager: AgentSettingsCatalog, filters: HarnessSettingFilters = {}): readonly AgentConfigSetting[] {
+  if (filters.query?.trim()) throw new SettingsSearchRequiresReadingError();
+  return harnessSettingCatalog(configManager, filters);
+}
+
+function captureSettingsReadingOptions(options: CatalogRankingOptions) {
+  const { signal, sourceOwner, assertCurrent, retainCurrent } = options;
+  const assertIdentity = () => {
+    signal?.throwIfAborted();
+    if (options.signal !== signal || options.sourceOwner !== sourceOwner || options.assertCurrent !== assertCurrent || options.retainCurrent !== retainCurrent) throw new ToolInputProjectionError('stale');
+  };
+  return { assertIdentity, assertCurrent: () => { assertIdentity(); assertCurrent?.(); } };
+}
+
+/** Bind every own descriptor once; checking never re-reads values through getters.
+ * Strings/functions are exact identity/value comparisons, not repeated privacy scans. */
+export function bindSettingSchemaDescriptors(roots: readonly unknown[]): () => void {
+  const seen = new Set<object>();
+  const bindings: { object: object; prototype: object | null; descriptors: PropertyDescriptorMap; keys: readonly PropertyKey[] }[] = [];
+  const visit = (value: unknown, depth = 0) => {
+    if (depth > 64) throw new ToolInputProjectionError('invalid');
+    if (value === null || typeof value !== 'object' || seen.has(value)) return;
+    if (nodeTypes.isProxy(value) || bindings.length >= 100_000) throw new ToolInputProjectionError('invalid');
+    const prototype = Object.getPrototypeOf(value) as object | null;
+    if (![Object.prototype, Array.prototype, null].includes(prototype)) throw new ToolInputProjectionError('invalid');
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (Array.isArray(value) && (keys.length !== value.length + 1 || keys.some(key => key !== 'length'
+      && (typeof key !== 'string' || !Number.isSafeInteger(Number(key)) || String(Number(key)) !== key || Number(key) < 0 || Number(key) >= value.length)))) throw new ToolInputProjectionError('invalid');
+    if (keys.some(key => !('value' in descriptors[key as keyof typeof descriptors]!))) throw new ToolInputProjectionError('invalid');
+    seen.add(value); bindings.push({ object: value, prototype, descriptors, keys });
+    for (const key of keys) visit(descriptors[key as keyof typeof descriptors]!.value, depth + 1);
+  };
+  for (const root of roots) visit(root);
+  return () => {
+    for (const binding of bindings) {
+      if (Object.getPrototypeOf(binding.object) !== binding.prototype) throw new ToolInputProjectionError('stale');
+      const current = Object.getOwnPropertyDescriptors(binding.object);
+      const keys = Reflect.ownKeys(current);
+      if (keys.length !== binding.keys.length || keys.some((key, index) => key !== binding.keys[index])) throw new ToolInputProjectionError('stale');
+      for (const key of binding.keys) {
+        const expected = binding.descriptors[key as keyof typeof binding.descriptors]!;
+        const actual = current[key as keyof typeof current]!;
+        if (!('value' in actual) || !Object.is(actual.value, expected.value) || actual.writable !== expected.writable
+          || actual.enumerable !== expected.enumerable || actual.configurable !== expected.configurable) throw new ToolInputProjectionError('stale');
+      }
+    }
+  };
+}
+
+/** One complete immutable metadata snapshot, with executable validators bound separately. */
+function captureSettingCatalog(configManager: AgentSettingsCatalog, options: CatalogRankingOptions) {
+  const caller = captureSettingsReadingOptions(options); caller.assertCurrent();
+  const owner = configManager as AgentSettingsCatalog & Partial<Pick<ConfigManager, 'getConfigurationIncarnation' | 'getHomeDirectory'>>;
+  const methods = [configManager.getSchema, configManager.getHostSettingsSchema, owner.getConfigurationIncarnation, owner.getHomeDirectory];
+  const incarnation = owner.getConfigurationIncarnation?.();
+  const home = owner.getHomeDirectory?.();
+  const builtin = configManager.getSchema(), hosts = configManager.getHostSettingsSchema?.();
+  const assertDescriptors = bindSettingSchemaDescriptors([builtin, hosts]);
+  const host = hosts?.find(setting => setting.key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY);
+  // Preserve hidden host metadata for the same complete privacy screen as builtins.
+  // Reject a conflicting discriminator rather than replacing unreviewed source data.
+  const hostDescriptors: Record<string, PropertyDescriptor> | undefined = host ? Object.getOwnPropertyDescriptors(host) : undefined;
+  if (hostDescriptors?.kind && hostDescriptors.kind.value !== 'host') throw new ToolInputProjectionError('invalid');
+  const normalizedHost = hostDescriptors ? Object.defineProperties({}, {
+    ...hostDescriptors, kind: { value: 'host', enumerable: true },
+  }) as AgentConfigSetting : undefined;
+  const source: readonly AgentConfigSetting[] = normalizedHost ? [...builtin, normalizedHost] : builtin;
+  const schema = Object.freeze(source.map(setting => {
+    const { validate, ...data } = Object.getOwnPropertyDescriptors(setting);
+    if (validate && (!('value' in validate) || (validate.value !== undefined && typeof validate.value !== 'function'))) throw new ToolInputProjectionError('invalid');
+    return captureModelReadingInput(Object.defineProperties({}, data)) as AgentConfigSetting;
+  }));
+  const assertCurrent = () => {
+    caller.assertIdentity();
+    if (configManager.getSchema !== methods[0] || configManager.getHostSettingsSchema !== methods[1]
+      || owner.getConfigurationIncarnation !== methods[2] || owner.getHomeDirectory !== methods[3]
+      || owner.getConfigurationIncarnation?.() !== incarnation || owner.getHomeDirectory?.() !== home
+      || configManager.getSchema() !== builtin || configManager.getHostSettingsSchema?.() !== hosts) throw new ToolInputProjectionError('stale');
+    assertDescriptors();
+  };
+  assertCurrent();
+  return { schema, assertCurrent };
+}
+
+type SettingCatalogSnapshot = ReturnType<typeof captureSettingCatalog>;
+
+/** Every structurally eligible row reaches the existing canonical catalog reader. */
+async function readHarnessSettingSchema(configManager: AgentSettingsCatalog, filters: HarnessSettingFilters,
+  options: CatalogRankingOptions, captured: SettingCatalogSnapshot = captureSettingCatalog(configManager, options)) {
+  const capturedFilters = captureModelReadingInput(filters);
+  const filtersJson = JSON.stringify(capturedFilters);
+  const assertFiltersCurrent = () => {
+    if (JSON.stringify(captureModelReadingInput(filters)) !== filtersJson) throw new ToolInputProjectionError('stale');
+  };
+  const assertCurrent = () => { options.assertCurrent?.(); captured.assertCurrent(); assertFiltersCurrent(); };
+  // During ranking the scoped guard already checks the entire schema. Register
+  // the same guard for later consumers only after ranking, avoiding reentrant
+  // outer guards walking the same source again for every candidate callback.
+  const retainSource = () => {
+    options.retainCurrent?.(captured.assertCurrent);
+    options.retainCurrent?.(assertFiltersCurrent);
+  };
+  const catalog = filterSettingCatalog(captured.schema, capturedFilters);
+  const query = capturedFilters.query?.trim();
+  if (!query) { retainSource(); return { matches: catalog.map(entry => ({ entry, judgment: undefined })), total: catalog.length, assertCurrent }; }
+  const ranked = await rankHarnessCatalog(catalog, query, setting => ({
+    id: setting.key,
+    description: [setting.description, setting.type, ...(setting.enumValues ?? []), setting.validationHint ?? ''].join('\n'),
+    evidence: setting,
+  }), 'agent.harness.settings', { ...options, assertCurrent, requirePreservedSource: true });
+  assertCurrent(); retainSource();
+  return { ...ranked, total: catalog.length, assertCurrent };
 }
 
 /**
@@ -467,12 +517,13 @@ export function countHarnessSettingCatalog(
   return harnessSettingCatalog(configManager, filters).length;
 }
 
-/** True when a page's rows matched single words rather than the whole query. */
+/** Structural compatibility only. Semantic pages expose their recorded judgments. */
 export function harnessSettingQueryRelaxed(
   configManager: AgentSettingsCatalog,
   filters: HarnessSettingFilters = {},
 ): boolean {
-  return searchHarnessSettingSchema(configManager, filters).relaxed;
+  filterHarnessSettingSchema(configManager, filters);
+  return false;
 }
 
 export function listHarnessSettings(
@@ -499,19 +550,42 @@ export function listHarnessSettings(
  * agent's own store is what made the same key name read blank in one place and
  * set in another with nothing explaining why.
  */
+export async function listEffectiveHarnessSettingsPage(
+  configManager: ConfigManager,
+  filters: HarnessSettingFilters = {},
+  options: CatalogRankingOptions & { readonly includeParameters?: boolean; readonly routing?: AgentConfigRoutingOptions } = {},
+): Promise<{ readonly settings: readonly (HarnessSettingDescriptor | HarnessSettingSummary)[]; readonly matched: number; readonly total: number }> {
+  const caller = captureSettingsReadingOptions(options); caller.assertCurrent();
+  const incarnation = configManager.getConfigurationIncarnation();
+  const home = configManager.getHomeDirectory();
+  const client = agentDaemonConfigClient(); const clientRevision = agentDaemonConfigClientRevision();
+  const includeParameters = options.includeParameters;
+  const routing = captureCatalogData(options.routing ?? {});
+  const routingJson = JSON.stringify(routing);
+  const assertOwner = () => {
+    caller.assertCurrent();
+    if (options.includeParameters !== includeParameters || JSON.stringify(captureCatalogData(options.routing ?? {})) !== routingJson) throw new ToolInputProjectionError('stale');
+    if (configManager.getConfigurationIncarnation() !== incarnation || configManager.getHomeDirectory() !== home
+      || agentDaemonConfigClient() !== client || agentDaemonConfigClientRevision() !== clientRevision) throw new ToolInputProjectionError('stale');
+  };
+  const selected = await readHarnessSettingSchema(configManager, filters, { ...options, assertCurrent: assertOwner });
+  selected.assertCurrent();
+  const view = await openEffectiveConfigView(configManager, { homeDir: home ?? undefined, ...routing });
+  selected.assertCurrent();
+  const settings = selected.matches.slice(0, clampLimit(filters.limit)).map(({ entry, judgment }) => ({
+    ...(includeParameters ? describeHarnessSetting(configManager, entry, { view }) : describeHarnessSettingSummary(configManager, entry, { view })),
+    ...(judgment ? { judgment } : {}),
+  }));
+  selected.assertCurrent();
+  return { settings, matched: selected.matches.length, total: selected.total };
+}
+
 export async function listEffectiveHarnessSettings(
   configManager: ConfigManager,
   filters: HarnessSettingFilters = {},
-  options: { readonly includeParameters?: boolean; readonly routing?: AgentConfigRoutingOptions } = {},
+  options: CatalogRankingOptions & { readonly includeParameters?: boolean; readonly routing?: AgentConfigRoutingOptions } = {},
 ): Promise<readonly (HarnessSettingDescriptor | HarnessSettingSummary)[]> {
-  const view = await openEffectiveConfigView(configManager, {
-    homeDir: configManager.getHomeDirectory() ?? undefined,
-    ...(options.routing ?? {}),
-  });
-  return listHarnessSettings(configManager, filters, {
-    ...(options.includeParameters === undefined ? {} : { includeParameters: options.includeParameters }),
-    view,
-  });
+  return (await listEffectiveHarnessSettingsPage(configManager, filters, options)).settings;
 }
 
 export function countHarnessSettings(
@@ -550,7 +624,7 @@ export async function getEffectiveHarnessSetting(
   return getHarnessSetting(configManager, key, options.lookup, view);
 }
 
-export function resolveHarnessSetting(
+function resolveHarnessSettingKey(
   configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
   args: HarnessSettingLookupArgs,
   view?: EffectiveConfigView,
@@ -587,35 +661,62 @@ export function resolveHarnessSetting(
     };
   }
 
-  const category = args.category?.trim();
-  const prefix = args.prefix?.trim();
-  const searched = searchHarnessSettingSchema(configManager, {
-    ...(category ? { category } : {}),
-    ...(prefix ? { prefix } : {}),
-    includeHidden: args.includeHidden === true,
-    query: inputLower,
-  });
-  const searchMatches = searched.matches;
-  // A relaxed hit matched one WORD of what was asked. Naming it as THE setting
-  // and reporting `resolvedBy: 'search'` would dress a guess as a resolution,
-  // so loose hits are always returned as candidates.
-  if (searchMatches.length === 1 && !searched.relaxed) {
-    const resolvedLookup = { ...lookup, resolvedBy: 'search' as const };
-    return {
-      status: 'found',
-      setting: describeHarnessSetting(configManager, searchMatches[0]!, { lookup: resolvedLookup, ...(view ? { view } : {}) }),
-      lookup: resolvedLookup,
-    };
-  }
-  if (searchMatches.length > 0) {
-    return {
-      status: 'ambiguous',
-      input: lookup.input,
-      candidates: searchMatches.map(settingCandidate).slice(0, 8),
-    };
-  }
-
+  // Prose resolution is asynchronous and must carry a protected source lifetime.
   return null;
+}
+
+/** Exact identifiers remain synchronous; prose requires the async protected reader. */
+export function resolveHarnessSetting(
+  configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
+  args: HarnessSettingLookupArgs,
+  view?: EffectiveConfigView,
+): HarnessSettingResolution | null {
+  const exact = resolveHarnessSettingKey(configManager, args, view);
+  if (!exact && settingLookupFromArgs(args)) throw new SettingsSearchRequiresReadingError();
+  return exact;
+}
+
+export async function resolveHarnessSettingAsync(
+  configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
+  args: HarnessSettingLookupArgs,
+  view?: EffectiveConfigView,
+  options: CatalogRankingOptions = {},
+): Promise<HarnessSettingResolution | null> {
+  return resolveHarnessSettingReading(configManager, args, view, options);
+}
+
+async function resolveHarnessSettingReading(
+  configManager: Pick<ConfigManager, 'get'> & AgentSettingsCatalog,
+  args: HarnessSettingLookupArgs,
+  view?: EffectiveConfigView,
+  options: CatalogRankingOptions = {},
+  captured?: SettingCatalogSnapshot,
+): Promise<HarnessSettingResolution | null> {
+  const caller = captureSettingsReadingOptions(options); caller.assertCurrent();
+  const exact = resolveHarnessSettingKey(configManager, args, view);
+  if (exact) return exact;
+  const lookup = settingLookupFromArgs(args);
+  if (!lookup) return null;
+  const argsJson = JSON.stringify(captureModelReadingInput(args));
+  const assertArgs = () => {
+    caller.assertCurrent();
+    if (JSON.stringify(captureModelReadingInput(args)) !== argsJson) throw new ToolInputProjectionError('stale');
+  };
+  const selected = await readHarnessSettingSchema(configManager, {
+    ...(args.category === undefined ? {} : { category: args.category }),
+    ...(args.prefix === undefined ? {} : { prefix: args.prefix }),
+    includeHidden: args.includeHidden === true, query: lookup.input,
+  }, { ...options, assertCurrent: assertArgs }, captured);
+  selected.assertCurrent();
+  const only = selected.matches.length === 1 ? selected.matches[0] : undefined;
+  if (only?.judgment?.reading.verdict === 'yes' && only.judgment.reading.outcome === 'act') {
+    const resolvedLookup = { ...lookup, resolvedBy: 'search' as const };
+    const setting = { ...describeHarnessSetting(configManager, only.entry, { lookup: resolvedLookup, ...(view ? { view } : {}) }), judgment: only.judgment };
+    selected.assertCurrent();
+    return { status: 'found', setting, lookup: resolvedLookup };
+  }
+  return selected.matches.length ? { status: 'ambiguous', input: lookup.input,
+    candidates: selected.matches.slice(0, 8).map(({ entry, judgment }) => ({ ...settingCandidate(entry), ...(judgment ? { judgment } : {}) })) } : null;
 }
 
 function coerceBoolean(value: unknown): boolean {
@@ -671,7 +772,7 @@ export async function setHarnessSetting(
     handle.set(coerced);
     return { key: setting.key, action: 'set', previous, current: handle.get(), scope: 'client', appliedBy: 'local' };
   }
-  const previous = configManager.get(setting.key);
+  const previous = postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key);
   const coerced = coerceHarnessSettingValue(setting, value);
   if (setting.type === 'string' && isSecretConfigKey(setting.key)) {
     const secretValue = String(coerced);
@@ -737,7 +838,7 @@ export async function resetHarnessSetting(
     handle.reset();
     return { key: setting.key, action: 'reset', previous, current: handle.get() };
   }
-  const previous = configManager.get(setting.key);
+  const previous = postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key);
   if (isSecretConfigKey(setting.key)) {
     if (typeof previous === 'string' && isSecretReferenceValue(previous) && !secretsManager?.delete) {
       throw new Error(`Cannot reset ${setting.key}: secrets manager is unavailable to delete the stored secret.`);
@@ -753,7 +854,7 @@ export async function resetHarnessSetting(
     key: setting.key,
     action: 'reset',
     previous: redactHarnessSettingValue(setting.key, previous),
-    current: redactHarnessSettingValue(setting.key, configManager.get(setting.key)),
+    current: redactHarnessSettingValue(setting.key, postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key)),
   };
 }
 
@@ -823,10 +924,31 @@ export async function resolveEffectiveHarnessSetting(
   configManager: ConfigManager,
   args: HarnessSettingLookupArgs,
   routing: AgentConfigRoutingOptions = {},
+  options: CatalogRankingOptions = {},
 ): Promise<HarnessSettingResolution | null> {
-  const view = await openEffectiveConfigView(configManager, {
-    homeDir: configManager.getHomeDirectory() ?? undefined,
-    ...routing,
-  });
-  return resolveHarnessSetting(configManager, args, view);
+  const caller = captureSettingsReadingOptions(options); caller.assertCurrent();
+  const incarnation = configManager.getConfigurationIncarnation();
+  const home = configManager.getHomeDirectory();
+  const client = agentDaemonConfigClient(); const clientRevision = agentDaemonConfigClientRevision();
+  const captured = captureSettingCatalog(configManager, options);
+  const argsJson = JSON.stringify(captureModelReadingInput(args));
+  const capturedRouting = captureCatalogData(routing); const routingJson = JSON.stringify(capturedRouting);
+  const retained: (() => void)[] = [];
+  const assertOwner = () => {
+    caller.assertIdentity();
+    if (configManager.getConfigurationIncarnation() !== incarnation || configManager.getHomeDirectory() !== home
+      || agentDaemonConfigClient() !== client || agentDaemonConfigClientRevision() !== clientRevision
+      || JSON.stringify(captureModelReadingInput(args)) !== argsJson || JSON.stringify(captureCatalogData(routing)) !== routingJson) throw new ToolInputProjectionError('stale');
+  };
+  const assertCurrent = () => { caller.assertCurrent(); assertOwner(); captured.assertCurrent(); for (const guard of retained) guard(); };
+  options.retainCurrent?.(assertOwner);
+  assertCurrent();
+  const view = await openEffectiveConfigView(configManager, { homeDir: home ?? undefined, ...capturedRouting });
+  assertCurrent();
+  const selected = await resolveHarnessSettingReading(configManager, args, view, { ...options,
+    assertCurrent: () => { caller.assertCurrent(); assertOwner(); },
+    retainCurrent: (guard, key) => { retained.push(guard); options.retainCurrent?.(guard, key); },
+  }, captured);
+  assertCurrent(); options.retainCurrent?.(captured.assertCurrent);
+  return selected;
 }

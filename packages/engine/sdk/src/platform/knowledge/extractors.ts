@@ -1,9 +1,10 @@
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from './extraction-ownership.js';
 import { extname } from 'node:path';
 import type { ArtifactDescriptor, ArtifactRecord } from '../artifacts/types.js';
 import { guessMimeType } from '../artifacts/types.js';
 import { describeHtmlReadabilityAvailability, extractReadableHtml, extractLightweightReadableHtml, type ReadableHtmlExtraction } from './html-readability.js';
 import { extractPdf } from './pdf-extractor.js';
-import { JudgmentInputError } from '../gate/judgment-input.js';
+import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
 import { KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS, KnowledgeExtractionJudgmentHoldError } from './extraction-policy.js';
 import type { KnowledgeExtractionFormat } from './types.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -123,19 +124,21 @@ function decodeBuffer(buffer: Buffer): string {
   return cleanText(buffer.toString('utf-8'));
 }
 
-async function extractHtml(buffer: Buffer): Promise<KnowledgeExtractionResult> {
+async function extractHtml(buffer: Buffer, owner: KnowledgeExtractionOwner): Promise<KnowledgeExtractionResult> {
   const html = buffer.toString('utf-8');
   let readable: ReadableHtmlExtraction | null;
   let readabilityWarning: string | undefined;
   let lightweight = false;
   try {
-    readable = await extractReadableHtml(html);
+    readable = await extractReadableHtml(html, owner);
     if (!readable) {
+      owner.assertCurrent();
       const availability = await describeHtmlReadabilityAvailability();
+      owner.assertCurrent();
       if (!availability.available) {
         lightweight = true;
         readabilityWarning = `Used the lightweight HTML fallback: ${availability.reason ?? 'DOM parser unavailable'}`;
-        readable = await extractLightweightReadableHtml(html);
+        readable = await extractLightweightReadableHtml(html, owner);
       }
     }
   } catch (error) {
@@ -144,7 +147,7 @@ async function extractHtml(buffer: Buffer): Promise<KnowledgeExtractionResult> {
     lightweight = true;
     readabilityWarning = `DOM parsing failed; used lightweight HTML fallback: ${summarizeError(error)}`;
     logger.debug('Knowledge extraction: DOM parsing failed; using lightweight HTML parser', { error: summarizeError(error) });
-    readable = await extractLightweightReadableHtml(html);
+    readable = await extractLightweightReadableHtml(html, owner);
   }
   const extractorId = lightweight ? 'html' : 'html-readability';
   const extractionPath = lightweight ? 'lightweight-html' : 'readability';
@@ -541,14 +544,63 @@ async function extractOfficeWithFallback(
   }
 }
 
+/** Full original document admission for multimodal entity readings, before extractor sampling.
+ * Office archives must be expanded locally: inspecting compressed bytes cannot screen late text.
+ */
+export async function readKnowledgeArtifactJudgmentSource(
+  artifact: Pick<ArtifactRecord, 'id' | 'mimeType' | 'filename'>,
+  buffer: Buffer,
+): Promise<string> {
+  const original = buffer.toString('utf-8');
+  assertJudgmentInput(original);
+  if (['docx', 'xlsx', 'pptx'].includes(chooseFormat(artifact))) {
+    const refuse = () => new JudgmentInputError('unsupported-input');
+    if (buffer.byteLength > 8 * 1024 * 1024) throw refuse();
+    const JSZip = await loadJsZip();
+    let zip: Awaited<ReturnType<typeof JSZip.loadAsync>>;
+    try { zip = await JSZip.loadAsync(buffer); } catch { throw refuse(); }
+    const entries = Object.values(zip.files);
+    if (entries.length > 256) throw refuse();
+    let expandedBytes = 0;
+    const sourceTexts: string[] = [];
+    for (const entry of entries) {
+      if (entry.dir || !/\.(xml|rels)$/i.test(entry.name)) continue;
+      // Stream every relevant entry with one aggregate expansion budget. A pause
+      // stops decompression immediately when completeness cannot be guaranteed.
+      const xml = await new Promise<string>((resolve, reject) => {
+        const chunks: Uint8Array[] = [];
+        const stream = entry.nodeStream('nodebuffer');
+        stream.on('data', (chunk: Uint8Array) => {
+          expandedBytes += chunk.byteLength;
+          if (expandedBytes > 750_000) { stream.pause(); reject(refuse()); return; }
+          chunks.push(chunk);
+        }).on('error', () => reject(refuse()))
+          .on('end', () => resolve(Buffer.concat(chunks).toString('utf-8'))).resume();
+      });
+      const decode = (value: string) => decodeHtmlEntities(value).replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (_match, hex: string | undefined, decimal: string | undefined) => {
+        const code = Number.parseInt(hex ?? decimal!, hex ? 16 : 10);
+        if (!Number.isInteger(code) || code < 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) throw refuse();
+        return String.fromCodePoint(code);
+      });
+      const text = decode([xml.replace(/<[^>]*>/g, ' '), ...Array.from(xml.matchAll(/=["']([^"']*)["']/g), match => match[1] ?? '')].join(' '));
+      assertJudgmentInput({ xml, text });
+      sourceTexts.push(text);
+    }
+    return sourceTexts.join('\n');
+  }
+  return original;
+}
+
 export async function extractKnowledgeArtifact(
   artifact: Pick<ArtifactRecord, 'id' | 'mimeType' | 'filename'>,
   buffer: Buffer,
+  owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner(),
 ): Promise<KnowledgeExtractionResult> {
+  owner.assertCurrent();
   const format = chooseFormat(artifact);
   switch (format) {
     case 'html':
-      return await extractHtml(buffer);
+      return await extractHtml(buffer, owner);
     case 'markdown':
       return extractTextLike(buffer, 'markdown', 'markdown');
     case 'json':
@@ -573,7 +625,7 @@ export async function extractKnowledgeArtifact(
       // terminal failure; do NOT wrap it in the office text fallback. Decoding PDF binary
       // as text yields garbage and would swallow 'PDF extraction failed', which callers
       // rely on to know OCR / a dedicated PDF provider is required.
-      return extractPdf(buffer);
+      return extractPdf(buffer, owner);
     case 'text':
       return extractTextLike(buffer, 'text', 'text');
     default:

@@ -39,7 +39,7 @@ import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../config/surface.js';
 import type { BrowserCheckoutSeamHolder } from './browser-checkout-seam-holder.js';
 
 export interface PaymentsCompositionOptions {
-  readonly configManager: Pick<ConfigManager, 'get'>;
+  readonly configManager: Pick<ConfigManager, 'get'> & Partial<Pick<ConfigManager, 'preparePostalAddress'>>;
   readonly shellPaths: ShellPathService;
   readonly secretsManager: Pick<SecretsManager, 'get' | 'set' | 'delete'>;
   /** Binding the catalog is what turns the family from a 501 facade into handlers. */
@@ -125,7 +125,7 @@ export function createPaymentsServices(options: PaymentsCompositionOptions): Pay
   );
   const checkout: CheckoutComposition = {
     seam: options.checkoutSeam,
-    addresses: configBackedAddressStore(config),
+    addresses: configBackedAddressStore(config, options.configManager.preparePostalAddress?.bind(options.configManager)),
     notifier: channelBackedPaymentNotifier(config, options.channelDeliveryRouter, paymentReplies),
     merchantJudge: createJevMerchantJudge(),
     untrusted: getProcessUntrustedContentLedger(),

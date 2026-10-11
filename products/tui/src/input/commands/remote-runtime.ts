@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import type { CommandRegistry, CommandContext } from '../command-registry.ts';
+import { directOwnerRemoteInput, type CommandRegistry, type CommandContext } from '../command-registry.ts';
 import { AGENT_TEMPLATES } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { handleRemoteSetupCommand } from './remote-runtime-setup.ts';
 import { handleRemotePoolCommand } from './remote-runtime-pool.ts';
@@ -37,6 +37,18 @@ export function handleRemoteCancelCommand(
   }
   void acpManager.cancel(agentId);
   ctx.print(`Cancellation requested for remote runner ${agentId}.`);
+}
+
+/** Capture while the private direct-owner command mark is still live. */
+function remoteDispatchSource(ctx: CommandContext) {
+  const goal = directOwnerRemoteInput(ctx);
+  if (!goal) return undefined;
+  const runtime = ctx.session.runtime, sessionId = runtime.sessionId, manager = ctx.ops.acpManager;
+  const source = Object.freeze({ goal, criteria: Object.freeze([] as string[]) });
+  return { sourceOf: () => source, assertCurrent() {
+    if (ctx.session.runtime !== runtime || runtime.sessionId !== sessionId || ctx.ops.acpManager !== manager)
+      throw new Error('Remote dispatch owner changed');
+  } };
 }
 
 export function registerRemoteRuntimeCommands(registry: CommandRegistry): void {
@@ -244,6 +256,11 @@ export function registerRemoteRuntimeCommands(registry: CommandRegistry): void {
           ctx.print('Usage: /remote dispatch [template] <description>');
           return;
         }
+        const operation = remoteDispatchSource(ctx);
+        if (!operation) {
+          ctx.print('Remote dispatch requires the original directly entered command. Enter /remote dispatch or /remote dispatch-pool in the terminal.');
+          return;
+        }
         const templateDef = AGENT_TEMPLATES[template] ?? AGENT_TEMPLATES.general;
         const workingDirectory = requireShellPaths(ctx).workingDirectory;
         const runnerId = await ctx.ops.acpManager.spawn({
@@ -251,7 +268,7 @@ export function registerRemoteRuntimeCommands(registry: CommandRegistry): void {
           context: `Self-hosted remote runner dispatched from session ${ctx.session.runtime.sessionId}. Follow ${template} discipline and return concise evidence.`,
           tools: [...templateDef.defaultTools],
           workingDirectory,
-        });
+        }, operation);
         const now = Date.now();
         remoteRunners.registerContract({
           id: `runner:${runnerId}`,
@@ -314,6 +331,11 @@ export function registerRemoteRuntimeCommands(registry: CommandRegistry): void {
           ctx.print('Usage: /remote dispatch-pool <pool> [template] <description>');
           return;
         }
+        const operation = remoteDispatchSource(ctx);
+        if (!operation) {
+          ctx.print('Remote dispatch requires the original directly entered command. Enter /remote dispatch or /remote dispatch-pool in the terminal.');
+          return;
+        }
         const templateDef = AGENT_TEMPLATES[template] ?? AGENT_TEMPLATES.general;
         const workingDirectory = requireShellPaths(ctx).workingDirectory;
         const runnerId = await ctx.ops.acpManager.spawn({
@@ -321,7 +343,7 @@ export function registerRemoteRuntimeCommands(registry: CommandRegistry): void {
           context: `Self-hosted remote runner dispatched from session ${ctx.session.runtime.sessionId} via pool ${poolId}. Follow ${template} discipline and return concise evidence.`,
           tools: [...templateDef.defaultTools],
           workingDirectory,
-        });
+        }, operation);
         const now = Date.now();
         remoteRunners.registerContract({
           id: `runner:${runnerId}`,

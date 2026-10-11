@@ -1,3 +1,4 @@
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 /**
  * What the Google setup runners need, and how the OAuth client is obtained.
  *
@@ -33,7 +34,7 @@ export type GoogleClientIntakeChoice =
   | { readonly kind: 'downloaded-file'; readonly directory: string; readonly since?: number };
 
 /** Everything the runners need, all of it injected. */
-export interface GoogleSetupActionDeps {
+export interface GoogleSetupActionDeps extends JudgmentReadingOptions {
   readonly config: GoogleConfigPort;
   readonly secrets: GoogleSecretPort;
   /**

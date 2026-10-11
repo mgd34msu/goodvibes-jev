@@ -10,6 +10,7 @@ import { WorkLedgerAccessError } from '../sdk/src/platform/workflow/work-ledger/
 import { createWorkLedger } from '../sdk/src/platform/workflow/work-ledger/service.js';
 import { prepareLegacyWorkLedgerMigration } from '../sdk/src/platform/workflow/work-ledger/legacy-import.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { knowledgeSourceSnapshotFromRows } from '../sdk/src/platform/knowledge/store-source-generation.js';
 import { PairingTokenManager } from '../sdk/src/platform/pairing/pairing-token-store.js';
 import { WorkspaceRegistrationStore } from '../sdk/src/platform/workspace/registration/store.js';
 import { DaemonControlPlaneHelper, type DaemonControlPlaneContext } from '../sdk/src/platform/daemon/control-plane.js';
@@ -53,6 +54,7 @@ async function fixture(options: { decorate?: (port: JudgmentPort) => JudgmentPor
 
 test('dedicated import scopes commit once from actual recorded lineage; completed legacy work stays unverified and unclaimed', async () => {
   const f = await fixture(); const source = f.store.getSourceSnapshot({ id: 'source' });
+  expect(Object.keys(source)).toContain('raw'); expect(source.raw).not.toBeNull();
   expect(f.authority.current()!.scopes).not.toContain('write:fleet');
   expect(await f.run()).toMatchObject({ kind: 'accepted', replayed: false });
   const snapshot = await f.ledger.service.readSnapshot(f.actor);
@@ -63,6 +65,8 @@ test('dedicated import scopes commit once from actual recorded lineage; complete
   expect(record.notes).toContainEqual(expect.objectContaining({ kind: 'action', action: expect.stringContaining('autonomous:claim:') }));
   const state = f.fake.requests[0]!.state as { binding: Record<string, string> };
   for (const key of ['actionId', 'actionRevision', 'authorityId', 'authorityRevision', 'scopeId', 'scopeRevision']) expect(state.binding[key]).toMatch(/^[a-f0-9]{64}$/);
+  const manifest = (f.fake.requests[0]!.state as unknown as { input: { manifest: { sources: object[] } } }).input.manifest;
+  expect(Object.keys(manifest.sources[0]!).sort()).toEqual(['digest', 'generation', 'source']);
 });
 
 test('fresh refusal has no ledger effects; explicit same-command reconsideration performs a new recorded read', async () => {
@@ -227,4 +231,35 @@ test('an unrelated operational failure is not relabeled cancellation merely beca
   const f = await fixture({ decorate: port => ({ ...port, async ask() { controller.abort(); throw new Error('Synthetic unrelated recorder failure'); } }) });
   await expect(f.run(controller.signal)).rejects.toThrow('Synthetic unrelated recorder failure');
   expect((await f.ledger.service.readSnapshot(f.actor)).revision).toBe(0);
+});
+
+
+test('raw-only SQL JSON changes invalidate native admission even when the mapped source is identical', async () => {
+  const f = await fixture(); const current = f.store.getSourceSnapshot({ id: 'source' });
+  if (!current.raw || typeof current.raw.metadata !== 'string') throw new Error('Missing raw source metadata');
+  const raw = { ...current.raw, metadata: ` ${current.raw.metadata}` };
+  const changed = knowledgeSourceSnapshotFromRows([{ columns: Object.keys(raw), values: [Object.values(raw)] }]);
+  expect(changed.source).toEqual(current.source); expect(changed.generation).not.toBe(current.generation);
+  const host = createNativeLegacyImportHost({ ...f.deps, readSource: () => changed });
+  const bytes = readFileSync(f.file);
+  try {
+    expect(await host.run(f.command, f.authority, { isAuthorized: () => true })).toMatchObject({ kind: 'rejected', code: 'stale_source' });
+    expect(f.fake.requests).toHaveLength(0); expect(readFileSync(f.file)).toEqual(bytes);
+  } finally { await host.close(); }
+});
+
+test.each(['missing', 'malformed', 'identity', 'content'] as const)('%s fresh source cannot use an unchanged generation to pass native admission', async change => {
+  const f = await fixture(); const current = f.store.getSourceSnapshot({ id: 'source' });
+  if (!current.source) throw new Error('Missing fixture source');
+  const source = change === 'missing' ? null : { ...current.source,
+    ...(change === 'malformed' ? { metadata: null } : {}),
+    ...(change === 'identity' ? { id: 'different-source' } : {}),
+    ...(change === 'content' ? { description: 'Changed complete source image' } : {}),
+  };
+  const host = createNativeLegacyImportHost({ ...f.deps, readSource: () => ({ ...current, source }) });
+  const bytes = readFileSync(f.file);
+  try {
+    expect(await host.run(f.command, f.authority, { isAuthorized: () => true })).toMatchObject({ kind: 'rejected', code: 'stale_source' });
+    expect(f.fake.requests).toHaveLength(0); expect(readFileSync(f.file)).toEqual(bytes);
+  } finally { await host.close(); }
 });

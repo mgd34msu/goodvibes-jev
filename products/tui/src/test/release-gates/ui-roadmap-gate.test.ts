@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { describe, expect, test } from 'bun:test';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
 import { DEFAULT_CONFIG } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -11,7 +13,9 @@ import { makeTestShellViews } from '../helpers/shell-views.ts';
 
 describe('UI roadmap gate', () => {
 
-  test('supports line-accurate conversation navigation by transcript event family', () => {
+  test('supports line-accurate conversation navigation by transcript event family', async () => {
+    const previous = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    try {
     const conversation = new ConversationManager(() => 100);
     conversation.addUserMessage('review the file');
     conversation.addAssistantMessage('Running checks.', {
@@ -22,9 +26,10 @@ describe('UI roadmap gate', () => {
     conversation.addToolResults([{ callId: 'call-1', success: true, output: '1 file changed' }]);
     conversation.addSystemMessage('[Approval] Waiting for operator input');
 
-    const toolLine = conversation.nextTranscriptEventLine(0, 'tool_result');
+    const toolLine = await conversation.nextTranscriptEventLine(0, 'tool_result');
     expect(toolLine).toBeGreaterThanOrEqual(0);
-    expect(conversation.prevTranscriptEventLine(999, 'tool_result')).toBe(toolLine);
+    expect(await conversation.prevTranscriptEventLine(999, 'tool_result')).toBe(toolLine);
+    } finally { installJudgmentPort(previous); }
   });
 
   test('opens views through the shared shell opener path: an old view name lands on its modal, focus stays in the composer', () => {

@@ -28,6 +28,7 @@
  * avoid.
  */
 import { watch, type FSWatcher } from 'node:fs';
+import { readProfilePerson, type ProfilePersonReadingOptions } from './person-reading.js';
 import { basename, dirname } from 'node:path';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -85,6 +86,18 @@ export class OwnerProfileStore {
 
   /** The whole model. Replaced wholesale, never mutated in place. */
   private projection: ProfileProjection | null = null;
+  private readEpoch = 0;
+  /** Loads and own commits each hold one independent source-change claim. */
+  private pendingSourceChanges = 0;
+
+  /** A restriction on consumers of this exact profile incarnation, never read permission. */
+  captureRead(): { readonly assertCurrent: () => void } {
+    const projection = this.projection, epoch = this.readEpoch;
+    const settled = this.pendingSourceChanges === 0 && this.debounceTimer === null && !this.reloading;
+    return Object.freeze({ assertCurrent: () => {
+      if (!settled || this.projection !== projection || this.readEpoch !== epoch || this.pendingSourceChanges > 0 || this.debounceTimer !== null || this.reloading) throw new Error('The profile reading is no longer current.');
+    } });
+  }
   private state: ProfileLoadState;
 
   private watcher: FSWatcher | null = null;
@@ -128,7 +141,10 @@ export class OwnerProfileStore {
    * answers "profile is disabled", a stated state, not an empty profile.
    */
   async load(): Promise<ProfileLoadState> {
-    return this.adoptRead(await readProfile(this.filePath), this.enabled);
+    this.readEpoch += 1;
+    this.pendingSourceChanges += 1;
+    try { return this.adoptRead(await readProfile(this.filePath), this.enabled); }
+    finally { this.pendingSourceChanges -= 1; }
   }
 
   /**
@@ -141,6 +157,7 @@ export class OwnerProfileStore {
    * store-load.ts for why a readiness promise could not have closed that.
    */
   loadSync(): ProfileLoadState {
+    this.readEpoch += 1;
     return this.adoptRead(readProfileSync(this.filePath), this.enabled);
   }
 
@@ -262,6 +279,7 @@ export class OwnerProfileStore {
 
   /** Stop watching. Safe to call when nothing is running. */
   unwatch(): void {
+    this.readEpoch += 1;
     this.closeWatcher();
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
@@ -292,6 +310,7 @@ export class OwnerProfileStore {
 
   /** Collapse a burst of events into one reload, skipping this store's own write. */
   private scheduleReload(): void {
+    this.readEpoch += 1;
     if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
@@ -363,37 +382,14 @@ export class OwnerProfileStore {
   }
 
   /**
-   * The lines about one person, BY NAME.
-   *
-   * There is deliberately no enumerate-all-people counterpart, and `section()`
-   * refusing the closed tier is what makes that true rather than merely stated.
-   * A `People` line may reach outbound content only when the owner named that
-   * person in this turn's instruction, and the structural guarantee behind that
-   * rule is that the only lookup available takes a name.
-   *
-   * An empty or whitespace-only name returns nothing rather than everything,
-   * "the owner named nobody" must not degrade into "give me all of them",
-   * which is the shape this kind of guard usually fails in.
-   *
-   * Two things make that hold rather than nearly hold:
-   *
-   *  - The name must contain a LETTER OR DIGIT. `person('-')` used to return
-   *    every line in the section: `ProfileLine.text` keeps the `- ` list marker,
-   *    and the word-boundary alternative `(^|[^\p{L}\p{N}])` matches at index 0
-   *    of every bullet, so one character of punctuation was a complete
-   *    enumerate-all call. Rejecting empty-after-trim is not the same test.
-   *  - Matching runs against the line with its list marker STRIPPED, so the
-   *    marker cannot participate in a boundary match at all. Belt and braces:
-   *    either fix alone closes the measured case, and the pair closes the shape.
+   * Read lines about one named person semantically. Closed People prose never
+   * becomes generic context. The reading grants no disclosure authority, and
+   * unsettled/missing/stale readings reject rather than returning a guess.
    */
-  person(name: string): readonly ProfileLine[] {
-    const trimmed = name.trim();
-    if (trimmed.length === 0) return [];
-    if (!/[\p{L}\p{N}]/u.test(trimmed)) return [];
-    const section = this.sectionByHeading('People');
-    if (section === undefined) return [];
-    const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(trimmed)}([^\\p{L}\\p{N}]|$)`, 'iu');
-    return section.prose.filter((line) => pattern.test(withoutListMarker(line.text)));
+  async person(name: string, options: ProfilePersonReadingOptions = {}): Promise<readonly ProfileLine[]> {
+    const lease = this.captureRead();
+    lease.assertCurrent();
+    return readProfilePerson(name, this.sectionByHeading('People')?.prose ?? [], options, lease.assertCurrent);
   }
 
   /**
@@ -649,6 +645,18 @@ export class OwnerProfileStore {
     operate: (projection: ProfileProjection) => ProfileEditResult,
     options: { readonly replayable?: boolean } = {},
   ): Promise<ProfileWriteResult> {
+    // Retire at accepted mutation intent, before a reload, persistence or its
+    // failure cleanup can yield. Even a same-content write is a new incarnation.
+    this.readEpoch += 1;
+    this.pendingSourceChanges += 1;
+    try { return await this.commitWhilePending(operate, options); }
+    finally { this.pendingSourceChanges -= 1; }
+  }
+
+  private async commitWhilePending(
+    operate: (projection: ProfileProjection) => ProfileEditResult,
+    options: { readonly replayable?: boolean },
+  ): Promise<ProfileWriteResult> {
     const replayable = options.replayable !== false;
     const start = this.projection;
     if (start === null) return refusal('Your profile has not been loaded, so nothing was recorded.');
@@ -734,15 +742,6 @@ export class OwnerProfileStore {
 
 function refusal(reason: string): ProfileWriteResult {
   return { ok: false, reason, changes: [], disclosure: '' };
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** A prose line without its bullet or numbered-list marker. */
-function withoutListMarker(text: string): string {
-  return text.replace(/^\s*([-*+]|\d+[.)])\s+/, '');
 }
 
 /** Re-exported so a caller holding a field id can name it without a second import. */

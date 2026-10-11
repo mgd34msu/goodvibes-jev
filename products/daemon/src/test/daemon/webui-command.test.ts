@@ -318,3 +318,33 @@ describe('webui disable and status', () => {
     expect(config.writes).toHaveLength(0);
   });
 });
+
+describe('read-only machine WebUI binding status', () => {
+  test('reports configured web endpoint without probing, inspecting the bundle, or writing', () => {
+    const config = fakeConfig({ 'web.hostMode': 'custom', 'web.host': '127.0.0.2', 'web.port': 44323,
+      'controlPlane.webui.serve': true, 'controlPlane.port': 44321 });
+    const forbidden = () => { throw new Error('machine binding query must not probe or inspect a bundle'); };
+    const result = runWebuiCommand(['status', '--json'], { configManager: config.manager,
+      probeStableHost: forbidden, directoryExists: forbidden, fileExists: forbidden });
+    expect(result.exitCode).toBe(0); expect(result.lines).toHaveLength(1);
+    expect(JSON.parse(result.lines[0]!)).toEqual({ schema: 'goodvibes.daemon.webui-binding', schemaVersion: 1,
+      source: 'configuration', endpoint: 'web', enabled: true, hostMode: 'custom', configuredHost: '127.0.0.2',
+      host: '127.0.0.2', port: 44323, url: 'http://127.0.0.1:3423' });
+    expect(config.writes).toEqual([]);
+  });
+
+  test.each([
+    ['enable', '--json', '--bundle-dir', '/fixture/bundle'], ['disable', '--json'],
+    ['status', '--json', '--lan'], ['status', '--json', '--loopback'], ['status', '--json', '--bundle-dir', '/fixture/bundle'],
+  ].map((args) => ({ args })))('refuses mixing machine discovery with a mutation: %j', ({ args }) => {
+    const config = fakeConfig();
+    expect(runWebuiCommand(args, { configManager: config.manager }).exitCode).toBe(2);
+    expect(config.writes).toEqual([]);
+  });
+
+  test('an unrecognized host mode never becomes a usable binding receipt', () => {
+    const config = fakeConfig({ 'web.hostMode': 'Network' });
+    const result = runWebuiCommand(['status', '--json'], { configManager: config.manager });
+    expect(result.exitCode).toBe(2); expect(config.writes).toEqual([]);
+  });
+});

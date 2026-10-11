@@ -217,3 +217,10 @@ export function normalizeUrl(rawUrl: string): string {
   }
   return parsed.toString();
 }
+
+/** Retained caller observation checked at the final interactive effect boundary. */
+export interface BrowserActionLifetime {
+  readonly assertCurrent: () => void;
+  readonly signal?: AbortSignal | undefined;
+  readonly snapshotId?: string | undefined;
+}

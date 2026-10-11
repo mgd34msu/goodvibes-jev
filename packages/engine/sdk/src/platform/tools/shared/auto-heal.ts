@@ -21,7 +21,7 @@ import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort, JudgmentPortMissingError, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
@@ -73,7 +73,29 @@ export class AutoHealer {
     private readonly configManager: Pick<ConfigManager, 'get'>,
     private readonly toolLLM: Pick<ToolLLM, 'chat'>,
     private readonly execution?: AutoHealExecution,
+    private readonly assertInvocation?: () => void,
+    private readonly invocationSignal?: AbortSignal,
+    private readonly reading?: JudgmentPortCapture,
   ) {}
+
+  private async check(): Promise<void> {
+    this.reading?.assertCurrent();
+    this.invocationSignal?.throwIfAborted();
+    this.assertInvocation?.();
+    if (this.execution) await this.execution.check();
+    this.reading?.assertCurrent();
+    this.invocationSignal?.throwIfAborted();
+    this.assertInvocation?.();
+  }
+  private readonly checkSynchronous = (): void => {
+    this.reading?.assertCurrent();
+    this.invocationSignal?.throwIfAborted();
+    this.assertInvocation?.();
+    this.execution?.checkSynchronous();
+    this.reading?.assertCurrent();
+    this.invocationSignal?.throwIfAborted();
+    this.assertInvocation?.();
+  };
 
   /**
    * Attempt to auto-heal content with validation errors.
@@ -86,7 +108,7 @@ export class AutoHealer {
   async heal(filePath: string, content: string, errors: string[]): Promise<HealResult> {
     const warnings: string[] = [];
     if (hasCapturedToolInvocation() && !this.execution) throw new Error('Captured repair requires its construction-owned backend');
-    if (this.execution) await this.execution.check();
+    await this.check();
     try {
       // Config gate: only run when tools.autoHeal is enabled
       if (!this.configManager.get('tools.autoHeal')) {
@@ -127,11 +149,11 @@ export class AutoHealer {
         }
       }
 
-      if (this.execution) await this.execution.check();
+      await this.check();
       return warnings.length > 0 ? { ...result, warnings } : result;
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
-      if (this.execution) await this.execution.check();
+      await this.check();
       logger.warn('AutoHealer.heal: unexpected error', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal failed unexpectedly', err);
       return { healed: false, content, warnings };
@@ -149,6 +171,7 @@ export class AutoHealer {
     warnings: string[],
   ): Promise<HealResult> {
     try {
+      await this.check();
       if (this.execution) return await this._tryContained('formatter', filePath, content, errors, warnings);
       const prettier = Bun.which('prettier');
       const biome = Bun.which('biome');
@@ -159,14 +182,17 @@ export class AutoHealer {
       }
 
       // Write content to temp file
+      this.checkSynchronous();
       writeFileSync(tmpFile, content, 'utf-8');
 
       let proc: { exitCode: number | null };
 
       if (prettier) {
+        this.checkSynchronous();
         proc = Bun.spawnSync([prettier, '--write', '--log-level', 'silent', tmpFile]);
       } else {
         // biome format --write
+        this.checkSynchronous();
         proc = Bun.spawnSync([biome!, 'format', '--write', tmpFile], {
           stderr: 'pipe',
         });
@@ -194,7 +220,7 @@ export class AutoHealer {
       return { healed: false, content: formatted };
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
-      if (this.execution) await this.execution.check();
+      await this.check();
       logger.warn('AutoHealer: formatter stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal formatter stage failed; continuing to later repair stages', err);
       return { healed: false, content };
@@ -212,6 +238,7 @@ export class AutoHealer {
     warnings: string[],
   ): Promise<HealResult> {
     try {
+      await this.check();
       if (this.execution) return await this._tryContained('linter', filePath, content, errors, warnings);
       const eslint = Bun.which('eslint');
 
@@ -221,8 +248,10 @@ export class AutoHealer {
       }
 
       // Write (possibly formatter-updated) content to temp file
+      this.checkSynchronous();
       writeFileSync(tmpFile, content, 'utf-8');
 
+      this.checkSynchronous();
       const proc = Bun.spawnSync([eslint, '--fix', tmpFile], {
         stderr: 'pipe',
         stdout: 'pipe',
@@ -243,7 +272,7 @@ export class AutoHealer {
       return { healed: false, content: fixed };
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
-      if (this.execution) await this.execution.check();
+      await this.check();
       logger.warn('AutoHealer: linter stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal linter stage failed; continuing to LLM repair', err);
       return { healed: false, content };
@@ -251,9 +280,9 @@ export class AutoHealer {
   }
 
   private async _tryContained(stage: 'formatter' | 'linter', filePath: string, content: string, errors: string[], warnings: string[]): Promise<HealResult> {
-    await this.execution!.check();
+    await this.check();
     const candidate = await executePolicyCheck(() => this.execution!.transform(stage, filePath, content, warnings), this.execution!.signal);
-    await this.execution!.check();
+    await this.check();
     if (candidate === content) return { healed: false, content };
     const accepted = await this._accepted(filePath, content, candidate, errors, stage, warnings);
     return { healed: accepted, content: candidate, ...(accepted ? { method: stage } : {}) };
@@ -286,14 +315,15 @@ export class AutoHealer {
         `Return ONLY the corrected file content, no explanation, no markdown fences.`,
       ].join('\n');
 
-      if (this.execution) await this.execution.check();
-      const response = await executePolicyCheck(() => this.toolLLM.chat(prompt, {
+      await this.check();
+      const signal = this.execution?.signal ?? this.invocationSignal;
+      const response = await executePolicyCheck(() => { this.checkSynchronous(); return this.toolLLM.chat(prompt, {
         maxTokens: 4096,
         systemPrompt: 'You are a code repair tool. Output only the corrected file content with no additional text or markdown.',
-        ...(this.execution?.signal ? { signal: this.execution.signal } : {}),
-        ...(this.execution ? { beforeAttempt: this.execution.check } : {}),
-      }), this.execution?.signal);
-      if (this.execution) await this.execution.check();
+        ...(signal ? { signal } : {}),
+        beforeAttempt: () => this.check(),
+      }); }, this.execution?.signal ?? this.invocationSignal);
+      await this.check();
 
       if (!response || response.trim() === '') {
         logger.debug('AutoHealer: LLM returned empty response');
@@ -311,7 +341,7 @@ export class AutoHealer {
       return { healed: true, content: response, method: 'llm' };
     } catch (err) {
       if (isJudgmentFailure(err)) throw err;
-      if (this.execution) await this.execution.check();
+      await this.check();
       logger.warn('AutoHealer: LLM stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal LLM stage failed', err);
       return { healed: false, content };
@@ -350,13 +380,18 @@ export class AutoHealer {
       return false;
     }
     const asked = stage === 'llm' ? (['fixes_errors', 'only_the_fix'] as const) : (['fixes_errors'] as const);
-    if (this.execution) await this.execution.check();
-    const run = await executePolicyCheck(() => healAcceptance.run(judgmentPort(HEAL_ACCEPTANCE_SITE), { file: filePath, errors, change }, { site: HEAL_ACCEPTANCE_SITE, only: [...asked], ...(this.execution ? { beforeAttempt: this.execution.checkSynchronous, beforeAsyncAttempt: this.execution.check } : {}), ...(this.execution?.signal ? { signal: this.execution.signal } : {}) }), this.execution?.signal);
-    if (this.execution) await this.execution.check();
+    await this.check();
+    const capture = this.reading ?? captureJudgmentPort(HEAL_ACCEPTANCE_SITE, { assertCurrent: this.checkSynchronous, signal: this.execution?.signal ?? this.invocationSignal });
+    const run = await executePolicyCheck(() => healAcceptance.run(capture.port, { file: filePath, errors, change }, {
+      site: HEAL_ACCEPTANCE_SITE, only: [...asked], beforeAttempt: capture.assertCurrent,
+      beforeAsyncAttempt: async () => { await this.check(); capture.assertCurrent(); }, signal: capture.signal,
+    }), capture.signal);
+    await this.check();
     const accepted = asked.every((question) => {
       const reading = run.readings[question];
       return reading?.verdict === 'yes' && reading.outcome === 'act';
     });
+    capture.assertCurrent();
     run.recordAction(`${stage} ${accepted ? 'accepted' : 'not accepted'}`);
     return accepted;
   }

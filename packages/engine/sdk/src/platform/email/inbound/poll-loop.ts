@@ -285,6 +285,7 @@ export async function drainMailboxDelta(
           + `${current.lastSeenUid} and the message will be fetched again.`);
         return finish('delivery-failed', uids.length, error);
       }
+      if (deps.signal.aborted) return finish('aborted', uids.length);
       delivered += 1;
       // Only now. Everything about "no message is lost" is in this ordering.
       current = await advanceTo(deps, current, uid);

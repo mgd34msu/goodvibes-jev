@@ -11,8 +11,10 @@ import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
 import { JevDecisionContext } from '@goodvibes-jev/judgment/decisions';
 import { JevVersionRef } from '@goodvibes-jev/judgment/decisions';
 import { JudgmentPort } from '@goodvibes-jev/judgment';
+import type { JudgmentPort as JudgmentPort_2 } from '@goodvibes-jev/judgment/decisions';
 import { JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
+import type { Questions } from '@goodvibes-jev/judgment/decisions';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { SimpleGit } from 'simple-git';
 import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
@@ -351,6 +353,7 @@ export class SharedSessionBroker {
     markInputDelivered(sessionId: string, inputId: string, options?: {
         readonly consumed?: boolean | undefined;
         readonly agentId?: string | undefined;
+        readonly beforeApply?: (() => void) | undefined;
     }): Promise<SharedSessionInputRecord | null>;
     // (undocumented)
     rebindRoute(bindingId: string, sessionId: string): Promise<SharedSessionRecord | null>;

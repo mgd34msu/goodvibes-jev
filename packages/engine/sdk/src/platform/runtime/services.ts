@@ -6,7 +6,7 @@ import type { SecretsManager } from '../config/secrets.js';
 import { createRuntimeSecretsManager } from './secrets-composition.js';
 import { ServiceRegistry } from '../config/service-registry.js';
 import { SubscriptionManager, sharedSubscriptionsPath } from '../config/subscriptions.js';
-import { AutomationDeliveryManager, AutomationManager, AutomationRouteStore } from '../automation/index.js';
+import { AutomationDeliveryManager, AutomationManager, AutomationRouteStore, automationActionBinding } from '../automation/index.js';
 import { ChannelPluginRegistry, ChannelPolicyManager, RouteBindingManager, SurfaceRegistry } from '../channels/index.js';
 import { ChannelDeliveryRouter } from '../channels/delivery-router.js';
 import { ApprovalBroker, GatewayMethodCatalog, SessionLiveTurnControlsHolder, SharedSessionBroker, registerGatewayVerbGroups, controlPlaneStorePath } from '../control-plane/index.js';
@@ -643,7 +643,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
         ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
         ...(input.toolAllowlist?.length ? { tools: [...input.toolAllowlist], restrictTools: true } : {}),
         ...(input.context ? { context: input.context } : {}),
-      });
+      }, automationActionBinding(input));
       return record.id;
     },
   });
@@ -693,12 +693,14 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     admitExpensiveWork,
   });
   const projectPlanningService = new ProjectPlanningService(knowledgeStore, {
+    waitForStartup: () => knowledgeService.whenReady(),
     defaultProjectId: projectPlanningProjectIdFromPath(workingDirectory),
     runtimeBus: options.runtimeBus,
   });
   const voiceProviders = new VoiceProviderRegistry();
   ensureBuiltinVoiceProviders(voiceProviders, {
     readConfig: (key) => configManager.get(key as never),
+    readConfigIncarnation: () => configManager.getConfigurationIncarnation(),
     managedVoiceRoot: shellPaths.resolveUserPath('voice'),
   });
   // Metered voice spend -> attribution ingest; local engines emit nothing.
@@ -828,6 +830,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // Same store + same manager wiring the pure-client composition uses (permissions/permission-composition.ts).
   const userPermissionRuleStore = createUserPermissionRuleStore(configManager);
   const backgroundPermissionManager = createBrokeredPermissionManager({
+    workspaceTrust: null,
     requestApproval: (input) => approvalBroker.requestApproval(input),
     configManager,
     policyRuntimeState,
@@ -835,6 +838,10 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     featureFlags,
     userRuleStore: userPermissionRuleStore,
   });
+  const externalPermissionLifetime = new AbortController();
+  disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
+  const externalPermissionHost = { port: judgment.port, permissionManager: backgroundPermissionManager,
+    config: configManager, signal: externalPermissionLifetime.signal, workspaceTrust: null, workspaceRoot: workingDirectory };
   // The interactive session binds its Orchestrator-backed source onto this holder
   // after construction; passing it through here registers the context_accounting
   // tool on the shared roster (every consumer inherits it, like repo_map).
@@ -850,6 +857,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     localhostFetchApproval,
     onSandboxedRun,
   } = createApprovalDerivedHandlers({
+    autonomousHost: externalPermissionHost,
     requestApproval: (input) => approvalBroker.requestApproval(input),
     configManager,
     featureFlags,
@@ -927,10 +935,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // Archive-aware: finished agent/swarm subtrees can be moved out of the
   // live fleet view into a session-scoped archive (see fleet/archive.ts).
   // ACP/MCP protocol decisions use the same recorded autonomous owner as native tools.
-  const externalPermissionLifetime = new AbortController();
-  disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
-  const externalPermissionHost = { port: judgment.port, permissionManager: backgroundPermissionManager,
-    config: configManager, signal: externalPermissionLifetime.signal };
+
   mcpRegistry.setPermissionHost(externalPermissionHost);
   mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler(externalPermissionHost));
   const acpHost = new AcpHostService({
@@ -1068,7 +1073,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     resetLocalEngineFailureState: () => voiceProviders.get('local')?.resetEngineFailureState?.(),
     admitExpensiveWork: (label) => admitExpensiveWork(label),
   });
-  registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: contractRunner.fleetControls(), contractOperator, stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
+  registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: contractRunner.fleetControls(), contractOperator, stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, ciAutonomousHost: () => externalPermissionHost, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
   // Teardown for every poller started above. RuntimePollerOwners is all-required,
   // so a poller added to this graph later cannot compile without being named here.
   registerRuntimePollers(disposalScope.registry, {

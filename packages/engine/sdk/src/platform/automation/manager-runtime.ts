@@ -1,3 +1,5 @@
+import type { ExternalOperationSource } from '../permissions/external-request.js';
+import { captureAutomationSource } from './action-source.js';
 import { ConfigManager } from '../config/manager.js';
 import { logger } from '../utils/logger.js';
 import { createDomainDispatch } from '../runtime/store/index.js';
@@ -371,7 +373,9 @@ export class AutomationManager {
     return await updateAutomationJobRecord(this.jobMutationContext(), jobId, patch);
   }
 
-  async runNow(jobId: string): Promise<AutomationRun> {
+  private readonly sourceClaims = new Set<string>();
+  async runNow(jobId: string, operation?: ExternalOperationSource): Promise<AutomationRun> {
+    const source = operation ? captureAutomationSource(operation) : undefined;
     this.requireEnabled('run automation job');
     await this.start();
     const job = this.jobs.get(jobId);
@@ -379,7 +383,13 @@ export class AutomationManager {
     if (this.activeRunCount() >= this.maxConcurrentRuns()) {
       throw new Error(`Automation concurrency limit reached (${this.maxConcurrentRuns()})`);
     }
-    return await this.executeJob(job, 'manual', false);
+    source?.assertCurrent();
+    if (job.execution.requiresSourceOwner) {
+      if (!source) throw new Error('Automation original source owner is unavailable');
+      if (this.sourceClaims.has(jobId)) throw new Error('Automation source owner is already claimed');
+      this.sourceClaims.add(jobId);
+    }
+    return await this.executeJob(job, 'manual', false, 1, source);
   }
 
   async triggerHeartbeat(_input: { readonly source?: string } = {}): Promise<AutomationHeartbeatResult> {
@@ -639,8 +649,9 @@ export class AutomationManager {
     trigger: AutomationRunTrigger,
     dueRun: boolean,
     attempt = 1,
+    operation?: ExternalOperationSource,
   ): Promise<AutomationRun> {
-    return await executeAutomationJob(this.runtimeExecutionContext(), job, trigger, dueRun, attempt);
+    return await executeAutomationJob(this.runtimeExecutionContext(), job, trigger, dueRun, attempt, operation);
   }
 
   private async syncExecutionRoute(job: AutomationJob, run: AutomationRun): Promise<void> {

@@ -30,7 +30,9 @@ import {
   type VoiceRuntimeStatus,
 } from '../voice/provisioning/index.js';
 import { recordVoiceDiagnostic } from '../voice/diagnostics.js';
-import { singleFlight } from '../utils/single-flight.js';
+import { assertVoiceProofCurrent, beginVoiceProofReading, ownVoiceProofLifetime, type VoiceProofLifetime } from '../voice/provisioning/round-trip-reading.js';
+import { VOICE_PROOF_PHRASE, type VoiceRoundTripProofOptions } from '../voice/provisioning/round-trip-proof.js';
+import { awaitPermission } from '../permissions/cancellation.js';
 import {
   createWakeSetupService,
   type WakeModelChunkRequest,
@@ -81,21 +83,14 @@ export interface VoiceSetupServiceDeps {
    * The live round-trip proof seam. Injected by tests so no real engine has to
    * run; defaults to actually speaking a phrase and transcribing it back.
    */
-  readonly prove?: ((options: {
-    readonly ttsEngine: string;
-    readonly ttsBinary: string;
-    readonly ttsModelPath: string;
-    readonly sttEngine: string;
-    readonly sttBinary: string;
-    readonly sttModelPath: string;
-  }) => Promise<VoiceRoundTripProof>) | undefined;
+  readonly prove?: ((options: VoiceRoundTripProofOptions) => Promise<VoiceRoundTripProof>) | undefined;
   /** Status-read seam (tests). */
   readonly readStatus?: ((options: { managedRoot: string }) => VoiceRuntimeStatus) | undefined;
 }
 
 export interface VoiceSetupService {
   status(): VoiceRuntimeStatus;
-  install(): Promise<VoiceInstallReceipt>;
+  install(options?: VoiceProofLifetime): Promise<VoiceInstallReceipt>;
   /** Wake-word artifact state, verified by content. See runtime/wake-setup.ts. */
   wakeStatus(): ReturnType<WakeSetupService['status']>;
   wakeProvision(): ReturnType<WakeSetupService['provision']>;
@@ -118,16 +113,20 @@ export function createVoiceSetupService(deps: VoiceSetupServiceDeps): VoiceSetup
   // subdirectory, so they share this service's ownership of that tree.
   const wake = createWakeSetupService({ managedVoiceRoot: deps.managedVoiceRoot });
 
-  const runInstall = singleFlight(async (): Promise<VoiceInstallReceipt> => {
+  let inFlight: Promise<VoiceInstallReceipt> | undefined;
+  const runInstall = async (request: VoiceProofLifetime): Promise<VoiceInstallReceipt> => {
+    assertVoiceProofCurrent(request);
     progress.begin();
     try {
       const result = await provision({
         managedRoot: deps.managedVoiceRoot,
         onProgress: (event) => progress.onProgress(event),
       });
+      assertVoiceProofCurrent(request);
       let configured: VoiceInstallReceipt['configured'] = { set: [], skipped: [], superseded: [] };
       const notes: string[] = [];
       let proof: VoiceRoundTripProof | undefined;
+      let proofLifetime: VoiceProofLifetime = request;
       const sttProvisioned = result.stt.state === 'provisioned' && !!result.stt.binaryPath && !!result.stt.modelPath;
 
       if (result.tts.state === 'provisioned' && result.tts.binaryPath && result.tts.modelPath) {
@@ -164,7 +163,22 @@ export function createVoiceSetupService(deps: VoiceSetupServiceDeps): VoiceSetup
         // there", which is exactly what was true on a machine where voice did
         // not work.
         if (sttProvisioned) {
+          const configKeys = ['voice.local.ttsEngine', 'voice.local.ttsBinary', 'voice.local.ttsModelPath',
+            'voice.local.sttEngine', 'voice.local.sttBinary', 'voice.local.sttModelPath'];
+          const config = configKeys.map(key => deps.getConfig(key));
+          proofLifetime = ownVoiceProofLifetime({
+            signal: AbortSignal.any([AbortSignal.timeout(120_000), ...(request.signal ? [request.signal] : [])]),
+            assertCurrent: () => {
+              assertVoiceProofCurrent(request);
+              if (configKeys.some((key, index) => deps.getConfig(key) !== config[index])) {
+                throw new Error('Voice setup configuration changed during the proof. Retry the original request.');
+              }
+            },
+          });
+          try { beginVoiceProofReading(VOICE_PROOF_PHRASE, proofLifetime); }
+          catch { assertVoiceProofCurrent(proofLifetime); }
           proof = await (deps.prove ?? proveVoiceRoundTrip)({
+            ...proofLifetime,
             ttsEngine: result.tts.engine,
             ttsBinary: result.tts.binaryPath,
             ttsModelPath: result.tts.modelPath,
@@ -172,6 +186,7 @@ export function createVoiceSetupService(deps: VoiceSetupServiceDeps): VoiceSetup
             sttBinary: result.stt.binaryPath ?? '',
             sttModelPath: result.stt.modelPath ?? '',
           });
+          assertVoiceProofCurrent(proofLifetime);
           notes.push(proof.summary);
           recordVoiceDiagnostic(deps.managedVoiceRoot, {
             at: new Date().toISOString(),
@@ -190,6 +205,7 @@ export function createVoiceSetupService(deps: VoiceSetupServiceDeps): VoiceSetup
           );
         }
       }
+      assertVoiceProofCurrent(proofLifetime);
       return {
         // Installed AND proven. A failed proof reports NOT provisioned, because
         // a false "ready" costs a session and an honest failure costs a retry.
@@ -205,7 +221,7 @@ export function createVoiceSetupService(deps: VoiceSetupServiceDeps): VoiceSetup
     } finally {
       progress.end();
     }
-  });
+  };
 
   return {
     status(): VoiceRuntimeStatus {
@@ -213,14 +229,22 @@ export function createVoiceSetupService(deps: VoiceSetupServiceDeps): VoiceSetup
       const installInProgress = progress.snapshot();
       return installInProgress ? { ...status, installInProgress } : status;
     },
-    async install(): Promise<VoiceInstallReceipt> {
+    async install(options: VoiceProofLifetime = {}): Promise<VoiceInstallReceipt> {
+      const request = Object.freeze({ ...options });
+      assertVoiceProofCurrent(request);
       // Critical-tier admission: a provision run allocates archive + model
       // buffers, refuse honestly instead of piling onto memory pressure.
       const admission = deps.admitExpensiveWork('voice runtime install');
       if (!admission.allowed) {
         throw new Error(admission.reason ?? 'voice runtime install refused: daemon is under critical memory pressure.');
       }
-      return runInstall();
+      // The first request owns the shared work. Joining callers may cancel their
+      // wait, but cannot lend new authority to the original installation.
+      if (!inFlight) inFlight = runInstall(request).finally(() => { inFlight = undefined; });
+      const ownedRun = inFlight;
+      const receipt = await awaitPermission(() => ownedRun, request.signal);
+      assertVoiceProofCurrent(request);
+      return receipt;
     },
     wakeStatus: () => wake.status(),
     async wakeProvision() {

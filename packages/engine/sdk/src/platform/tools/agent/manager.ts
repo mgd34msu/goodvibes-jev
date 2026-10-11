@@ -1,5 +1,5 @@
 import { bindContractInputAuthority } from '../../contract/input-authority.js';
-import { bindContractActionSource } from './contract-binding.js';
+import { bindContractActionSource, bindContractActionSignal } from './contract-binding.js';
 import type { AgentConstructionBinding } from './contract-binding.js';
 import { ArchetypeLoader } from '../../agents/archetypes.js';
 import { AgentOrchestrator } from '../../agents/orchestrator.js';
@@ -539,6 +539,7 @@ export class AgentManager {
     };
 
     if (spawnBinding && 'inputReadAuthority' in spawnBinding) bindContractInputAuthority(record, spawnBinding.inputReadAuthority);
+    bindContractActionSignal(record, spawnBinding && 'autonomousSignal' in spawnBinding ? spawnBinding.autonomousSignal : undefined);
     bindContractActionSource(record, spawnBinding && 'autonomousSource' in spawnBinding ? spawnBinding.autonomousSource : undefined,
       spawnBinding && 'autonomousPort' in spawnBinding ? spawnBinding.autonomousPort : undefined);
     const reserve = () => {

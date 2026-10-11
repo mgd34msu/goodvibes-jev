@@ -1,3 +1,4 @@
+import { createTuiTurnPermissionManager, registerTuiTurnTools } from './turn-tool-composition.ts';
 import { readTuiNotificationsMetadataOnly } from '../config/host-settings.ts';
 import { ConversationManager } from '../core/conversation';
 import { createShellNoticeSink } from './notification-dispatch.ts';
@@ -10,7 +11,7 @@ import { getProviderIdFromModel } from '@goodvibes-jev/engine/sdk/platform/provi
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { registerAllTools } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createSandboxContainmentNotice } from './daemon-attach-notices.ts';
-import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import type { PermissionManager } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { Compositor } from '../renderer/compositor.ts'; import { activeTokens } from '../renderer/theme.ts';
 import type { PermissionRequestHandler } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { SystemMessageRouter } from '../core/system-message-router.ts';
@@ -24,8 +25,6 @@ import {
   ForensicsRegistry, generateUserSessionId, loadBootstrapSystemPrompt, syncConfiguredServices,
   registerBootstrapHookBridge, registerBootstrapRuntimeEvents, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom,
 } from '@/runtime/index.ts';
-import { readExecEnvScrubAllowlist } from '../input/exec-env-scrub-config.ts';
-import { createSandboxExecAsk, sandboxExecAskDepsFromRuntime } from '../permissions/sandbox-exec-gate.ts';
 import { createRuntimeServices, type RuntimeServices } from './services.ts';
 import { registerClientPhoneTool } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
 import { createHostPowerSeam } from '@goodvibes-jev/engine/sdk/platform/power';
@@ -36,7 +35,7 @@ import { join } from 'node:path';
 import type { SystemMessagePriority } from '../core/system-message-router.ts';
 import { SessionSpineClient, SessionUnionCache, TUI_SPINE_PARTICIPANT } from '@goodvibes-jev/engine/sdk/platform/runtime/session-spine';
 import { SessionInboundInputPoller, createBootstrapInboundInputPoller } from './session-inbound-inputs.ts';
-import { trustGatedAsk, type WorkspaceTrustLevel } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import type { WorkspaceTrustLevel } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { attachTypedRuntimeNotifications, createRuntimeNotifier, syncNotifierQueueIntegrations } from './bootstrap-notifier-sync.ts';
 
 // --- Pre-router buffer ---
@@ -325,7 +324,6 @@ export async function initializeBootstrapCore(
 
   const forensicsRegistry = new ForensicsRegistry();
   const forensicsCollector = new ForensicsCollector(runtimeBus, forensicsRegistry);
-  const policyRuntimeState = services.policyRuntimeState;
   const uiServices = createUiRuntimeServices(services, {
     forensicsRegistry,
     getControlPlaneRecentEvents,
@@ -344,38 +342,8 @@ export async function initializeBootstrapCore(
   const selection = new SelectionManager();
 
   const toolRegistry = new ToolRegistry();
-  const { fileCache, projectIndex } = registerAllTools(toolRegistry, {
-    resolveSessionId: () => runtimeSessionIdRef.value, surfaceRoot: services.surface.surfaceRoot, // task refs follow the LIVE runtime session (recovery reassigns it in place); without this they fall into the shared legacy namespace
-    localhostFetchApproval: services.localhostFetchApproval, // loopback-fetch ask, built once in the services composition
-    execPromptAnswerHandler: services.execPromptAnswerHandler, // terminal prompt-answer path, built once in the services composition
-    fileUndoManager: services.fileUndoManager,
-    modeManager: services.modeManager,
-    processManager: services.processManager,
-    agentManager: services.agentManager,
-    agentMessageBus: services.agentMessageBus,
-    archetypeLoader: services.archetypeLoader,
-    projectRoot: services.workingDirectory,
-    contractRunner: services.contractRunner,
-    webSearchService: services.webSearchService,
-    channelRegistry: services.channelPlugins,
-    remoteRunnerRegistry: services.remoteRunnerRegistry,
-    workflowServices: services.workflow,
-    mcpRegistry: services.mcpRegistry,
-    sessionOrchestration: services.sessionOrchestration,
-    sandboxSessionRegistry: services.sandboxSessionRegistry,
-    workingDirectory: services.workingDirectory,
-    configManager,
-    providerRegistry: services.providerRegistry,
-    toolLLM: services.toolLLM,
-    featureFlags: services.featureFlags,
-    serviceRegistry: services.serviceRegistry,
-    overflowHandler: services.overflowHandler,
-    changeTracker: services.sessionChangeTracker,
-    // Widens the allowlist of credential-looking variable NAMES kept (master switch stays on). See exec-env-scrub-config.ts.
-    credentialEnvScrub: { allowlist: readExecEnvScrubAllowlist(configManager) },
-    // Register context_accounting against OUR holder (the Orchestrator-backed source bound at bootstrap.ts). See runtime/context-accounting-source.ts.
-    contextAccountingHolder: services.contextAccountingHolder,
-    // First contained (sandboxed) command run announces "commands now run contained" once, recorded and surfaced now.
+  const { fileCache, projectIndex } = registerTuiTurnTools(toolRegistry, services, {
+    resolveSessionId: () => runtimeSessionIdRef.value,
     onSandboxedRun: createSandboxContainmentNotice({ configManager, notify: (text) => conversation.log(`[Sandbox] ${text}`, { fg: activeTokens().secondary }) }),
   }); registerClientPhoneTool(toolRegistry, services.devices); // the `phone` tool follows the LOOP, so it is registered here; the posture runtime it used to call is the daemon's now and this tool reaches it over the devices.* verbs (see the SDK's client/phone-tool.ts)
   services.agentOrchestrator.setDependencies({
@@ -615,22 +583,7 @@ export async function initializeBootstrapCore(
 
   await syncConfiguredServices(domainDispatch.syncIntegration, services.serviceRegistry);
 
-  const permissionManager = new PermissionManager(
-    // Composed ask layer: the workspace trust gate (outer) wraps the sandbox-aware exec gate (inner); see sandbox-exec-gate.ts. The catastrophic block is untouched. The innermost ask is the CLIENT raiser: it posts approvals.raise to the daemon and prompts here (see the SDK's platform/runtime/client/approval-raiser.ts).
-    trustGatedAsk(
-      services.workspaceTrustManager,
-      createSandboxExecAsk(
-        sandboxExecAskDepsFromRuntime(configManager, featureFlags),
-        (request) => services.requestApproval({ request }),
-      ),
-      () => trustPromptRef.requestTrustDecision(), // indirection through the ref, not bound early. main.ts patches the real impl in later
-    ),
-    createPermissionConfigReader(configManager),
-    policyRuntimeState,
-    services.hookDispatcher,
-    featureFlags,
-    services.userPermissionRuleStore, // durable remembered approvals (mirrors the SDK composition); permissions.rules.* lists/deletes them
-  );
+  const permissionManager = createTuiTurnPermissionManager(services, () => trustPromptRef.requestTrustDecision());
   await hookWorkbench.loadAndApplyManagedHooks();
 
   const runtime: MutableRuntimeState = {

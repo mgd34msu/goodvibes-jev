@@ -19,6 +19,7 @@
 // The caller (orchestrator-runner.ts runAgentTask) owns the "did anything new happen this
 // turn" cache-reuse guard and the AgentRecord/session-transcript recording; this module is
 // a pure function of its inputs so it can be unit-tested without a live agent loop.
+import type { CodeInjectionRanking, CodeInjectionAuthorityOptions } from '../state/code-injection-ranking.js';
 import type { ContentPart, ProviderMessage } from '../providers/interface.js';
 import { estimateTokens } from '../core/context-compaction.js';
 import { buildKnowledgeInjectionPrompt, selectKnowledgeForTaskScored } from '../state/index.js';
@@ -55,31 +56,8 @@ export const DEFAULT_TURN_KNOWLEDGE_LIMIT = 3;
 /** Default candidate breadth for the code-index retrieval (Stage B). */
 export const DEFAULT_TURN_CODE_LIMIT = 3;
 
-/**
- * Similarity → floor-scale projection for code-index hits (Stage B).
- *
- * Memory records are scored on a 0 to 190 scale (knowledge-injection.ts: the
- * relevance reading's probability times KNOWLEDGE_SCORE_SCALE), with the
- * default relevance floor of 95 at probability 0.5. Code-index hits carry a cosine-derived `similarity` in
- * [0,1] (code-index-store.ts distanceToSimilarity = clamp(1 - L2distance/2)),
- * a DIFFERENT scale entirely. To let a single shared relevance floor govern
- * BOTH sources honestly, a code hit's similarity is projected onto the memory
- * score scale by:
- *
- *   codeScore = similarity * CODE_SIMILARITY_TO_SCORE_SCALE   (= similarity * 200)
- *
- * Consequences of scale = 200, stated so the mapping is auditable, not magic:
- *   - The default floor 95 admits code at similarity >= 0.475.
- *   - An orthogonal (unrelated) normalized-embedding pair has cosine 0, i.e.
- *     L2 distance sqrt(2) ≈ 1.414, i.e. similarity ≈ 0.293, BELOW 0.475, so
- *     unrelated chunks never clear the floor.
- *   - A genuinely similar chunk (similarity 0.5–1.0 → score 100–200) clears it.
- *   - Because the SAME configurable floor scales both sources, raising the
- *     floor (stricter memory) also raises the code similarity bar in lockstep,
- *     and lowering it loosens both. There is no separate, silently-diverging
- *     code threshold to keep in sync.
- */
-export const CODE_SIMILARITY_TO_SCORE_SCALE = 200;
+/** Canonical code relevance shares memory's probability × 190 score scale. */
+export const CODE_RELEVANCE_TO_SCORE_SCALE = 190;
 
 /** Bounded ring size for AgentRecord.turnInjections (see recordTurnInjection). */
 export const DEFAULT_TURN_INJECTION_RING_SIZE = 20;
@@ -99,6 +77,7 @@ export type TurnCodeIndexSource = {
   assertCurrent?(expected?: string): Promise<void>;
   finishTurn?(): void;
   dispose?(): void;
+  rankForInjection?(query: string, hits: readonly CodeContextResult[], options?: CodeInjectionAuthorityOptions): Promise<CodeInjectionRanking>;
   search(query: string, opts?: { limit?: number }): Promise<readonly CodeContextResult[]>;
   stats(): Pick<
     CodeIndexStats,
@@ -218,6 +197,7 @@ export interface BuildPerTurnKnowledgeInjectionInput {
    * so a wired-but-disabled source is a hard no-op with an honest record.
    */
   readonly codeIndex?: TurnCodeIndexSource | undefined;
+  readonly codeAuthority?: CodeInjectionAuthorityOptions | undefined;
   /**
    * Stage B, resolved code-injection gate for this turn: (the `agent-passive-code-injection`
    * gate, off by default via agents.passiveInjection.code) AND (the embedder's storage.codeIndexEnabled setting). Resolved
@@ -232,6 +212,7 @@ export interface BuildPerTurnKnowledgeInjectionInput {
 export interface BuildPerTurnKnowledgeInjectionResult {
   readonly block: string | null;
   readonly memoryBlock?: string | null;
+  readonly assertCodeCurrent?: (() => Promise<void>) | undefined;
   readonly record: TurnInjectionRecord;
 }
 
@@ -301,7 +282,8 @@ async function collectCodeInjectionCandidates(
   relevanceFloor: number,
   codeLimit: number,
   alreadyInjectedIdSet: ReadonlySet<string>,
-): Promise<{ candidates: MergedCandidate[]; considered: number; skipped: string | undefined }> {
+  authority?: CodeInjectionAuthorityOptions,
+): Promise<{ candidates: MergedCandidate[]; considered: number; skipped: string | undefined; assertCurrent?: (() => Promise<void>) | undefined }> {
   if (!enabled || !codeIndex) return { candidates: [], considered: 0, skipped: undefined };
 
   await codeIndex.prepare?.();
@@ -312,20 +294,25 @@ async function collectCodeInjectionCandidates(
   if (!stats.semanticRetrievalAvailable) return { candidates: [], considered: 0, skipped: 'no semantic embedding provider' };
 
   const hits = await codeIndex.search(query, { limit: codeLimit });
+  const generation = codeIndex.generation?.();
+  const considered = hits.filter(hit => !alreadyInjectedIdSet.has(generation === undefined ? codeHitId(hit) : `${codeHitId(hit)}:${generation}:${hit.chunk.contentHash}`)).length;
+  if (!hits.length) return { candidates: [], considered, skipped: undefined };
+  if (!codeIndex.rankForInjection) return { candidates: [], considered, skipped: 'code relevance unavailable' };
+  const reading = await codeIndex.rankForInjection(query, hits, authority);
+  await reading.assertCurrent();
+  await codeIndex.assertCurrent?.(generation);
   const candidates: MergedCandidate[] = [];
-  let considered = 0;
-  for (const hit of hits) {
+  for (const { hit, probability } of reading.ranked) {
     const id = codeIndex.generation ? `${codeHitId(hit)}:${codeIndex.generation()}:${hit.chunk.contentHash}` : codeHitId(hit);
     if (alreadyInjectedIdSet.has(id)) continue;
-    considered++;
-    const score = hit.similarity * CODE_SIMILARITY_TO_SCORE_SCALE;
+    const score = probability * CODE_RELEVANCE_TO_SCORE_SCALE;
     if (score < relevanceFloor) continue;
     candidates.push({ source: 'code-index', score, id, ingestMode: hit.label, hit });
   }
   const skipped = candidates.length === 0 && considered > 0
     ? 'no code chunks cleared the relevance floor'
     : undefined;
-  return { candidates, considered, skipped };
+  return { candidates, considered, skipped, assertCurrent: reading.assertCurrent };
 }
 
 /**
@@ -380,6 +367,7 @@ export async function buildPerTurnKnowledgeInjection(
     alreadyInjectedIds,
     turn,
     codeIndex,
+    codeAuthority,
     codeInjectionEnabled = false,
     codeLimit = DEFAULT_TURN_CODE_LIMIT,
   } = input;
@@ -402,7 +390,7 @@ export async function buildPerTurnKnowledgeInjection(
       injection: entry.injection,
     }));
 
-  const code = await collectCodeInjectionCandidates(codeIndex, codeInjectionEnabled, query, relevanceFloor, codeLimit, alreadyInjectedIdSet);
+  const code = await collectCodeInjectionCandidates(codeIndex, codeInjectionEnabled, query, relevanceFloor, codeLimit, alreadyInjectedIdSet, codeAuthority);
 
   // One merged pool, sorted best-first, so memory and code compete in the SAME budget and the
   // trim always drops the globally-lowest-scored surviving line regardless of its source.
@@ -465,6 +453,7 @@ export async function buildPerTurnKnowledgeInjection(
   return {
     block,
     memoryBlock: renderTurnInjectionBlock(kept.filter(entry => entry.source === 'memory')),
+    ...(kept.some(entry => entry.source === 'code-index') ? { assertCodeCurrent: code.assertCurrent } : {}),
     record: {
       ...baseRecordFields,
       injectedIds: kept.map((entry) => entry.id),

@@ -1,3 +1,4 @@
+import { postalConfigKey, readConfigSettingForDisplay } from '@goodvibes-jev/engine/sdk/platform/config';
 /**
  * settings-modal-mutations, pure mutation helpers for SettingsModal.
  *
@@ -90,7 +91,7 @@ export function applySettingValue({
   // of surfacing the honest "Save failed" message the write path below produces.
   let previousValue: unknown;
   try {
-    previousValue = configManager.get(key);
+    previousValue = postalConfigKey(key) ? configManager.getStored(key) : configManager.get(key);
   } catch (e) {
     logger.error('SettingsModal: failed to read previous config value', { key, error: summarizeError(e) });
   }
@@ -129,7 +130,9 @@ export function applySettingValue({
   for (const entries of groups.values()) {
     for (const entry of entries) {
       if (entry.setting.key !== key) continue;
-      entry.currentValue = configManager.get(key);
+      const display = readConfigSettingForDisplay(() => configManager.get(key));
+      entry.currentValue = display.value;
+      entry.valueUnavailable = display.held;
       entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
       refreshHostSettingEntry(entry, configManager);
     }

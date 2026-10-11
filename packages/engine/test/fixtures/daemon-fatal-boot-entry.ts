@@ -1,22 +1,11 @@
-/**
- * daemon-fatal-boot-entry.ts — the daemon's boot-and-fail path, compilable.
- *
- * This exists to be built with `bun build --compile` and RUN, because the
- * defect it guards is invisible to a source-level test. The released daemon
- * binary died on this path with zero bytes on stdout and zero bytes on stderr,
- * while the identical source run under `bun` printed the reason loudly.
- *
- * It imports the real `ConfigManager` and the real `reportFatalBootFailure`,
- * and mirrors daemon/cli.ts's tail exactly — the ingestion refusal comes out of
- * the shipped screen, and the fatal report comes out of the shipped reporter.
- * Nothing about the failure path is re-implemented here; if this entry stays
- * silent, so does the daemon.
- *
- * The real daemon entrypoint cannot itself be compiled inside this repository:
- * `knowledge/html-readability.ts` statically imports `jsdom`, which is an
- * optionalDependency, so a compiled build of daemon/cli.ts dies at module init
- * on a missing package before any of this code runs. That is worth fixing on
- * its own and is noted in the report; it is not what this fixture is for.
+/** Compiled canonical ConfigManager + fatal reporter fixture.
+ * This isolates descriptor/logging behavior without bundling the whole product.
+ * resolveDaemonCliPaths additionally exercises the engine's --daemon-home
+ * isolation contract; surfaceRoot=goodvibes and output markers intentionally
+ * differ from the pinned daemon fixture aea2b399f6aec7fc3a3a8831bfc2d1934c8b8090.
+ * It is not an exact mirror of the current product CLI. The product's emitted
+ * malformed-settings startup is separately exercised by
+ * products/daemon/src/test/cli/startup-diagnostics-executable.test.ts.
  */
 
 import { homedir } from 'node:os';

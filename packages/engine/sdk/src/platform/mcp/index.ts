@@ -1,4 +1,5 @@
 export { McpRegistry } from './registry.js';
+export { createMcpAutonomousElicitationHandler } from './elicitation-autonomous.js';
 export type { McpReloadResult, McpReloadServerResult, RegisteredTool } from './registry.js';
 export { McpClient } from './client.js';
 export { createMcpApi } from './mcp-api.js';

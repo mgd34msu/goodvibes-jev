@@ -25,6 +25,9 @@ export interface CompactionReadings {
 /** A port answering both compaction readings from `readings`, recording every request. */
 export function compactionQualityPort(readings: CompactionReadings = {}) {
   return fakePort((name: string, question: Question) => {
+    if (name.startsWith('dependency_')) return noulAnswer(0.01);
+    if (name.startsWith('selected_c2_')) return noulAnswer(0.01);
+    if (name === 'selected' || name.startsWith('selected_')) return noulAnswer(0.99);
     if (name === 'substance') return scoreAnswer(question, readings.substance ?? 3, 0.95);
     if (name === 'relation') return choiceAnswer(question, readings.relation ?? 'supports', 0.95);
     if (name.startsWith('keep_')) return noulAnswer(readings.keep?.(Number(name.slice('keep_'.length))) ?? 0.05);

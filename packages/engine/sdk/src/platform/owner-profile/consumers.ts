@@ -1,3 +1,4 @@
+import { PostalAddressHeldError } from '../config/postal-address.js';
 /**
  * consumers.ts, every place that used to hold or guess a fact about the owner,
  * reading it from here instead.
@@ -132,17 +133,8 @@ const ROW_BY_CONFIG_KEY = new Map(CONSUMER_FALLBACKS.map((row) => [row.configKey
 // ---------------------------------------------------------------------------
 
 /**
- * Split a one-line address into its parts, best-effort, by comma.
- *
- * `200 Office Way, Lansing, MI 48933, US` → line1 / city / region+postalCode /
- * country. A shape this cannot read confidently yields `undefined` for the
- * parts it could not determine, and an undefined part means the consumer key
- * stays unset and falls back exactly as before. That is the correct failure
- * direction for an address: a key left unset is visible and fixable, while a
- * confidently-wrong `region` is a parcel delivered to the wrong state.
- *
- * `name` is never inferred, a profile line holds an address, not an addressee,
- * and guessing a recipient name out of a street line would be invention.
+ * @deprecated Mechanical compatibility parser only. Production consumers must
+ * use the async verified address boundary; this is never a semantic fallback.
  */
 export function splitPostalAddress(value: string): Partial<Record<PostalAddressPart, string>> {
   const parts = value.split(',').map((part) => part.trim()).filter((part) => part.length > 0);
@@ -176,7 +168,9 @@ export function splitPostalAddress(value: string): Partial<Record<PostalAddressP
 // ---------------------------------------------------------------------------
 
 /** The store reads the resolver needs. */
-export type ConsumerProfileSource = Pick<OwnerProfileStore, 'get' | 'read' | 'section' | 'status'>;
+/** Legacy adapters may omit the lease; a real store always supplies it. */
+export type ConsumerProfileSource = Pick<OwnerProfileStore, 'get' | 'read' | 'section' | 'status'>
+  & Partial<Pick<OwnerProfileStore, 'captureRead'>>;
 
 /** Whether the fallback is switched on right now (`profile.consumerFallback`). */
 export type FallbackEnabledPredicate = () => boolean;
@@ -197,13 +191,13 @@ export function createConsumerFallbackReader(
     if (!isEnabled()) return undefined;
     const row = ROW_BY_CONFIG_KEY.get(key);
     if (row === undefined) return undefined;
+    if (row.addressPart !== undefined && source.status().kind === 'unavailable') throw new PostalAddressHeldError();
     const field = source.get(row.fieldId);
     if (field === undefined || !field.valid) return undefined;
     const value = field.value.trim();
     if (value.length === 0) return undefined;
     if (row.addressPart === undefined) return value;
-    const part = splitPostalAddress(value)[row.addressPart];
-    return part === undefined || part.length === 0 ? undefined : part;
+    throw new PostalAddressHeldError();
   };
 }
 
@@ -215,6 +209,7 @@ export interface ConsumerFallbackStatus {
   readonly keyExists: boolean;
   /** True when the key is unset AND the profile has something for it. */
   readonly resolvesFromProfile: boolean;
+  readonly status: 'available' | 'held' | 'missing';
 }
 
 /**
@@ -230,19 +225,17 @@ export function profileFallbackStatus(
   source: ConsumerProfileSource,
   get: (key: string) => unknown,
 ): readonly ConsumerFallbackStatus[] {
-  const reader = createConsumerFallbackReader(source, () => true);
   return CONSUMER_FALLBACKS.map((row) => {
     let keyExists = true;
-    try {
-      get(row.configKey);
-    } catch {
-      keyExists = false;
-    }
+    let held = false;
+    try { get(row.configKey); }
+    catch (error) { if (error instanceof PostalAddressHeldError) held = true; else keyExists = false; }
+    const field = source.get(row.fieldId);
+    const present = field?.valid === true && field.value.trim().length > 0;
     return {
-      configKey: row.configKey,
-      fieldId: row.fieldId,
-      keyExists,
-      resolvesFromProfile: keyExists && reader(row.configKey) !== undefined,
+      configKey: row.configKey, fieldId: row.fieldId, keyExists,
+      resolvesFromProfile: keyExists && present && !held,
+      status: held ? 'held' : present ? 'available' : 'missing',
     };
   });
 }
@@ -365,7 +358,11 @@ export function installOwnerProfileConsumers(
   host: OwnerProfileConsumerHost,
 ): () => void {
   host.attachProfileFallback(createConsumerFallbackReader(source, host.consumerFallbackEnabled));
-  registerProfileRedactionValues(memoizedRedactionValues(source));
+  const uninstallRedaction = registerProfileRedactionValues(
+    memoizedRedactionValues(source),
+    () => source.status(),
+    source.captureRead?.bind(source),
+  );
   registerSignupBaseAddressFallback(() => {
     const email = source.get('contact.email');
     return email !== undefined && email.valid && email.value.trim().length > 0
@@ -377,7 +374,7 @@ export function installOwnerProfileConsumers(
   ));
   return (): void => {
     host.attachProfileFallback(null);
-    registerProfileRedactionValues(null);
+    uninstallRedaction();
     registerSignupBaseAddressFallback(null);
     registerOpenTierContextBlock(null);
   };

@@ -62,7 +62,7 @@ function downgradeLedgerRows(db: SqlDatabase): void {
     db.run('UPDATE work_ledgers SET format_version = 1, state_json = ? WHERE project_id = ?', [JSON.stringify(legacy), String(row[0])]);
   }
 }
-async function raw(file: string, version = 7) {
+async function raw(file: string, version = 9) {
   const db = new SQLiteStore(file); await db.init(() => {}, { schemaVersion: version }); return db;
 }
 
@@ -190,7 +190,7 @@ test('schema3 migration preserves exact nine-field execution JSON and leaves int
   const db = await raw(f.file);
   expect(db.exec('SELECT state_json FROM native_work_executions')[0]?.values).toEqual([[stateJson]]);
   expect(db.exec('SELECT COUNT(*) FROM native_work_execution_intents')[0]?.values).toEqual([[0]]);
-  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); db.close();
+  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); db.close();
   await migrated.storage.transaction(f.key, current => ({ next: { ...current.record!, state: 'cancelled' }, value: undefined }));
   expect(migrated.storage.currentByAttempt(f.key.attemptId)).toMatchObject({ record: { state: 'cancelled' }, intent: null });
 });
@@ -214,7 +214,7 @@ test('schema2 migration chains through execution and intent creation without inv
   const f = await fixture(); await f.store.close();
   await mutateImage(f.file, db => { db.run('DROP TABLE native_work_executions'); db.run('DROP TABLE native_work_execution_intents'); downgradeLedgerRows(db); db.run('PRAGMA user_version = 2'); });
   const migrated = await open(f.file); expect(migrated.storage.current(f.key)).toMatchObject({ intent: null, record: null, ledger: { revision: 2 } });
-  const db = await raw(f.file); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); db.close();
+  const db = await raw(f.file); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); db.close();
 });
 
 for (const table of ['work_ledgers', 'native_work_executions']) test(`schema3 migration validates ${table} before creating any intent table`, async () => {

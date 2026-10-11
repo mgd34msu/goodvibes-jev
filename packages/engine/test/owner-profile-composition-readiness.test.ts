@@ -29,6 +29,7 @@ import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProfileDocumentView } from '../sdk/src/platform/owner-profile/index.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
 import { composeOwnerProfile } from '../sdk/src/platform/control-plane/routes/owner-profile-composition.ts';
@@ -117,17 +118,16 @@ describe('§4.4: a composed profile is never in a pre-load state', () => {
     }
   });
 
-  test('the pre-load sentence is not reachable from any verb', async () => {
+  test('the first bulk read returns the loaded document and its actual fields', async () => {
     const { catalog, dispose } = compose();
     try {
-      for (const [id, body] of [
-        ['profile.status', {}],
-        ['profile.read', {}],
-        ['profile.get', { fieldId: 'contact.email' }],
-      ] as const) {
-        const answer = await catalog.invoke(id, { context: { admin: true }, body });
-        expect(JSON.stringify(answer)).not.toContain('has not been loaded');
-      }
+      const document = await catalog.invoke('profile.read', {
+        context: { admin: true }, body: {},
+      }) as ProfileDocumentView;
+      expect(document.state.kind).toBe('loaded');
+      const contact = document.sections.find((section) => section.heading === 'Contact');
+      expect(contact?.fields.find((field) => field.fieldId === 'contact.email')?.value)
+        .toBe('owner@example.com');
     } finally {
       dispose();
     }

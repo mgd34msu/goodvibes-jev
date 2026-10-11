@@ -1,6 +1,6 @@
 # Conversational original-source admission
 
-Status: local owner implementation. The explicit UTF-8 file submission path remains supported. This contract captures and admits text; product ingress and execution have their own owners and proof obligations.
+The explicit UTF-8 file submission path remains supported. This contract captures and admits text; product ingress and execution have their own owners and proof obligations.
 
 ## Source authority
 

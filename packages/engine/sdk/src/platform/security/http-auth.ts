@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { UserAuthManager } from './user-auth.js';
-import type { AuthenticatedNativePairingToken, SettingsPairingAuthority } from '../pairing/pairing-token-store.js';
+import type { AuthenticatedNativePairingToken, SettingsPairingAuthority, NativeContinuationGrant, NativeContinuationAuthority } from '../pairing/pairing-token-store.js';
 
 export const OPERATOR_SESSION_COOKIE_NAME = 'goodvibes_session';
 
@@ -30,6 +30,7 @@ export interface NativePairedSnapshot extends AuthenticatedNativePairingToken {
 }
 
 export interface NativeExecutionAuthority {
+  issueContinuation?(binding: string, assertCurrent: () => void, sourceBinding?: string): NativeContinuationGrant;
   current(): NativePairedSnapshot | null;
   withCurrent<T>(expected: NativePairedSnapshot,
     operation: (assertCurrent: () => NativePairedSnapshot) => T | Promise<T>): Promise<T>;
@@ -42,6 +43,7 @@ export interface NativeExecutionAuthority {
  * tokens are configured (only the shared token / user sessions authenticate).
  */
 export interface PairingTokenAuthenticator {
+  issueNativeContinuation?(token: string, expected: NativeContinuationAuthority, binding: string, assertCurrent: () => void, sourceBinding?: string): NativeContinuationGrant;
   /** Additive strict SETTINGS path; never substituted with native authority. */
   captureSettingsAuthority?(input: { readonly kind: 'shared-token' }
     | { readonly kind: 'pairing-token'; readonly token: string }): SettingsPairingAuthority | null;

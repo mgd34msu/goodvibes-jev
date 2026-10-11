@@ -4653,7 +4653,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "files": [
           "sample"
         ],
-        "nativeRevision": "sample",
+        "nativeRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "unifiedDiff": "sample",
         "stat": "sample"
       }
@@ -4783,6 +4783,9 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "overall": "passed",
         "jobs": [
           {
+            "headSha": "sample",
+            "runId": "sample",
+            "jobId": "sample",
             "name": "sample",
             "status": "queued",
             "conclusion": "sample",
@@ -4868,6 +4871,9 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "overall": "passed",
         "jobs": [
           {
+            "headSha": "sample",
+            "runId": "sample",
+            "jobId": "sample",
             "name": "sample",
             "status": "queued",
             "conclusion": "sample",
@@ -5320,6 +5326,32 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     },
     "status": 200,
     "body": {
+      "originalSource": {
+        "goal": "sample",
+        "criteria": [
+          "sample"
+        ],
+        "conversationContext": [
+          {
+            "role": "user",
+            "content": "sample"
+          }
+        ],
+        "selectedDiffContext": {
+          "kind": "session",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "fileIndex": 0,
+          "hunkIndex": 0,
+          "unifiedDiff": "sample",
+          "provenance": {
+            "kind": "session",
+            "sessionId": "sample",
+            "baselineCheckpointId": "sample",
+            "latestCheckpointId": "sample"
+          }
+        }
+      },
+      "taskEvidence": "sample",
       "nativeSource": {
         "sourceId": "sample",
         "sourceRevision": "sample",
@@ -6304,6 +6336,32 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "contracts": [
         {
+          "originalSource": {
+            "goal": "sample",
+            "criteria": [
+              "sample"
+            ],
+            "conversationContext": [
+              {
+                "role": "user",
+                "content": "sample"
+              }
+            ],
+            "selectedDiffContext": {
+              "kind": "session",
+              "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "fileIndex": 0,
+              "hunkIndex": 0,
+              "unifiedDiff": "sample",
+              "provenance": {
+                "kind": "session",
+                "sessionId": "sample",
+                "baselineCheckpointId": "sample",
+                "latestCheckpointId": "sample"
+              }
+            }
+          },
+          "taskEvidence": "sample",
           "nativeSource": {
             "sourceId": "sample",
             "sourceRevision": "sample",
@@ -7304,6 +7362,32 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "status": 200,
     "body": {
       "contract": {
+        "originalSource": {
+          "goal": "sample",
+          "criteria": [
+            "sample"
+          ],
+          "conversationContext": [
+            {
+              "role": "user",
+              "content": "sample"
+            }
+          ],
+          "selectedDiffContext": {
+            "kind": "session",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fileIndex": 0,
+            "hunkIndex": 0,
+            "unifiedDiff": "sample",
+            "provenance": {
+              "kind": "session",
+              "sessionId": "sample",
+              "baselineCheckpointId": "sample",
+              "latestCheckpointId": "sample"
+            }
+          }
+        },
+        "taskEvidence": "sample",
         "nativeSource": {
           "sourceId": "sample",
           "sourceRevision": "sample",
@@ -9393,6 +9477,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               }
             }
           ],
+          "attemptCount": 0,
+          "selectableCandidateCount": 0,
+          "unresolved": [
+            {
+              "itemId": "sample",
+              "attemptIndex": 0,
+              "title": "sample",
+              "state": "sample",
+              "reason": "sample"
+            }
+          ],
           "autoAccept": false,
           "judgment": {
             "proposedWinnerItemId": "sample",
@@ -9454,6 +9549,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "unifiedDiff": "sample",
               "stat": "sample"
             }
+          }
+        ],
+        "attemptCount": 0,
+        "selectableCandidateCount": 0,
+        "unresolved": [
+          {
+            "itemId": "sample",
+            "attemptIndex": 0,
+            "title": "sample",
+            "state": "sample",
+            "reason": "sample"
           }
         ],
         "autoAccept": false,
@@ -11063,15 +11169,14 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "body": {
       "protocolVersion": 1,
       "requestId": "sample",
-      "battery": "webui.errors.daemon-refusal",
+      "battery": "webui.voice.speech-seams",
       "batteryVersion": 1,
       "status": "settled",
       "value": {
-        "session_not_found": false,
-        "session_closed": false,
-        "session_active": false,
-        "session_not_local": false,
-        "method_unknown": false
+        "endOffsets": [
+          0
+        ],
+        "nextCursor": 0
       },
       "readings": {},
       "outcome": "act",
@@ -11086,10 +11191,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           },
           "latencyMs": 0
         }
-      ],
-      "structuralBasis": {
-        "method_unknown": "http-status-not-404"
-      }
+      ]
     }
   },
   "homeassistant.homeGraph.askHomeGraph": {
@@ -21172,7 +21274,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "files": [
         "sample"
       ],
-      "nativeRevision": "sample",
+      "nativeRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "unifiedDiff": "sample",
       "stat": "sample"
     }
@@ -24200,10 +24302,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "selectedDiff": {
             "kind": "session",
-            "revision": "sample",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "fileIndex": 0,
             "hunkIndex": 0
           }
@@ -24230,10 +24332,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "selectedDiff": {
             "kind": "session",
-            "revision": "sample",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "fileIndex": 0,
             "hunkIndex": 0
           }
@@ -24260,10 +24362,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "selectedDiff": {
             "kind": "session",
-            "revision": "sample",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "fileIndex": 0,
             "hunkIndex": 0
           }
@@ -24290,10 +24392,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "selectedDiff": {
             "kind": "session",
-            "revision": "sample",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "fileIndex": 0,
             "hunkIndex": 0
           }
@@ -24320,10 +24422,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "sessionId": "sample",
         "continuation": {
           "sessionId": "sample",
-          "revision": "sample",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "selectedDiff": {
             "kind": "session",
-            "revision": "sample",
+            "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "fileIndex": 0,
             "hunkIndex": 0
           }

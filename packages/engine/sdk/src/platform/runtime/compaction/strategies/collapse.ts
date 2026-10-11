@@ -19,7 +19,8 @@
  * left out and counted.
  */
 
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { OwnedJudgmentOptions } from '../../owned-judgment-work.js';
 import type { ProviderMessage } from '../../../providers/interface.js';
 import { estimateTokens } from '../../../core/compaction-types.js';
 import { collapseKeep, type KeepEntry } from '../batteries/collapse-keep.js';
@@ -47,7 +48,9 @@ interface Quote extends Entry {
  * @param input - Strategy input containing messages and context.
  * @returns Strategy output with a single collapsed message.
  */
-export async function runCollapse(input: StrategyInput): Promise<StrategyOutput> {
+export async function runCollapse(input: StrategyInput, options: OwnedJudgmentOptions = {}): Promise<StrategyOutput> {
+  options.signal?.throwIfAborted();
+  options.assertCurrent?.();
   const startMs = Date.now();
   const { messages, tokensBefore, sessionId, strategy } = input;
   const warnings: string[] = [];
@@ -61,9 +64,11 @@ export async function runCollapse(input: StrategyInput): Promise<StrategyOutput>
   if (lastUserText) recent.push({ prefix: 'User: ', body: lastUserText, droppable: false, omitted: false });
   if (lastAssistantText) recent.push({ prefix: 'Assistant: ', body: lastAssistantText, droppable: false, omitted: false });
 
-  const keys: Quote[] = (await selectKeyMessages(messages, new Set([lastUserIndex, lastAssistantIndex])))
+  const keys: Quote[] = (await selectKeyMessages(messages, new Set([lastUserIndex, lastAssistantIndex]), options))
     .map((text) => ({ prefix: '- ', body: text, droppable: true, omitted: false }));
 
+  options.signal?.throwIfAborted();
+  options.assertCurrent?.();
   const render = (cap: number): string => {
     const omitted = keys.filter((quote) => quote.omitted).length;
     const kept = keys.filter((quote) => !quote.omitted).map((quote) => quote.prefix + clip(quote.body, cap));
@@ -119,12 +124,18 @@ export async function runCollapse(input: StrategyInput): Promise<StrategyOutput>
  * The rendered text of every collapsed message the keep reading selects, in
  * conversation order. The recent exchange is quoted on its own and is not asked about.
  */
-async function selectKeyMessages(messages: readonly ProviderMessage[], recentIndexes: ReadonlySet<number>): Promise<string[]> {
+async function selectKeyMessages(messages: readonly ProviderMessage[], recentIndexes: ReadonlySet<number>, options: OwnedJudgmentOptions): Promise<string[]> {
   const entries: KeepEntry[] = messages
     .map((msg, index) => ({ number: index + 1, text: renderMessage(msg) }))
     .filter((entry) => !recentIndexes.has(entry.number - 1));
   if (entries.length === 0) return [];
-  const readings = await collapseKeep.select(judgmentPort(COLLAPSE_KEEP_SITE), entries, { site: COLLAPSE_KEEP_SITE });
+  const supplied = options.port;
+  const capture = supplied ? undefined : captureJudgmentPort(COLLAPSE_KEEP_SITE, options);
+  const signal = options.signal ?? capture?.signal;
+  const readings = await collapseKeep.select(supplied ?? capture!.port, entries, { site: COLLAPSE_KEEP_SITE, ...(signal ? { signal } : {}) });
+  signal?.throwIfAborted();
+  options.assertCurrent?.();
+  capture?.assertCurrent();
   return entries.filter((entry) => readings.get(entry.number)?.verdict === 'yes').map((entry) => entry.text);
 }
 

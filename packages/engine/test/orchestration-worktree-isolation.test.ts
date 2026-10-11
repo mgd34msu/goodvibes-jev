@@ -10,6 +10,8 @@
  * repository.
  */
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -382,35 +384,53 @@ describe('WorktreeIsolationManager: claim-time creation + concurrent non-conflic
 
 describe('WorktreeIsolationManager: shared isolation (default) stays fully untouched', () => {
   test('no worktree/branch is ever created when isolation is omitted, even with concurrent items touching the same file', async () => {
-    root = freshRoot();
-    writeFileSync(join(root, 'shared.txt'), 'original\n');
-    runGit(root, ['add', 'shared.txt']);
-    runGit(root, ['-c', 'user.email=a@b.c', '-c', 'user.name=test', 'commit', '-m', 'seed']);
+    // This test owns shared-tree isolation, not repository-error meaning. Its
+    // recorded reading permits ordinary post-gate commit failures to advance.
+    const recorded = fakePort((name) => {
+      if (name !== 'negating') throw new Error(`Unexpected repository question: ${name}`);
+      return noulAnswer(.01);
+    });
+    const previous = installJudgmentPort(undefined);
+    installJudgmentPort({ ...recorded.port, async ask(request) {
+      if (request.context?.battery === 'orchestration.repository-failure'
+        && request.context.site === 'orchestration.repository-failure') return recorded.port.ask(request);
+      if (previous) return previous.ask(request);
+      throw new Error('Unexpected judgment outside repository-failure fixture');
+    } });
+    try {
+      root = freshRoot();
+      writeFileSync(join(root, 'shared.txt'), 'original\n');
+      runGit(root, ['add', 'shared.txt']);
+      runGit(root, ['-c', 'user.email=a@b.c', '-c', 'user.name=test', 'commit', '-m', 'seed']);
 
-    const h = makeWtHarness();
-    const events: OrchestrationEvent[] = [];
-    const engine = makeEngine(root, h);
-    engine.on((e) => events.push(e));
+      const h = makeWtHarness();
+      const events: OrchestrationEvent[] = [];
+      const engine = makeEngine(root, h);
+      engine.on((e) => events.push(e));
 
-    const items: WorkItemSpec[] = [{ id: 'item-a', title: 'a', task: 'edit' }, { id: 'item-b', title: 'b', task: 'edit' }];
-    const ws = engine.createWorkstream({ id: 'ws-shared', title: 'shared', phases: [enginePhase(2)], items });
-    expect(ws.isolation).toBeUndefined();
-    engine.start(ws.id);
+      const items: WorkItemSpec[] = [{ id: 'item-a', title: 'a', task: 'edit' }, { id: 'item-b', title: 'b', task: 'edit' }];
+      const ws = engine.createWorkstream({ id: 'ws-shared', title: 'shared', phases: [enginePhase(2)], items });
+      expect(ws.isolation).toBeUndefined();
+      engine.start(ws.id);
 
-    await waitForAgents(ws, h, 2);
-    expect(h.workingDirByAgent.get(h.spawnedIds[0]!)).toBeUndefined();
-    expect(h.workingDirByAgent.get(h.spawnedIds[1]!)).toBeUndefined();
-    expect(ws.items[0]!.worktreePath).toBeUndefined();
-    expect(ws.items[1]!.worktreePath).toBeUndefined();
+      await waitForAgents(ws, h, 2);
+      expect(h.workingDirByAgent.get(h.spawnedIds[0]!)).toBeUndefined();
+      expect(h.workingDirByAgent.get(h.spawnedIds[1]!)).toBeUndefined();
+      expect(ws.items[0]!.worktreePath).toBeUndefined();
+      expect(ws.items[1]!.worktreePath).toBeUndefined();
 
-    h.completeAgent(h.spawnedIds[0]!, engineerReportOutput({ filesModified: ['shared.txt'] }));
-    h.completeAgent(h.spawnedIds[1]!, engineerReportOutput({ filesModified: ['shared.txt'] }));
-    await waitUntil(() => ws.items.every((i) => i.state === 'passed' || i.state === 'failed'), { label: 'every item reached a terminal state' });
+      h.completeAgent(h.spawnedIds[0]!, engineerReportOutput({ filesModified: ['shared.txt'] }));
+      h.completeAgent(h.spawnedIds[1]!, engineerReportOutput({ filesModified: ['shared.txt'] }));
+      await waitUntil(() => ws.items.every((i) => i.state === 'passed' || i.state === 'failed'), { label: 'every item reached a terminal state' });
 
-    expect(existsSync(join(root, '.goodvibes', '.worktrees'))).toBe(false);
-    expect(events.some((e) => e.type.startsWith('item-worktree') || e.type === 'item-merged' || e.type === 'item-merge-conflict')).toBe(false);
+      expect(runGit(root, ['branch', '--list', 'ws/*']).trim()).toBe('');
+      expect(existsSync(join(root, '.goodvibes', '.worktrees'))).toBe(false);
+      expect(events.some((e) => e.type.startsWith('item-worktree') || e.type === 'item-merged' || e.type === 'item-merge-conflict')).toBe(false);
 
-    rmSync(root, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    } finally {
+      installJudgmentPort(previous);
+    }
   }, WAIT_TEST_TIMEOUT_MS);
 });
 

@@ -1,4 +1,4 @@
-# Product migration contracts and gates
+# Product workspace contracts and gates
 
 The four products are ports of the existing products. They retain their screens,
 commands, styles and behavior. Their composition, input and rendering remain in
@@ -15,40 +15,12 @@ legitimate interactions. Legacy callers must migrate with their engine/native
 owners and evidence; preserving an inventory mapping does not complete that
 migration. See the [current admission, grant/revocation and retry gaps](../../README.md#status).
 
-## Applied source accounting and forward targets
+## Project tracking
 
-`docs/inventory/product-sources.json` records the complete tracked-file list used
-by the current inventory and migration mappings. These are accounting baselines,
-not a claim that the products are complete. The product gate compares every
-inventory row against these snapshots, in both directions. No upstream repo is
-modified.
-
-| Product | Source revision | Tracked files |
-|---|---|---:|
-| daemon | `254699bf5d834cdca41436211ada1ae32bf89258` | 281 |
-| tui | `0d69500f598a90f0f4aecae213b0e003764899dd` | 1618 |
-| agent | `9e225a349667632bb550e9c270d922b985848eaa` | 1602 |
-| webui | `dadf57700668fe4500b17b0b0b4520715ab25ef4` | 666 |
-
-The October 1 platform refresh is recorded separately in
-[`../inventory/upstream-targets.json`](../inventory/upstream-targets.json), with
-the exact content snapshots in `docs/inventory/upstream/`. The implementation
-sequence and unapplied differences are in
-[`upstream-reconciliation.md`](upstream-reconciliation.md). Advance a product's
-accounting baseline when its inventory and migration mappings have been
-reconciled to that source. A target pin alone does not apply its behavior.
-
-The original WebUI inventory described `9856cba`. An earlier metadata change
-named `5050483`, which has the same paths but different content in six files.
-Both remain documented history. The applied WebUI inventory and partial workspace
-now use the redesigned `dadf577` tree. Daemon accounting now uses `254699bf` after
-review of every changed Git blob. Its 86 existing mappings remain valid, and
-three added mappings identify the already-landed wire, version and adapted
-contract-lifecycle tests (89 total). The lifecycle mapping preserves shutdown
-intent without restoring the removed WRFC engine. Neither
-advance marks remaining module mappings or behavioral proof complete. The daemon
-ledger retains five native-binary/release/compiled-hosting deferrals after the
-emitted CLI-dispatch acceptance was mapped to the real entrypoint tests.
+Source revisions, per-file dispositions, migration progress and acceptance
+records are maintained in [Linear](https://linear.app/the-artificery/issue/TA-14/port-daemon-tui-agent-and-webui-with-preserved-parity) and its product-owner issues.
+They are not inputs to workspace builds or checks. A source mapping or passing
+structural gate does not prove behavioral parity or live-provider acceptance.
 
 ## Workspace boundary
 
@@ -81,52 +53,17 @@ incorrect zero exit status. Product `typecheck` scripts remain available as loca
 convenience commands; the whole-tree gate does not repeat their aggregate and
 child compiler invocations.
 
-## Module accounting
+## Executable workspace checks
 
-A product's `migration.json` has this shape:
-
-```json
-{
-  "sourceRevision": "the full pinned upstream commit",
-  "entrypoints": ["src/main.ts"],
-  "mappings": [
-    {
-      "source": "src/example.ts",
-      "disposition": "PORT",
-      "targets": ["products/example/src/example.ts"]
-    }
-  ],
-  "verification": {
-    "parity": "docs/audit/example-parity.md",
-    "proof": "docs/audit/example-proof.md",
-    "patternAudit": "docs/audit/example-patterns.md"
-  }
-}
-```
-
-Use actual product names and paths. Each mapping must match its inventory's
-disposition. PORT targets stay in that product, HOIST targets live in the
-engine, and JEV mappings identify the rewritten implementation. A permitted
-DROP has no target and names its reason. All targets must be existing files
-inside the workspace. Incremental ports can leave mappings unfinished, but
-cannot invent dispositions or targets.
-
-## Checks and completion
-
-- `bun run products:check` verifies source accounting and every product that
-  actually exists; it reports missing products as pending
-- Root `build`, `test` and `typecheck` run the corresponding product checks
-  automatically; the Bun CI leg also runs `products:test`
-- `bun run migration:complete` additionally requires all four products, every
-  source-file mapping and nonempty parity, runnable-proof and pattern-audit
-  evidence files
-
-The strict gate is a structural completion check. It does not establish that
-an evidence file's claims are true, that a live proof ran, or that two UIs match.
-Those still require the actual commands, side-by-side checks and evidence
-review required by the intent. Do not add placeholder products to make this
-gate green. Ordinary checks can be useful while ports are in progress without
-claiming that the migration is finished.
+- `bun run products:check` verifies product packages, real source entrypoints,
+  scripts, public imports, test presence and complete TypeScript project coverage.
+- Root `build`, `test` and `typecheck` run their corresponding product checks.
+  CI obtains its product test matrix from the same inspected workspaces.
+- Source entrypoints are read from the existing package, build and HTML inputs;
+  no migration manifest or project-status document is required.
+- Build/test failures, child signals and TypeScript diagnostics fail the gate.
+  Passing structural checks does not establish UI parity or live calibration;
+  those require actual execution and review of the evidence in Linear.
 
 Product test runners must preserve their existing per-file isolation and
 local fixture behavior while adopting the shared test environment/network

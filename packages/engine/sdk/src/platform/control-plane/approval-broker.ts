@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { PersistentStore } from '../state/persistent-store.js';
 import { StoreWriteQueue } from '../state/store-write-queue.js';
 import type { PermissionPromptDecision, PermissionPromptRequest, PermissionRequestHandler } from '../permissions/prompt.js';
-import { buildDurableRuleForDecision, matchDurableRules } from '../permissions/approval-rules.js';
+import { buildDurableRuleForDecision, matchDurableRulesAsync } from '../permissions/approval-rules.js';
 import type { ControlPlaneSurfaceMessage } from './types.js';
 import { logger } from '../utils/logger.js';
 import { isRecord } from '../utils/record-coerce.js';
@@ -565,10 +565,24 @@ export class ApprovalBroker {
           if (candidate.status !== 'pending' && candidate.status !== 'claimed') continue;
           if (approved && candidate.requiresOwnerDecision) continue;
           if (this.pendingResolvers.get(candidate.id)?.retired) continue;
-          const covered = matchDurableRules([rule], candidate.request.tool, candidate.request.args, {
-            projectRoot: candidate.request.workingDirectory,
-          });
-          if (!covered) continue;
+          const candidateCurrent = () => {
+            assertOwnerCurrent?.();
+            if (this.approvals.get(candidate.id) !== candidate || this.pendingResolvers.get(candidate.id)?.retired)
+              throw new Error('Remembered approval candidate is no longer pending');
+          };
+          let covered: Awaited<ReturnType<typeof matchDurableRulesAsync>>;
+          try {
+            covered = await matchDurableRulesAsync([rule], candidate.request.tool, candidate.request.args, {
+              projectRoot: candidate.request.workingDirectory,
+              signal: this.pendingResolvers.get(candidate.id)?.promptController?.signal,
+              assertCurrent: candidateCurrent,
+            });
+          } catch (error) {
+            if (this.approvals.get(candidate.id) !== candidate || this.pendingResolvers.get(candidate.id)?.retired) continue;
+            throw error;
+          }
+          if (!covered || this.approvals.get(candidate.id) !== candidate || this.pendingResolvers.get(candidate.id)?.retired) continue;
+          candidateCurrent();
           const swept: SharedApprovalRecord = {
             ...candidate,
             status: approved ? 'approved' : 'denied',

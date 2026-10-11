@@ -115,6 +115,7 @@ export async function runWakeRaceSweep(sdkRoot: string, delayMs: number): Promis
       if (interrupted !== null) break;
       console.log(`  run   test/${name}`);
       const result = await withRunTmpDir(TEST_TMP_ROOT, (runTmpDir) => runOwnedTestChild({
+        ownProcessGroup: process.platform !== 'win32',
         // Keep the original per-test ceiling. Ownership/isolation must not
         // make an existing failure green merely by granting it more time.
         argv: ['--timeout=5000', `test/${name}`],

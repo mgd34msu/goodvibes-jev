@@ -1,3 +1,4 @@
+import { prepareProjectFramework, readRepeatedCalls, OrchestratorObservationHeldError, type RetainedToolObservation } from './orchestrator-observations.js';
 import { captureAutonomousSource } from '../permissions/autonomous.js';
 // OrchestratorRunner, single-agent turn loop coordinator.
 //
@@ -74,15 +75,36 @@ function resolveRunTurnBudget(context: AgentOrchestratorRunContext, record: Agen
   });
 }
 
+// This generation authorizes only fixed cancellation bookkeeping in the local
+// conversation. It never authorizes a tool effect, payload, or semantic decision.
+const cancellationConversationGenerations = new WeakMap<AgentRecord, object>();
+function captureCancelledConversationOwner(context: AgentOrchestratorRunContext, record: AgentRecord): () => boolean {
+  const generation = {};
+  cancellationConversationGenerations.set(record, generation);
+  const id = record.id, task = record.task, startedAt = record.startedAt;
+  const getSignal = context.getCancellationSignal, signal = getSignal?.(id);
+  const cwd = context.workingDirectory, registerConversation = context.registerConversationSource;
+  return () => {
+    try {
+      return signal?.aborted === true && record.status === 'cancelled'
+        && cancellationConversationGenerations.get(record) === generation
+        && record.id === id && record.task === task && record.startedAt === startedAt
+        && context.getCancellationSignal === getSignal && getSignal?.(id) === signal
+        && context.workingDirectory === cwd && context.registerConversationSource === registerConversation;
+    } catch { return false; }
+  };
+}
+
 async function executeToolCalls(
   toolCalls: Awaited<ReturnType<LLMProvider['chat']>>['toolCalls'],
   toolRegistry: ToolRegistry,
   session: AgentSession,
   turn: number,
   record: AgentRecord,
-  callHistory: string[],
+  callHistory: RetainedToolObservation[],
   callHistoryWindow: number,
   context: AgentOrchestratorRunContext,
+  assertObservationCurrent: () => void,
 ): Promise<ToolResult[]> {
   // Capture before any asynchronous admission work; a later lookup can belong
   // to a replacement run rather than the owner of this batch.
@@ -90,7 +112,18 @@ async function executeToolCalls(
   const results: ToolResult[] = [];
 
   for (const originalCall of toolCalls) {
+    assertObservationCurrent();
     const call = originalCall;
+    const originalTool = toolRegistry.list?.().find(tool => tool.definition.name === call.name);
+    const originalExecute = originalTool?.execute;
+    const originalDefinition = JSON.stringify(originalTool?.definition);
+    const requestedArguments = JSON.stringify(call.arguments);
+    const assertCallCurrent = () => {
+      assertObservationCurrent();
+      if (toolRegistry.list?.().find(tool => tool.definition.name === call.name) !== originalTool
+        || originalTool?.execute !== originalExecute || JSON.stringify(originalTool?.definition) !== originalDefinition
+        || JSON.stringify(call.arguments) !== requestedArguments) throw new OrchestratorObservationHeldError();
+    };
     const argsSummary = summarizeToolArgs(call.arguments as Record<string, unknown>);
     // The tool trace: for the TUI's activity surfaces, never for a channel.
     setAgentProgress(record, `Turn ${turn} · ${call.name}${argsSummary}`, 'operator');
@@ -101,7 +134,10 @@ async function executeToolCalls(
     // Push a result AND log the matching session record, so the denied /
     // executed / threw branches below stay uniform.
     const recordResult = (result: ToolResult, argsJson: string, toolName = call.name): void => {
+      assertCallCurrent();
       results.push(result);
+      callHistory.push(Object.freeze({ signature: callSig, requested: structuredClone(call), executed: Object.freeze({ name: toolName, arguments: argsJson }), result: structuredClone(result) }));
+      if (callHistory.length > callHistoryWindow) callHistory.shift();
       session.appendMessage({
         type: 'tool_execution',
         turn,
@@ -122,7 +158,7 @@ async function executeToolCalls(
         // Use the same prepared-action owner as foreground/native sessions. The
         // source getter is a construction binding, not agent prose or AgentInput.
         const [result] = await executeAutonomousToolCalls({
-          autonomousSource: context.autonomousSource, autonomousPort: context.autonomousPort, turnSignal: signal, toolRegistry,
+          autonomousSource: context.autonomousSource, autonomousPort: context.autonomousPort, turnSignal: signal, toolRegistry, assertCurrent: assertCallCurrent,
           permissionManager: { check: manager.check.bind(manager), checkDetailed: manager.checkDetailed.bind(manager),
             admitAutonomous: manager.admitAutonomous.bind(manager), autonomousPreparation: manager.autonomousPreparation.bind(manager),
             ...(manager.prepareAutonomousOwner ? { prepareAutonomousOwner: manager.prepareAutonomousOwner.bind(manager) } : {}),
@@ -131,6 +167,7 @@ async function executeToolCalls(
           hookDispatcher: null, runtimeBus: context.runtimeBus, sessionId: record.id,
           emitterContext: () => context.emitterContext(record.id),
           onToolExecuted(name, args, success) {
+            assertObservationCurrent();
             executedName = name; executedArgs = args;
             context.onToolExecuted?.(name, args, success);
           },
@@ -141,16 +178,24 @@ async function executeToolCalls(
       // Background permission gate: consult the session permission mode exactly
       // like the foreground turn loop (denials return a structured ToolDenial).
       assertPermissionActive(signal);
+      assertCallCurrent();
       const permissionOutcome = await gateBackgroundToolCall(context, record, call.name, call.arguments as Record<string, unknown>, signal);
       assertPermissionActive(signal);
+      assertCallCurrent();
       if (!permissionOutcome.approved) {
         recordResult(
           { callId: call.id, success: false, error: permissionOutcome.error, denial: permissionOutcome.denial },
           JSON.stringify(call.arguments),
         );
       } else {
-        const effectiveArgs = permissionOutcome.modifiedArgs ?? (call.arguments as Record<string, unknown>);
-        const result = await toolRegistry.execute(call.id, call.name, effectiveArgs, signal ? { signal } : undefined);
+        const effectiveArgs = captureProjectionArgs(permissionOutcome.modifiedArgs ?? call.arguments, call.name);
+        const approvedArguments = JSON.stringify(effectiveArgs);
+        const assertEffectiveCurrent = (executedArgs?: Record<string, unknown>) => {
+          assertCallCurrent();
+          if (JSON.stringify(effectiveArgs) !== approvedArguments || (executedArgs && JSON.stringify(executedArgs) !== approvedArguments)) throw new OrchestratorObservationHeldError();
+        };
+        const result = await toolRegistry.execute(call.id, call.name, effectiveArgs, { signal, assertCurrent: assertEffectiveCurrent });
+        assertEffectiveCurrent();
         // Stage B: schedule a debounced reindex of any touched file(s). Never awaited.
         try {
           context.onToolExecuted?.(call.name, effectiveArgs, result.success !== false);
@@ -161,12 +206,13 @@ async function executeToolCalls(
       }
       }
     } catch (err) {
+      assertCallCurrent();
+      if (err instanceof OrchestratorObservationHeldError || (err instanceof Error && err.cause instanceof OrchestratorObservationHeldError)) throw new OrchestratorObservationHeldError();
       const toolErr = signal?.aborted ? 'cancelled by user' : summarizeError(err);
       recordResult({ callId: call.id, success: false, error: toolErr, ...(signal?.aborted ? { cancelled: true } : {}) }, JSON.stringify(call.arguments));
     }
 
-    callHistory.push(callSig);
-    if (callHistory.length > callHistoryWindow) callHistory.shift();
+
   }
 
   return results;
@@ -177,8 +223,10 @@ async function finalizeAgentRun(
   record: AgentRecord,
   session: AgentSession | null,
   preAgentProcessIds: Set<string>,
+  assertObservationCurrent?: () => void,
 ): Promise<void> {
   if (context.beforeRunSettlement) await context.beforeRunSettlement();
+  if (record.status === 'running') assertObservationCurrent?.();
   const statusAfterLoop = (record as { status: string }).status;
   if (statusAfterLoop !== 'failed' && statusAfterLoop !== 'cancelled') {
     record.status = 'completed';
@@ -237,6 +285,7 @@ async function handleAgentRunFailure(
   }
   if (context.beforeRunSettlement) await context.beforeRunSettlement();
   record.status = 'failed';
+  if (err instanceof OrchestratorObservationHeldError) record.failureReason = 'semantic_observation_held';
   record.error = message;
   record.completedAt = Date.now();
   if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
@@ -295,6 +344,7 @@ export async function runAgentTask(
   const preAgentProcessIds = new Set((context.processManager?.list() ?? []).map((p) => p.id));
 
   try {
+    const ownsCancelledConversation = captureCancelledConversationOwner(context, record);
     const providerRegistry = context.providerRegistry;
     const currentModel = lazyCurrentModel(providerRegistry);
     const primaryRoute = context.resolveProviderForRecord(providerRegistry, record, currentModel);
@@ -347,13 +397,15 @@ export async function runAgentTask(
     const activeConversation = conversation;
     context.registerConversationSource?.(record.id, () => activeConversation.getMessageSnapshot());
 
+    const projectFramework = await prepareProjectFramework(context, record);
+    const spawnPromptContext = { ...context, projectFramework };
     await resolveSpawnKnowledgeInjections(record, context);
-    let promptContext = await prepareOrchestratorPromptContext(record, context, context.getCancellationSignal?.(record.id));
+    let promptContext = await prepareOrchestratorPromptContext(record, spawnPromptContext, context.getCancellationSignal?.(record.id));
     let systemPrompt = buildOrchestratorSystemPrompt(record, undefined, promptContext);
     const rebuildSystemPrompt = async (remainingTokens: number): Promise<string> => {
       // The emergency task-only prompt contains no curated knowledge.
       promptContext = remainingTokens === 0 ? undefined
-        : await prepareOrchestratorPromptContext(record, context, context.getCancellationSignal?.(record.id));
+        : await prepareOrchestratorPromptContext(record, spawnPromptContext, context.getCancellationSignal?.(record.id));
       return buildLayeredOrchestratorSystemPrompt(record, remainingTokens, promptContext);
     };
 
@@ -365,6 +417,7 @@ export async function runAgentTask(
     // `systemPrompt` fresh every turn (composeTurnSystemPrompt), never written back into it.
     const knowledgeIdsAlreadySurfaced = new Set<string>((record.knowledgeInjections ?? []).map((entry) => entry.id));
     let priorTurnKnowledgeBlock: string | null = null;
+    let assertCodeInjectionCurrent: (() => Promise<void>) | undefined;
     let priorCapturedMemoryBlock: string | null = null;
     let priorCapturedMemoryIds: string[] = [];
     let priorCapturedMemoryModes: string[] = [];
@@ -376,7 +429,8 @@ export async function runAgentTask(
     setAgentProgress(record, 'Turn 1 · Thinking…', 'operator');
     context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
 
-    const callHistory: string[] = [];
+    const callHistory: RetainedToolObservation[] = [];
+    let repeatObservation: Awaited<ReturnType<typeof readRepeatedCalls>> | undefined;
     const LOOP_SYSTEM_THRESHOLD = 3;
     const LOOP_USER_THRESHOLD = 5;
     const CALL_HISTORY_WINDOW = 20;
@@ -453,7 +507,7 @@ export async function runAgentTask(
       const passiveKnowledgeInjectionEnabled = context.featureFlagManager?.isEnabled('agent-passive-knowledge-injection') ?? true;
       // A released captured code generation never survives into another turn,
       // even if a feature/storage/registry gate prevents replacement retrieval.
-      if (capturedCode) priorTurnKnowledgeBlock = priorCapturedMemoryBlock;
+      if (capturedCode) { priorTurnKnowledgeBlock = priorCapturedMemoryBlock; assertCodeInjectionCurrent = undefined; }
       // Resolved once per turn (used by both the awareness check below and the per-turn
       // knowledge budget), rather than only inside the awareness branch, so the passive-
       // injection budget can derive "3% of context window" even when context-window
@@ -513,7 +567,7 @@ export async function runAgentTask(
           const codeInjectionEnabled = !!context.codeIndex
             && (context.featureFlagManager?.isEnabled('agent-passive-code-injection') ?? false)
             && (context.isCodeInjectionSettingEnabled?.() ?? true);
-          const { block, memoryBlock, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
+          const { block, memoryBlock, assertCodeCurrent, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
             memoryRegistry: capturedCode && !newUserInputThisTurn ? { getAll: () => [] } : context.memoryRegistry,
             task: record.task,
             writeScope: record.writeScope ?? [],
@@ -523,9 +577,11 @@ export async function runAgentTask(
             alreadyInjectedIds: [...knowledgeIdsAlreadySurfaced],
             turn,
             codeIndex: context.codeIndex,
+            codeAuthority: { readAccessFilter: context.codeReadAccessFilter, signal: context.getCancellationSignal?.(record.id) },
             codeInjectionEnabled,
             codeLimit: context.configManager?.get('agents.passiveInjection.codeLimit'),
           });
+          assertCodeInjectionCurrent = assertCodeCurrent;
           if (capturedCode) {
             if (newUserInputThisTurn) {
               priorCapturedMemoryBlock = memoryBlock ?? null;
@@ -561,6 +617,7 @@ export async function runAgentTask(
             priorCapturedMemoryModes = [];
           }
           priorTurnKnowledgeBlock = capturedCode && !newUserInputThisTurn ? priorCapturedMemoryBlock : null;
+          assertCodeInjectionCurrent = undefined;
         }
       }
 
@@ -603,6 +660,8 @@ export async function runAgentTask(
           record.streamingContent = undefined;
 
           const onDelta = (delta: StreamDelta) => {
+            projectFramework.assertCurrent();
+            repeatObservation?.assertCurrent();
             if (delta.content) {
               streamAccumulated += delta.content;
               // Live model output goes to streamingContent (rendered in the agent
@@ -617,6 +676,8 @@ export async function runAgentTask(
           };
 
           await context.beforeProviderRequest?.();
+          projectFramework.assertCurrent();
+          repeatObservation?.assertCurrent();
           assertOrchestratorKnowledgeCurrent(record, promptContext);
           // Read the live construction binding for every attempt. The private
           // transcript and diff exist only on this provider request, never the agent's
@@ -632,9 +693,13 @@ export async function runAgentTask(
                 + JSON.stringify(selectedDiffContext)
               : '');
           const capturedCodeGeneration = capturedCode?.generation?.();
+          const codeAuthorityForAttempt = assertCodeInjectionCurrent;
           const assertNativeProviderSource = async () => {
+            try { await codeAuthorityForAttempt?.(); } catch (error) { throw new ProviderAttemptDeniedError(error); }
             await capturedCode?.assertCurrent?.(capturedCodeGeneration);
             await context.beforeProviderRequest?.();
+            projectFramework.assertCurrent();
+            repeatObservation?.assertCurrent();
             assertOrchestratorKnowledgeCurrent(record, promptContext);
             if (nativeSource && (!context.autonomousSource || JSON.stringify(captureAutonomousSource(context.autonomousSource())) !== JSON.stringify(nativeSource)))
               throw new Error('Native provider source changed before retry');
@@ -644,18 +709,20 @@ export async function runAgentTask(
             // request so a cancel/kill aborts the provider call mid-stream, not
             // only cooperatively at the next turn/tool boundary.
             const cancelSignal = context.getCancellationSignal?.(record.id);
+            try { await codeAuthorityForAttempt?.(); } catch (error) { throw new ProviderAttemptDeniedError(error); }
             response = await activeRoute.provider.chat({
               model: activeRoute.modelId,
               messages: conversation.getMessagesForLLM(),
               tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
               systemPrompt: appendGoodVibesRuntimeAwarenessPrompt(composeTurnSystemPrompt(systemPrompt)) + privateContextBlock,
-              ...((nativeSource || promptContext?.preparedKnowledgePrompt || context.beforeProviderRequest) ? { beforeAttempt: assertNativeProviderSource } : {}),
+              ...((codeAuthorityForAttempt || nativeSource || projectFramework || promptContext?.preparedKnowledgePrompt || context.beforeProviderRequest) ? { beforeAttempt: assertNativeProviderSource } : {}),
               ...(record.reasoningEffort ? { reasoningEffort: record.reasoningEffort } : {}),
               ...(cancelSignal ? { signal: cancelSignal } : {}),
               onDelta,
             });
             break;
           } catch (chatErr) {
+            if (chatErr instanceof OrchestratorObservationHeldError) throw chatErr;
             if (chatErr instanceof ProviderAttemptDeniedError || chatErr instanceof KnowledgeEvidenceRelevanceHeldError || chatErr instanceof JudgmentInputError) throw chatErr;
             if (
               !contextRetried &&
@@ -756,6 +823,9 @@ export async function runAgentTask(
       await capturedCode?.assertCurrent?.();
       capturedCode?.finishTurn?.();
 
+      projectFramework.assertCurrent();
+      repeatObservation?.assertCurrent();
+
       // Honest "consumed at boundary" signal, emitted here (not at drain time
       // above) because this is the first point in the turn where the chat
       // call is KNOWN to have succeeded. If the call above exhausted its
@@ -775,6 +845,8 @@ export async function runAgentTask(
         }
       }
 
+      projectFramework.assertCurrent();
+      repeatObservation?.assertCurrent();
       session.appendMessage({ type: 'llm_response', turn, contentLength: response.content.length, toolCallCount: response.toolCalls.length, usage: response.usage, timestamp: new Date().toISOString() });
       record.usage = {
         inputTokens: (record.usage?.inputTokens ?? 0) + response.usage.inputTokens,
@@ -796,6 +868,10 @@ export async function runAgentTask(
       });
 
       if (response.toolCalls.length > 0) {
+        repeatObservation?.assertCurrent();
+        const precedingRepeat = repeatObservation;
+        precedingRepeat?.retainForTools();
+        const assertToolObservationCurrent = () => { projectFramework.assertCurrent(); precedingRepeat?.assertCurrent(); };
         // Apply the existing delegated exec defaults before the immutable
         // projection, history publication, progress and permission readers.
         const ingress = captureToolInputCalls(response.toolCalls).map(call => {
@@ -813,20 +889,46 @@ export async function runAgentTask(
         const batch = typeof toolRegistry.projectCall === 'function'
           ? await projectToolInputBatch(toolRegistry, ingress, { signal: inputSignal, assertCurrent() {
             inputSignal?.throwIfAborted();
+            assertToolObservationCurrent();
             if (context.getCancellationSignal?.(record.id) !== inputSignal) throw new Error('Delegated input lifetime changed');
           } }) : undefined;
         response = { ...response, toolCalls: batch?.calls ?? ingress };
         let results: ToolResult[];
+        // Capture only IDs before execution; cancellation must never publish a
+        // late tool payload or reread mutable tool arguments/results.
+        const terminalCallIds = response.toolCalls.map(call => call.id);
+        let assistantPublished = false;
         try {
-          batch?.assertCurrent();
-          conversation.addAssistantMessage(response.content, { toolCalls: response.toolCalls, usage: response.usage });
-          results = await executeToolCalls(response.toolCalls, toolRegistry, session, turn, record, callHistory, CALL_HISTORY_WINDOW, context);
-        } finally { await batch?.release(); }
+          try {
+            batch?.assertCurrent();
+            assertToolObservationCurrent();
+            conversation.addAssistantMessage(response.content, { toolCalls: response.toolCalls, usage: response.usage });
+            assistantPublished = true;
+            results = await executeToolCalls(response.toolCalls, toolRegistry, session, turn, record, callHistory, CALL_HISTORY_WINDOW, context, assertToolObservationCurrent);
+          } finally { await batch?.release(); }
+          assertToolObservationCurrent();
+        } catch (error) {
+          // Close this already-published batch mechanically, then use the
+          // existing cancellation lifecycle. No result/session/hook/contract or
+          // repeat-reading publication is allowed through this separate seam.
+          if (assistantPublished && ownsCancelledConversation()) {
+            // This catch runs once, before the normal batch result append. A
+            // prior turn may legitimately reuse these IDs; it is not this batch.
+            activeConversation.addToolResults([...new Set(terminalCallIds)].map(callId => ({
+              callId, success: false, cancelled: true, error: 'Tool invocation cancelled',
+            })));
+          }
+          throw error;
+        }
         conversation.addToolResults(results);
+        assertToolObservationCurrent();
         reportContractTurnEnd(context, record, turn, response, results);
+        assertToolObservationCurrent();
         // Per-model edit-failure + exec-expectation-miss telemetry (measurement only).
         toolFormatTelemetry.observeToolResults(activeRoute.modelId, response.toolCalls, results);
 
+        assertToolObservationCurrent();
+        repeatObservation = undefined;
         const allFailed = results.length > 0 && results.every(r => r.success === false);
         if (allFailed) {
           const cbResult = circuitBreaker.recordAllFailed();
@@ -853,7 +955,7 @@ export async function runAgentTask(
         }
 
         const sigCounts = new Map<string, { count: number; toolName: string }>();
-        for (const sig of callHistory) {
+        for (const { signature: sig } of callHistory) {
           const name = sig.slice(0, sig.indexOf('::'));
           const entry = sigCounts.get(sig);
           if (entry) {
@@ -864,18 +966,27 @@ export async function runAgentTask(
         }
         let worstCount = 0;
         let worstTool = '';
-        for (const [_sig, { count, toolName }] of sigCounts) {
+        let worstSignature = '';
+        for (const [signature, { count, toolName }] of sigCounts) {
           if (count > worstCount) {
             worstCount = count;
             worstTool = toolName;
+            worstSignature = signature;
           }
         }
-        if (worstCount >= LOOP_USER_THRESHOLD) {
+        if (continueLoop && response.toolCalls.some(call => (sigCounts.get(`${call.name}::${JSON.stringify(call.arguments)}`)?.count ?? 0) >= 2)) {
+          repeatObservation = await readRepeatedCalls(callHistory, context, record, worstSignature);
+          projectFramework.assertCurrent();
+          repeatObservation.assertCurrent();
+          repeatObservation.recordAction(repeatObservation.stuck ? 'repeated calls are stuck' : 'repeated calls show progress');
+          repeatObservation.assertCurrent();
+        }
+        if (repeatObservation?.stuck && worstCount >= LOOP_USER_THRESHOLD) {
           logger.warn(`Agent ${record.id}: loop detected, ${worstTool} called ${worstCount} times with identical args`);
           conversation.addUserMessage(
-            `You are repeating the same tool call. ${worstTool} has been called ${worstCount} times with identical arguments and results. Do NOT call ${worstTool} with these arguments again. Identify what you were trying to accomplish and take a different action.`,
+            `You are repeating the same tool call. ${worstTool} has been called ${worstCount} times with identical requested arguments and no meaningful progress in the retained results. Do NOT call ${worstTool} with these arguments again. Identify what you were trying to accomplish and take a different action.`,
           );
-        } else if (worstCount >= LOOP_SYSTEM_THRESHOLD) {
+        } else if (repeatObservation?.stuck && worstCount >= LOOP_SYSTEM_THRESHOLD) {
           logger.warn(`Agent ${record.id}: possible loop, ${worstTool} called ${worstCount} times with identical args`);
           conversation.addSystemMessage(
             `You have already executed this exact call (${worstTool}) ${worstCount} times with identical arguments. The results from your previous calls are already in your conversation history. Review them and proceed to the next step.`,
@@ -890,7 +1001,10 @@ export async function runAgentTask(
       }
     }
 
-    await finalizeAgentRun(context, record, session, preAgentProcessIds);
+    await finalizeAgentRun(context, record, session, preAgentProcessIds, () => {
+      projectFramework.assertCurrent();
+      repeatObservation?.assertCurrent();
+    });
   } catch (err) {
     await handleAgentRunFailure(context, record, conversation, session, preAgentProcessIds, err);
   } finally {

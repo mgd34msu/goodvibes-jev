@@ -1,7 +1,10 @@
-import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { knowledgeClockIso, knowledgeRawRepresentation } from '../store-record-representation.js';
+import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
+import { prepareObservedKnowledgeNodeInput, upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
   KnowledgeIssueRecord,
+  KnowledgeIssueUpsertInput,
   KnowledgeNodeRecord,
 } from '../types.js';
 import {
@@ -15,8 +18,10 @@ export async function suppressGap(
   gap: KnowledgeNodeRecord,
   reason: string | undefined,
   spaceId: string,
+  assertCurrent: () => void = () => {},
 ): Promise<void> {
-  await upsertObservedKnowledgeNode(store, {
+  assertCurrent();
+  const node = prepareObservedKnowledgeNodeInput(store, {
     id: gap.id,
     kind: gap.kind,
     slug: gap.slug,
@@ -27,15 +32,21 @@ export async function suppressGap(
     confidence: gap.confidence,
     sourceId: gap.sourceId,
     metadata: {
-      ...gap.metadata,
+      ...knowledgeRawRepresentation(gap.metadata),
       repairStatus: 'not_applicable',
       repairReason: reason,
-      repairedAt: Date.now(),
+      repairedAt: knowledgeClockIso(Date.now()),
     },
-  }, 'research-task', gap, () => store.getNode(gap.id));
-  for (const issue of store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open')) {
-    await resolveIssue(store, issue, spaceId, reason ?? 'Gap was classified as not applicable.');
-  }
+  }, 'research-task', gap, () => { assertCurrent(); return store.getNode(gap.id); });
+  const issues = store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open');
+  const guard = () => {
+    assertCurrent();
+    for (const issue of issues) if (store.getIssue(issue.id) !== issue) throw new KnowledgeSourceQualityHeldError('stale');
+  };
+  await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+    nodes: [node], edges: [], issues: issues.map((issue) => resolvedIssueInput(issue, spaceId, reason ?? 'Gap was classified as not applicable.')),
+    assertCurrent: guard,
+  }));
 }
 
 export async function markGapRepairAttempt(
@@ -52,9 +63,11 @@ export async function markGapRepairAttempt(
     readonly assertCurrent?: (() => void) | undefined;
   },
 ): Promise<KnowledgeNodeRecord> {
+  // Only the locally generated retry clock is encoded. Explicit caller values
+  // remain untouched and undergo complete raw admission on later reads.
   const nextRepairAttemptAt = details.nextRepairAttemptAt ?? (
     details.status === 'searched_no_sources' || details.status === 'failed' || details.status === 'deferred'
-      ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS
+      ? knowledgeClockIso(Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS)
       : undefined
   );
   const committed = await upsertObservedKnowledgeNode(store, {
@@ -68,13 +81,13 @@ export async function markGapRepairAttempt(
     confidence: gap.confidence,
     sourceId: gap.sourceId,
     metadata: {
-      ...gap.metadata,
+      ...knowledgeRawRepresentation(gap.metadata),
       repairStatus: details.status,
       ...(details.reason ? { repairReason: details.reason } : {}),
       ...(details.query ? { repairQuery: details.query } : {}),
       ...((details.acceptedSourceIds?.length ?? 0) > 0 ? { acceptedSourceIds: details.acceptedSourceIds } : {}),
       ...(typeof details.promotedFactCount === 'number' ? { promotedFactCount: details.promotedFactCount } : {}),
-      lastRepairAttemptAt: Date.now(),
+      lastRepairAttemptAt: knowledgeClockIso(Date.now()),
       nextRepairAttemptAt,
       knowledgeSpaceId: spaceId,
     },
@@ -88,7 +101,11 @@ export async function markGapRepairAttempt(
 }
 
 async function resolveIssue(store: KnowledgeStore, issue: KnowledgeIssueRecord, spaceId: string, reason: string): Promise<void> {
-  await store.upsertIssue({
+  await store.upsertIssue(resolvedIssueInput(issue, spaceId, reason));
+}
+
+function resolvedIssueInput(issue: KnowledgeIssueRecord, spaceId: string, reason: string): KnowledgeIssueUpsertInput {
+  return {
     id: issue.id,
     severity: issue.severity,
     code: issue.code,
@@ -104,5 +121,5 @@ async function resolveIssue(store: KnowledgeStore, issue: KnowledgeIssueRecord, 
         resolvedAt: Date.now(),
       },
     }),
-  });
+  };
 }

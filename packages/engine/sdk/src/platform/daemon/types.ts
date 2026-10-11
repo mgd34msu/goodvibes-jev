@@ -262,7 +262,7 @@ export interface DaemonRouteContext {
   readonly recordApiResponse: (req: Request, path: string, response: Response, clientKind?: 'web' | 'slack' | 'discord' | 'ntfy' | 'webhook' | 'homeassistant' | 'telegram' | 'google-chat' | 'signal' | 'whatsapp' | 'telephony' | 'imessage' | 'msteams' | 'bluebubbles' | 'mattermost' | 'matrix' | 'daemon') => Response;
   readonly queueSurfaceReplyFromBinding: (binding: import('../automation/routes.js').AutomationRouteBinding | undefined, input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly contractId?: string; readonly sessionId?: string; }) => void;
   readonly queueWebhookReply: (input: { readonly agentId: string; readonly task: string; readonly sessionId?: string; readonly routeId?: string; readonly callbackUrl?: string; readonly callbackCorrelationId?: string; readonly callbackSignature?: PendingSurfaceReply['callbackSignature']; }) => void;
-  readonly parseSurfaceControlCommand: (text: string) => { readonly action: 'status' | 'cancel' | 'retry'; readonly id: string } | null;
+  readonly parseSurfaceControlCommand: (text: string, options?: import('@goodvibes-jev/judgment/decisions').CallOptions) => Promise<{ readonly action: 'status' | 'cancel' | 'retry'; readonly id: string } | null>;
   readonly performSurfaceControlCommand: (command: { readonly action: 'status' | 'cancel' | 'retry'; readonly id: string }) => Promise<string>;
   readonly performInteractiveSurfaceAction: (actionId: string, surface: 'slack' | 'discord', req: Request) => Promise<string>;
   readonly trySpawnAgent: (input: {

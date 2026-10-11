@@ -1,3 +1,5 @@
+import { bindNativeCiSourceIssuer } from '../ci-watch/native-owner.js';
+import type { ExternalOperationSource } from '../permissions/external-request.js';
 /** Native semantic ownership. Registered continuations never run through an owner reply or a fake tool. */
 import { hashState, JudgmentError, type EntryType, type JudgmentPort, type JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -24,6 +26,8 @@ export interface NativeContractCondition {
   current(): JevVersionRef;
 }
 export interface NativeContractDecisionHost {
+  /** Host-owned transfer while this exact native source is still current. */
+  reserveCiContinuation?(contract: ContractView, operation: ExternalOperationSource): ExternalOperationSource;
   /** Authenticated native host ownership, rebuilt before every transport attempt and continuation. */
   authorityOf(contract: ContractView): NativeContractAuthority;
   /** External evidence/resource changes only. Never approval or Jev availability. */
@@ -155,10 +159,16 @@ function assertAuthority(contract: Contract, owner: NativeContractServices, expe
 export function nativeContractActionSource(contract: Contract, services: NativeContractServices | undefined, signal: AbortSignal): () => ReturnType<typeof nativeContractSourceForAdmission> {
   const owner = ownedServices(services);
   const expected = authorityIdentity(contract.durableAdmission?.binding ?? authority(contract, owner));
-  return () => {
+  const issue = owner.host.reserveCiContinuation ? (operation: ExternalOperationSource) => {
     assertAuthority(contract, owner, expected, signal);
-    return nativeContractSourceForAdmission(contract);
+    return owner.host.reserveCiContinuation!(contract, operation);
+  } : undefined;
+  const sourceOf = () => {
+    assertAuthority(contract, owner, expected, signal);
+    const source = nativeContractSourceForAdmission(contract);
+    return issue ? bindNativeCiSourceIssuer(source, issue) : source;
   };
+  return issue ? bindNativeCiSourceIssuer(sourceOf, issue) : sourceOf;
 }
 
 /** Decorates the single shared transport; owns no retry loop and cannot turn an outage into a decision. */

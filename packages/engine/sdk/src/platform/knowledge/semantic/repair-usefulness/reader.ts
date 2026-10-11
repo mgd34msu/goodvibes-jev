@@ -1,13 +1,14 @@
-import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError, type JudgmentPortCapture } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, JudgmentPort } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
 import { freezeSupport } from '../verification/projection.js';
 import { repairFactUsefulness } from './battery.js';
+import { knowledgePageFactUsefulness } from './page-battery.js';
 import { KnowledgeRepairFactUsefulnessHeldError as Held, REPAIR_FACT_USEFULNESS_LIMITS as LIMITS,
   type RepairFactUsefulnessInput, type RepairFactUsefulnessOptions, type RepairFactUsefulnessReading } from './types.js';
 export * from './types.js';
 
-const SITE = 'engine.knowledge.repair-fact-usefulness';
+
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function keys(value: Record<string, unknown>, allowed: readonly string[]): boolean { return Object.keys(value).every((key) => allowed.includes(key)); }
 function strings(value: unknown): value is readonly string[] {
@@ -36,7 +37,7 @@ function assertJsonTree(value: unknown, optional = false): void {
   }
 }
 
-function snapshotInputs(inputs: readonly RepairFactUsefulnessInput[]): readonly { reference: string; key: string; state: Record<string, JsonValue> }[] {
+function snapshotInputs(inputs: readonly RepairFactUsefulnessInput[], page = false): readonly { reference: string; key: string; state: Record<string, JsonValue> }[] {
   // The ENTIRE selected batch, including late fields, precedes serialization,
   // every local cap, cache lookup and even acquisition of the judgment port.
   try { assertJudgmentInput(inputs); }
@@ -48,10 +49,12 @@ function snapshotInputs(inputs: readonly RepairFactUsefulnessInput[]): readonly 
   if (!Array.isArray(inputs)) throw new Held('malformed');
   const references = new Set<string>();
   for (const input of inputs) {
-    if (!record(input) || !keys(input, ['reference', 'query', 'subjects', 'fact', 'evidence'])
+    if (!record(input) || !keys(input, ['reference', 'query', 'subjects', 'fact', 'evidence', ...(page ? ['pagePolicy'] : [])])
       || typeof input.reference !== 'string' || !/^fact-[1-9]\d*$/.test(input.reference) || references.has(input.reference)
       || typeof input.query !== 'string' || !Array.isArray(input.subjects) || !record(input.fact) || !Array.isArray(input.evidence)) throw new Held('malformed');
     references.add(input.reference);
+    if (page && (!record(input.pagePolicy) || !keys(input.pagePolicy, ['rejectRemoteAccessoryDetails'])
+      || typeof input.pagePolicy.rejectRemoteAccessoryDetails !== 'boolean')) throw new Held('malformed');
     for (const subject of input.subjects) {
       if (!record(subject) || !keys(subject, ['title', 'kind', 'aliases', 'identity']) || typeof subject.title !== 'string'
         || !optionalText(subject.kind) || (subject.aliases !== undefined && !strings(subject.aliases))
@@ -88,9 +91,18 @@ function snapshotInputs(inputs: readonly RepairFactUsefulnessInput[]): readonly 
 
 /** One caller operation owns this reader. Nothing is cached across operations. */
 export function createRepairFactUsefulnessReader(options: RepairFactUsefulnessOptions = {}) {
+  return createFactUsefulnessReader(options, false);
+}
+export function createKnowledgePageFactUsefulnessReader(options: RepairFactUsefulnessOptions = {}) {
+  return createFactUsefulnessReader(options, true);
+}
+function createFactUsefulnessReader(options: RepairFactUsefulnessOptions, page: boolean) {
+  const battery = page ? knowledgePageFactUsefulness : repairFactUsefulness;
+  const SITE = battery.name;
   const signal = options.signal, timeoutMs = options.timeoutMs ?? LIMITS.defaultTimeoutMs;
   const cache = new Map<string, Omit<RepairFactUsefulnessReading, 'reference'>>();
   let configured: JudgmentPort | undefined, configuredModel: string | undefined, resultModel: string | undefined;
+  let authority: JudgmentPortCapture | undefined;
   let requests = 0, bytes = 0;
   let failed: Error | undefined;
   // Serial batches share a single four-request concurrency limit and one budget.
@@ -99,13 +111,14 @@ export function createRepairFactUsefulnessReader(options: RepairFactUsefulnessOp
     if (failed) throw failed;
     if (signal?.aborted) throw new Held('aborted');
     if (configured) {
+      try { authority?.assertCurrent(); } catch { throw new Held('stale'); }
       let current: JudgmentPort;
       try { current = judgmentPort(SITE); } catch { throw new Held('stale'); }
       if (current !== configured || current.model !== configuredModel) throw new Held('stale');
     }
   };
   const failure = (error: unknown): Error => error instanceof Held || error instanceof JudgmentInputError ? error
-    : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : 'unavailable');
+    : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : error instanceof JudgmentAuthorityRetiredError ? 'stale' : 'unavailable');
 
   async function run(snapshots: ReturnType<typeof snapshotInputs>): Promise<readonly RepairFactUsefulnessReading[]> {
     assertCurrent();
@@ -113,13 +126,9 @@ export function createRepairFactUsefulnessReader(options: RepairFactUsefulnessOp
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.timeoutMs) throw new Held('budget');
     const pending = [...new Map(snapshots.filter(({ key }) => !cache.has(key)).map((snapshot) => [snapshot.key, snapshot])).values()];
     const rebound = () => freezeSupport(snapshots.map(({ reference, key }) => ({ reference, ...cache.get(key)! })));
-    const questions = { repairUseful: repairFactUsefulness.items.repairUseful.question };
+    const questions = { repairUseful: battery.items.repairUseful.question };
     const pendingBytes = pending.reduce((sum, { state }) => sum + new TextEncoder().encode(JSON.stringify({ state, questions })).byteLength + 1_024, 0);
     if (requests + pending.length > LIMITS.requests || bytes + pendingBytes > LIMITS.bytes) throw new Held('budget');
-    if (!configured) {
-      configured = judgmentPort(SITE); configuredModel = configured.model;
-      if (typeof configuredModel !== 'string' || !configuredModel.trim()) throw new Held('malformed');
-    }
     assertCurrent();
     if (!pending.length) return rebound();
     requests += pending.length; bytes += pendingBytes;
@@ -132,7 +141,7 @@ export function createRepairFactUsefulnessReader(options: RepairFactUsefulnessOp
     signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => stop(new Held('budget')), timeoutMs);
     const check = () => { if (stoppedError) throw stoppedError; assertCurrent(); };
-    const captured = configured;
+    const captured = authority!.port;
     const port: JudgmentPort = {
       model: configuredModel!, ...(captured.recorder === undefined ? {} : { recorder: captured.recorder }),
       async ask(request) {
@@ -163,7 +172,7 @@ export function createRepairFactUsefulnessReader(options: RepairFactUsefulnessOp
         while (next < pending.length) {
           try {
             check(); const snapshot = pending[next++]!;
-            const result = await repairFactUsefulness.run(port, snapshot.state, { signal: controller.signal, site: SITE });
+            const result = await battery.run(port, snapshot.state, { signal: controller.signal, site: SITE });
             check(); const reading = result.readings.repairUseful;
             if (reading.outcome !== 'act' || reading.verdict === 'uncertain') throw new Held('uncertain');
             result.recordAction(`settled repair fact usefulness ${reading.verdict}; persistence requires separate live read-set validation`);
@@ -181,10 +190,21 @@ export function createRepairFactUsefulnessReader(options: RepairFactUsefulnessOp
   }
   return Object.freeze({
     assertCurrent,
+    preflight(inputs: readonly RepairFactUsefulnessInput[]): void { snapshotInputs(inputs, page); },
     async read(inputs: readonly RepairFactUsefulnessInput[]): Promise<readonly RepairFactUsefulnessReading[]> {
       // Snapshot immediately, even when another batch is still in flight.
       let snapshots: ReturnType<typeof snapshotInputs>;
-      try { snapshots = snapshotInputs(inputs); }
+      try {
+        snapshots = snapshotInputs(inputs, page);
+        assertCurrent();
+        // Privacy/schema preflight covers the complete batch before acquiring
+        // authority, synchronously before a queued microtask can change owners.
+        if (snapshots.length && !configured) {
+          configured = judgmentPort(SITE); configuredModel = configured.model;
+          authority = captureJudgmentPort(SITE, { signal });
+          if (typeof configuredModel !== 'string' || !configuredModel.trim()) throw new Held('malformed');
+        }
+      }
       catch (error) { failed ??= failure(error); throw failed; }
       const reading = queue.then(() => run(snapshots)).catch((error: unknown) => { failed ??= failure(error); throw failed; });
       queue = reading.catch(() => {});

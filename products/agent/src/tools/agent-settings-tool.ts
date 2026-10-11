@@ -1,3 +1,7 @@
+import { isHarnessSettingsQuery } from './agent-harness-settings-catalog.ts';
+import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { createHarnessCatalogInputProjector, forwardHarnessCatalogCall, protectHarnessCatalogTool } from './agent-harness-catalog-ingress.ts';
+import { createPreferredSettingsProjector, executeAdmittedPreferredSettings } from './agent-settings-admission.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
@@ -108,6 +112,13 @@ function settingsLookupArgs(mode: 'get_setting' | 'set_setting' | 'reset_setting
   });
 }
 
+function isSettingsQuery(input: Record<string, unknown>, context: CommandContext): boolean {
+  const args = captureCatalogData(input) as AgentSettingsToolArgs;
+  const action = readAction(args);
+  return action === 'list' ? isHarnessSettingsQuery(settingsListArgs(args), context.platform.configManager)
+    : action === 'get' && isHarnessSettingsQuery(settingsLookupArgs('get_setting', args), context.platform.configManager);
+}
+
 export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
   const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
     commandRegistry: deps.commandRegistry,
@@ -116,7 +127,7 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
   });
   const settingsImportTool = deps.settingsImportTool ?? createAgentSettingsImportTool(deps.commandContext);
 
-  return {
+  return protectHarnessCatalogTool({
     definition: {
       name: 'settings',
       description: 'List, inspect, change, reset, or import settings.',
@@ -126,7 +137,7 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
           action: {
             type: 'string',
             enum: ['list', 'get', 'set', 'reset', 'import'],
-            description: 'Read settings or confirm setting changes/imports.',
+            description: 'Read settings or propose an exact owner-admitted setting change. Import remains a separate confirmed flow.',
           },
           mode: { type: 'string', description: 'Alias for action.' },
           key: { type: 'string', description: 'Exact setting key.' },
@@ -139,22 +150,24 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
           includeHidden: { type: 'boolean', description: 'Include scriptable or hidden settings.' },
           includeParameters: { type: 'boolean', description: 'Include full setting metadata.' },
           limit: { type: 'number', description: 'Maximum settings to return.' },
-          confirm: { type: 'boolean', description: 'Required true for set/reset/import apply.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing confirmed setting effects.' },
+          confirm: { type: 'boolean', description: 'Legacy context for set/reset; required true only for import apply. It is never settings admission authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request context; settings authority comes from the live source and recorded admission.' },
         },
         additionalProperties: false,
       },
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSettingsToolArgs;
       const action = readAction(args);
 
-      if (action === 'list') return harnessTool.execute(settingsListArgs(args));
-      if (action === 'get') return harnessTool.execute(settingsLookupArgs('get_setting', args));
-      if (action === 'set') return harnessTool.execute(settingsLookupArgs('set_setting', args));
-      if (action === 'reset') return harnessTool.execute(settingsLookupArgs('reset_setting', args));
+      if (action === 'list') return forwardHarnessCatalogCall(harnessTool, rawArgs as Record<string, unknown>, settingsListArgs(args), options);
+      if (action === 'get') return forwardHarnessCatalogCall(harnessTool, rawArgs as Record<string, unknown>, settingsLookupArgs('get_setting', args), options);
+      if (action === 'set' || action === 'reset') {
+        try { return await executeAdmittedPreferredSettings(rawArgs as Record<string, unknown>, options); }
+        catch { return error('Settings mutation requires a current recorded effect-owner admission.'); }
+      }
       if (action === 'import') {
         return settingsImportTool.execute({
           action: readBoolean(args.confirm) ? 'apply' : 'preview',
@@ -164,7 +177,7 @@ export function createAgentSettingsTool(deps: AgentSettingsToolDeps): Tool {
 
       return error('Unknown settings action. Use action:"list" to inspect settings.');
     },
-  };
+  }, deps.toolRegistry, input => isSettingsQuery(input, deps.commandContext), deps.commandContext);
 }
 
 export function registerAgentSettingsTool(
@@ -172,5 +185,9 @@ export function registerAgentSettingsTool(
   commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('settings')) registry.register(createAgentSettingsTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('settings')) registry.register(createAgentSettingsTool({ commandRegistry, commandContext, toolRegistry: registry }), {
+    inputProjection: createHarnessCatalogInputProjector(registry,
+      createPreferredSettingsProjector(commandContext.platform, undefined, { registry, context: commandContext }),
+      input => isSettingsQuery(input, commandContext), commandContext),
+  });
 }

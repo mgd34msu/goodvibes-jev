@@ -7,6 +7,7 @@ import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.ts';
 import { PermissionManager, type GateOptions, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.ts';
+import type { PolicyRule } from '../sdk/src/platform/runtime/permissions/types.ts';
 import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
 import { executeToolCalls, type ToolExecutionDeps } from '../sdk/src/platform/core/orchestrator-tool-runtime.ts';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
@@ -40,14 +41,14 @@ beforeEach(() => {
 afterEach(() => { installJudgmentPort(previous); log[Symbol.dispose](); forgetGateReadings(); });
 
 const args = () => ({ commands: [{ cmd: 'git commit -m autonomous-fixture' }] });
-function fixture(gate: GateOptions = {}, store: UserPermissionRuleStore | null = null) {
+function fixture(gate: GateOptions = {}, store: UserPermissionRuleStore | null = null, policyEnabled = false) {
   let directory = '/synthetic/autonomous-gate';
   let mode = 'prompt' as const;
   const config: PermissionConfigReader = { getAutonomousSnapshot: () => ({ permissions: { mode, tools: {} }, autoApprove: false, directory }), isAutoApproveEnabled: () => false, getWorkingDirectory: () => directory,
     getSnapshot: () => ({ permissions: { mode, tools: {} } }) } as PermissionConfigReader;
   const state = new PolicyRuntimeState();
   // No human handler installed. This is the original failing-before acceptance path.
-  const manager = new PermissionManager(undefined, config, state, null, null, store, gate);
+  const manager = new PermissionManager(undefined, config, state, null, { isEnabled: () => policyEnabled }, store, gate);
   const registry = new ToolRegistry(); const executed: Record<string, unknown>[] = [];
   registry.register({ definition: { name: 'exec', description: 'Intercepted tool; never executes a shell', parameters: EXEC_TOOL_SCHEMA },
     execute: async input => { executed.push(input); return { success: true, output: 'intercepted' }; } });
@@ -448,6 +449,106 @@ test('coherent owner frame replaces sequential legacy permission getters on the 
   config.isAutoApproveEnabled = () => { throw new Error('legacy getter must not run'); };
   expect((await run(deps))[0]?.success).toBe(true); expect(executed).toHaveLength(1);
 });
+
+function forbidLegacyPermissionGetters(config: PermissionConfigReader): void {
+  config.getSnapshot = () => { throw new Error('legacy getter must not run'); };
+  config.getWorkingDirectory = () => { throw new Error('legacy getter must not run'); };
+  config.isAutoApproveEnabled = () => { throw new Error('legacy getter must not run'); };
+}
+
+function publishManagedFixture(state: PolicyRuntimeState, rules: PolicyRule[]): void {
+  const registry = state.getRegistry();
+  // Only the registry's public rule/publication reads participate in this fixture.
+  registry.getCurrent = () => ({ rules }) as NonNullable<ReturnType<typeof registry.getCurrent>>;
+}
+
+test.each(['allow', 'deny'] as const)('coherent autonomous frame enforces remembered %s with the policy engine enabled', async effect => {
+  const store = new UserPermissionRuleStore(':memory:');
+  const rule = buildDurableRuleForDecision({ toolName: 'exec', args: args(), tier: 'exact', effect })!;
+  await store.add({ rule, createdAt: 1, tier: 'exact', tool: 'exec' });
+  const { deps, config, executed } = fixture({}, store, true);
+  forbidLegacyPermissionGetters(config);
+  answer = request => {
+    const state = request.state as { input: { evidence: { constraints: { durableEffect: boolean; allowAct: boolean } } } };
+    expect(state.input.evidence.constraints.durableEffect).toBe(effect === 'allow');
+    expect(state.input.evidence.constraints.allowAct).toBe(effect === 'allow');
+    return effect === 'allow' ? 'act' : 'reject';
+  };
+  const [result] = await run(deps);
+  expect(result?.autonomousDecision?.outcome).toBe(effect === 'allow' ? 'act' : 'reject');
+  expect(executed).toHaveLength(effect === 'allow' ? 1 : 0);
+});
+
+test.each([true, false])('coherent autonomous frame enforces remembered session approval %s', async approved => {
+  const { deps, config, state, executed } = fixture();
+  const manager = new PermissionManager(async () => ({ approved, rememberTier: 'session' }), config, state);
+  deps.permissionManager = manager;
+  expect((await manager.checkDetailed('exec', args())).approved).toBe(approved);
+  forbidLegacyPermissionGetters(config);
+  answer = request => {
+    const state = request.state as { input: { evidence: { constraints: { durableEffect: boolean } } } };
+    expect(state.input.evidence.constraints.durableEffect).toBe(approved);
+    return approved ? 'act' : 'reject';
+  };
+  expect((await run(deps))[0]?.autonomousDecision?.outcome).toBe(approved ? 'act' : 'reject');
+  expect(executed).toHaveLength(approved ? 1 : 0);
+});
+
+test('coherent autonomous frame preserves a managed policy deny', async () => {
+  const { deps, config, state, executed } = fixture({}, null, true);
+  publishManagedFixture(state, [{ type: 'prefix', id: 'managed-deny', origin: 'managed', effect: 'deny', toolPattern: 'exec', exactCommands: [args().commands[0]!.cmd] }]);
+  forbidLegacyPermissionGetters(config);
+  answer = request => {
+    const state = request.state as { input: { evidence: { constraints: { allowAct: boolean; durableEffect: boolean | null } } } };
+    expect(state.input.evidence.constraints).toMatchObject({ allowAct: false, durableEffect: null });
+    return 'reject';
+  };
+  expect((await run(deps))[0]?.autonomousDecision?.outcome).toBe('reject');
+  expect(executed).toHaveLength(0);
+});
+
+for (const stage of ['remembered', 'runtime-policy'] as const) {
+  test.each(['owner-incarnation', 'user-publication', 'policy-publication', 'cancel'] as const)(
+    `coherent ${stage} reading rejects %s changes while pending`, async mutation => {
+      const store = new UserPermissionRuleStore(':memory:');
+      const rule: PolicyRule = { type: 'arg-shape', id: 'pending-rule', origin: stage === 'remembered' ? 'user' : 'managed',
+        effect: 'deny', toolPattern: 'exec', argMatchers: { commands: '/synthetic/' } };
+      if (stage === 'remembered') await store.add({ rule, createdAt: 1, tier: 'tool', tool: 'exec' });
+      const { deps, config, state, executed } = fixture({}, store, true);
+      if (stage === 'runtime-policy') publishManagedFixture(state, [rule]);
+      let incarnation = 0; const snapshot = config.getAutonomousSnapshot!;
+      config.getAutonomousSnapshot = () => ({ ...snapshot(), incarnation });
+      const registry = state.getRegistry(); let publication = 0;
+      registry.getPublicationRevision = () => publication;
+      const abort = new AbortController(); deps.turnSignal = abort.signal;
+      forbidLegacyPermissionGetters(config);
+      let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+      let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+      const gate = gateReadingsPort(); let readings = 0;
+      installJudgmentPort(withDecisionLog({ model: gate.port.model, async ask(request) {
+        request.beforeAttempt?.();
+        if ('backtracking' in request.questions) { readings++; entered(); await held; }
+        return gate.port.ask(request);
+      } }, log));
+      const pending = run(deps).then(() => null, (error: unknown) => error);
+      try {
+        await Promise.race([started, Bun.sleep(1000).then(() => { throw new Error('Rule reading did not start'); })]);
+        if (mutation === 'owner-incarnation') incarnation += 2; // Same owner values, different lifetime (ABA).
+        if (mutation === 'policy-publication') publication += 2; // Same rules republished.
+        if (mutation === 'user-publication') {
+          const transient = buildDurableRuleForDecision({ toolName: 'exec', args: args(), tier: 'exact', effect: 'allow' })!;
+          await store.add({ rule: transient, createdAt: 2, tier: 'exact', tool: 'exec' });
+          await store.delete(transient.id); // Exact original rules restored; publication must still invalidate.
+        }
+        if (mutation === 'cancel') abort.abort();
+        release();
+        expect(await pending).toBeInstanceOf(Error);
+        expect(readings).toBe(1);
+        expect(executed).toHaveLength(0);
+        expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
+      } finally { release(); await pending; }
+    });
+}
 
 test('boundary content-derivation call lineage is included in the final receipt', async () => {
   const ledger = new UntrustedContentLedger(); ledger.record({ surface: 'web-page', origin: 'https://source.test', at: '2026-10-03T00:00:00Z', content: 'Ordinary unrelated source content.' });

@@ -44,7 +44,7 @@ function makeConversationManager(
   return {
     getMessageCount: () => 0,
     title: 'test-session',
-    getTranscriptEventIndex: () => ({ events: [], groups: [] }),
+    getMessageSnapshot: () => [], getTranscriptEventIndex: () => ({ events: [], groups: [] }),
     ...overrides,
   } as unknown as CommandContext['session']['conversationManager'];
 }

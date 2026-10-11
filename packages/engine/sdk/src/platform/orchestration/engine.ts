@@ -64,7 +64,7 @@ import { OwnedWork } from '../utils/owned-work.js';
 export interface OrchestrationEngineDeps {
   readonly prepareInputAuthority?: import('../contract/group-runner.js').ContractEngineInput['prepareInputAuthority'];
   readonly agentManager: PhaseRunnerAgentManagerLike;
-  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'> & Partial<Pick<ConfigManager, 'getConfigurationIncarnation' | 'onDidChangeIncarnation'>>;
   readonly runtimeBus: RuntimeEventBus;
   readonly projectRoot: string;
   /**
@@ -460,6 +460,10 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       createWorktree: deps.createWorktree,
       cancellation,
       cancellationSignal: signal,
+      assertBookkeepingCurrent: () => {
+        if (disposed || signal.aborted || workstreams.get(workstream.id) !== workstream
+          || !workstream.items.includes(item)) throw new Error('Repository failure request retired.');
+      },
       priceUsage: deps.priceUsage,
       priceProvenance: deps.priceProvenance,
       skipClaimVerification: deps.skipClaimVerification,
@@ -468,6 +472,19 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       launchDirtySnapshot,
       itemWorktree,
     });
+
+    let phaseResult = outcome.result;
+    // A killed/requeued phase cannot publish an old commit observation or result.
+    if ((disposed || signal.aborted || workstreams.get(workstream.id) !== workstream) && outcome.bookkeeping) { requeuedInFlight.delete(item.id); return; }
+    let bookkeepingHeld = outcome.result.commit?.classification === 'held';
+    const fenceBookkeeping = () => {
+      try { outcome.bookkeeping?.assertCurrent(); } catch { bookkeepingHeld = true; }
+      if (bookkeepingHeld && phaseResult.commit) {
+        // Retain the action failure, withdraw any retired semantic conclusion.
+        phaseResult = { ...phaseResult, commit: { status: 'failed', reason: phaseResult.commit.reason, classification: 'held' } };
+      }
+    };
+    fenceBookkeeping();
 
     // ── Bookkeeping region (AFTER the phase outcome) ────────────────────────
     // Everything below layers on a verdict already reached; a bookkeeping
@@ -479,15 +496,19 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     } catch (error) {
       warnItem(item, `usage rollup skipped: ${summarizeError(error)}`);
     }
+    if ((disposed || signal.aborted || workstreams.get(workstream.id) !== workstream) && outcome.bookkeeping) { requeuedInFlight.delete(item.id); return; }
+    fenceBookkeeping();
     const results = completedResults.get(workstream.id) ?? [];
-    results.push(outcome.result);
+    results.push(phaseResult);
     completedResults.set(workstream.id, results);
     emit({ type: 'workstream-persisted', workstreamId: workstream.id });
 
     // kill() may have transitioned the item to 'failed' while this phase was
     // in flight, read via currentState() to defeat stale narrowing and never
     // clobber that terminal state.
-    if (currentState(item) === 'failed') return;
+    if (signal.aborted || currentState(item) === 'failed') return;
+    fenceBookkeeping();
+    results[results.length - 1] = phaseResult;
 
     if (outcome.agentStatus === 'cancelled') {
       // A deliberate requeue already reset this item, never clobber it.
@@ -502,10 +523,15 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     }
 
     if (outcome.result.gate.passed) {
-      // The PHASE PASSED. Post-gate commit bookkeeping can only WARN this item
-      // (or, for the narrow negating set, fail it), it can never contradict
-      // the passed verdict the gate already reached.
-      const commit = outcome.result.commit;
+      // The gate passed; repository-condition reading still owns whether the
+      // failed commit permits advance, negates the work, or must hold it.
+      const commit = phaseResult.commit;
+      if (commit?.status === 'failed' && (bookkeepingHeld || commit.classification === 'held')) {
+        item.state = 'blocked-bookkeeping';
+        item.blockedReason = 'Phase gate passed, but the failed commit or merge needs a current repository-condition reading.';
+        emit({ type: 'workstream-persisted', workstreamId: workstream.id });
+        return;
+      }
       if (commit?.status === 'failed' && commit.negating) {
         // Negating set: the commit/merge left the workspace corrupted, so the
         // recorded pass can no longer be trusted, this is the one post-gate

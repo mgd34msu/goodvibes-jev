@@ -5,6 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { WALK_SKIP_DIRS } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { DirectoryWalk, WALK_MAX_FILE_SIZE, walkDir, type WalkDirOptions } from '../sdk/src/platform/utils/walk-dir.ts';
 import { collectGlobFiles, findNestedGitignoreFiles } from '../sdk/src/platform/tools/find/shared.ts';
 import { executeFilesQuery } from '../sdk/src/platform/tools/find/files.ts';
@@ -426,4 +427,21 @@ test('each transport retry keeps the full readset fence before another directory
   } });
   await expect(files(path, { beforeAsyncAttempt: async () => { if (!allowed) throw new Error('retry revoked'); } })).rejects.toThrow('retry revoked');
   expect(transmissions).toBe(1); expect(fake.requests).toHaveLength(0);
+});
+
+
+test('deprecated public skip-set mutation cannot alter canonical walk or find selection', async () => {
+  const path = root(); put(path, 'target/generated.ts'); put(path, 'dist/authored.ts');
+  const compatibility: Set<string> = WALK_SKIP_DIRS;
+  const original = [...compatibility];
+  const fake = directoryPort(); usePort(fake.port);
+  const expected = ['dist/authored.ts'];
+  const findFiles = async () => [...await collectGlobFiles(path, ['**/*'], false, false)].map(file => relative(path, file)).sort();
+  try {
+    expect(await files(path)).toEqual(expected);
+    expect(await findFiles()).toEqual(expected);
+    compatibility.clear(); compatibility.add('dist'); compatibility.add('target');
+    expect(await files(path)).toEqual(expected);
+    expect(await findFiles()).toEqual(expected);
+  } finally { compatibility.clear(); for (const value of original) compatibility.add(value); }
 });

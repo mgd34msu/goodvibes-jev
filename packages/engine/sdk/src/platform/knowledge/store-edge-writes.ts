@@ -3,6 +3,12 @@ import type { SQLiteStore } from '../state/sqlite-store.js';
 import type { KnowledgeEdgeRecord, KnowledgeEdgeUpsertInput } from './types.js';
 import { nowMs } from './store-schema.js';
 
+const guardedEdgeInputs = new WeakMap<KnowledgeEdgeUpsertInput, () => void>();
+/** Local commit authority does not survive copying or serialization. */
+export function guardKnowledgeEdgeInput(input: KnowledgeEdgeUpsertInput, assertCurrent: () => void): KnowledgeEdgeUpsertInput {
+  guardedEdgeInputs.set(input, assertCurrent); return input;
+}
+
 export function findKnowledgeEdge(edges: ReadonlyMap<string, KnowledgeEdgeRecord>, input: KnowledgeEdgeUpsertInput): KnowledgeEdgeRecord | undefined {
     return [...edges.values()].find((edge) => (
       edge.fromKind === input.fromKind
@@ -14,6 +20,7 @@ export function findKnowledgeEdge(edges: ReadonlyMap<string, KnowledgeEdgeRecord
 }
 
 export function prepareKnowledgeEdgeRecord(input: KnowledgeEdgeUpsertInput, existing: KnowledgeEdgeRecord | undefined): KnowledgeEdgeRecord {
+    guardedEdgeInputs.get(input)?.();
     const now = nowMs();
     const record: KnowledgeEdgeRecord = {
       id: existing?.id ?? `edge-${randomUUID().slice(0, 8)}`,

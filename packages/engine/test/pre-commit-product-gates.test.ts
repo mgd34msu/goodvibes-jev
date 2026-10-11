@@ -40,7 +40,6 @@ const sourceScopes = [
   'products/daemon/scripts/build.ts',
   'products/daemon/package.json',
   'products/daemon/tsconfig.build.json',
-  'products/daemon/migration.json',
 ];
 
 test('a credential classification failure rejects every protected source/config scope', () => {

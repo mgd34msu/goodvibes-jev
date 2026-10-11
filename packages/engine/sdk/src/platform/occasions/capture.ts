@@ -31,7 +31,7 @@ import {
   renderOccasionLine,
   renderPlanLine,
 } from './grammar.js';
-import { readOccasions, type OccasionProfileSource } from './reader.js';
+import { readOccasionDeclarations, type OccasionProfileSource } from './reader.js';
 import {
   isOccasionKind,
   OCCASIONS_SECTION,
@@ -145,7 +145,7 @@ export function proposeOccasion(
   const kind: OccasionKind | null = isOccasionKind(kindValue) ? kindValue : null;
   const id = occasionIdFor(title);
   const written = renderOccasionDate(date);
-  const conflictsWith = readOccasions(source).occasions
+  const conflictsWith = readOccasionDeclarations(source).occasions
     .filter((entry) => entry.id === id)
     .map((entry) => renderOccasionDate(entry.date))
     .filter((value) => value !== written);
@@ -339,7 +339,7 @@ export async function removeOccasion(
       'Removing this drops the date and everything recorded against it. Confirm to go ahead.',
     );
   }
-  const occasion = readOccasions(source).occasions.find((entry) => entry.id === input.occasionId);
+  const occasion = readOccasionDeclarations(source).occasions.find((entry) => entry.id === input.occasionId);
   if (occasion === undefined) {
     // Still drop any state, so a line the owner deleted by hand does not leave the
     // machine holding an answer about something that is no longer there.

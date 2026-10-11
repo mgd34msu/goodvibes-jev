@@ -1,3 +1,5 @@
+name: Reusable native binary matrix
+
 # Reusable: binary build matrix (toolchain build-binaries + post-build-smoke)
 #
 # Consumer contract

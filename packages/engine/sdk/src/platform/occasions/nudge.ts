@@ -24,6 +24,7 @@
  * be something that needs to happen."* A gift-giving occasion asks whether the
  * owner wants to sort something. It does not suggest what.
  */
+import { occasionTitlePerson, occasionEntry, OccasionReadingHeldError, OccasionReadingWork } from './readings.js';
 import type { NudgeSubject, Occasion, OccasionNudge } from './types.js';
 
 /**
@@ -64,10 +65,15 @@ export function subjectFor(
  * restructuring the People section, which is prose by design, so this is the
  * one place the two are reconciled.
  */
-export function nameOf(subject: NudgeSubject): string {
+export async function nameOf(subject: NudgeSubject, work = new OccasionReadingWork()): Promise<string> {
+  subject = work.snapshot(subject);
   const person = subject.person.trim();
   if (person.length === 0) return subject.title;
-  if (subject.title.toLowerCase().includes(person.toLowerCase())) return subject.title;
+  const result = await work.wait(() => occasionTitlePerson.run(work.port, occasionEntry({ title: subject.title, person }), { ...(work.signal ? { signal: work.signal } : {}), site: 'engine.occasions.title-names-person' }));
+  const reading = result.readings.names;
+  if (reading.outcome !== 'act' || (reading.verdict !== 'yes' && reading.verdict !== 'no')) throw new OccasionReadingHeldError();
+  result.recordAction('composed occasion subject label'); work.assertCurrent();
+  if (reading.verdict === 'yes') return subject.title;
   return `${subject.title} (${person})`;
 }
 
@@ -92,9 +98,11 @@ function urgencyPhrase(subjects: readonly NudgeSubject[]): string {
  * is that a week holding three birthdays produces three separate interruptions
  * on the same day, which is how a useful feature becomes one the owner mutes.
  */
-export function composeNudgeMessage(subjects: readonly NudgeSubject[]): string {
+export async function composeNudgeMessage(subjects: readonly NudgeSubject[], work = new OccasionReadingWork()): Promise<string> {
+  subjects = work.snapshot(subjects);
   if (subjects.length === 0) return '';
-  const names = joinNames(subjects.map(nameOf));
+  const names = joinNames(await Promise.all(subjects.map(subject => nameOf(subject, work))));
+  work.assertCurrent();
   const urgency = urgencyPhrase(subjects);
   const gifting = subjects.some((subject) => subject.kind === 'gift-giving');
   const opening = subjects.length === 1
@@ -108,20 +116,26 @@ export function composeNudgeMessage(subjects: readonly NudgeSubject[]): string {
 }
 
 /** Build the nudge a batch of due occasions produces. */
-export function composeNudge(input: {
+export async function composeNudge(input: {
   readonly id: string;
   readonly now: number;
   readonly subjects: readonly NudgeSubject[];
-}): OccasionNudge {
+}, work = new OccasionReadingWork()): Promise<OccasionNudge> {
+  input = work.snapshot(input);
+  const prepared = await prepareNudge(input.subjects, work);
+  work.assertCurrent();
+  return { ...prepared, id: input.id, raisedAt: input.now };
+}
+
+/** Internal preparation: generated delivery ID and clock are not reading evidence. */
+export async function prepareNudge(subjects: readonly NudgeSubject[], work: OccasionReadingWork): Promise<Omit<OccasionNudge, 'id' | 'raisedAt'>> {
+  subjects = work.snapshot(subjects);
+  const message = await composeNudgeMessage(subjects, work);
+  work.assertCurrent();
   return {
-    id: input.id,
-    raisedAt: input.now,
-    subjects: input.subjects,
-    message: composeNudgeMessage(input.subjects),
-    // Only a gift-giving occasion asks a question, so only a batch containing
-    // one can be answered yes/no/later. A remember-only batch is a statement,
-    // and offering an answer to a statement invites an answer that means nothing.
-    answerable: input.subjects.some((subject) => subject.kind === 'gift-giving'),
+    subjects,
+    message,
+    answerable: subjects.some(subject => subject.kind === 'gift-giving'),
   };
 }
 

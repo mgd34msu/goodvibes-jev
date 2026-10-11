@@ -1,5 +1,7 @@
 /** Adopted SETTINGS transport. References are owner preconditions, not grants. */
 import { readFileSync, statSync } from 'node:fs';
+import { daemonSecretKeyFor } from './daemon-secret-keys.js';
+import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
 import { configKeyScope, describeConfigOwnership } from './config-ownership.js';
 import { deriveControlPlaneBaseUrl } from './control-plane-base-url.js';
 import { detachedDaemonProcessAlive, detachedDaemonRuntimePath, type DetachedDaemonRuntimeHint } from '../runtime/detached-daemon-runtime.js';
@@ -22,6 +24,7 @@ interface Entry {
   readonly fetchImpl: typeof fetch;
   readonly timeoutMs: number;
   readonly localExpiresAt: number;
+  readonly assertCurrent?: () => void;
   spent: boolean;
 }
 const entries = new WeakMap<RemoteSettingsPrecondition, Entry>();
@@ -68,7 +71,8 @@ export function assertPreparedConfigWriteRoute(route: ConfigWriteRoute): void {
   const check = routeChecks.get(route); if (!check) throw unavailable(); check();
 }
 /** Non-mutating discovery. No quarantine, stale record reaping or receipt writes. */
-export async function resolvePreparedConfigWriteRoute(key: string, deps: DaemonConfigRouterDeps): Promise<ConfigWriteRoute> {
+export async function resolvePreparedConfigWriteRoute(key: string, deps: DaemonConfigRouterDeps, assertOwner?: () => void): Promise<ConfigWriteRoute> {
+  assertOwner?.();
   const scope = configKeyScope(key);
   const reason = describeConfigOwnership(key);
   const hostsDaemon = deps.hostsDaemon;
@@ -97,11 +101,13 @@ export async function resolvePreparedConfigWriteRoute(key: string, deps: DaemonC
   const configuredStamp = JSON.stringify(configured);
   const finish = (route: ConfigWriteRoute): ConfigWriteRoute => {
     const check = () => {
+      assertOwner?.();
       if (deps.hostsDaemon !== hostsDaemon || deps.daemonHomeDir !== directory || deps.token !== token
         || deps.readRuntimeRecord !== readRuntime || deps.readDaemonBinding !== readBinding || deps.isProcessAlive !== isProcessAlive
         || (deps.fetchImpl ?? globalThis.fetch) !== fetchImpl || JSON.stringify(deps.endpoint ? { ...deps.endpoint } : null) !== configuredStamp
         || observeRuntime().stamp !== runtimeObservation.stamp
         || (discover && JSON.stringify(readBinding?.() ?? null) !== bindingStamp)) throw unavailable();
+      assertOwner?.();
     };
     check(); // A routing change during a probe cannot be silently captured.
     Object.freeze(route); routeChecks.set(route, check); return route;
@@ -131,21 +137,41 @@ export async function resolvePreparedConfigWriteRoute(key: string, deps: DaemonC
 }
 
 function validFacts(value: unknown, request: SettingsPreconditionRequest): value is SettingsPreconditionFacts {
-  if (!record(value) || !exact(value, ['operation', 'key', 'value', 'destinations', 'incarnation'])
+  const compound = request.credentialClear === true;
+  if (!record(value) || !exact(value, ['operation', 'key', 'value', 'destinations', 'incarnation', ...(compound ? ['credentialClear', 'credential'] : [])])
     || value.operation !== request.operation || value.key !== request.key || !Number.isSafeInteger(value.incarnation) || Number(value.incarnation) < 0
     || !Array.isArray(value.destinations) || value.destinations.length === 0 || value.destinations.length > 16) return false;
-  return value.destinations.every(destination => record(destination) && exact(destination, ['path', 'operation', 'tier'])
+  let configOffset = 0;
+  if (compound) {
+    const credential = value.credential;
+    const scope = configKeyScope(request.key) === 'daemon' ? 'daemon' : 'user';
+    if (value.credentialClear !== true || !record(credential) || !exact(credential, ['key', 'scope', 'destinations'])
+      || credential.key !== daemonSecretKeyFor(request.key) || credential.scope !== scope
+      || !Array.isArray(credential.destinations) || credential.destinations.length >= value.destinations.length) return false;
+    configOffset = credential.destinations.length;
+    if (!credential.destinations.every((destination, index) => record(destination) && exact(destination, ['path', 'operation', 'tier'])
+      && typeof destination.path === 'string' && destination.path.length > 0 && destination.operation === 'remove' && destination.tier === scope
+      && record((value.destinations as unknown[])[index])
+      && ['path', 'operation', 'tier'].every(field => destination[field] === ((value.destinations as Record<string, unknown>[])[index]!)[field]))) return false;
+  }
+  return value.destinations.every((destination, index) => record(destination) && exact(destination, ['path', 'operation', 'tier'])
     && typeof destination.path === 'string' && destination.path.length > 0
-    && destination.operation === 'set' && ['global', 'project', 'daemon', 'shared'].includes(String(destination.tier)));
+    && destination.operation === (index < configOffset ? 'remove' : 'set')
+    && (index < configOffset ? destination.tier === (value.credential as Record<string, unknown>).scope
+      : ['global', 'project', 'daemon', 'shared'].includes(String(destination.tier))));
 }
 export async function captureRemoteSettingsPrecondition(
   endpoint: DaemonConfigEndpoint,
   request: SettingsPreconditionRequest,
-  deps: Pick<DaemonConfigRouterDeps, 'fetchImpl' | 'timeoutMs'> = {},
+  deps: Pick<DaemonConfigRouterDeps, 'fetchImpl' | 'timeoutMs'> & { readonly assertCurrent?: () => void } = {},
 ): Promise<RemoteSettingsPrecondition> {
+  try { deps.assertCurrent?.(); } catch { throw unavailable(); }
+  if (!['set', 'reset-default'].includes(request.operation) || (request.credentialClear !== undefined && request.credentialClear !== true)) throw unavailable();
   // Protect before serialization/network, not just before the later Jev call.
   const input = snapshotJudgmentInput({ mode: 'set', key: request.key, value: request.value }, 'goodvibes_settings') as { key: string; value: unknown };
-  const capturedRequest: SettingsPreconditionRequest = Object.freeze({ operation: request.operation, key: input.key, ...(request.operation === 'set' ? { value: input.value } : {}) });
+  if (request.credentialClear && (!isSecretBearingConfigKey(input.key) || (request.operation === 'set' && input.value !== ''))) throw unavailable();
+  const capturedRequest: SettingsPreconditionRequest = Object.freeze({ operation: request.operation, key: input.key,
+    ...(request.operation === 'set' ? { value: input.value } : {}), ...(request.credentialClear ? { credentialClear: true } : {}) });
   const endpointUrl = baseUrl(endpoint);
   const url = `${endpointUrl}/config`;
   const authHeaders = headers(endpoint);
@@ -165,9 +191,11 @@ export async function captureRemoteSettingsPrecondition(
       || localExpiresAt <= Date.now() || !validFacts(arm.facts, capturedRequest)) throw unavailable();
     // Serving normalization still traverses the same protected-input boundary.
     const safe = snapshotJudgmentInput({ mode: 'set', key: arm.facts.key, value: arm.facts.value }, 'goodvibes_settings') as { value: unknown };
-    const facts = freeze({ ...arm.facts, value: safe.value, destinations: arm.facts.destinations.map(destination => ({ ...destination })), endpoint: endpointUrl, expiresAt: arm.expiresAt });
+    const facts = freeze({ ...arm.facts, value: safe.value, destinations: arm.facts.destinations.map(destination => ({ ...destination })),
+      ...(arm.facts.credential ? { credential: { ...arm.facts.credential, destinations: arm.facts.credential.destinations.map(destination => ({ ...destination })) } } : {}), endpoint: endpointUrl, expiresAt: arm.expiresAt });
+    deps.assertCurrent?.();
     const handle = Object.freeze({}) as RemoteSettingsPrecondition;
-    entries.set(handle, { facts, reference: arm.reference, url, headers: authHeaders, fetchImpl, timeoutMs, localExpiresAt, spent: false });
+    entries.set(handle, { facts, reference: arm.reference, url, headers: authHeaders, fetchImpl, timeoutMs, localExpiresAt, ...(deps.assertCurrent ? { assertCurrent: deps.assertCurrent } : {}), spent: false });
     return handle;
   } catch { throw unavailable(); }
 }
@@ -175,7 +203,9 @@ export function inspectRemoteSettingsPrecondition(handle: RemoteSettingsPrecondi
   const entry = entries.get(handle); if (!entry) throw unavailable(); return entry.facts;
 }
 export function assertRemoteSettingsPrecondition(handle: RemoteSettingsPrecondition): void {
-  const entry = entries.get(handle); if (!entry || entry.spent || entry.localExpiresAt <= Date.now()) throw unavailable();
+  const entry = entries.get(handle); if (!entry || entry.spent) throw unavailable();
+  if (entry.localExpiresAt <= Date.now()) { entry.spent = true; throw unavailable(); }
+  try { entry.assertCurrent?.(); } catch { entry.spent = true; throw unavailable(); }
 }
 function validReceipt(value: unknown, facts: RemoteSettingsPreconditionFacts): value is SettingsPreconditionReceipt {
   if (!record(value) || !exact(value, ['status', 'completedPaths',

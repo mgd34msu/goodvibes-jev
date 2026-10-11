@@ -1,5 +1,5 @@
 import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
-import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
+import { firstJsonSchemaFailureAsync } from '@goodvibes-jev/engine/transport-http';
 import type { WorkLedgerReadEvent } from './types.js';
 import type { WorkLedgerReadClient, WorkLedgerReadSnapshot } from './read-client.js';
 import type { OperatorRemoteClient } from '@goodvibes-jev/engine/operator-sdk';
@@ -87,9 +87,9 @@ export function createOperatorWorkLedgerReadClient(
   const requests = new Set<AbortController>();
   const listeners = new Map<symbol, (snapshot: WorkLedgerReadSnapshot) => void>();
   function active(): void { if (disposed) throw error('reader is disposed'); }
-  function validate(method: string, value: unknown): void {
+  async function validate(method: string, value: unknown, signal: AbortSignal): Promise<void> {
     const schema = getOperatorContract().operator.methods.find(item => item.id === method)?.outputSchema;
-    if (!schema || firstJsonSchemaFailure(schema, value)) throw error('invalid read response');
+    if (!schema || await firstJsonSchemaFailureAsync(schema, value, { signal, assertCurrent: active })) throw error('invalid read response');
     if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_PAGE_BYTES) throw error('response exceeds the read limit');
   }
   async function invoke<T>(method: string, input: Record<string, unknown>, controller = new AbortController()): Promise<{ value: T; sequence: number }> {
@@ -109,7 +109,7 @@ export function createOperatorWorkLedgerReadClient(
       const value = await Promise.race([client.invoke<T>(method, input, { signal: controller.signal }), cancelled]);
       active();
       if (controller.signal.aborted) throw error('read was cancelled');
-      validate(method, value);
+      await validate(method, value, controller.signal);
       return { value, sequence };
     } finally {
       clearTimeout(timeout); controller.signal.removeEventListener('abort', cancel); requests.delete(controller);

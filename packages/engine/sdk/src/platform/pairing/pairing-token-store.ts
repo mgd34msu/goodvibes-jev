@@ -50,7 +50,29 @@ interface PairingOwnerLock {
   release(): void;
 }
 
+/** Private delegation receipt. The identifier alone grants nothing. */
+export interface NativeContinuationGrant { readonly id: string; readonly binding: string; }
+export interface NativeContinuationAuthority extends AuthenticatedNativePairingToken { readonly scopes: readonly string[]; }
+interface StoredNativeContinuationGrant extends NativeContinuationGrant {
+  readonly sourceBinding: string;
+  readonly successorSourceBinding: string | null;
+  readonly parent: (NativeContinuationGrant & { readonly consumption: string }) | null;
+  readonly tokenId: string;
+  readonly tokenRevision: string;
+  readonly ownerRoot: string;
+  readonly watchBinding: string | null;
+  readonly scopes: readonly string[];
+  readonly createdAt: number;
+  readonly consumption: string | null;
+  readonly revoked: boolean;
+}
+
 interface PairingTokenSnapshot {
+  /** Host-issued only, retained as tombstones after consumption/revocation. */
+  continuations?: StoredNativeContinuationGrant[];
+  /** Explicit native cancellation is irreversible for this exact source incarnation. */
+  revokedNativeSources?: string[];
+
   tokens: StoredPairingToken[];
   /** Once true, the legacy single shared token no longer authenticates. */
   legacyRevoked?: boolean | undefined;
@@ -126,7 +148,31 @@ function validateSnapshot(parsed: unknown): PairingTokenSnapshot {
     }
     ids.add(record.id); hashes.add(record.tokenHash);
   }
-  return { tokens: snapshot.tokens, legacyRevoked: snapshot.legacyRevoked === true };
+  const isHash = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  if (snapshot.revokedNativeSources !== undefined && (!Array.isArray(snapshot.revokedNativeSources)
+    || snapshot.revokedNativeSources.some(value => !isHash(value))
+    || new Set(snapshot.revokedNativeSources).size !== snapshot.revokedNativeSources.length)) throw new Error('Invalid native source tombstones');
+  if (snapshot.continuations !== undefined) {
+    if (!Array.isArray(snapshot.continuations)) throw new Error('Invalid native continuation grants');
+    const grants = new Set<string>();
+    for (const grant of snapshot.continuations) {
+      if (!grant || Object.keys(grant).length !== 13 || typeof grant.id !== 'string' || !/^continuation-[0-9a-f-]{36}$/.test(grant.id)
+        || !isHash(grant.binding) || !isHash(grant.sourceBinding)
+        || (grant.successorSourceBinding !== null && !isHash(grant.successorSourceBinding))
+        || ((grant.consumption === null) !== (grant.successorSourceBinding === null)) || !isHash(grant.tokenRevision)
+        || !isHash(grant.ownerRoot) || (grant.watchBinding !== null && !isHash(grant.watchBinding)) || typeof grant.tokenId !== 'string'
+        || !Array.isArray(grant.scopes) || !grant.scopes.length || grant.scopes.some(scope => typeof scope !== 'string' || !scope)
+        || new Set(grant.scopes).size !== grant.scopes.length || typeof grant.revoked !== 'boolean'
+        || !Number.isFinite(grant.createdAt) || (grant.consumption !== null && !isHash(grant.consumption))
+        || (grant.parent !== null && (!grant.parent || Object.keys(grant.parent).length !== 3 || typeof grant.parent.id !== 'string'
+          || !isHash(grant.parent.binding) || !isHash(grant.parent.consumption)))
+        || grants.has(grant.id)) throw new Error('Invalid native continuation grant');
+      grants.add(grant.id);
+    }
+  }
+  return { tokens: snapshot.tokens, legacyRevoked: snapshot.legacyRevoked === true,
+    ...(snapshot.continuations ? { continuations: snapshot.continuations } : {}),
+    ...(snapshot.revokedNativeSources ? { revokedNativeSources: snapshot.revokedNativeSources } : {}) };
 }
 
 /** What ordinary authentication resolves to: the identity behind the token. */
@@ -487,6 +533,164 @@ export class PairingTokenManager {
       assertCurrent();
       return await operation(assertCurrent);
     } finally { active = false; lock.release(); }
+  }
+
+  private nativeContinuationRoot(): string {
+    if (!lstatSync(this.filePath).isFile()) throw new Error('Native continuation owner file is not ordinary');
+    const identities: string[][] = [];
+    for (let path = dirname(this.filePath);;) {
+      const entry = lstatSync(path, { bigint: true });
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error('Native continuation owner root is not ordinary');
+      identities.push([path, String(entry.dev), String(entry.ino), String(entry.birthtimeNs)]);
+      const parent = dirname(path); if (parent === path) break; path = parent;
+    }
+    return hashToken(JSON.stringify(identities));
+  }
+
+  /**
+   * Issue under the authenticating owner's private lock. The caller supplies its
+   * exact source/scope/policy validator; persistence precedes any successful receipt.
+   * No plaintext credential or signing material enters the issued record.
+   */
+  issueNativeContinuation(token: string, expected: NativeContinuationAuthority, binding: string, assertCurrent: () => void, sourceBinding = binding): NativeContinuationGrant {
+    if (typeof sourceBinding !== 'string' || !/^[0-9a-f]{64}$/.test(sourceBinding) || !/^[0-9a-f]{64}$/.test(binding) || !Array.isArray(expected.scopes) || !expected.scopes.length
+      || expected.scopes.some(scope => typeof scope !== 'string' || !scope) || new Set(expected.scopes).size !== expected.scopes.length) throw new Error('Invalid continuation binding');
+    return this.mutate(snapshot => {
+      const current = this.authenticateNative(token);
+      if (!current || current.kind !== expected.kind || current.authorityId !== expected.authorityId || current.tokenId !== expected.tokenId || current.principalId !== expected.principalId
+        || current.authorityRevision !== expected.authorityRevision) throw new Error('Native continuation owner is no longer current');
+      assertCurrent();
+      return this.appendNativeContinuation(snapshot, expected, binding, null, assertCurrent, sourceBinding);
+    });
+  }
+
+  /** A consumed successor may transfer only its own current native source. */
+  issueNativeContinuationFromGrant(parent: NativeContinuationGrant, consumption: string,
+    expected: NativeContinuationAuthority, binding: string, assertCurrent: () => void, sourceBinding?: string): NativeContinuationGrant {
+    if ((sourceBinding !== undefined && (typeof sourceBinding !== 'string' || !/^[0-9a-f]{64}$/.test(sourceBinding))) || !/^[0-9a-f]{64}$/.test(binding) || !/^[0-9a-f]{64}$/.test(consumption)) throw new Error('Invalid continuation lineage');
+    return this.mutate(snapshot => {
+      const current = this.readNativeContinuation(parent, consumption);
+      if (!current || JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('Native continuation parent is no longer current');
+      const consumedSource = snapshot.continuations?.find(item => item.id === parent.id && item.binding === parent.binding)?.successorSourceBinding;
+      if (!consumedSource || (sourceBinding !== undefined && sourceBinding !== consumedSource)) throw new Error('Native continuation child source differs from consumed successor');
+      assertCurrent();
+      return this.appendNativeContinuation(snapshot, expected, binding, { ...parent, consumption }, assertCurrent, consumedSource);
+    });
+  }
+
+  private appendNativeContinuation(snapshot: PairingTokenSnapshot, expected: NativeContinuationAuthority, binding: string,
+    parent: StoredNativeContinuationGrant['parent'], assertCurrent: () => void, sourceBinding: string): { changed: boolean; value: NativeContinuationGrant } {
+    if (snapshot.revokedNativeSources?.includes(sourceBinding)) throw new Error('Native continuation source was cancelled');
+    const tokenRecord = snapshot.tokens.find(item => item.id === expected.tokenId);
+    if (!tokenRecord) throw new Error('Native continuation pairing is unavailable');
+    const tokenRevision = hashToken(JSON.stringify([tokenRecord.createdAt, tokenRecord.tokenHash])); const ownerRoot = this.nativeContinuationRoot();
+    const previous = snapshot.continuations?.find(item => item.tokenId === expected.tokenId && item.binding === binding);
+    if (previous) {
+      if (previous.sourceBinding !== sourceBinding || previous.revoked || previous.tokenRevision !== tokenRevision || previous.ownerRoot !== ownerRoot
+        || JSON.stringify(previous.parent) !== JSON.stringify(parent)
+        || JSON.stringify(previous.scopes) !== JSON.stringify([...expected.scopes].sort())) throw new Error('Native continuation issuance was revoked or changed');
+      assertCurrent(); return { changed: false, value: Object.freeze({ id: previous.id, binding: previous.binding }) };
+    }
+    const grant: StoredNativeContinuationGrant = { id: `continuation-${randomUUID()}`, binding, sourceBinding, successorSourceBinding: null, parent, tokenId: expected.tokenId,
+      tokenRevision, ownerRoot, watchBinding: null, scopes: [...expected.scopes].sort(), createdAt: Date.now(), consumption: null, revoked: false };
+    (snapshot.continuations ??= []).push(grant); assertCurrent();
+    return { changed: true, value: Object.freeze({ id: grant.id, binding: grant.binding }) };
+  }
+
+  /** Strict restart lookup of an actually issued grant, never adoption by token ID. */
+  readNativeContinuation(grant: NativeContinuationGrant, consumption?: string, watchBinding?: string): NativeContinuationAuthority | null {
+    if (this.nativePersistenceFailed) return null;
+    try {
+      const before = readFileSync(this.filePath, 'utf8');
+      const snapshot = validateSnapshot(JSON.parse(before)); confirmFileDurable(this.filePath);
+      if (readFileSync(this.filePath, 'utf8') !== before) return null;
+      const issued = snapshot.continuations?.find(item => item.id === grant.id && item.binding === grant.binding);
+      const token = issued && snapshot.tokens.find(item => item.id === issued.tokenId);
+      if (!issued || !token || issued.ownerRoot !== this.nativeContinuationRoot()
+        || (watchBinding !== undefined && issued.watchBinding !== watchBinding) || issued.tokenRevision !== hashToken(JSON.stringify([token.createdAt, token.tokenHash]))
+        || snapshot.revokedNativeSources?.includes(issued.sourceBinding) || (issued.successorSourceBinding !== null && snapshot.revokedNativeSources?.includes(issued.successorSourceBinding))
+        || issued.revoked || (consumption !== undefined && issued.consumption !== consumption)) return null;
+      const visited = new Set<string>([issued.id]); let child = issued;
+      while (child.parent) {
+        const parent = snapshot.continuations?.find(item => item.id === child.parent!.id && item.binding === child.parent!.binding);
+        if (!parent || visited.has(parent.id) || parent.revoked
+          || snapshot.revokedNativeSources?.includes(parent.sourceBinding) || (parent.successorSourceBinding !== null && snapshot.revokedNativeSources?.includes(parent.successorSourceBinding))
+          || parent.consumption !== child.parent.consumption
+          || parent.tokenId !== issued.tokenId || parent.tokenRevision !== issued.tokenRevision || parent.ownerRoot !== issued.ownerRoot
+          || JSON.stringify(parent.scopes) !== JSON.stringify(issued.scopes)) return null;
+        visited.add(parent.id); child = parent;
+      }
+      const principalId = pairingPrincipalId(token.id);
+      return Object.freeze({ kind: 'pairing-token', tokenId: token.id, principalId, authorityId: principalId,
+        authorityRevision: token.id, scopes: Object.freeze([...issued.scopes]) });
+    } catch { return null; }
+  }
+
+  async withNativeContinuation<T>(grant: NativeContinuationGrant, expected: NativeContinuationAuthority,
+    operation: (assertCurrent: () => NativeContinuationAuthority) => T | Promise<T>): Promise<T> {
+    const lock = this.acquireOwnerLock(); let active = true;
+    try {
+      const assertCurrent = () => {
+        lock.assertOwned(); const current = active ? this.readNativeContinuation(grant) : null;
+        if (!current || JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('Native continuation authority is no longer current');
+        return current;
+      };
+      assertCurrent(); return await operation(assertCurrent);
+    } finally { active = false; lock.release(); }
+  }
+
+  /** The exact resolved watch is independently retained by the issuing owner. */
+  bindNativeContinuationWatch(grant: NativeContinuationGrant, watchBinding: string, assertCurrent: () => void): void {
+    if (!/^[0-9a-f]{64}$/.test(watchBinding)) throw new Error('Invalid continuation watch binding');
+    this.mutate(snapshot => {
+      const issued = snapshot.continuations?.find(item => item.id === grant.id && item.binding === grant.binding);
+      if (!issued || issued.revoked || issued.ownerRoot !== this.nativeContinuationRoot()
+        || !snapshot.tokens.some(token => token.id === issued.tokenId)
+        || (issued.watchBinding !== null && issued.watchBinding !== watchBinding)) throw new Error('Native continuation watch is unavailable or already bound');
+      if (!this.readNativeContinuation(grant)) throw new Error('Native continuation lineage is unavailable');
+      assertCurrent(); const changed = issued.watchBinding === null;
+      if (changed) snapshot.continuations![snapshot.continuations!.indexOf(issued)] = { ...issued, watchBinding };
+      assertCurrent(); return { changed, value: undefined };
+    });
+  }
+
+  /** One immutable successor binding. Repeated delivery can only reconcile it. */
+  consumeNativeContinuation(grant: NativeContinuationGrant, consumption: string, assertCurrent: () => void, successorSourceBinding = consumption): void {
+    if (typeof successorSourceBinding !== 'string' || !/^[0-9a-f]{64}$/.test(successorSourceBinding) || !/^[0-9a-f]{64}$/.test(consumption)) throw new Error('Invalid continuation consumption');
+    this.mutate(snapshot => {
+      const issued = snapshot.continuations?.find(item => item.id === grant.id && item.binding === grant.binding);
+      if (!issued || issued.revoked || issued.ownerRoot !== this.nativeContinuationRoot() || !snapshot.tokens.some(token => token.id === issued.tokenId)
+        || snapshot.revokedNativeSources?.includes(successorSourceBinding)
+        || (issued.consumption !== null && (issued.consumption !== consumption || issued.successorSourceBinding !== successorSourceBinding))) throw new Error('Native continuation is unavailable or already consumed');
+      assertCurrent();
+      if (!this.readNativeContinuation(grant)) throw new Error('Native continuation lineage is unavailable');
+      const changed = issued.consumption === null;
+      if (changed) snapshot.continuations![snapshot.continuations!.indexOf(issued)] = { ...issued, consumption, successorSourceBinding };
+      assertCurrent(); return { changed, value: undefined };
+    });
+  }
+
+  /** Only an authenticated native owner supplies the exact source-incarnation guard. */
+  revokeNativeContinuationsForSource(sourceBinding: string, assertCurrent: () => void): void {
+    if (typeof sourceBinding !== 'string' || !/^[0-9a-f]{64}$/.test(sourceBinding)) throw new Error('Invalid native source binding');
+    this.mutate(snapshot => {
+      assertCurrent();
+      const sources = snapshot.revokedNativeSources ??= []; const changed = !sources.includes(sourceBinding);
+      if (changed) sources.push(sourceBinding);
+      if (snapshot.continuations) snapshot.continuations = snapshot.continuations.map(grant =>
+        grant.sourceBinding === sourceBinding || grant.successorSourceBinding === sourceBinding ? { ...grant, revoked: true } : grant);
+      assertCurrent(); return { changed, value: undefined };
+    });
+  }
+
+  revokeNativeContinuation(grant: NativeContinuationGrant, watchBinding?: string): void {
+    this.mutate(snapshot => {
+      const issued = snapshot.continuations?.find(item => item.id === grant.id && item.binding === grant.binding);
+      if (!issued || issued.revoked) return { changed: false, value: undefined };
+      if (watchBinding !== undefined && issued.watchBinding !== watchBinding) throw new Error('Native continuation revocation watch changed');
+      snapshot.continuations![snapshot.continuations!.indexOf(issued)] = { ...issued, revoked: true };
+      return { changed: true, value: undefined };
+    });
   }
 
   /**

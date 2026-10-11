@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync, existsSync, renameSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync, renameSync, statSync, unlinkSync, type BigIntStats } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import { logger } from '../utils/logger.js';
@@ -268,11 +268,35 @@ export function pruneStaleOperatorTokens(
       skippedPaths.push(candidatePath);
       continue;
     }
-    if (!existsSync(candidatePath)) {
-      skippedPaths.push(candidatePath);
+    let candidateStat: BigIntStats;
+    try { candidateStat = statSync(candidatePath, { bigint: true }); }
+    catch (error) {
+      // A missing candidate remains a noop. Other lookup failures cannot
+      // establish identity, so retain it and report the failed cleanup.
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      (code === 'ENOENT' || code === 'ENOTDIR' ? skippedPaths : failedPaths).push(candidatePath);
       continue;
     }
     try {
+      // Lexical paths do not establish ownership: a relocated daemon home or
+      // workspace parent may be a directory symlink, and files may be hard
+      // links. Never unlink the selected identity under another spelling.
+      const canonicalStat = statSync(canonicalPath, { bigint: true });
+      if (!canonicalStat.isFile() || !candidateStat.isFile()) {
+        failedPaths.push(candidatePath);
+        continue;
+      }
+      if (realpathSync(candidatePath) === realpathSync(canonicalPath)
+        || (canonicalStat.ino !== 0n && candidateStat.dev === canonicalStat.dev && candidateStat.ino === canonicalStat.ino)) {
+        skippedPaths.push(candidatePath);
+        continue;
+      }
+      // Some filesystems cannot report an inode. Distinct resolved paths alone
+      // cannot disprove a hard-link alias; uncertain identity fails closed.
+      if (canonicalStat.ino === 0n || candidateStat.ino === 0n) {
+        failedPaths.push(candidatePath);
+        continue;
+      }
       unlinkSync(candidatePath);
       prunedPaths.push(candidatePath);
     } catch {

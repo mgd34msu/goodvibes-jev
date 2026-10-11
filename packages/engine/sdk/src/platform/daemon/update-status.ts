@@ -2,7 +2,7 @@
  * update-status.ts, what a daemon can say about updating itself.
  *
  * The state was always there: the loop tracked its cadence, its consecutive
- * failures, the release it had already downloaded and verified, and the one a
+ * failures, the release descriptor waiting to install, and the one a
  * crash-loop rollback rejected. None of it was answerable from outside the
  * process, so "this daemon has not updated" read identically whether there was
  * nothing to update to, the loop was never armed, or every check had been
@@ -10,6 +10,8 @@
  * the lifecycle that produces it and by the verbs that serve it, and neither
  * should have to import the other.
  */
+
+import type { UpdateTransactionReceipt } from '../runtime/self-update.js';
 
 /** What a daemon can say about updating itself. See DaemonLifecycleRuntime.updateStatus. */
 export interface DaemonUpdateStatus {
@@ -29,8 +31,12 @@ export interface DaemonUpdateStatus {
   readonly failedCheckCount: number;
   /** What the most recent failing check said, or null when none is failing. */
   readonly lastCheckFailure: string | null;
-  /** A downloaded-and-verified release waiting for an idle moment, or null. */
+  /** A discovered release descriptor waiting for an idle moment, or null. */
   readonly pendingVersion: string | null;
   /** A release a crash-loop rollback rejected and no boot has cleared, or null. */
   readonly rejectedVersion: string | null;
+  /** A terminal filesystem recovery fence, preserved across in-process restarts. */
+  readonly recoveryRequired?: boolean;
+  /** Exact update or rollback outcome and retained-file evidence when fenced. */
+  readonly transactionRecovery?: UpdateTransactionReceipt | null;
 }

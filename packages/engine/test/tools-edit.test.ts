@@ -385,6 +385,9 @@ describe('edit tool', () => {
   // -------------------------------------------------------------------------
 
   describe('regex matching', () => {
+    let prior: ReturnType<typeof installJudgmentPort>;
+    beforeEach(() => { prior = installJudgmentPort(fakePort(() => noulAnswer(0.001)).port); });
+    afterEach(() => { installJudgmentPort(prior); });
     test('replaces regex match', async () => {
       const file = writeFile(tmpDir, 'k.ts', 'version: 1.2.3');
       const result = await tool.execute({

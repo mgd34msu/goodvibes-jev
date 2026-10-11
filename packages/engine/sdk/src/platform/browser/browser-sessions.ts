@@ -1,3 +1,4 @@
+import { assertProvisionCurrent, ownProvisionLifetime, type BrowserProvisionLifetime } from './browser-failure-reading.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
@@ -29,7 +30,7 @@ const STEALTH_ARGS: readonly string[] = [
 /** Default flags Playwright adds that mark the browser as automated. */
 const SUPPRESSED_DEFAULT_ARGS: readonly string[] = ['--enable-automation'];
 
-export interface BrowserLaunchOptions {
+export interface BrowserLaunchOptions extends BrowserProvisionLifetime {
   readonly profileName?: string | undefined;
   readonly headless?: boolean | undefined;
   readonly viewport?: { readonly width: number; readonly height: number } | undefined;
@@ -221,11 +222,15 @@ export class BrowserSessionManager {
     return this.lastProvision;
   }
 
-  async provision(options: { readonly repair?: boolean | undefined; readonly allowDownload?: boolean | undefined } = {}): Promise<BrowserProvisionReport> {
+  async provision(options: BrowserProvisionLifetime & { readonly repair?: boolean | undefined; readonly allowDownload?: boolean | undefined } = {}): Promise<BrowserProvisionReport> {
+    const captured = ownProvisionLifetime(Object.freeze({ ...options }));
+    const { allowDownload, ...lifetime } = captured;
     const report = await ensureBrowserBinary(this.io, {
+      ...lifetime,
       forceReinstall: options.repair === true,
-      ...(options.allowDownload === undefined ? {} : { allowDownload: options.allowDownload }),
+      ...(allowDownload === undefined ? {} : { allowDownload }),
     });
+    assertProvisionCurrent(captured);
     this.lastProvision = report;
     return report;
   }
@@ -288,13 +293,17 @@ export class BrowserSessionManager {
    *      instead of opening one more window that will fail the same way.
    */
   async launch(options: BrowserLaunchOptions = {}): Promise<BrowserLaunchResult> {
+    options = ownProvisionLifetime(Object.freeze({ ...options }));
+    assertProvisionCurrent(options);
     const existing = this.liveLaunchedSession();
     if (existing) {
       return { ...this.describe(existing), reused: true };
     }
 
     if (this.launchInFlight) {
-      return this.launchInFlight;
+      const result = await this.launchInFlight;
+      assertProvisionCurrent(options);
+      return result;
     }
 
     if (this.consecutiveLaunchFailures >= BrowserSessionManager.MAX_CONSECUTIVE_LAUNCH_FAILURES) {
@@ -321,7 +330,8 @@ export class BrowserSessionManager {
   }
 
   private async performLaunch(options: BrowserLaunchOptions): Promise<BrowserSessionInfo> {
-    const provision = await this.provision();
+    const provision = await this.provision(options);
+    assertProvisionCurrent(options);
     if (!provision.ok || !provision.executablePath) {
       throw new BrowserSessionError(provision.problem ?? 'No usable browser is available.', provision.fix);
     }
@@ -341,6 +351,7 @@ export class BrowserSessionManager {
     } catch (error) {
       throw describeLaunchFailure(error instanceof Error ? error.message : String(error), profileDirectory);
     }
+    try { assertProvisionCurrent(options); } catch (error) { await context.close(); throw error; }
     return this.register({
       origin: 'launched',
       context,

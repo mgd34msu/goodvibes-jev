@@ -392,11 +392,14 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
   return { continueLoop: true, results };
 }
 
-export function handleFinalResponseOutcome(args: {
+type FinalResponseOutcomeArgs = {
+  assertPostTurnCurrent?: (() => void) | undefined;
+  signal?: AbortSignal | undefined;
+  assertCurrent?: (() => void) | undefined;
   onTurnTerminal?: ((publish: () => void) => void) | undefined;
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list' | 'spawn'>;
-  planManager: Pick<ExecutionPlanManager, 'parseFromMarkdown' | 'replaceItems' | 'load' | 'save' | 'getActive' | 'getNextItems' | 'updateItem'> | null;
+  planManager: Pick<ExecutionPlanManager, 'parseFromMarkdown' | 'replaceItems' | 'load' | 'save' | 'getActive' | 'getNextItems' | 'updateItem' | 'getIncarnation'> | null;
   configManager: Pick<ConfigManager, 'get'>;
   providerRegistry: Pick<ProviderRegistry, 'getCurrentModel'>;
   runtimeBus: RuntimeEventBus | null;
@@ -410,7 +413,11 @@ export function handleFinalResponseOutcome(args: {
   sessionId?: string | undefined;
   /** This turn's MEMORY-sourced injected knowledge ids, stamped onto TURN_COMPLETED as metadata.memory.recordIds when non-empty (absent otherwise). */
   memoryRecordIds?: readonly string[] | undefined;
-}): false {
+};
+
+export async function handleFinalResponseOutcome(args: FinalResponseOutcomeArgs): Promise<false> {
+  args.signal?.throwIfAborted();
+  args.assertCurrent?.();
   args.conversation.addAssistantMessage(args.response.content, {
     reasoningContent: args.response.reasoning || undefined,
     reasoningSummary: args.response.reasoningSummary || undefined,
@@ -418,6 +425,9 @@ export function handleFinalResponseOutcome(args: {
     model: args.providerRegistry.getCurrentModel().displayName,
     provider: args.providerRegistry.getCurrentModel().provider,
   });
+  await handleFinalPlanOutcome(args);
+  args.signal?.throwIfAborted();
+  args.assertCurrent?.();
   if (args.runtimeBus) {
     publishTurnTerminal(() => emitTurnCompleted(args.runtimeBus!, args.emitterContext(args.turnId), {
       turnId: args.turnId,
@@ -427,12 +437,39 @@ export function handleFinalResponseOutcome(args: {
     }), args.onTurnTerminal);
   }
 
+  return false;
+}
+
+async function handleFinalPlanOutcome(args: FinalResponseOutcomeArgs): Promise<false> {
   if (isNativeConversationTurn()) return false;
   const planManager = args.planManager;
   if (args.preTurnPlan && args.preTurnPlan.awaitingPlan === true && args.response.content.includes('## Phase') && planManager) {
-    const parsed = planManager.parseFromMarkdown(args.response.content);
+    const sessionId = args.sessionId;
+    const source = args.response.content;
+    const preTurn = JSON.stringify(args.preTurnPlan);
+    const incarnation = planManager.getIncarnation();
+    const assertPlanCurrent = () => {
+      args.signal?.throwIfAborted(); args.assertCurrent?.();
+      if (args.sessionId !== sessionId || args.response.content !== source || planManager.getIncarnation() !== incarnation
+        || JSON.stringify(args.preTurnPlan) !== preTurn || JSON.stringify(planManager.getActive(sessionId)) !== preTurn) {
+        throw new Error('Plan parsing owner changed');
+      }
+    };
+    let parsed: Awaited<ReturnType<ExecutionPlanManager['parseFromMarkdown']>>;
+    try {
+      assertPlanCurrent();
+      parsed = await planManager.parseFromMarkdown(source, { signal: args.signal, assertCurrent: assertPlanCurrent });
+      assertPlanCurrent();
+      parsed.assertCurrent?.();
+    } catch {
+      // Cancellation belongs to the turn; all other failures retain the shell
+      // and do not enter the timer fallback or leak provider/source material.
+      args.signal?.throwIfAborted(); args.assertCurrent?.();
+      args.conversation.addSystemMessage('[Plan] Status reading is unavailable or the plan changed. The existing plan was retained. Retry the plan update when ready.');
+      return false;
+    }
     if (parsed.items && parsed.items.length > 0) {
-      planManager.replaceItems(args.preTurnPlan.id, parsed.items);
+      planManager.replaceItems(args.preTurnPlan.id, parsed.items, { preserveReportedStatuses: true });
       const filledPlan = planManager.load(args.preTurnPlan.id);
       if (filledPlan) {
         filledPlan.awaitingPlan = false;
@@ -482,10 +519,14 @@ export function handleFinalResponseOutcome(args: {
   if (pendingPlan) {
     const pendingItems = planManager?.getNextItems(pendingPlan) ?? [];
     if (pendingItems.length > 0) {
+      const pendingIncarnation = planManager!.getIncarnation();
+      const pendingSnapshot = JSON.stringify(pendingPlan);
       const timeout = setTimeout(() => {
-        args.setAutoSpawnTimeout(null);
+        try { args.signal?.throwIfAborted(); (args.assertPostTurnCurrent ?? args.assertCurrent)?.(); } catch { return; }
+        if (planManager!.getIncarnation() !== pendingIncarnation) return;
         const stillActivePlan = planManager?.getActive(args.sessionId) ?? null;
-        if (!stillActivePlan) return;
+        if (!stillActivePlan || JSON.stringify(stillActivePlan) !== pendingSnapshot) return;
+        args.setAutoSpawnTimeout(null);
         const stillPending = planManager?.getNextItems(stillActivePlan) ?? [];
         if (stillPending.length === 0) return;
 

@@ -1,3 +1,4 @@
+import { attemptGroupProgress } from './attempt-group-progress';
 /**
  * The Work view's one list, as data (design doc "Data views", Work row).
  *
@@ -229,21 +230,21 @@ function approvalItem(record: ApprovalRecord): WorkItem {
 }
 
 function attemptGroupItem(group: FleetAttemptGroup): WorkItem {
-  const held = group.candidates.filter((c) => c.state === 'held-merge').length;
-  const count = group.candidates.length;
-  const meta = ['Workstream', group.judgment ? 'judge ready' : `${held} of ${count} held`].join(' · ');
+  const progress = attemptGroupProgress(group);
+  const { count } = progress;
+  const meta = `Workstream · ${progress.meta}`;
   return {
     key: `attempt-group:${group.groupId}`,
     type: 'attempt-group',
     id: group.groupId,
     kind: 'processes',
-    group: group.ready ? 'needs' : 'running',
-    title: group.ready
+    group: progress.ready || progress.held ? 'needs' : 'running',
+    title: progress.ready
       ? `Pick a winner: ${count} attempt${count === 1 ? '' : 's'}${group.sourceTitle ? ` for ${group.sourceTitle}` : ''}`
       : `Best of ${count}: ${group.sourceTitle || group.groupId}`,
     meta,
-    tone: group.ready ? 'warn' : 'live',
-    status: group.ready ? 'Needs your pick' : 'Waiting for attempts',
+    tone: progress.tone,
+    status: progress.status,
     depth: 0,
     sortAt: 0,
   };

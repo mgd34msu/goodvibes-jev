@@ -38,7 +38,7 @@
  *    being flattened into a 500.
  */
 import type { GatewayMethodCatalog } from '../method-catalog.js';
-import type { GatewayMethodHandler } from '../method-catalog-shared.js';
+import type { GatewayMethodHandler, GatewayMethodInvocation } from '../method-catalog-shared.js';
 import { GatewayVerbError } from './gateway-verb-error.js';
 import { readInvocationParams } from './invocation-params.js';
 
@@ -49,7 +49,12 @@ export interface BrowserGatewayTarget {
 }
 
 /** Launch arguments carried on an ordinary call, so an implicit open matches the ask. */
-export interface BrowserGatewayLaunchArgs {
+export interface BrowserGatewayLifetime {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
+
+export interface BrowserGatewayLaunchArgs extends BrowserGatewayLifetime {
   readonly profileName?: string | undefined;
   readonly headless?: boolean | undefined;
 }
@@ -74,7 +79,7 @@ const SCROLL_DIRECTIONS = new Set(['up', 'down']);
  */
 export interface BrowserGatewayService {
   status(): Promise<BrowserGatewayResult>;
-  provision(options: { readonly repair?: boolean | undefined; readonly allowDownload?: boolean | undefined }): Promise<BrowserGatewayResult>;
+  provision(options: BrowserGatewayLifetime & { readonly repair?: boolean | undefined; readonly allowDownload?: boolean | undefined }): Promise<BrowserGatewayResult>;
   listSessions(): Promise<BrowserGatewayResult>;
   launch(options: BrowserGatewayLaunchArgs): Promise<BrowserGatewayResult>;
   attach(options: { readonly cdpEndpoint: string }): Promise<BrowserGatewayResult>;
@@ -246,9 +251,23 @@ async function guard(run: () => Promise<BrowserGatewayResult>): Promise<BrowserG
 
 /** Every handler reads params the same way and reports failure the same way. */
 function handler(
-  run: (params: Record<string, unknown>) => Promise<BrowserGatewayResult>,
+  run: (params: Record<string, unknown>, invocation: GatewayMethodInvocation) => Promise<BrowserGatewayResult>,
 ): GatewayMethodHandler {
-  return async (invocation) => guard(async () => run(readInvocationParams(invocation)));
+  return async (invocation) => guard(async () => run(readInvocationParams(invocation), invocation));
+}
+
+function provisionLifetime(invocation: GatewayMethodInvocation): BrowserGatewayLifetime {
+  const principalId = invocation.context.principalId;
+  const principalKind = invocation.context.principalKind;
+  const assertCurrent = (): void => {
+    invocation.signal?.throwIfAborted();
+    if (invocation.context.principalId !== principalId || invocation.context.principalKind !== principalKind
+      || (invocation.isAuthorized && !invocation.isAuthorized(['write:browser']))) {
+      throw new GatewayVerbError('The browser request no longer owns its authorization.', 'BROWSER_REQUEST_REFUSED', 403);
+    }
+  };
+  assertCurrent();
+  return { signal: invocation.signal, assertCurrent };
 }
 
 export function createBrowserGatewayHandlers(
@@ -256,22 +275,23 @@ export function createBrowserGatewayHandlers(
 ): ReadonlyMap<string, GatewayMethodHandler> {
   const entries: readonly (readonly [string, GatewayMethodHandler])[] = [
     ['browser.status', handler(async () => service.status())],
-    ['browser.provision', handler(async (params) => service.provision({
+    ['browser.provision', handler(async (params, invocation) => service.provision({
+      ...provisionLifetime(invocation),
       ...(readOptionalBoolean(params.repair) === undefined ? {} : { repair: readOptionalBoolean(params.repair) }),
       ...(readOptionalBoolean(params.allowDownload) === undefined ? {} : { allowDownload: readOptionalBoolean(params.allowDownload) }),
     }))],
     ['browser.sessions.list', handler(async () => service.listSessions())],
-    ['browser.sessions.launch', handler(async (params) => service.launch(readLaunchArgs(params)))],
+    ['browser.sessions.launch', handler(async (params, invocation) => service.launch({ ...readLaunchArgs(params), ...provisionLifetime(invocation) }))],
     ['browser.sessions.attach', handler(async (params) => service.attach({
       cdpEndpoint: readRequiredString(params.cdpEndpoint, 'cdpEndpoint'),
     }))],
     ['browser.sessions.release', handler(async (params) => service.release(readRequiredString(params.sessionId, 'sessionId')))],
     ['browser.sessions.close', handler(async (params) => service.close(readRequiredString(params.sessionId, 'sessionId')))],
-    ['browser.navigate', handler(async (params) => {
+    ['browser.navigate', handler(async (params, invocation) => {
       const waitUntil = readOptionalString(params.waitUntil);
       return service.navigate(readTarget(params), {
         url: readRequiredString(params.url, 'url'),
-        launch: readLaunchArgs(params),
+        launch: { ...readLaunchArgs(params), ...provisionLifetime(invocation) },
         ...(waitUntil !== undefined && WAIT_UNTIL_STATES.has(waitUntil)
           ? { waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle' }
           : {}),
@@ -347,9 +367,9 @@ export function createBrowserGatewayHandlers(
       path: readOptionalString(params.path),
     }))],
     ['browser.tabs.list', handler(async (params) => service.tabs(readTarget(params)))],
-    ['browser.tabs.create', handler(async (params) => service.newTab(readTarget(params), {
+    ['browser.tabs.create', handler(async (params, invocation) => service.newTab(readTarget(params), {
       url: readOptionalString(params.url),
-      launch: readLaunchArgs(params),
+      launch: { ...readLaunchArgs(params), ...provisionLifetime(invocation) },
     }))],
     ['browser.tabs.switch', handler(async (params) => service.switchTab(readTarget(params), {
       pageId: readRequiredString(params.pageId, 'pageId'),

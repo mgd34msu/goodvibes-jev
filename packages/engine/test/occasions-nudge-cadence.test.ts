@@ -22,6 +22,8 @@
  * agent's conversation as a bare sentence, which the model then wove into
  * unrelated troubleshooting as though it were a thought of its own.
  */
+import { useOccasionReadings } from './helpers/occasion-readings.ts';
+useOccasionReadings();
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,17 +38,11 @@ import { nudgeDeliveryText } from '../sdk/src/platform/occasions/destinations.ts
 import { AGENT_NOTICE_HEADING } from '../sdk/src/platform/occasions/nudge.ts';
 import { reconcileRaiseLedger } from '../sdk/src/platform/occasions/cadence.ts';
 import {
-  possessiveSubject,
   pushableSubject,
   resolveOccasionSubject,
 } from '../sdk/src/platform/occasions/subject.ts';
 import { parseOccasionLine } from '../sdk/src/platform/occasions/grammar.ts';
 import { OCCASIONS_DEFAULTS } from '../sdk/src/platform/occasions/policy.ts';
-import {
-  buildConversationalTurnContext,
-  OCCASION_ACKNOWLEDGEMENT_INSTRUCTION,
-  OCCASION_COMPLAINT_LADDER,
-} from '../sdk/src/platform/personal-capture/spawn-contract.ts';
 import { PROFILE_TOOL_SCHEMA } from '../sdk/src/platform/tools/profile/schema.ts';
 import type { OccasionNudge, OpenItem } from '../sdk/src/platform/occasions/types.ts';
 import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
@@ -133,7 +129,8 @@ function harness(options: {
     profile: {
       importantDates: () => profile.importantDates(),
       plans: () => profile.plans(),
-      person: (name) => profile.person(name),
+      person: (name, options) => profile.person(name, options),
+      captureRead: () => profile.captureRead(),
       ownerNames: () => [
         profile.get('identity.name')?.value ?? '',
         profile.get('identity.goesBy')?.value ?? '',
@@ -186,43 +183,34 @@ function occasionLine(line: string) {
 // ---------------------------------------------------------------------------
 
 describe('the two-raise ceiling', () => {
-  test('an hourly sweep across the whole lead window pushes exactly twice', async () => {
+  test('hourly sweeps push only at both boundaries, with date-free delivery text', async () => {
     const h = harness({ now: Date.parse('2026-08-10T10:00:00Z') });
-    // Natalie's birthday is 08-20 with a ten-day lead, so the window opens on
-    // the 10th. Fourteen sweeps a day for eleven days is 154 passes, ending on
-    // the day itself, one more day and the housekeeping pass would reap the
-    // item as expired, which is correct and would hide what is being asserted.
-    await sweepHourly(h, '2026-08-10', 11);
-
+    // All 154 waking-hour passes, including every hour on the occurrence day.
+    for (let day = 10; day <= 20; day++) {
+      for (let hour = 8; hour < 22; hour++) {
+        h.setNow(Date.parse(`2026-08-${day}T${String(hour).padStart(2, '0')}:00:00Z`));
+        const outcome = await h.service.sweep();
+        if ((day === 10 || day === 20) && hour === 8) {
+          expect(outcome.nudge?.subjects[0]?.title).toBe("Natalie Sons's birthday");
+        } else {
+          expect(outcome.nudge).toBeNull();
+        }
+      }
+    }
     const wife = h.pushes.filter((push) => push.channel === 'telegram');
     expect(wife).toHaveLength(2);
+    expect(wife.map(push => push.nudge.raisedAt)).toEqual([
+      Date.parse('2026-08-10T08:00:00Z'), Date.parse('2026-08-20T08:00:00Z'),
+    ]);
     const item = (await h.state.openItems()).find((entry) => entry.occurrence === '2026-08-20');
     expect(item?.raiseCount).toBe(2);
     expect(item?.servedBoundaries).toEqual(['lead', 'day-of']);
-  });
-
-  test('the two pushes land at the lead boundary and on the day itself', async () => {
-    const h = harness({ now: Date.parse('2026-08-10T10:00:00Z') });
-    const first = await h.service.sweep();
-    expect(first.nudge?.subjects[0]?.title).toBe("Natalie Sons's birthday");
-
-    // Every day in between is silent. Not "quieter", silent.
-    for (const day of ['2026-08-11', '2026-08-14', '2026-08-17', '2026-08-19']) {
-      h.setNow(Date.parse(`${day}T10:00:00Z`));
-      expect((await h.service.sweep()).nudge).toBeNull();
+    for (const push of h.pushes) {
+      const text = `${push.nudge.message} ${nudgeDeliveryText(push.channel, push.nudge).body}`;
+      expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+      expect(text).not.toMatch(/\b\d{1,2}\s+(days?|August|Aug)\b/i);
+      expect(text).toContain("Natalie Sons's birthday");
     }
-
-    h.setNow(Date.parse('2026-08-20T10:00:00Z'));
-    expect((await h.service.sweep()).nudge?.subjects[0]?.title).toBe("Natalie Sons's birthday");
-
-    // And the day itself does not become a new hourly loop, which is the exact
-    // shape of the original defect: the due date could never move past the
-    // occurrence, so on the day it was due on every pass forever.
-    for (let hour = 11; hour < 22; hour += 1) {
-      h.setNow(Date.parse(`2026-08-20T${hour}:00:00Z`));
-      expect((await h.service.sweep()).nudge).toBeNull();
-    }
-    expect(h.pushes.filter((push) => push.channel === 'telegram')).toHaveLength(2);
   });
 
   test('the open item survives the silence and stays enumerable', async () => {
@@ -294,43 +282,13 @@ describe('an acknowledgement mutes the push and never the pull', () => {
   });
 });
 
-describe('the conversational turn can acknowledge, and is told to', () => {
-  test('the profile tool exposes acknowledge_occasion', () => {
+describe('the conversational tool exposes acknowledgement', () => {
+  test('the profile tool exposes acknowledge_occasion', async () => {
     const properties = PROFILE_TOOL_SCHEMA.parameters.properties as
       Record<string, { enum?: readonly string[] }> | undefined;
     expect(properties?.['action']?.enum).toContain('acknowledge_occasion');
     // And the parameters it needs to name one.
     expect(properties?.['occasionId']).toBeDefined();
-  });
-
-  test('the turn contract tells it to record an acknowledgement in the same turn', () => {
-    const context = buildConversationalTurnContext({ sessionId: 's1' });
-    expect(context).toContain('acknowledge_occasion');
-    // The failure mode being corrected: offering rather than doing.
-    expect(context).toContain('Do not ask whether to record it');
-    for (const line of OCCASION_ACKNOWLEDGEMENT_INSTRUCTION) {
-      expect(context).toContain(line);
-    }
-  });
-
-  test('the remedy ladder is in the contract, smallest rung first', () => {
-    const context = buildConversationalTurnContext({ sessionId: 's1' });
-    for (const line of OCCASION_COMPLAINT_LADDER) expect(context).toContain(line);
-
-    const text = OCCASION_COMPLAINT_LADDER.join('\n');
-    const ackRung = text.indexOf('Acknowledge that one occurrence');
-    const occasionRung = text.indexOf('Change that one occasion');
-    const featureRung = text.indexOf('Turn the whole occasions feature off');
-    expect(ackRung).toBeGreaterThan(-1);
-    expect(occasionRung).toBeGreaterThan(ackRung);
-    expect(featureRung).toBeGreaterThan(occasionRung);
-
-    // Switching the feature off needs him to have named the feature, and
-    // swearing is not consent to it. Both were the actual failure.
-    expect(text).toContain('ONLY when the owner has said so explicitly and');
-    expect(text).toContain('neither is a complaint with swearing in it');
-    // And whatever happens, he is told what stayed on.
-    expect(text).toContain('the other dates still run');
   });
 });
 
@@ -402,43 +360,40 @@ describe('an occasion about him that he only has to remember is never pushed', (
       .toBe(true);
   });
 
-  test('the subject is resolved from his declared names, not from a name literal', () => {
+  test('the subject is resolved from his declared names, not from a name literal', async () => {
     const his = occasionLine("Avery's birthday · 08-06 · annual · remember-only");
     const hers = occasionLine("Natalie Sons's birthday · 08-20 · annual · gift-giving · for Natalie Sons");
     const names = ['Avery Chen', 'Avery'];
 
-    expect(resolveOccasionSubject(his, names)).toBe('owner');
-    expect(resolveOccasionSubject(hers, names)).toBe('other');
+    expect(await resolveOccasionSubject(his, names)).toBe('owner');
+    expect(await resolveOccasionSubject(hers, names)).toBe('other');
 
     // The same line on someone else's machine is about someone else. This is
     // what "not a name match" means: change the file, change the answer, and
     // the practical consequence is that it goes back to being pushed normally.
-    expect(resolveOccasionSubject(his, ['Priya Raman'])).toBe('other');
-    expect(pushableSubject({ ...his, subject: resolveOccasionSubject(his, ['Priya Raman']) }))
+    expect(await resolveOccasionSubject(his, ['Priya Raman'])).toBe('other');
+    expect(pushableSubject({ ...his, subject: await resolveOccasionSubject(his, ['Priya Raman']) }))
       .toBe(true);
     // With nothing declared, a possessive title still names SOMEONE, and the
     // one thing that must not happen is concluding it is him.
-    expect(resolveOccasionSubject(his, [])).not.toBe('owner');
-    expect(pushableSubject({ ...his, subject: resolveOccasionSubject(his, []) })).toBe(true);
+    expect(await resolveOccasionSubject(his, [])).not.toBe('owner');
+    expect(pushableSubject({ ...his, subject: await resolveOccasionSubject(his, []) })).toBe(true);
   });
 
-  test('an unattributed line is never treated as his', () => {
+  test('an unattributed line is never treated as his', async () => {
     const ours = occasionLine('Our anniversary · 09-12 · annual · gift-giving');
     const dad = occasionLine('Dad · 11-02 · annual · remember-only');
-    expect(resolveOccasionSubject(ours, ['Avery Chen', 'Avery'])).toBe('unattributed');
-    expect(resolveOccasionSubject(dad, ['Avery Chen', 'Avery'])).toBe('unattributed');
-    expect(possessiveSubject('Our anniversary')).toBe('');
-    expect(possessiveSubject("Avery's birthday")).toBe('Avery');
-    expect(possessiveSubject("Natalie Sons's birthday")).toBe('Natalie Sons');
+    expect(await resolveOccasionSubject(ours, ['Avery Chen', 'Avery'])).toBe('unattributed');
+    expect(await resolveOccasionSubject(dad, ['Avery Chen', 'Avery'])).toBe('unattributed');
   });
 
-  test('`for me` settles it on the line, whatever the title says', () => {
+  test('`for me` settles it on the line, whatever the title says', async () => {
     const explicit = occasionLine('Renew the car tax · 02-01 · annual · remember-only · for me');
     expect(explicit.selfDeclared).toBe(true);
-    expect(resolveOccasionSubject(explicit, [])).toBe('owner');
+    expect(await resolveOccasionSubject(explicit, [])).toBe('owner');
   });
 
-  test('the silence is narrow: an occasion about him that wants an action still runs', () => {
+  test('the silence is narrow: an occasion about him that wants an action still runs', async () => {
     const remember = occasionLine('My birthday · 08-06 · annual · remember-only · for me');
     const action = occasionLine('Renew passport · 2026-11-02 · once · gift-giving · for me');
     // He knows when he was born. He does not know when his passport expires.
@@ -509,7 +464,7 @@ describe('a machine already in the bad state settles on load', () => {
     expect((await h.state.openItems()).some((entry) => entry.raiseCount === 5)).toBe(true);
   });
 
-  test('a legacy item raised once keeps the day itself', () => {
+  test('a legacy item raised once keeps the day itself', async () => {
     const once: OpenItem = { ...LIVE_ITEM, kind: 'nudge', raiseCount: 1, servedBoundaries: [] };
     expect(reconcileRaiseLedger(once)?.servedBoundaries).toEqual(['lead']);
     const twice: OpenItem = { ...once, raiseCount: 2 };
@@ -537,7 +492,7 @@ describe('a nudge landed in the agent conversation says what it is', () => {
     answerable: false,
   };
 
-  test('the agent gets a framed, self-contained notice rather than a bare line', () => {
+  test('the agent gets a framed, self-contained notice rather than a bare line', async () => {
     const { title, body } = nudgeDeliveryText('agent', NUDGE);
     expect(title).toBe(AGENT_NOTICE_HEADING);
     // The exact defect: this sentence, alone, in someone else's conversation.
@@ -549,25 +504,13 @@ describe('a nudge landed in the agent conversation says what it is', () => {
     expect(body).toContain('acknowledge_occasion');
   });
 
-  test('a message channel still gets the plain line', () => {
+  test('a message channel still gets the plain line', async () => {
     expect(nudgeDeliveryText('telegram', NUDGE).body).toBe(NUDGE.message);
     expect(nudgeDeliveryText('telegram:12345', NUDGE).body).toBe(NUDGE.message);
   });
 });
 
 describe('the doctrine the fix must not have broken', () => {
-  test('no nudge carries a date, in any form', async () => {
-    const h = harness({ now: Date.parse('2026-08-10T10:00:00Z') });
-    await sweepHourly(h, '2026-08-10', 11);
-    expect(h.pushes).not.toHaveLength(0);
-    for (const push of h.pushes) {
-      const text = `${push.nudge.message} ${nudgeDeliveryText(push.channel, push.nudge).body}`;
-      expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
-      expect(text).not.toMatch(/\b\d{1,2}\s+(days?|August|Aug)\b/i);
-      expect(text).toContain("Natalie Sons's birthday");
-    }
-  });
-
   test('the channels are unchanged: Telegram and the agent, never the TUI', async () => {
     const h = harness({ now: Date.parse('2026-08-10T10:00:00Z') });
     h.setConfig('occasions.nudgeChannel', 'telegram,agent,tui');

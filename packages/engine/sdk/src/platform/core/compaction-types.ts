@@ -93,6 +93,10 @@ export const IMAGE_TOKEN_ESTIMATE = 1600;
 
 /** All data sources needed for compaction. Accept as plain data; do not import singletons. */
 export interface CompactionContext {
+  /** Lifetime of the session/turn that may apply this compaction. */
+  signal?: AbortSignal | undefined;
+  /** Rechecked at message, lineage, and diagnostic publication boundaries. */
+  assertCurrent?: (() => void) | undefined;
   /** Current conversation messages (as sent to LLM, no system messages). */
   messages: ProviderMessage[];
 

@@ -10,6 +10,7 @@ import {
 } from './settings-model';
 import { CONFIG_SCHEMA_ENTRIES, FEATURE_SETTINGS } from './generated/config-schema';
 import { isCardMaterialKey } from './card-material';
+import { displayConfigValue } from './config-redaction';
 
 function groupById(groups: SettingsGroupModel[], id: string): SettingsGroupModel | undefined {
   return groups.find((g) => g.id === id);
@@ -141,15 +142,40 @@ describe('buildSettingsModel: enablement state from domain settings keys', () =>
 });
 
 describe("buildSettingsModel: honesty for unschema'd live keys", () => {
+  test.each(['synthetic-secret-1234', { child: 'synthetic-private-child' }])(
+    'a non-schema declared secret stays one masked row without semantic clearance: %p',
+    (value) => {
+      const groups = buildSettingsModel({ cluster: { groupMaterial: value } });
+      const rows = groupById(groups, 'cluster')!.rawRows;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ key: 'cluster.groupMaterial', isSecret: true, displayCleared: false });
+      expect(displayConfigValue(rows[0]!.key, rows[0]!.value, rows[0]!.displayCleared))
+        .toBe(typeof value === 'string' ? '••••••••••••1234' : '••••');
+    },
+  );
+
+  test('declared-secret rendering never grants an unknown neighbor or card material a row', () => {
+    const config = {
+      cluster: { groupMaterial: 'synthetic-secret-1234', unknownName: 'private-neighbor' },
+      payments: { cardNumber: 'private-card' },
+    };
+    const rows = buildSettingsModel(config).flatMap(group => group.rawRows);
+    expect(rows.map(row => row.key)).toEqual(['cluster.groupMaterial']);
+    const attemptedClearance = new Set(['cluster.groupMaterial', 'payments.cardNumber']);
+    const clearedRows = buildSettingsModel(config, attemptedClearance, attemptedClearance).flatMap(group => group.rawRows);
+    expect(clearedRows.map(row => row.key)).toEqual(['cluster.groupMaterial']);
+    expect(clearedRows[0]).toMatchObject({ isSecret: true, displayCleared: false });
+  });
+
   test('a live key with no schema entry renders as a raw row, never hidden', () => {
-    const groups = buildSettingsModel({ mysteryDomain: { unknownKnob: 'held-by-daemon' } });
+    const groups = buildSettingsModel({ mysteryDomain: { unknownKnob: 'held-by-daemon' } }, new Set(), new Set(['mysteryDomain.unknownKnob']));
     const group = groupById(groups, 'mysteryDomain');
     expect(group).toBeDefined();
     expect(group!.rawRows.some((r) => r.key === 'mysteryDomain.unknownKnob')).toBe(true);
   });
 
   test("an older daemon's leftover featureFlags record stays visible, without the dead category name", () => {
-    const groups = buildSettingsModel({ featureFlags: { 'exec-sandbox': 'enabled' } });
+    const groups = buildSettingsModel({ featureFlags: { 'exec-sandbox': 'enabled' } }, new Set(), new Set(['featureFlags.exec-sandbox']));
     const group = groupById(groups, 'featureFlags');
     expect(group).toBeDefined();
     expect(group!.rawRows.some((r) => r.key === 'featureFlags.exec-sandbox')).toBe(true);
@@ -363,13 +389,13 @@ describe('daemonOwned metadata: config-ownership.ts surfaced onto every row', ()
   });
 
   test('an unschema\'d raw row under a daemon-owned namespace is flagged daemonOwned too', () => {
-    const groups = buildSettingsModel({ surfaces: { mysteryBot: { unknownKnob: 'held-by-daemon' } } });
+    const groups = buildSettingsModel({ surfaces: { mysteryBot: { unknownKnob: 'held-by-daemon' } } }, new Set(), new Set(['surfaces.mysteryBot.unknownKnob']));
     const surfaces = groupById(groups, 'surfaces');
     const row = surfaces?.rawRows.find((r) => r.key === 'surfaces.mysteryBot.unknownKnob');
     expect(row).toBeDefined();
     expect(row!.daemonOwned).toBe(true);
 
-    const mysteryGroups = buildSettingsModel({ mysteryDomain: { unknownKnob: 'x' } });
+    const mysteryGroups = buildSettingsModel({ mysteryDomain: { unknownKnob: 'x' } }, new Set(), new Set(['mysteryDomain.unknownKnob']));
     const mysteryRow = groupById(mysteryGroups, 'mysteryDomain')?.rawRows.find((r) => r.key === 'mysteryDomain.unknownKnob');
     expect(mysteryRow?.daemonOwned).toBe(false);
   });
@@ -533,4 +559,16 @@ describe('the four flat card keys the entry surfaces write never reach the model
     expect(rendered).toContain('payments.shippingAddress.line1');
     expect(rendered).not.toContain('payments.cardNumber');
   });
+});
+
+ test('unknown rows require explicit non-card clearance before value access or rendering', () => {
+  const config = { mystery: { label: 'ordinary fixture', rawPan: 'private fixture' } };
+  expect(buildSettingsModel(config).flatMap(group => group.rawRows)).toEqual([]);
+  const rows = buildSettingsModel(config, new Set(), new Set(['mystery.label'])).flatMap(group => group.rawRows);
+  expect(rows.map(row => row.key)).toEqual(['mystery.label']);
+  expect(rows[0]?.isSecret).toBe(true);
+});
+test('secret clearance cannot override a declared card exclusion or substitute for card clearance', () => {
+  const config = { payments: { cardNumber: 'never-render' }, unknown: { value: 'still-excluded' } };
+  expect(buildSettingsModel(config, new Set(['payments.cardNumber', 'unknown.value']), new Set(['payments.cardNumber'])).flatMap(group => group.rawRows)).toEqual([]);
 });

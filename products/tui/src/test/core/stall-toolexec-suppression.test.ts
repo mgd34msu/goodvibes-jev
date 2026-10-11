@@ -30,8 +30,9 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { wireStreamEventMetrics } from '../../core/stream-event-wiring.ts';
-import type { WireStreamEventMetricsOptions, StreamMetrics } from '../../core/stream-event-wiring.ts';
+import { wireStreamEventMetrics, createStreamMetrics as createMetricsFromWiring } from '../../core/stream-event-wiring.ts';
+import type { WireStreamEventMetricsOptions } from '../../core/stream-event-wiring.ts';
+import { createStreamMetrics, type StreamMetrics } from '../../core/stream-metrics.ts';
 import { UIFactory } from '../../renderer/ui-factory.ts';
 
 // Mirrors ui-factory.ts's private THINKING_STALL_FREEZE_MS constant.
@@ -73,17 +74,6 @@ function makeInertFeed() {
   };
 }
 
-function makeMetrics(): StreamMetrics {
-  return {
-    startTime: 0, deltaCount: 0, tokenSpeed: 0,
-    ttftMs: undefined, ttftRecorded: false,
-    activeToolStartedAtMs: undefined, activeToolName: undefined, activeToolCallId: undefined,
-    toolArgsByCallId: new Map(),
-    lastDeltaAtMs: undefined, stallEpisode: 0,
-    reconnectAttempt: undefined, reconnectMaxAttempts: undefined,
-  };
-}
-
 function makeOptions(turns: ReturnType<typeof makeBus>, tools: ReturnType<typeof makeBus>, metrics: StreamMetrics): WireStreamEventMetricsOptions {
   return {
     events: {
@@ -115,10 +105,47 @@ function makeOptions(turns: ReturnType<typeof makeBus>, tools: ReturnType<typeof
 const computeRenderStallInfo = UIFactory.computeRenderStallInfo.bind(UIFactory);
 
 describe('stall indicator vs. tool execution (integration path)', () => {
+  test('new metric owners stay idle and isolate tool state through both factory entrypoints', () => {
+    const first = { turns: makeBus(), tools: makeBus(), metrics: createStreamMetrics() };
+    const second = { turns: makeBus(), tools: makeBus(), metrics: createMetricsFromWiring() };
+    const wires = [first, second].map(({ turns, tools, metrics }) =>
+      wireStreamEventMetrics(makeOptions(turns, tools, metrics)));
+    try {
+      // No stream clock exists while idle, even far beyond the stall threshold.
+      for (const { metrics } of [first, second]) {
+        expect(computeRenderStallInfo(metrics, Date.now() + 60_000)).toBeUndefined();
+        expect(metrics.deltaCount).toBe(0);
+        expect(metrics.tokenSpeed).toBe(0);
+        expect(metrics.ttftRecorded).toBe(false);
+        expect(metrics.reconnectAttempt).toBeUndefined();
+      }
+
+      first.turns.emit('STREAM_START');
+      first.turns.emit('STREAM_DELTA');
+      first.tools.emit('TOOL_RECEIVED', { callId: 'same-id', tool: 'read', args: { path: 'first.ts' } });
+      first.tools.emit('TOOL_EXECUTING', { callId: 'same-id', tool: 'read', startedAt: Date.now() });
+      expect(first.metrics.deltaCount).toBe(1);
+      expect(first.metrics.activeToolName).toBe('read');
+      expect(second.metrics.deltaCount).toBe(0);
+      expect(second.metrics.activeToolName).toBeUndefined();
+      expect(second.metrics.toolArgsByCallId.size).toBe(0);
+      expect(computeRenderStallInfo(second.metrics, Date.now() + 60_000)).toBeUndefined();
+
+      second.tools.emit('TOOL_RECEIVED', { callId: 'same-id', tool: 'read', args: { path: 'second.ts' } });
+      expect(first.metrics.toolArgsByCallId.get('same-id')).toEqual({ path: 'first.ts' });
+      expect(second.metrics.toolArgsByCallId.get('same-id')).toEqual({ path: 'second.ts' });
+      first.tools.emit('TOOL_CANCELLED', { callId: 'same-id' });
+      expect(first.metrics.toolArgsByCallId.size).toBe(0);
+      expect(second.metrics.toolArgsByCallId.get('same-id')).toEqual({ path: 'second.ts' });
+    } finally {
+      for (const wire of wires) for (const unsub of wire.unsubs) unsub();
+    }
+  });
+
   test('tool executing past the stall-freeze threshold does NOT produce stall info', () => {
     const turns = makeBus();
     const tools = makeBus();
-    const metrics = makeMetrics();
+    const metrics = createStreamMetrics();
     wireStreamEventMetrics(makeOptions(turns, tools, metrics));
 
     let mockNow = 1_000_000;
@@ -160,7 +187,7 @@ describe('stall indicator vs. tool execution (integration path)', () => {
     for (const completionEvent of ['TOOL_FAILED', 'TOOL_CANCELLED']) {
       const turns = makeBus();
       const tools = makeBus();
-      const metrics = makeMetrics();
+      const metrics = createStreamMetrics();
       wireStreamEventMetrics(makeOptions(turns, tools, metrics));
 
       let mockNow = 5_000_000;
@@ -187,7 +214,7 @@ describe('stall indicator vs. tool execution (integration path)', () => {
   test('genuine no-delta stream stall with no tool active still stall-detects (pre-first-token case included)', () => {
     const turns = makeBus();
     const tools = makeBus();
-    const metrics = makeMetrics();
+    const metrics = createStreamMetrics();
     wireStreamEventMetrics(makeOptions(turns, tools, metrics));
 
     let mockNow = 2_000_000;
@@ -211,7 +238,7 @@ describe('stall indicator vs. tool execution (integration path)', () => {
   test('genuine no-delta stream stall mid-stream (after some deltas, then silence) with no tool active still stall-detects', () => {
     const turns = makeBus();
     const tools = makeBus();
-    const metrics = makeMetrics();
+    const metrics = createStreamMetrics();
     wireStreamEventMetrics(makeOptions(turns, tools, metrics));
 
     let mockNow = 3_000_000;
@@ -237,7 +264,7 @@ describe('the running call\'s arguments, for the throbber', () => {
   test('TOOL_RECEIVED keeps a call\'s arguments while it runs; completion drops them', () => {
     const turns = makeBus();
     const tools = makeBus();
-    const metrics = makeMetrics();
+    const metrics = createStreamMetrics();
     wireStreamEventMetrics(makeOptions(turns, tools, metrics));
     tools.emit('TOOL_RECEIVED', { callId: 'c1', tool: 'exec', args: { command: 'bun test' } });
     tools.emit('TOOL_RECEIVED', { callId: 'c2', tool: 'read', args: { path: 'src/a.ts' } });
@@ -251,7 +278,7 @@ describe('the running call\'s arguments, for the throbber', () => {
   test('the map stays bounded when calls never finish', () => {
     const turns = makeBus();
     const tools = makeBus();
-    const metrics = makeMetrics();
+    const metrics = createStreamMetrics();
     wireStreamEventMetrics(makeOptions(turns, tools, metrics));
     for (let i = 0; i < 200; i++) tools.emit('TOOL_RECEIVED', { callId: `c${i}`, tool: 'read', args: { path: `f${i}` } });
     expect(metrics.toolArgsByCallId.size).toBe(64);

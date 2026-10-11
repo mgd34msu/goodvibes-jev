@@ -6,7 +6,7 @@ import type { CompactionContext } from './context-compaction.js';
 import type { CompactionReceipt } from './compaction-types.js';
 import type { SessionMemoryStore } from './session-memory.js';
 import type { SessionLineageTracker } from './session-lineage.js';
-import { buildTranscriptEventIndex } from './transcript-events/index.js';
+import { buildTranscriptEventIndex, TranscriptReadingLifetime, TranscriptSourceChangedError, type TranscriptReadingOptions } from './transcript-events/index.js';
 import { compactConversation } from './conversation-compaction.js';
 import {
   cloneBranchMap,
@@ -381,8 +381,19 @@ export class ConversationManager {
     return cloneMessages(this.messages);
   }
 
-  public getTranscriptEventIndex() {
-    return buildTranscriptEventIndex(this.getMessageSnapshot());
+  public async getTranscriptEventIndex(options: TranscriptReadingOptions = {}) {
+    const lifetime = options.lifetime ?? new TranscriptReadingLifetime();
+    const revision = this._messagesRevision;
+    const assertCurrent = () => {
+      options.signal?.throwIfAborted();
+      const checked: unknown = options.assertCurrent?.();
+      if (checked !== undefined) { void Promise.resolve(checked).catch(() => {}); throw new Error('Transcript source checks must be synchronous'); }
+      if (revision !== this._messagesRevision) throw new TranscriptSourceChangedError();
+    };
+    lifetime.retain(assertCurrent);
+    const index = await buildTranscriptEventIndex(this.getMessageSnapshot(), { ...options, assertCurrent, lifetime });
+    lifetime.assertCurrent();
+    return index;
   }
 
   public replaceMessagesForLLM(newMessages: ProviderMessage[]): void {

@@ -1,5 +1,5 @@
 import { inflateSync } from 'node:zlib';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from './extraction-ownership.js';
 import { assertJudgmentInput } from '../gate/judgment-input.js';
 import { pdfTextDecoding } from './batteries/extraction-readability.js';
 import type { KnowledgeExtractionResult } from './extractors.js';
@@ -24,9 +24,9 @@ function cleanText(value: string): string {
     .trim();
 }
 
-async function searchTextPayload(value: string): Promise<string | undefined> {
+async function searchTextPayload(value: string, owner: KnowledgeExtractionOwner): Promise<string | undefined> {
   const cleaned = cleanText(value);
-  if (!(await hasUsefulKnowledgeExtractionText(value))) return undefined;
+  if (!(await hasUsefulKnowledgeExtractionText(value, owner))) return undefined;
   return cleaned.length <= KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS
     ? cleaned
     : cleaned.slice(0, KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS);
@@ -60,12 +60,12 @@ function excerptText(text: string, maxLength = 480): string | undefined {
   return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength - 1).trim()}...`;
 }
 
-async function uniqueStrings(values: Iterable<string>, limit = 24): Promise<string[]> {
+async function uniqueStrings(values: Iterable<string>, limit: number, owner: KnowledgeExtractionOwner): Promise<string[]> {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const value of values) {
     const trimmed = cleanText(value);
-    if (!trimmed || seen.has(trimmed) || !(await hasUsefulKnowledgeExtractionText(value))) continue;
+    if (!trimmed || seen.has(trimmed) || !(await hasUsefulKnowledgeExtractionText(value, owner))) continue;
     seen.add(trimmed);
     result.push(trimmed);
     if (result.length >= limit) break;
@@ -83,35 +83,46 @@ interface RawPdfExtractionDiagnostics {
   firstFlateDecodeError?: string | undefined;
 }
 
-export async function extractPdf(buffer: Buffer): Promise<KnowledgeExtractionResult> {
-  const parsed = await extractPdfWithPdfJs(buffer);
+export async function extractPdf(buffer: Buffer, owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner()): Promise<KnowledgeExtractionResult> {
+  const parsed = await extractPdfWithPdfJs(buffer, owner);
   if (parsed.result) return parsed.result;
-  const raw = await extractPdfRawStreams(buffer, parsed.warning ? [parsed.warning] : []);
+  const raw = await extractPdfRawStreams(buffer, parsed.warning ? [parsed.warning] : [], owner);
   if (raw) return raw;
   throw new Error('PDF extraction failed: no readable text was extracted. OCR or a dedicated PDF provider may be required.');
 }
 
-async function extractPdfWithPdfJs(buffer: Buffer): Promise<PdfJsExtractionAttempt> {
+async function extractPdfWithPdfJs(buffer: Buffer, owner: KnowledgeExtractionOwner): Promise<PdfJsExtractionAttempt> {
   let pageCount: number;
   const pageTexts: string[] = [];
   try {
+    owner.assertCurrent();
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    owner.assertCurrent();
     const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer), useSystemFonts: true });
+    const abort = () => { void loadingTask.destroy().catch(() => {}); };
+    owner.signal?.addEventListener('abort', abort, { once: true });
     try {
+      owner.assertCurrent();
       const document = await loadingTask.promise;
+      owner.assertCurrent();
       pageCount = document.numPages;
       for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        owner.assertCurrent();
         const page = await document.getPage(pageNumber);
+        owner.assertCurrent();
         const content = await page.getTextContent();
+        owner.assertCurrent();
         const lines = textContentItemsToLines(content.items);
         if (lines.length > 0) pageTexts.push(lines.join('\n'));
         page.cleanup();
       }
     } finally {
+      owner.signal?.removeEventListener('abort', abort);
       // The loading task owns teardown in pdfjs 5.x and 6.x.
       await loadingTask.destroy();
     }
   } catch (error) {
+    owner.assertCurrent();
     const warning = `PDF.js extraction failed; used raw stream fallback: ${summarizeError(error)}`;
     logger.warn('PDF extraction: pdfjs path failed; trying raw stream extraction', { error: summarizeError(error) });
     return { warning };
@@ -119,7 +130,7 @@ async function extractPdfWithPdfJs(buffer: Buffer): Promise<PdfJsExtractionAttem
   // Parsing fallback is allowed; a judgment outage or uncertain reading is not.
   const uncleaned = pageTexts.join('\n\n');
   assertJudgmentInput(uncleaned);
-  const searchText = await searchTextPayload(uncleaned);
+  const searchText = await searchTextPayload(uncleaned, owner);
   if (!searchText) return {};
   const text = cleanText(uncleaned);
   return {
@@ -129,8 +140,8 @@ async function extractPdfWithPdfJs(buffer: Buffer): Promise<PdfJsExtractionAttem
       title: firstNonEmptyLine(text) ?? 'PDF document',
       summary: summarizeText(text) ?? 'PDF document.',
       excerpt: excerptText(text),
-      sections: await uniqueStrings(text.split(/\n+/), 24),
-      links: await uniqueStrings(Array.from(text.matchAll(/\bhttps?:\/\/[^\s)]+/g), (match) => match[0]), 50),
+      sections: await uniqueStrings(text.split(/\n+/), 24, owner),
+      links: await uniqueStrings(Array.from(text.matchAll(/\bhttps?:\/\/[^\s)]+/g), (match) => match[0]), 50, owner),
       estimatedTokens: estimateTokens(text),
       structure: { pageCount, extractedTextChars: text.length, searchText },
       metadata: { limitations: ['PDF text extraction does not perform OCR for scanned images.'] },
@@ -158,7 +169,7 @@ function unknownRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
-async function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly string[] = []): Promise<KnowledgeExtractionResult | undefined> {
+async function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly string[], owner: KnowledgeExtractionOwner): Promise<KnowledgeExtractionResult | undefined> {
   const body = buffer.toString('latin1');
   const texts: string[] = [];
   const diagnostics: RawPdfExtractionDiagnostics = { failedFlateDecodeStreams: 0 };
@@ -168,13 +179,13 @@ async function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly st
     const dictionary = match[1]! ?? '';
     const rawChunk = match[2]! ?? '';
     const chunk = decodePdfStreamChunk(dictionary, rawChunk, diagnostics);
-    texts.push(...await extractPdfTextStrings(chunk));
+    texts.push(...await extractPdfTextStrings(chunk, owner));
   }
   assertJudgmentInput(texts);
-  const readable = await uniqueStrings(texts, 512);
+  const readable = await uniqueStrings(texts, 512, owner);
   const combined = readable.slice(0, 64).join('\n');
   const searchable = readable.join('\n');
-  const searchText = await searchTextPayload(searchable);
+  const searchText = await searchTextPayload(searchable, owner);
   if (!searchText) return undefined;
   const warnings = [...initialWarnings];
   if (diagnostics.failedFlateDecodeStreams > 0) {
@@ -189,8 +200,8 @@ async function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly st
     title: firstNonEmptyLine(combined) ?? 'PDF document',
     summary: summarizeText(combined) ?? 'PDF document text extracted from raw streams.',
     excerpt: excerptText(combined),
-    sections: await uniqueStrings(combined.split(/\n+/), 8),
-    links: await uniqueStrings(Array.from(combined.matchAll(/\bhttps?:\/\/[^\s)]+/g), (linkMatch) => linkMatch[0]), 50),
+    sections: await uniqueStrings(combined.split(/\n+/), 8, owner),
+    links: await uniqueStrings(Array.from(combined.matchAll(/\bhttps?:\/\/[^\s)]+/g), (linkMatch) => linkMatch[0]), 50, owner),
     estimatedTokens: estimateTokens(combined),
     structure: {
       extractedStringCount: texts.length,
@@ -221,10 +232,10 @@ function decodePdfStreamChunk(
   }
 }
 
-async function extractPdfTextStrings(chunk: string): Promise<string[]> {
+async function extractPdfTextStrings(chunk: string, owner: KnowledgeExtractionOwner): Promise<string[]> {
   return [
     ...extractLiteralStrings(chunk),
-    ...await extractHexStrings(chunk),
+    ...await extractHexStrings(chunk, owner),
   ];
 }
 
@@ -305,18 +316,18 @@ function decodePdfEscape(char: string, following: string): { readonly value: str
   }
 }
 
-async function extractHexStrings(chunk: string): Promise<string[]> {
+async function extractHexStrings(chunk: string, owner: KnowledgeExtractionOwner): Promise<string[]> {
   const values: string[] = [];
   const hexRe = /(?<!<)<([0-9A-Fa-f\s]*)>(?!>)/g;
   let match: RegExpExecArray | null;
   while ((match = hexRe.exec(chunk)) !== null) {
-    const text = await decodeHexPdfString(match[1] ?? '');
+    const text = await decodeHexPdfString(match[1] ?? '', owner);
     if (text) values.push(text);
   }
   return values;
 }
 
-async function decodeHexPdfString(value: string): Promise<string | undefined> {
+async function decodeHexPdfString(value: string, owner: KnowledgeExtractionOwner): Promise<string | undefined> {
   const hex = value.replace(/\s+/g, '');
   // Preserve the parser's complete-byte rule, not the old two-byte text floor.
   if (hex.length === 0 || hex.length % 2 !== 0) return undefined;
@@ -330,10 +341,11 @@ async function decodeHexPdfString(value: string): Promise<string | undefined> {
   // Both full interpretations are inspected before either bounded candidate leaves.
   assertJudgmentInput({ singleByte, utf16be });
   return requireExtractionJudgment(async () => {
-    const run = await pdfTextDecoding.run(judgmentPort('knowledge.extraction.pdf-decoding'), {
+    const run = await pdfTextDecoding.run(owner.port('knowledge.extraction.pdf-decoding'), {
       singleByte: singleByte.slice(0, KNOWLEDGE_EXTRACTION_SAMPLE_CHARS),
       utf16be: utf16be?.slice(0, KNOWLEDGE_EXTRACTION_SAMPLE_CHARS) ?? null,
-    }, { site: 'knowledge.extraction.pdf-decoding' });
+    }, { site: 'knowledge.extraction.pdf-decoding', ...(owner.signal ? { signal: owner.signal } : {}), beforeAttempt: owner.assertCurrent });
+    owner.assertCurrent();
     const reading = run.readings.decoding;
     if (reading.outcome !== 'act' || reading.choice === 'unknown' || (reading.choice === 'utf16be' && utf16be === null)) {
       run.recordAction('hold');

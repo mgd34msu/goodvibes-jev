@@ -31,6 +31,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { DurablePolicyEpochOwner } from './durable-policy-epoch.js';
 import { readDotPath } from './shared-config-tier.js';
 import { deleteRawDotPath } from './settings-io.js';
 import { listDaemonOwnedConfigPaths } from './config-ownership.js';
@@ -140,14 +141,27 @@ export function migrateDaemonOwnedConfig(
     coveredKeys: [...ownedKeys],
   };
 
+  // This pre-ConfigManager writer owns every settings root it will change.
+  // Observe existing continuation history only; a migration never activates it.
+  // Persist all revocation intents before the plan or any settings effects.
+  const writesStore = plan.storeChanged || !existsSync(storePath);
+  const policyOwners = new Map([...new Set([
+    ...(writesStore ? [storePath] : []), ...surfaceFiles.filter(entry => entry.stripped).map(entry => entry.path),
+  ])].map(path => [path, new DurablePolicyEpochOwner([path], true)]));
+  for (const owner of policyOwners.values()) owner.advance();
+  const writeSettings = (path: string, value: Record<string, unknown>) => {
+    writeJsonAtomic(path, value);
+    policyOwners.get(path)?.reconcile();
+  };
+
   // 1. Announce the plan before touching anything.
   writeJsonAtomic(markerPath, { ...marker, status: 'in-progress' });
   // 2. The daemon store becomes authoritative.
-  if (plan.storeChanged || !existsSync(storePath)) writeJsonAtomic(storePath, plan.store);
+  if (writesStore) writeSettings(storePath, plan.store);
   // 3. Only then do the surfaces give the keys up, one writer per key.
   for (const entry of surfaceFiles) {
     if (!entry.stripped) continue;
-    writeJsonAtomic(entry.path, entry.raw);
+    writeSettings(entry.path, entry.raw);
   }
   // 4. The ledger is final.
   writeJsonAtomic(markerPath, marker);

@@ -1,15 +1,8 @@
 import type { OmitNamed, RequiredNamedKeys } from '@goodvibes-jev/engine/contracts';
-import { ContractError } from '@goodvibes-jev/engine/errors';
+import { ContractError, admitRegex, compileLegacyRegex, type RegexAdmissionOptions } from '@goodvibes-jev/engine/errors';
 
 const MAX_SCHEMA_PATTERN_CHARS = 512;
 const MAX_SCHEMA_PATTERN_INPUT_CHARS = 50_000;
-const RISKY_SCHEMA_PATTERN_CHECKS: readonly RegExp[] = [
-  /(^|[^\\])\\[1-9]/,
-  /\((?:[^()\\]|\\.)*[+*{][^)]*\)\s*[+*{]/,
-  /\.\*(?:[^|)]{0,64})\.\*/,
-  // Lookbehind assertions (?<=...) can also produce pathological backtracking.
-  /\(\?<[=!]/,
-];
 
 /**
  * The required keys of a contract input.
@@ -117,39 +110,104 @@ export interface JsonSchemaValidationFailure {
   readonly received: string;
 }
 
+/** Exact checked-in wire grammars, not a trusted-schema or safe-pattern heuristic.
+ * These literals have fixed bounded repeats or a single-character linear scan.
+ * Native literal evaluation preserves ECMAScript anchor/Unicode semantics.
+ */
+function fixedSchemaGrammar(source: string, value: string): boolean | undefined {
+  if (source === '\\S') return value.trim().length > 0;
+  if (source !== '^[a-f0-9]{64}$' && source !== '^[!-~][ -~]{0,255}$' && source !== '[^!-~]') return undefined;
+  if (value.length > MAX_SCHEMA_PATTERN_INPUT_CHARS) throw new ContractError(`Contract schema pattern input exceeds ${MAX_SCHEMA_PATTERN_INPUT_CHARS} characters.`);
+  switch (source) {
+    case '^[a-f0-9]{64}$': return /^[a-f0-9]{64}$/.test(value);
+    case '^[!-~][ -~]{0,255}$': return /^[!-~][ -~]{0,255}$/.test(value);
+    case '[^!-~]': return /[^!-~]/.test(value);
+  }
+}
+
 const MAX_SCHEMA_WALK_DEPTH = 32;
 
+/** @deprecated Synchronous compatibility only. Production callers use firstJsonSchemaFailureAsync. */
 export function firstJsonSchemaFailure(
+  schema: Record<string, unknown>, value: unknown, path = '$', root: Record<string, unknown> = schema, _depth = 0,
+): JsonSchemaValidationFailure | undefined {
+  const walk = walkJsonSchema(schema, value, path, root, _depth);
+  let next = walk.next();
+  while (!next.done) next = walk.next(contractPatternMatches(compileContractPattern(next.value.source), next.value.value));
+  return next.value;
+}
+
+/** One owned schema/value snapshot; no result or admission escapes this call. */
+export async function firstJsonSchemaFailureAsync(
+  schema: Record<string, unknown>, value: unknown,
+  options: Omit<RegexAdmissionOptions, 'operation'> = {},
+): Promise<JsonSchemaValidationFailure | undefined> {
+  const original = JSON.stringify([schema, value]);
+  const [capturedSchema, capturedValue] = structuredClone([schema, value]) as [Record<string, unknown>, unknown];
+  const current = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (JSON.stringify([schema, value]) !== original) throw new ContractError('Contract schema validation source changed while reading.');
+  };
+  current();
+  const walk = walkJsonSchema(capturedSchema, capturedValue);
+  let next = walk.next();
+  // Reuse only within this exact invocation, not by source across requests.
+  const handles = new Map<string, Awaited<ReturnType<typeof admitRegex>>>();
+  try {
+    while (!next.done) {
+      current();
+      const { source, value: input } = next.value;
+      if (input.length > MAX_SCHEMA_PATTERN_INPUT_CHARS) throw new ContractError(`Contract schema pattern input exceeds ${MAX_SCHEMA_PATTERN_INPUT_CHARS} characters.`);
+      let handle = handles.get(source);
+      if (!handle) {
+        handle = await admitRegex(source, '', { ...options, operation: 'contract schema pattern', maxInputChars: MAX_SCHEMA_PATTERN_INPUT_CHARS, assertCurrent: current });
+        handles.set(source, handle);
+      }
+      const matches = await handle.test(input);
+      current();
+      next = walk.next(matches);
+    }
+    current();
+    for (const handle of handles.values()) handle.assertCurrent();
+    return next.value;
+  } finally {
+    for (const handle of handles.values()) await handle[Symbol.asyncDispose]();
+  }
+}
+
+function* walkJsonSchema(
   schema: Record<string, unknown>,
   value: unknown,
   path = '$',
   root: Record<string, unknown> = schema,
   _depth = 0,
-): JsonSchemaValidationFailure | undefined {
+): Generator<{ source: string; value: string }, JsonSchemaValidationFailure | undefined, boolean> {
   // Guard against cyclic $ref chains.
   if (_depth >= MAX_SCHEMA_WALK_DEPTH) return undefined;
   if (typeof schema.$ref === 'string') {
     const resolved = resolveLocalSchemaRef(root, schema.$ref);
-    return resolved ? firstJsonSchemaFailure(resolved, value, path, root, _depth + 1) : undefined;
+    return resolved ? yield* walkJsonSchema(resolved, value, path, root, _depth + 1) : undefined;
   }
   const excluded = schema.not;
   if (excluded === true || (excluded !== null && typeof excluded === 'object' && !Array.isArray(excluded)
-    && firstJsonSchemaFailure(excluded as Record<string, unknown>, value, path, root, _depth + 1) === undefined)) {
+    && (yield* walkJsonSchema(excluded as Record<string, unknown>, value, path, root, _depth + 1)) === undefined)) {
     return { path, expected: 'not to match the excluded schema', received: typeOfJsonValue(value) };
   }
   const allOf = readSchemaList(schema.allOf);
   for (const child of allOf) {
-    const failure = firstJsonSchemaFailure(child, value, path, root, _depth + 1);
+    const failure = yield* walkJsonSchema(child, value, path, root, _depth + 1);
     if (failure) return failure;
   }
   const anyOf = readSchemaList(schema.anyOf);
   if (anyOf.length > 0) {
-    const failures = anyOf.map((child) => firstJsonSchemaFailure(child, value, path, root, _depth + 1));
+    const failures: (JsonSchemaValidationFailure | undefined)[] = [];
+    for (const child of anyOf) failures.push(yield* walkJsonSchema(child, value, path, root, _depth + 1));
     if (failures.every(Boolean)) return bestSchemaFailure(failures) ?? { path, expected: 'one matching schema', received: typeOfJsonValue(value) };
   }
   const oneOf = readSchemaList(schema.oneOf);
   if (oneOf.length > 0) {
-    const matches = oneOf.filter((child) => !firstJsonSchemaFailure(child, value, path, root, _depth + 1)).length;
+    let matches = 0;
+    for (const child of oneOf) if (!(yield* walkJsonSchema(child, value, path, root, _depth + 1))) matches++;
     if (matches !== 1) return { path, expected: 'exactly one matching schema', received: `${matches} matches` };
   }
   const enumValues = schema.enum;
@@ -189,9 +247,7 @@ export function firstJsonSchemaFailure(
     // The canonical nonblank-text pattern has a bounded linear equivalent.
     // Native goals have no length ceiling; do not send them through the generic
     // regex input guard or relax that guard for arbitrary expressions.
-    const matches = schema.pattern === '\\S'
-      ? value.trim().length > 0
-      : contractPatternMatches(compileContractPattern(schema.pattern), value);
+    const matches = fixedSchemaGrammar(schema.pattern, value) ?? (yield { source: schema.pattern, value });
     if (!matches) return { path, expected: `pattern ${schema.pattern}`, received: 'non-matching string' };
   }
   if (typeof value === 'string' && typeof schema.format === 'string' && !stringMatchesJsonSchemaFormat(value, schema.format)) {
@@ -203,7 +259,7 @@ export function firstJsonSchemaFailure(
     if (itemSchema && typeof itemSchema === 'object' && !Array.isArray(itemSchema)) {
       for (let index = 0; index < value.length; index++) {
         // pass _depth + 1 so depth-reset through array items is prevented.
-        const failure = firstJsonSchemaFailure(itemSchema as Record<string, unknown>, value[index], `${path}[${index}]`, root, _depth + 1);
+        const failure = yield* walkJsonSchema(itemSchema as Record<string, unknown>, value[index], `${path}[${index}]`, root, _depth + 1);
         if (failure) return failure;
       }
     }
@@ -244,7 +300,7 @@ export function firstJsonSchemaFailure(
         if (!(key in objectValue)) continue;
         if (!propertySchema || typeof propertySchema !== 'object' || Array.isArray(propertySchema)) continue;
         // pass _depth + 1 so nested property recursion respects the walk depth limit.
-        const failure = firstJsonSchemaFailure(propertySchema as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
+        const failure = yield* walkJsonSchema(propertySchema as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
         if (failure) return failure;
       }
     }
@@ -255,7 +311,7 @@ export function firstJsonSchemaFailure(
       if (declared.has(key)) continue;
       if (additional === false) return { path: `${path}.${key}`, expected: 'no additional property', received: 'present' };
       if (additional !== null && typeof additional === 'object' && !Array.isArray(additional)) {
-        const failure = firstJsonSchemaFailure(additional as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
+        const failure = yield* walkJsonSchema(additional as Record<string, unknown>, objectValue[key], `${path}.${key}`, root, _depth + 1);
         if (failure) return failure;
       }
     }
@@ -297,12 +353,8 @@ function compileContractPattern(source: string): RegExp {
   if (source.length > MAX_SCHEMA_PATTERN_CHARS) {
     throw new ContractError(`Contract schema pattern exceeds ${MAX_SCHEMA_PATTERN_CHARS} characters.`);
   }
-  for (const pattern of RISKY_SCHEMA_PATTERN_CHECKS) {
-    if (pattern.test(source)) {
-      throw new ContractError('Contract schema pattern is too expensive to evaluate safely.');
-    }
-  }
-  return new RegExp(source);
+  try { return compileLegacyRegex(source, '', { operation: 'contract schema pattern' }, true); }
+  catch (error) { if (error instanceof SyntaxError) throw error; throw new ContractError('Contract schema pattern is too expensive to evaluate safely.'); }
 }
 
 function contractPatternMatches(pattern: RegExp, value: string): boolean {

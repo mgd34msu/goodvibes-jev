@@ -30,3 +30,6 @@ export {
 } from './registration/shared-register-path.js';
 export { foldLegacyWorkspaceRegister } from './registration/fold-legacy-register.js';
 export type { FoldLegacyRegisterResult } from './registration/fold-legacy-register.js';
+// Shared ownership primitive for product build/preparation operations; callers
+// can request strict ownership without duplicating the checkpoint lock engine.
+export { acquireCrossProcessLock, type CrossProcessLockOptions } from './checkpoint/cross-process-lock.js';

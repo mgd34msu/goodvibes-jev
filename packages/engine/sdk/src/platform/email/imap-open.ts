@@ -8,6 +8,7 @@
  * capability record it has to read.
  */
 
+import { assertImapReadingCurrent, imapFailureText, imapReadingLease, readImapRefusal, type ImapReadingOptions, type ImapReadingLease } from './imap-readings.js';
 import type { ImapMailboxStatus } from './imap-headers.js';
 import type { ImapConnection, ImapSession } from './imap-session.js';
 import type { ImapClient } from './imap-client.js';
@@ -96,49 +97,10 @@ const MAILBOX_RESPONSE_CODES: ReadonlySet<string> = new Set([
   'TRYCREATE',
 ]);
 
-/** Wording that means "the server is busy", used when no code was given. */
-const TRANSIENT_WORDING = [
-  /too many simultaneous/i,
-  /too many connections/i,
-  /connection limit/i,
-  /rate limit/i,
-  /temporarily/i,
-  /try again/i,
-  /server (is )?busy/i,
-  /service unavailable/i,
-  /system error/i,
-];
-
-/** Wording that means "this credential is not acceptable", when no code. */
-const AUTH_WORDING = [
-  /invalid credential/i,
-  /invalid (user|username|password|login)/i,
-  /authentication fail/i,
-  /login fail/i,
-  /bad (credential|password|username)/i,
-  /password.*(incorrect|wrong)/i,
-  /(incorrect|wrong).*password/i,
-  /application-specific password required/i,
-  /web login required/i,
-];
-
-/** Wording that means "no such folder", when no code. */
-const MAILBOX_WORDING = [
-  /no such mailbox/i,
-  /unknown mailbox/i,
-  /mailbox does ?n'?o?t exist/i,
-  /does not exist/i,
-  /no such folder/i,
-];
-
 /** The bracketed response code of a `NO`/`BAD` line, upper-cased, or ''. */
 function responseCodeOf(serverMessage: string): string {
   const match = /\[([A-Za-z-]+)[\s\]]/.exec(serverMessage);
   return (match?.[1] ?? '').toUpperCase();
-}
-
-function matchesAny(patterns: readonly RegExp[], text: string): boolean {
-  return patterns.some((pattern) => pattern.test(text));
 }
 
 /**
@@ -151,35 +113,52 @@ function matchesAny(patterns: readonly RegExp[], text: string): boolean {
  * `phaseReason` is used only when the refusal itself is ambiguous AND the
  * phase's own reason is not the terminal guess.
  */
-export function classifyServerRefusal(
+export async function classifyServerRefusal(
   serverMessage: string,
   phaseReason: ImapOpenFailureReason,
-): ImapOpenFailureReason {
+  options: ImapReadingOptions = {},
+): Promise<ImapOpenFailureReason> {
+  const reading = await classifyServerRefusalOwned(serverMessage, phaseReason, options);
+  reading.assertCurrent();
+  return reading.value;
+}
+
+/** Internal result keeps the original judgment owner through every caller await. */
+export async function classifyServerRefusalOwned(
+  serverMessage: string,
+  phaseReason: ImapOpenFailureReason,
+  options: ImapReadingOptions = {},
+): Promise<ImapReadingLease<ImapOpenFailureReason>> {
+  assertImapReadingCurrent(options);
   const code = responseCodeOf(serverMessage);
-  if (TRANSIENT_RESPONSE_CODES.has(code)) return 'server-unavailable';
-  if (AUTH_RESPONSE_CODES.has(code)) return 'authentication-rejected';
-  if (MAILBOX_RESPONSE_CODES.has(code)) return 'mailbox-unavailable';
+  if (TRANSIENT_RESPONSE_CODES.has(code)) return imapReadingLease('server-unavailable', options.publication ?? options);
+  if (AUTH_RESPONSE_CODES.has(code)) return imapReadingLease('authentication-rejected', options.publication ?? options);
+  if (MAILBOX_RESPONSE_CODES.has(code)) return imapReadingLease('mailbox-unavailable', options.publication ?? options);
+  const reading = await readImapRefusal(serverMessage, options);
+  reading.assertCurrent();
+  assertImapReadingCurrent(options);
+  const reason = reading.value === 'server' ? 'server-unavailable' : reading.value === 'credential' ? 'authentication-rejected'
+    : reading.value === 'mailbox' ? 'mailbox-unavailable' : TERMINAL_REASONS.has(phaseReason) ? 'server-unavailable' : phaseReason;
+  return imapReadingLease(reason, reading);
+}
 
-  if (matchesAny(TRANSIENT_WORDING, serverMessage)) return 'server-unavailable';
-  if (matchesAny(AUTH_WORDING, serverMessage)) return 'authentication-rejected';
-  if (matchesAny(MAILBOX_WORDING, serverMessage)) return 'mailbox-unavailable';
-
-  // Nothing in the refusal says what it was about. Prefer the answer that
-  // keeps trying: a wrong "terminal" stops mail until a human notices, a wrong
-  // "transient" costs a retry.
-  return TERMINAL_REASONS.has(phaseReason) ? 'server-unavailable' : phaseReason;
+const failureReadings = new WeakMap<object, ImapReadingLease<unknown>>();
+export function assertImapFailureCurrent(error: unknown): void {
+  if (error && typeof error === 'object') failureReadings.get(error)?.assertCurrent();
+}
+export function retainImapFailureReading(error: object, reading: ImapReadingLease<unknown>): void {
+  reading.assertCurrent(); failureReadings.set(error, reading);
 }
 
 /**
  * An `open()` that did not reach a readable mailbox, with the reason named.
  *
- * The message is composed so it still contains the underlying wording, the
- * server's own text where the server gave any, because "IMAP command failed"
- * with no further detail is what made these three indistinguishable before.
+ * Diagnostics contain the typed reason and host summary only. Raw server
+ * refusals may contain credentials or private account data and are not retained.
  */
 export class ImapOpenError extends Error {
   readonly reason: ImapOpenFailureReason;
-  /** The server's own words, or the original failure text. '' when neither. */
+  /** Empty for IMAP failures: raw server/private exception text is withheld. */
   readonly serverMessage: string;
   /** The mailbox this attempt was for. */
   readonly mailbox: string;
@@ -198,14 +177,10 @@ export class ImapOpenError extends Error {
     readonly serverMessage: string;
     readonly mailbox: string;
   }) {
-    super(
-      input.serverMessage.length > 0
-        ? `${input.summary} ${input.serverMessage}`
-        : input.summary,
-    );
+    super(input.summary);
     this.name = 'ImapOpenError';
     this.reason = input.reason;
-    this.serverMessage = input.serverMessage;
+    this.serverMessage = '';
     this.mailbox = input.mailbox;
     this.terminal = TERMINAL_REASONS.has(input.reason);
     this.notice = {
@@ -213,7 +188,7 @@ export class ImapOpenError extends Error {
       terminal: this.terminal,
       mailbox: input.mailbox,
       ownerMessage: ownerMessageForFailure(input.reason, input.mailbox),
-      serverMessage: input.serverMessage,
+      serverMessage: '',
     };
   }
 }
@@ -399,6 +374,7 @@ export function describeEmailCapabilityFailure(
   error: unknown,
 ): EmailCapabilityFailureNotice | null {
   if (typeof error !== 'object' || error === null) return null;
+  assertImapFailureCurrent(error);
   const candidate = (error as { readonly notice?: unknown }).notice;
   if (typeof candidate !== 'object' || candidate === null) return null;
   const notice = candidate as Partial<EmailCapabilityFailureNotice>;
@@ -436,7 +412,7 @@ export function imapConnection(client: ImapClient): ImapConnection {
 }
 
 /**
- * Compose a named open failure, keeping the underlying wording.
+ * Compose a named open failure without retaining private server wording.
  *
  * `refusedReason` is what the failing phase means when the SERVER said no. A
  * phase that timed out or lost the socket instead did not get an answer at
@@ -445,15 +421,14 @@ export function imapConnection(client: ImapClient): ImapConnection {
  * classification is made on what actually happened, not on which phase it
  * happened in.
  */
-export function composeOpenFailure(input: {
+export async function composeOpenFailure(input: {
   readonly refusedReason: ImapOpenFailureReason;
   readonly refusedSummary: string;
   readonly error: unknown;
   readonly mailbox: string;
-}): ImapOpenError {
-  const serverMessage = input.error instanceof Error
-    ? input.error.message
-    : String(input.error ?? '');
+}, options: ImapReadingOptions = {}): Promise<ImapOpenError> {
+  assertImapReadingCurrent(options);
+  const serverMessage = imapFailureText(input.error);
 
   // A credential that cannot be put on the wire at all never reached the
   // server, so there is no refusal to read: it is the credential, terminally.
@@ -461,7 +436,7 @@ export function composeOpenFailure(input: {
     return new ImapOpenError({
       reason: 'authentication-rejected',
       summary: 'The stored mail credentials cannot be sent to a mail server.',
-      serverMessage,
+      serverMessage: '',
       mailbox: input.mailbox,
     });
   }
@@ -470,15 +445,20 @@ export function composeOpenFailure(input: {
   // phase only supplies the fallback, and only when it is not the terminal
   // guess.
   if (serverMessage.startsWith('IMAP command failed:')) {
-    const reason = classifyServerRefusal(serverMessage, input.refusedReason);
-    return new ImapOpenError({
+    const reading = await classifyServerRefusalOwned(serverMessage, input.refusedReason, options);
+    reading.assertCurrent();
+    const reason = reading.value;
+    assertImapReadingCurrent(options);
+    const failure = new ImapOpenError({
       reason,
       summary: reason === input.refusedReason
         ? input.refusedSummary
         : summaryForReason(reason, input.mailbox),
-      serverMessage,
+      serverMessage: '',
       mailbox: input.mailbox,
     });
+    retainImapFailureReading(failure, reading);
+    return failure;
   }
 
   // No refusal at all: a timeout, a closed socket, a greeting that never came.
@@ -488,7 +468,7 @@ export function composeOpenFailure(input: {
       ? input.refusedSummary
       : `The connection to the mail server failed before the mailbox `
         + `'${input.mailbox}' was open for reading.`,
-    serverMessage,
+    serverMessage: '',
     mailbox: input.mailbox,
   });
 }

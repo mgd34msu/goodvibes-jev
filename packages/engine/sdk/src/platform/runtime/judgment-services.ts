@@ -1,4 +1,5 @@
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { bindJudgmentPortAuthority, installJudgmentPort, restoreJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { createJudgmentSourceLifetime } from './judgment-source-lifetime.js';
 import {
   createSystemOnePort,
   JudgmentError,
@@ -21,8 +22,16 @@ export const JUDGMENT_KEY_NAME = 'TYPESAFE_API_KEY';
 
 /** What the judgment settings are read from. */
 export interface JudgmentSettingsSource {
-  readonly config: { get(key: 'judgment.endpoint' | 'judgment.keySource' | 'judgment.model' | 'judgment.timeoutMs'): unknown };
-  readonly secrets: { get(key: string): Promise<string | null> };
+  readonly config: {
+    get(key: 'judgment.endpoint' | 'judgment.keySource' | 'judgment.model' | 'judgment.timeoutMs'): unknown;
+    getConfigurationIncarnation?(): number;
+    onDidChangeIncarnation?(listener: () => void): () => void;
+  };
+  readonly secrets: {
+    get(key: string): Promise<string | null>;
+    getCredentialMutationState?(): Readonly<{ generation: number; pending: boolean }>;
+    onDidInvalidateCredentials?(listener: () => void): () => void;
+  };
   /** The process environment; TYPESAFE_API_KEY, TYPESAFE_BASE_URL and TYPESAFE_DEFAULT_MODEL. */
   readonly env: Readonly<Record<string, string | undefined>>;
 }
@@ -165,13 +174,15 @@ export function composeJudgment(input: JudgmentServicesInput): JudgmentServices 
       return work;
     },
   };
+  const sourceLifetime = createJudgmentSourceLifetime(input);
+  bindJudgmentPortAuthority(port, sourceLifetime.capture);
   const previous = installJudgmentPort(port);
   // Config loaded before this port existed; what its load kept for a reading is read now.
   void input.config.announceUnknownSettingForms?.();
   input.disposal.add('judgment port and decision log', () => {
     retired.add(port);
-    const installed = installJudgmentPort(previous !== undefined && !retired.has(previous) ? previous : undefined);
-    if (installed !== port) installJudgmentPort(installed);
+    sourceLifetime.dispose();
+    restoreJudgmentPort(port, previous !== undefined && !retired.has(previous) ? previous : undefined);
     lifetime.abort(new JudgmentError('aborted', 'the judgment runtime is shutting down'));
     if (active.size === 0) { decisionLog[Symbol.dispose](); return; }
     // Keep returning the promise even through DisposalRegistry's legacy void

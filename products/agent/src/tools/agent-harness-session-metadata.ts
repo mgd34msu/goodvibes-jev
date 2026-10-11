@@ -1,3 +1,4 @@
+import { captureTranscriptSource, readTranscriptIndex } from '../input/commands/transcript-reading.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -149,7 +150,7 @@ function describeSession(
   };
 }
 
-function currentSession(context: CommandContext): Record<string, unknown> {
+async function currentSession(context: CommandContext, source?: ReturnType<typeof captureTranscriptSource>): Promise<Record<string, unknown>> {
   const runtime = context.session.runtime;
   const conversationManager = context.session.conversationManager;
   if (!runtime || !conversationManager) {
@@ -160,17 +161,18 @@ function currentSession(context: CommandContext): Record<string, unknown> {
       messageCount: 0,
     };
   }
-  const transcriptIndex = conversationManager.getTranscriptEventIndex();
+  source ??= captureTranscriptSource(context);
+  const transcriptIndex = await readTranscriptIndex(context, source);
+  source.assertPublishable();
   return {
     sessionId: runtime.sessionId,
     title: conversationManager.title || '(untitled)',
     messageCount: conversationManager.getMessageCount(),
     model: runtime.model,
     provider: runtime.provider,
-    transcript: {
-      events: transcriptIndex.events.length,
-      groups: transcriptIndex.groups.length,
-    },
+    transcript: transcriptIndex ? {
+      status: 'available', events: transcriptIndex.events.length, groups: transcriptIndex.groups.length,
+    } : { status: 'unavailable', events: null, groups: null },
   };
 }
 
@@ -210,16 +212,19 @@ export function sessionCatalogStatus(context: CommandContext): Record<string, un
   };
 }
 
-export function sessionSummary(context: CommandContext, args: AgentHarnessSessionArgs): Record<string, unknown> {
+export async function sessionSummary(context: CommandContext, args: AgentHarnessSessionArgs, signal?: AbortSignal, source = context.session.conversationManager ? captureTranscriptSource(context, signal) : undefined): Promise<Record<string, unknown>> {
   const manager = context.session.sessionManager;
   const runtime = context.session.runtime;
+  const current = await currentSession(context, source);
+  signal?.throwIfAborted();
+  source?.assertPublishable();
   if (!manager || !runtime) {
     return {
       status: 'unavailable',
       sessions: [],
       returned: 0,
       total: 0,
-      current: currentSession(context),
+      current,
       bookmarks: bookmarkSummary(context, args.includeParameters === true),
       policy: 'Session runtime or session manager is unavailable in this Agent context.',
     };
@@ -234,7 +239,7 @@ export function sessionSummary(context: CommandContext, args: AgentHarnessSessio
   const limited = sessions.slice(0, readLimit(args.limit, 100));
   return {
     status: 'available',
-    current: currentSession(context),
+    current,
     bookmarks: bookmarkSummary(context, args.includeParameters === true),
     sessions: limited.map((session) => {
       const search = searchByName.get(session.name);

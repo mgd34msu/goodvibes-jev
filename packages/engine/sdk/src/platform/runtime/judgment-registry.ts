@@ -93,3 +93,46 @@ import { atRestCredential } from './batteries/at-rest-credential.js';
 registry.register(atRestCredential);
 import { eventCredentialKey } from './config/batteries/event-credential-key.js';
 registry.register(eventCredentialKey);
+
+// Structured compaction source membership.
+import { conversationSubstance, toolResultRelevance, resolvedProblemEvidence, compactionEvidenceDependency } from './compaction/batteries/section-selection.js';
+registry.register(conversationSubstance);
+registry.register(toolResultRelevance);
+registry.register(resolvedProblemEvidence);
+registry.register(compactionEvidenceDependency);
+
+// Email: semantic refusals and mailbox purpose; RFC grammar stays deterministic.
+import { imapRefusalReading, imapCursorFailureReading, imapDraftsReading } from '../email/imap-readings.js';
+registry.register(imapRefusalReading);
+registry.register(imapCursorFailureReading);
+registry.register(imapDraftsReading);
+
+// Browser host provisioning diagnoses, shared by runtime and driver installs.
+import { browserProvisionFailure } from '../browser/browser-failure-reading.js';
+registry.register(browserProvisionFailure);
+import { browserControlIdentity } from '../browser/browser-control-identity.js';
+registry.register(browserControlIdentity);
+// Google setup control purposes and authentication page state.
+import { googleSetupControl, googleSignInPage } from '../google/browser-readings.js';
+registry.register(googleSetupControl);
+registry.register(googleSignInPage);
+
+// Managed local voice round-trip semantic proof.
+import { voiceRoundTripReading } from '../voice/provisioning/round-trip-reading.js';
+registry.register(voiceRoundTripReading);
+
+// Occasion meaning; closed dates and delivery authority remain mechanical.
+import { occasionInterest, occasionTitlePerson, occasionSubject } from '../occasions/readings.js';
+registry.register(occasionInterest);
+registry.register(occasionTitlePerson);
+registry.register(occasionSubject);
+// Recorder diagnostic semantics shared by Agent and TUI capture.
+import { recorderFailureReading } from '../voice/capture/recorder-failure-reading.js';
+registry.register(recorderFailureReading);
+
+import { localEngineFailureReading } from '../voice/providers/local-failure-reading.js';
+registry.register(localEngineFailureReading);
+
+// Owner profile: named People prose, never read/disclosure authority.
+import { profilePersonLine } from '../owner-profile/person-reading.js';
+registry.register(profilePersonLine);

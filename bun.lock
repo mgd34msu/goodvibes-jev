@@ -71,7 +71,7 @@
         "playwright-core": "1.62.0",
         "pyright": "1.1.409",
         "simple-git": "4.0.2",
-        "sql.js": "1.14.1",
+        "sql.js": "1.14.2",
         "sqlite-vec": "0.1.9",
         "tree-sitter-css": "0.25.0",
         "tree-sitter-javascript": "0.25.0",
@@ -108,7 +108,7 @@
         "@goodvibes-jev/daemon": "workspace:*",
         "@goodvibes-jev/engine": "workspace:*",
         "onnxruntime-web": "^1.27.0",
-        "sql.js": "^1.14.1",
+        "sql.js": "^1.14.2",
         "sqlite-vec": "^0.1.9",
         "zustand": "^5.0.12",
       },
@@ -1700,7 +1700,7 @@
 
     "sprintf-js": ["sprintf-js@1.0.3", "", {}, "sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g=="],
 
-    "sql.js": ["sql.js@1.14.1", "", {}, "sha512-gcj8zBWU5cFsi9WUP+4bFNXAyF1iRpA3LLyS/DP5xlrNzGmPIizUeBggKa8DbDwdqaKwUcTEnChtd2grWo/x/A=="],
+    "sql.js": ["sql.js@1.14.2", "", {}, "sha512-3ZGPovObMFrdw79zrUHbfdE/DLIsy8jdNdssmMSQuRAymedU6q84asPt0kgiqrdMYlPegDItiIMfmIXzZnYFcw=="],
 
     "sqlite-vec": ["sqlite-vec@0.1.9", "", { "optionalDependencies": { "sqlite-vec-darwin-arm64": "0.1.9", "sqlite-vec-darwin-x64": "0.1.9", "sqlite-vec-linux-arm64": "0.1.9", "sqlite-vec-linux-x64": "0.1.9", "sqlite-vec-windows-x64": "0.1.9" } }, "sha512-L7XJWRIBNvR9O5+vh1FQ+IGkh/3D2AzVksW5gdtk28m78Hy8skFD0pqReKH1Yp0/BUKRGcffgKvyO/EON5JXpA=="],
 

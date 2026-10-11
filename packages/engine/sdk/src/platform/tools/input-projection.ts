@@ -2,6 +2,7 @@
 import { types as nodeTypes } from 'node:util';
 import type { ToolExecuteOptions } from '../types/tools.js';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { SecretsManager, PreparedScopedSecretDeletion } from '../config/secrets.js';
 import type { ConfigManager, PreparedConfigMutation } from '../config/manager.js';
 import type { ConfigWriteRoute } from '../config/daemon-config-route.js';
 import { assertPreparedConfigWriteRoute } from '../config/settings-precondition-client.js';
@@ -53,6 +54,7 @@ export type ToolOwnedAdmissionEvidence = ToolAdmissionEvidence | AgentSettingsAd
 export interface ToolPreparedSettingsMutation {
   readonly owner: ConfigManager;
   readonly mutation: PreparedConfigMutation;
+  readonly secretDeletion?: Readonly<{ owner: SecretsManager; mutation: PreparedScopedSecretDeletion }> | undefined;
   readonly route?: ConfigWriteRoute | undefined;
 }
 
@@ -149,7 +151,17 @@ export function captureSettingsMutation(value: unknown): ToolPreparedSettingsMut
   if (!owner || !mutation) throw new ToolInputProjectionError('invalid');
   owner.assertPreparedMutation(mutation);
   if (route) assertPreparedConfigWriteRoute(route);
-  return Object.freeze({ owner, mutation, ...(route ? { route } : {}) });
+  const secret = projectionProperty(value, 'secretDeletion');
+  let secretDeletion: ToolPreparedSettingsMutation['secretDeletion'];
+  if (secret !== undefined) {
+    if (!secret || typeof secret !== 'object' || nodeTypes.isProxy(secret)) throw new ToolInputProjectionError('invalid');
+    const secretOwner = projectionProperty(secret, 'owner') as SecretsManager;
+    const deletion = projectionProperty(secret, 'mutation') as PreparedScopedSecretDeletion;
+    if (!secretOwner || !deletion) throw new ToolInputProjectionError('invalid');
+    secretOwner.assertPreparedScopedDeletion(deletion);
+    secretDeletion = Object.freeze({ owner: secretOwner, mutation: deletion });
+  }
+  return Object.freeze({ owner, mutation, ...(route ? { route } : {}), ...(secretDeletion ? { secretDeletion } : {}) });
 }
 
 export interface ToolInputProjector {
@@ -167,10 +179,8 @@ export interface ToolRegistrationOptions {
   readonly inputProjection?: ToolInputProjector | null | undefined;
 }
 
-export interface ToolInputProjectionOptions extends ToolExecuteOptions {
-  /** Trusted per-call authority guard, captured out of band and checked before retries. */
-  readonly assertCurrent?: (() => void) | undefined;
-}
+/** Projection and execution retain the same additive original-caller restriction. */
+export type ToolInputProjectionOptions = ToolExecuteOptions;
 
 export interface ProjectedToolCall {
   readonly callId: string;

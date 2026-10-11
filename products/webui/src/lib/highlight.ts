@@ -3,10 +3,9 @@
  *
  * Registers all supported languages exactly once (module-level singleton).
  * Exports:
- *   - LANGUAGE_ALIASES , normalised alias map
  *   - escapeHtml       , minimal HTML escaper
  *   - normalizeLanguage, alias resolution
- *   - highlightCode    , highlight or auto-detect, falling back to escapeHtml
+ *   - highlightCode    , highlight a declared or read language, falling back to escapeHtml
  */
 
 import hljs from 'highlight.js/lib/core';
@@ -68,35 +67,6 @@ hljs.registerLanguage('yaml', yaml);
 // Language alias map
 // ---------------------------------------------------------------------------
 
-export const LANGUAGE_ALIASES: Record<string, string> = {
-  c: 'c',
-  cc: 'cpp',
-  cjs: 'javascript',
-  cmd: 'bash',
-  cs: 'csharp',
-  docker: 'dockerfile',
-  env: 'ini',
-  htm: 'xml',
-  html: 'xml',
-  js: 'javascript',
-  jsx: 'javascript',
-  md: 'markdown',
-  mjs: 'javascript',
-  ps1: 'shell',
-  py: 'python',
-  rb: 'ruby',
-  rs: 'rust',
-  sh: 'bash',
-  svg: 'xml',
-  toml: 'ini',
-  ts: 'typescript',
-  tsx: 'typescript',
-  txt: 'plaintext',
-  xml: 'xml',
-  yml: 'yaml',
-  zsh: 'bash',
-};
-
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
@@ -112,14 +82,15 @@ export function escapeHtml(value: string): string {
 
 export function normalizeLanguage(language: string): string {
   const normalized = language.trim().toLowerCase();
-  return LANGUAGE_ALIASES[normalized] ?? normalized;
+  const grammar = hljs.getLanguage(normalized);
+  return grammar ? hljs.listLanguages().find(name => hljs.getLanguage(name) === grammar) ?? normalized : '';
 }
 
 /**
  * Highlight `code` for the given `language`.
  *
  * - If `language` resolves to a registered hljs language, use it.
- * - If `language` is empty/unknown but code is non-empty, auto-detect.
+ * - Unknown/absent tags stay plaintext until a source-owned typed reading arrives.
  * - Otherwise escape and return as-is.
  */
 export function highlightCode(
@@ -133,10 +104,6 @@ export function highlightCode(
       ignoreIllegals: true,
     });
     return { language: normalizedLanguage, html: result.value };
-  }
-  if (!normalizedLanguage && code.trim()) {
-    const result = hljs.highlightAuto(code);
-    return { language: result.language ?? '', html: result.value };
   }
   return { language: normalizedLanguage, html: escapeHtml(code) };
 }

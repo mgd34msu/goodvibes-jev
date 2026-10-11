@@ -1,4 +1,4 @@
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from './extraction-ownership.js';
 import { type Candidate } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput } from '../gate/judgment-input.js';
 import { pageBlocks, pageUnits } from '../tools/fetch/page-blocks.js';
@@ -17,7 +17,8 @@ interface SelectedHtmlContent {
 }
 
 /** HTML grammar supplies blocks; only recorded judgments decide which are document content. */
-export async function selectHtmlContent(html: string, documentTitle: string, metadataTitles: readonly string[] = []): Promise<SelectedHtmlContent | null> {
+export async function selectHtmlContent(html: string, documentTitle: string, metadataTitles: readonly string[] = [], owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner()): Promise<SelectedHtmlContent | null> {
+  owner.assertCurrent();
   assertJudgmentInput(html);
   const units = pageUnits(html);
   const blocks = pageBlocks(units).map((block, index) => ({ number: index + 1, ...block }));
@@ -26,7 +27,8 @@ export async function selectHtmlContent(html: string, documentTitle: string, met
   assertJudgmentInput({ documentTitle, blocks, titles });
   if (blocks.length === 0) return null;
   return requireExtractionJudgment(async () => {
-    const readings = await htmlMainContent.read(judgmentPort('knowledge.extraction.html-content'), documentTitle.slice(0, TITLE_SAMPLE_CHARS), blocks, { site: 'knowledge.extraction.html-content' });
+    const readings = await htmlMainContent.read(owner.port('knowledge.extraction.html-content'), documentTitle.slice(0, TITLE_SAMPLE_CHARS), blocks, { site: 'knowledge.extraction.html-content', ...(owner.signal ? { signal: owner.signal } : {}), beforeAttempt: owner.assertCurrent });
+    owner.assertCurrent();
     for (const block of blocks) {
       const reading = readings.get(block.number);
       if (!reading || reading.outcome !== 'act' || reading.verdict === 'uncertain') throw new KnowledgeExtractionJudgmentHoldError();
@@ -41,7 +43,7 @@ export async function selectHtmlContent(html: string, documentTitle: string, met
     });
     const textContent = kept.map((block) => block.text).join('\n\n');
     const candidates: Candidate[] = titles.map((text, index) => ({ id: `title-${index + 1}`, content: text.slice(0, TITLE_SAMPLE_CHARS) }));
-    const titleId = await chooseTitle(textContent, candidates);
+    const titleId = await chooseTitle(textContent, candidates, owner);
     const titleIndex = candidates.findIndex((candidate) => candidate.id === titleId);
     return {
       textContent,
@@ -53,12 +55,13 @@ export async function selectHtmlContent(html: string, documentTitle: string, met
 }
 
 /** Large candidate lists use the foundation's selection pattern in bounded tournaments. */
-async function chooseTitle(content: string, candidates: readonly Candidate[]): Promise<string | undefined> {
+async function chooseTitle(content: string, candidates: readonly Candidate[], owner: KnowledgeExtractionOwner): Promise<string | undefined> {
   if (candidates.length === 0) return undefined;
   const finalists: Candidate[] = [];
   for (let start = 0; start < candidates.length; start += TITLE_GROUP_SIZE) {
     const group = candidates.slice(start, start + TITLE_GROUP_SIZE);
-    const selection = await htmlDocumentTitle.select(judgmentPort('knowledge.extraction.html-title'), { content: content.slice(0, TITLE_CONTEXT_CHARS) }, group, { site: 'knowledge.extraction.html-title' });
+    const selection = await htmlDocumentTitle.select(owner.port('knowledge.extraction.html-title'), { content: content.slice(0, TITLE_CONTEXT_CHARS) }, group, { site: 'knowledge.extraction.html-title', ...(owner.signal ? { signal: owner.signal } : {}), beforeAttempt: owner.assertCurrent });
+    owner.assertCurrent();
     if (selection.outcome !== 'act') {
       selection.recordAction('hold');
       throw new KnowledgeExtractionJudgmentHoldError();
@@ -69,5 +72,5 @@ async function chooseTitle(content: string, candidates: readonly Candidate[]): P
     if (chosen) finalists.push(chosen);
   }
   if (candidates.length <= TITLE_GROUP_SIZE || finalists.length <= 1) return finalists[0]?.id;
-  return chooseTitle(content, finalists);
+  return chooseTitle(content, finalists, owner);
 }

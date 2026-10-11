@@ -56,6 +56,7 @@ export interface ConversationCompactionRun {
   readonly tokenCount: number;
   readonly contextWindow: number;
   readonly threshold: number;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /**
@@ -84,9 +85,18 @@ export function routeConversationCompaction(
   owner: CompactionLifecycleOwner | null | undefined,
   run: ConversationCompactionRun,
   conversation: { getMessagesForLLM(): ProviderMessage[] },
-  execute: () => Promise<CompactionReceipt | undefined>,
+  execute: (lifetime: { signal?: AbortSignal | undefined; assertCurrent: () => void }) => Promise<CompactionReceipt | undefined>,
 ): Promise<CompactionReceipt | undefined> {
-  if (!owner) return execute();
+  const originalMessages = JSON.stringify(run.messages);
+  const assertInputCurrent = () => {
+    if (JSON.stringify(conversation.getMessagesForLLM()) !== originalMessages) throw new Error('Conversation changed before compaction');
+  };
+  const assertCurrent = () => { run.signal?.throwIfAborted(); };
+  assertCurrent();
+  if (!owner) {
+    assertInputCurrent();
+    return execute({ signal: run.signal, assertCurrent });
+  }
   return owner.runLifecycle({
     trigger: run.trigger,
     strategy: run.strategy,
@@ -94,7 +104,13 @@ export function routeConversationCompaction(
     tokenCount: run.tokenCount,
     contextWindow: run.contextWindow,
     threshold: run.threshold,
-    execute,
+    execute: (lifetime) => {
+      const signal = run.signal ? AbortSignal.any([run.signal, lifetime.signal]) : lifetime.signal;
+      const assertCurrent = () => { signal.throwIfAborted(); lifetime.assertCurrent(); };
+      assertCurrent();
+      assertInputCurrent();
+      return execute({ signal, assertCurrent });
+    },
     outcome: (receipt) => {
       if (!receipt || receipt.outcome !== 'applied') return null;
       return {

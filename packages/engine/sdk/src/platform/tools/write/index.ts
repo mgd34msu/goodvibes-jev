@@ -1,10 +1,12 @@
+import { assertCurrentToolInvocation } from '../registry.js';
+import { captureFileEffectRevision } from '../shared/file-effect-revision.js';
 import type { CapturedWriteRevision } from '../shared/captured-write-revision.js';
 import { assertCapturedToolWriteRevision, captureCapturedToolWriteRevision, assertCapturedToolMutationCurrent, assertCapturedToolReadAccess, hasCapturedToolInvocation, prepareCapturedToolBackup } from '../shared/captured-input-tools.js';
 import type { ReadAccessFilter } from '../shared/read-access.js';
 import { chmodSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, unlinkSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { Tool, ToolDefinition } from '../../types/tools.js';
+import type { Tool, ToolDefinition, ToolExecuteOptions } from '../../types/tools.js';
 import { WRITE_SCHEMA, type WriteInput, type WriteFileInput, type WriteMode } from './schema.js';
 import { runValidators, formatValidatorFailure, type ValidatorName, type ValidatorRunner } from '../shared/validators.js';
 import { FileStateCache } from '../../state/file-cache.js';
@@ -183,6 +185,7 @@ function processSingleWrite(
   dryRun: boolean,
   capturedBackup?: Awaited<ReturnType<typeof prepareCapturedToolBackup>>,
   sourceRevision?: CapturedWriteRevision,
+  assertCurrent: () => void = () => {},
 ): { ok: true; result: FileWriteResult } | { ok: false; error: string } {
   // Resolve and validate path
   let resolvedPath: string;
@@ -263,9 +266,11 @@ function processSingleWrite(
     if (hasCapturedToolInvocation() && !capturedBackup) return { ok: false, error: 'Captured backup requires its prepared owned destination' };
     const backupPath = capturedBackup?.path ?? buildBackupPath(resolvedPath, projectRoot);
     try {
+      assertCurrent();
       if (capturedBackup) capturedBackup.create(sourceRevision);
       else {
         mkdirSync(dirname(backupPath), { recursive: true });
+        assertCurrent();
         copyFileSync(resolvedPath, backupPath);
       }
       result.backup_path = backupPath;
@@ -279,6 +284,7 @@ function processSingleWrite(
 
   // Auto-create parent directories
   try {
+    assertCurrent();
     mkdirSync(dirname(resolvedPath), { recursive: true });
   } catch (err) {
     return {
@@ -289,6 +295,7 @@ function processSingleWrite(
 
   // Atomic write
   try {
+    assertCurrent();
     atomicWrite(resolvedPath, content, encoding);
   } catch (err) {
     return {
@@ -378,7 +385,9 @@ export function createWriteTool(options?: {
 
   return {
     definition,
-    async execute(args: Record<string, unknown>) {
+    async execute(args: Record<string, unknown>, executeOptions?: ToolExecuteOptions) {
+      const authenticated = assertCurrentToolInvocation(args, executeOptions);
+      const assertCurrent = () => { assertCurrentToolInvocation(args, executeOptions); };
       // Runtime validation before cast: ensure required fields exist.
       if (!args['files'] || !Array.isArray(args['files']) || (args['files'] as unknown[]).length === 0) {
         return {
@@ -401,6 +410,7 @@ export function createWriteTool(options?: {
       const captured = hasCapturedToolInvocation();
       const capturedAtomic = captured && transactionMode === 'atomic';
       const revisions = new Map<string, CapturedWriteRevision>();
+      const ownedRevisions = new Map<string, () => void>();
       const initialRevisions = new Map<string, CapturedWriteRevision>();
       const backups = new Map<WriteFileInput, Awaited<ReturnType<typeof prepareCapturedToolBackup>>>();
 
@@ -414,6 +424,11 @@ export function createWriteTool(options?: {
               const revision = revisions.get(written.resolved_path);
               if (!revision) throw new Error('Captured rollback has no owned revision');
               assertCapturedToolWriteRevision(written.resolved_path, revision);
+            }
+            if (authenticated) {
+              const revision = ownedRevisions.get(written.resolved_path);
+              if (!revision) throw new Error('Rollback has no completed owned file revision');
+              revision(); // Narrow inverse only, never a fresh forward mutation grant.
             }
             assertCapturedToolMutationCurrent(written.resolved_path);
             const snapshot = snapshots.get(written.resolved_path);
@@ -508,6 +523,7 @@ export function createWriteTool(options?: {
         }
         let preparationError: string | undefined;
         try {
+          assertCurrent();
           if (captured) {
             const path = resolveAndValidatePath(fileInput.path, projectRoot);
             if (capturedAtomic) {
@@ -540,6 +556,7 @@ export function createWriteTool(options?: {
             try {
               beforeBytes = readFileSync(resolvedForUndo);
               beforeContent = beforeBytes.toString('utf-8');
+              if (authenticated && transactionMode === 'atomic') captureFileEffectRevision(resolvedForUndo, beforeBytes)();
             } catch (err) {
               const warning = `Failed to read existing content before writing '${fileInput.path}': ${summarizeError(err)}`;
               if (transactionMode === 'atomic') {
@@ -563,7 +580,7 @@ export function createWriteTool(options?: {
 
         const outcome = preparationError
           ? { ok: false as const, error: preparationError }
-          : processSingleWrite(fileInput, projectRoot, dryRun, backups.get(fileInput), capturedAtomic ? revisions.get(resolveAndValidatePath(fileInput.path, projectRoot)) : undefined);
+          : processSingleWrite(fileInput, projectRoot, dryRun, backups.get(fileInput), capturedAtomic ? revisions.get(resolveAndValidatePath(fileInput.path, projectRoot)) : undefined, assertCurrent);
 
         if (!outcome.ok) {
           errors.push(outcome.error);
@@ -576,6 +593,8 @@ export function createWriteTool(options?: {
         }
 
         results.push(outcome.result);
+        if (authenticated && !dryRun) ownedRevisions.set(outcome.result.resolved_path, captureFileEffectRevision(outcome.result.resolved_path,
+          Buffer.from(outcome.result._content ?? '', (fileInput.encoding as BufferEncoding) ?? 'utf-8')));
         if (captured && !dryRun && (capturedAtomic || options.fileUndoManager)) {
           revisions.set(outcome.result.resolved_path, captureCapturedToolWriteRevision(outcome.result.resolved_path,
             Buffer.from(outcome.result._content ?? '', (fileInput.encoding as BufferEncoding) ?? 'utf-8')));
@@ -629,7 +648,7 @@ export function createWriteTool(options?: {
                 let healResult: Awaited<ReturnType<typeof healToolFile>>;
                 try {
                   healResult = options.toolLLM && options.configManager
-                  ? await healToolFile(options.configManager, options.toolLLM, outcome.result.resolved_path, content, syntaxErrors, options.capturedAutoHeal)
+                  ? await healToolFile(options.configManager, options.toolLLM, outcome.result.resolved_path, content, syntaxErrors, options.capturedAutoHeal, authenticated ? assertCurrent : undefined, executeOptions?.signal)
                   : {
                       healed: false,
                       content,
@@ -664,7 +683,10 @@ export function createWriteTool(options?: {
                       healResult.assertCurrentSynchronous();
                       assertCapturedToolMutationCurrent(outcome.result.resolved_path);
                     }
+                    assertCurrent();
+                    if (authenticated) ownedRevisions.get(outcome.result.resolved_path)!();
                     atomicWrite(outcome.result.resolved_path, healResult.content);
+                    if (authenticated) ownedRevisions.set(outcome.result.resolved_path, captureFileEffectRevision(outcome.result.resolved_path, Buffer.from(healResult.content)));
                     content = healResult.content;
                     outcome.result._content = content;
                     outcome.result.bytes_written = Buffer.byteLength(content, 'utf-8');
@@ -805,7 +827,7 @@ export function createWriteTool(options?: {
         const validatorNames = input.validate.after as ValidatorName[];
         logger.debug('write tool: running post-write validators', { validators: validatorNames });
         try {
-          const failures = await runValidators(validatorNames, projectRoot, options.validatorRunner);
+          const failures = await runValidators(validatorNames, projectRoot, options.validatorRunner, assertCurrent);
           if (failures.length > 0) {
             finalOutput.validation_failures = failures.map((f) => ({
               validator: f.validator,

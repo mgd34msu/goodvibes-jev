@@ -9,6 +9,7 @@
  * reading the type sees them.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { Socket } from 'node:net';
 import type { DeliveryEvidence } from './imap-headers.js';
 
@@ -186,6 +187,11 @@ export interface ImapAppendDraftResult {
 }
 
 export interface ImapClientOptions {
+  /** Internal account lifetime that survives failed-session cleanup. */
+  readonly publication?: JudgmentReadingOptions | undefined;
+  /** Current account/source lifetime, checked before and after semantic readings. */
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
   /** Pre-connected socket (TLS for prod, plain for tests). */
   readonly socket: Socket;
   /** IMAP LOGIN username. */

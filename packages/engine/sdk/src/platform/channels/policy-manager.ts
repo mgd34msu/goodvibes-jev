@@ -12,6 +12,7 @@ import type {
 } from './types.js';
 import { isRecord } from '../utils/record-coerce.js';
 import { logger } from '../utils/logger.js';
+import { judgmentInputProblem } from '../gate/judgment-input.js';
 
 interface ChannelPolicySnapshot extends Record<string, unknown> {
   readonly policies: readonly ChannelPolicyRecord[];
@@ -273,8 +274,13 @@ export class ChannelPolicyManager {
     return next;
   }
 
-  async evaluateIngress(input: ChannelIngressPolicyInput): Promise<ChannelPolicyDecision> {
+  /** Same deterministic rules as ingress evaluation, without audit, logging or owner seeding. */
+  async preflightIngress(input: ChannelIngressPolicyInput): Promise<ChannelPolicyDecision> {
     await this.start();
+    return this.decideIngress(input);
+  }
+
+  private decideIngress(input: ChannelIngressPolicyInput): ChannelPolicyDecision {
     const policy = this.getPolicy(input.surface);
     const conversationKind = normalizeConversationKind(input);
     const matchedGroupPolicy = policy.groupPolicies.find((entry) => (
@@ -341,6 +347,23 @@ export class ChannelPolicyManager {
       reason = 'command-not-allowed';
     }
 
+    return {
+      allowed, reason, policy,
+      ...(matchedGroupPolicy ? { matchedGroupPolicy } : {}),
+      matchedScope: matchedGroupPolicy ? 'group' : 'surface',
+      effectiveRequireMention: requireMention,
+      effectiveAllowedCommands: allowedCommands,
+    };
+  }
+
+  async evaluateIngress(input: ChannelIngressPolicyInput, options: { readonly recordDenied?: boolean } = {}): Promise<ChannelPolicyDecision> {
+    await this.start();
+    const decision = this.decideIngress(input);
+    // Source-scoped callers may refuse fresh denials without retaining text.
+    if (!decision.allowed && options.recordDenied === false) return decision;
+    const { allowed, policy, matchedGroupPolicy } = decision;
+    let reason = decision.reason;
+    const allowlistUserIds = matchedGroupPolicy?.allowlistUserIds ?? policy.allowlistUserIds;
     // Owner allowlist self-seeding: a surface with no owner allowlist adopts
     // the first identified sender as its owner, whoever pairs/configures the
     // channel proves it by sending the first message, and no separate
@@ -355,10 +378,34 @@ export class ChannelPolicyManager {
       });
     }
 
+    this.recordIngressAudit(input, { ...decision, reason, policy: effectivePolicy }, true);
+
+    return { ...decision, reason, policy: effectivePolicy };
+  }
+
+  /** Preserve a denied source's bookkeeping without retaining its text or arbitrary metadata. */
+  async recordDeniedIngress(input: ChannelIngressPolicyInput): Promise<ChannelPolicyDecision> {
+    await this.start();
+    const decision = this.decideIngress(input);
+    if (!decision.allowed) this.recordIngressAudit(input, decision, false);
+    return decision;
+  }
+
+  private recordIngressAudit(input: ChannelIngressPolicyInput, decision: ChannelPolicyDecision, retainText: boolean): void {
+    const { allowed, reason, matchedGroupPolicy } = decision;
+    // Denied body identity fields are still untrusted prose. Preserve useful
+    // safe identifiers, but never retain credentials smuggled in those fields.
+    const safeIdentity = (value: string | undefined) => typeof value === 'string' && judgmentInputProblem(value) === undefined ? value : undefined;
+    const identity = retainText ? input : {
+      userId: safeIdentity(input.userId), channelId: safeIdentity(input.channelId),
+      groupId: safeIdentity(input.groupId), threadId: safeIdentity(input.threadId),
+    };
+    const matchedGroupPolicyId = retainText ? matchedGroupPolicy?.id : safeIdentity(matchedGroupPolicy?.id);
+    const conversationKind = normalizeConversationKind(input);
     if (!allowed && (reason === 'user-not-allowlisted' || reason === 'missing-user-identity')) {
       logger.info('Channel message from unknown sender ignored', {
         surface: input.surface,
-        ...(input.userId ? { userId: input.userId } : {}),
+        ...(identity.userId ? { userId: identity.userId } : {}),
         reason,
       });
     }
@@ -369,14 +416,14 @@ export class ChannelPolicyManager {
       createdAt: Date.now(),
       allowed,
       reason,
-      ...(input.userId ? { userId: input.userId } : {}),
-      ...(input.channelId ? { channelId: input.channelId } : {}),
-      ...(input.groupId ? { groupId: input.groupId } : {}),
-      ...(input.threadId ? { threadId: input.threadId } : {}),
+      ...(identity.userId ? { userId: identity.userId } : {}),
+      ...(identity.channelId ? { channelId: identity.channelId } : {}),
+      ...(identity.groupId ? { groupId: identity.groupId } : {}),
+      ...(identity.threadId ? { threadId: identity.threadId } : {}),
       conversationKind,
-      ...(matchedGroupPolicy?.id ? { matchedGroupPolicyId: matchedGroupPolicy.id } : {}),
-      ...(input.text ? { text: input.text.slice(0, 200) } : {}),
-      metadata: input.metadata ?? {},
+      ...(matchedGroupPolicyId ? { matchedGroupPolicyId } : {}),
+      ...(retainText && input.text ? { text: input.text.slice(0, 200) } : {}),
+      metadata: retainText ? input.metadata ?? {} : {},
     });
     if (this.audit.length > MAX_AUDIT_RECORDS) {
       this.audit.length = MAX_AUDIT_RECORDS;
@@ -385,16 +432,6 @@ export class ChannelPolicyManager {
     // schedule a coalesced flush rather than awaiting a full-snapshot disk write on
     // every inbound message. Call stop() to force a final flush on graceful shutdown.
     this.scheduleAuditFlush();
-
-    return {
-      allowed,
-      reason,
-      policy: effectivePolicy,
-      ...(matchedGroupPolicy ? { matchedGroupPolicy } : {}),
-      matchedScope: matchedGroupPolicy ? 'group' : 'surface',
-      effectiveRequireMention: requireMention,
-      effectiveAllowedCommands: allowedCommands,
-    };
   }
 
   private scheduleAuditFlush(): void {

@@ -1,8 +1,11 @@
+import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { captureTranscriptSource } from '../input/commands/transcript-reading.ts';
+import { createPreferredSettingsProjector, executeAdmittedPreferredSettings } from './agent-settings-admission.ts';
 import { assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { modelReadingOptions, modelReadingServicePath, withModelReadingContext } from './agent-harness-model-reading-source.ts';
 import { processClassificationOptions } from './agent-harness-process-launch.ts';
 import { createProcessInputProjector } from './agent-process-ingress.ts';
-import { createHarnessCatalogInputProjector, protectHarnessCatalogTool, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
+import { createHarnessCatalogInputProjector, isHarnessCatalogQuery, protectHarnessCatalogTool, harnessCatalogExecutionGuard, retainHarnessCatalogCurrent } from './agent-harness-catalog-ingress.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { createAgentHarnessResearchProjector, protectAgentHarnessResearchTool } from './agent-research-ingress.ts';
@@ -64,8 +67,8 @@ import { describeHarnessMode, HARNESS_MODE_DESCRIPTORS, listHarnessModes, type A
 import { describeHarnessUiSurface, listHarnessUiSurfaces, openHarnessUiSurface, totalHarnessUiSurfaces } from './agent-harness-ui-surface-metadata.ts';
 import { AGENT_WORKSPACE_CATEGORIES, allWorkspaceActions, buildWorkspaceEditorContext, describeWorkspaceAction, describeWorkspaceCategory, listWorkspaceActions, resolveWorkspaceActionDetail } from './agent-harness-workspace-actions.ts';
 import { connectedHostSummary, describeConnectedHostCapability, settingsPolicySummary } from './agent-harness-metadata.ts';
-import { countHarnessSettingCatalog, formatHarnessError, resetHarnessSetting, resolveEffectiveHarnessSetting, setHarnessSetting } from '../agent/harness-control.ts';
-import { harnessSettingsCatalog } from './agent-harness-settings-catalog.ts';
+import { countHarnessSettingCatalog, formatHarnessError, resolveEffectiveHarnessSetting } from '../agent/harness-control.ts';
+import { harnessSettingsCatalog, isHarnessSettingsQuery } from './agent-harness-settings-catalog.ts';
 import { buildAssistantCockpitFromSummaries } from '../agent/assistant-cockpit.ts';
 import { remoteCatalogStatus, remotePairApproveHandoff, remotePairRejectHandoff, remotePairRequestsSummary, remotePeersInvokeHandoff, remotePeersSummary, remoteSnapshotSummary, remoteWorkCancelHandoff, remoteWorkSummary } from './agent-harness-remote.ts';
 import { channelDraftSaveHandoff, channelDraftSendHandoff, channelDraftsSummary, channelRoutingAssignHandoff, channelRoutingRemoveHandoff, channelRoutingSummary, unifiedInboxSummary } from './agent-harness-comms.ts';
@@ -89,7 +92,7 @@ function compactHarnessModeGuide(): Record<string, unknown> {
     inspect: harnessModeIdsByKind('inspect'),
     effects: harnessModeIdsByKind('effect'),
     aliases: harnessModeIdsByKind('alias'),
-    pattern: 'Use query|target for search, exact ids for inspect modes, and confirm:true plus explicitUserRequest for effects.',
+    pattern: 'Use query|target for search and exact ids for inspect modes. Settings set/reset use current recorded effect-owner admission; other effects retain their documented confirmation requirements.',
   };
 }
 
@@ -209,6 +212,23 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           || (deps.commandContext.clients?.mcpApi ?? deps.commandContext.extensions?.mcpRegistry) !== personalOpsApi) throw new Error('PersonalOps source owner changed.');
       } };
       const catalogOptions = { ...personalOpsOptions, assertCurrent: () => { assertCatalogExecution(); personalOpsOptions.assertCurrent(); } };
+      if (dispatchMode === 'settings' || dispatchMode === 'get_setting') {
+        const originalJson = JSON.stringify(captureCatalogData(rawArgs));
+        const config = deps.commandContext.platform.configManager;
+        const incarnation = config.getConfigurationIncarnation();
+        const reading = { ...catalogOptions, retainCurrent: retainHarnessCatalogCurrent(rawArgs), assertCurrent: () => {
+          catalogOptions.assertCurrent();
+          if (JSON.stringify(captureCatalogData(rawArgs)) !== originalJson || deps.commandContext.platform.configManager !== config || config.getConfigurationIncarnation() !== incarnation) throw new Error('Settings source changed.');
+        } };
+        if (dispatchMode === 'settings') {
+          const page = await harnessSettingsCatalog(config, args, reading); reading.assertCurrent(); return output(page);
+        }
+        const setting = await resolveEffectiveHarnessSetting(config, settingLookupArgs(args), {}, reading);
+        reading.assertCurrent();
+        if (setting?.status === 'found') return output(setting.setting);
+        if (setting?.status === 'ambiguous') return error(`Ambiguous setting ${setting.input}. Candidates: ${JSON.stringify(setting.candidates)}`);
+        return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
+      }
       if (dispatchMode === 'personal_ops_queue') return output(await personalOpsQueueSummary(deps.commandContext, args, personalOpsOptions));
       if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, personalOpsOptions));
       if (dispatchMode === 'personal_ops_lane') {
@@ -637,62 +657,21 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous media provider ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'sessions') return output(sessionSummary(deps.commandContext, args));
+        if (dispatchMode === 'sessions') {
+          const source = deps.commandContext.session.conversationManager ? captureTranscriptSource(deps.commandContext, signal) : undefined;
+          const summary = await sessionSummary(deps.commandContext, args, signal, source);
+          signal?.throwIfAborted();
+          source?.assertPublishable();
+          return output(summary);
+        }
         if (dispatchMode === 'session') {
           const resolved = describeHarnessSession(deps.commandContext, args);
           if (resolved.status === 'found') return output(resolved.session);
           if (resolved.status === 'ambiguous') return error(`Ambiguous session ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (dispatchMode === 'settings') {
-          // Ownership-aware (daemon-owned keys carry the DAEMON's live value)
-          // and short-page-aware: harnessSettingsCatalog states in words when
-          // the page it returns is short of what matched.
-          return output(await harnessSettingsCatalog(deps.commandContext.platform.configManager, args));
-        }
-        if (dispatchMode === 'get_setting') {
-          const setting = await resolveEffectiveHarnessSetting(deps.commandContext.platform.configManager, settingLookupArgs(args));
-          if (setting?.status === 'found') return output(setting.setting);
-          if (setting?.status === 'ambiguous') {
-            return error(`Ambiguous setting ${setting.input}. Candidates: ${JSON.stringify(setting.candidates)}`);
-          }
-          return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
-        }
-        if (dispatchMode === 'set_setting') {
-          const confirmationError = requireConfirmedAction(args, 'Setting mutation');
-          if (confirmationError) return error(confirmationError);
-          if (args.value === undefined) return error('set_setting requires value.');
-          const setting = await resolveEffectiveHarnessSetting(deps.commandContext.platform.configManager, settingLookupArgs(args));
-          if (setting?.status === 'ambiguous') {
-            return error(`Ambiguous setting ${setting.input}. Candidates: ${JSON.stringify(setting.candidates)}`);
-          }
-          if (setting?.status !== 'found') {
-            return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
-          }
-          const result = await setHarnessSetting(
-            deps.commandContext.platform.configManager,
-            deps.commandContext.platform.secretsManager,
-            setting.setting.key,
-            args.value,
-          );
-          return output({ ...result, lookup: setting.lookup });
-        }
-        if (dispatchMode === 'reset_setting') {
-          const confirmationError = requireConfirmedAction(args, 'Setting reset');
-          if (confirmationError) return error(confirmationError);
-          const setting = await resolveEffectiveHarnessSetting(deps.commandContext.platform.configManager, settingLookupArgs(args));
-          if (setting?.status === 'ambiguous') {
-            return error(`Ambiguous setting ${setting.input}. Candidates: ${JSON.stringify(setting.candidates)}`);
-          }
-          if (setting?.status !== 'found') {
-            return error(`Unknown setting ${readString(args.key || args.target || args.query) || '<missing>'}. Use mode:"settings" to inspect available settings.`);
-          }
-          const result = await resetHarnessSetting(
-            deps.commandContext.platform.configManager,
-            deps.commandContext.platform.secretsManager,
-            setting.setting.key,
-          );
-          return output({ ...result, lookup: setting.lookup });
+        if (dispatchMode === 'set_setting' || dispatchMode === 'reset_setting') {
+          return await executeAdmittedPreferredSettings(args as Record<string, unknown>, options);
         }
         if (dispatchMode === 'workspace' || dispatchMode === 'workspace_categories') {
           return output({
@@ -825,11 +804,12 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         }
         return error(`Unhandled agent_harness mode: ${dispatchMode}`);
       } catch (err) {
+        if (dispatchMode === 'sessions') return error('Session transcript observation was canceled or superseded. Try again.');
         return error(formatHarnessError(err));
       }
     },
   };
-  return protectHarnessCatalogTool(tool, deps.toolRegistry, undefined, deps.commandContext);
+  return protectHarnessCatalogTool(tool, deps.toolRegistry, input => isHarnessCatalogQuery(input) || isHarnessSettingsQuery(input, deps.commandContext.platform.configManager), deps.commandContext);
 }
 
 export function registerAgentHarnessTool(
@@ -838,5 +818,11 @@ export function registerAgentHarnessTool(
   commandContext: CommandContext,
   taskRouteSources?: import('./agent-route-planner.ts').AgentTaskRouteSources,
 ): void {
-  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), { inputProjection: createHarnessCatalogInputProjector(registry, createProcessInputProjector(registry, 'agent_harness', createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry))), undefined, commandContext) });
+  registry.register(createAgentHarnessTool({ commandRegistry, commandContext, toolRegistry: registry, ...(taskRouteSources ? { taskRouteSources } : {}) }), {
+    inputProjection: createHarnessCatalogInputProjector(registry,
+      createProcessInputProjector(registry, 'agent_harness',
+        createPreferredSettingsProjector(commandContext.platform,
+          createPersonalOpsInputProjector(registry, createAgentHarnessResearchProjector(registry)), { registry, context: commandContext })),
+      input => isHarnessCatalogQuery(input) || isHarnessSettingsQuery(input, commandContext.platform.configManager), commandContext),
+  });
 }

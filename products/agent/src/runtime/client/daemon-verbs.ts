@@ -37,6 +37,10 @@
  * "this host has not wired that verb", which is a real answer about the host
  * and must never be laundered into an empty result.
  */
+import { statSync } from 'node:fs';
+import { captureRemoteSettingsPrecondition } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
+import { agentHostPairingStorePath } from '../connected-host-pairing-store.ts';
+import { connectedHostOperatorTokenPath } from '../connected-host-auth.ts';
 import { resolveConnectedHostDialEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { DaemonReachability, DaemonVerbCaller } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
@@ -179,6 +183,36 @@ export function createAgentDaemonVerbCaller(options: AgentDaemonVerbCallerOption
 
   return {
     probe,
+    captureSettingsPrecondition: async (request) => {
+      const manager = options.configManager;
+      // An unversioned embed cannot prove connection ABA, so it must not offer
+      // a prepared write. Ordinary read/manual verb behavior stays unchanged.
+      if (typeof manager.getConfigurationIncarnation !== 'function') throw new Error('Settings connection owner unavailable.');
+      const incarnation = manager.getConfigurationIncarnation();
+      const home = typeof options.homeDirectory === 'function' ? options.homeDirectory() : options.homeDirectory;
+      const credentialStamp = (): string => {
+        // File incarnation, not credential bytes. Even replacement with the same
+        // token retires the capture; no credential or hash enters public facts.
+        return [connectedHostOperatorTokenPath(home), agentHostPairingStorePath(home)].map(path => {
+          try { const stat = statSync(path, { bigint: true }); return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':'); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'; throw new Error('Settings connection owner unavailable.'); }
+        }).join('|');
+      };
+      const stamp = credentialStamp();
+      const resolved = resolveConnection(options);
+      if ('reason' in resolved) throw new Error('Settings connection owner unavailable.');
+      const assertCurrent = () => {
+        if (options.configManager !== manager || manager.getConfigurationIncarnation() !== incarnation
+          || (typeof options.homeDirectory === 'function' ? options.homeDirectory() : options.homeDirectory) !== home
+          || credentialStamp() !== stamp) throw new Error('Settings connection owner changed.');
+        const current = resolveConnection(options);
+        if ('reason' in current || current.baseUrl !== resolved.baseUrl || current.token !== resolved.token
+          || current.selectionIdentity !== resolved.selectionIdentity) throw new Error('Settings connection owner changed.');
+      };
+      assertCurrent();
+      return await captureRemoteSettingsPrecondition({ baseUrl: resolved.baseUrl, token: resolved.token, source: 'installed connected host' },
+        request, { fetchImpl, assertCurrent });
+    },
     invoke: async <T,>(methodId: string, input?: unknown): Promise<T> => {
       const resolved = resolveConnection(options);
       if ('reason' in resolved) throw new Error(`cannot invoke '${methodId}': ${resolved.reason}`);

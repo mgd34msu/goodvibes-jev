@@ -60,7 +60,7 @@ test('built terminal history refresh, native view and restart retain saved quest
       tui.key('Escape');
       await tui.waitForScreen('native view closed', screen => !screen.includes('Native Work') && inputAreaVisible(screen), 10_000);
       await assertSavedPlanning();
-      expect(tui.alive()).toBe(true); tui.stop(); tui = undefined;
+      expect(tui.alive()).toBe(true); await tui.stop(); tui = undefined;
       await assertSavedPlanning();
       const reopened = new KnowledgeStore({ dbPath }); await reopened.init();
       try {
@@ -72,5 +72,5 @@ test('built terminal history refresh, native view and restart retain saved quest
       } finally { await reopened.close(); }
     }
     expect(model.requests).toEqual([]);
-  } finally { tui?.stop(); await store.close(); model.stop(); rmSync(home.root, { recursive: true, force: true }); }
+  } finally { await tui?.stop(); await store.close(); model.stop(); rmSync(home.root, { recursive: true, force: true }); }
 }, 150_000);

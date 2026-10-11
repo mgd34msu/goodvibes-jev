@@ -144,7 +144,7 @@ describe('legacy email original-byte framing', () => {
     for (const name of ['NIL Drafts', '"quoted" Drafts', '  Drafts folder']) {
       const wire = new ByteSocket(); const session = new ImapSession(wire.socket(), 200, 1000);
       wire.reply = command => wire.feed(literal('* LIST (\\Drafts) "/" ', Buffer.from(name), `\r\n${completion(command)}`));
-      try { expect(selectDraftsMailboxFrames(await session.commandFrames('LIST "" "*"'))).toBe(name); }
+      try { expect((await selectDraftsMailboxFrames(await session.commandFrames('LIST "" "*"'))).value).toBe(name); }
       finally { session.destroy(); }
     }
   });

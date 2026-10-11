@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort, bindJudgmentPortAuthority } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
@@ -42,8 +42,8 @@ function heldNow(fn: () => void, reason: RepairFactUsefulnessHoldReason) {
 
 describe('repair fact usefulness complete-pass reader', () => {
   test('registers the versioned fixture-bearing repairUseful question and labelled gate plumbing', async () => {
-    expect(registry.list()).toHaveLength(1);
-    expect(registry.list()[0]?.name).toBe('engine.knowledge.repair-fact-usefulness');
+    expect(registry.list().map((entry) => entry.name).sort()).toEqual(['engine.knowledge.page-fact-quality', 'engine.knowledge.repair-fact-usefulness']);
+    expect(registry.list().find((entry) => entry.name === 'engine.knowledge.repair-fact-usefulness')).toBeDefined();
     expect(repairFactUsefulness.version).toBe(1);
     expect(repairFactUsefulness.accuracyFloor).toBeGreaterThanOrEqual(0.95);
     expect(Object.keys(repairFactUsefulness.items)).toEqual(['repairUseful']);
@@ -317,4 +317,25 @@ describe('repair fact usefulness complete-pass reader', () => {
     expect((rejection as KnowledgeRepairFactUsefulnessHeldError).reason).toBe('budget');
     expect(fake.requests.length).toBeGreaterThan(20); expect(fake.requests.length).toBeLessThan(40);
   });
+});
+
+
+test('prepared usefulness retains composition authority even when the installed port identity remains unchanged', async () => {
+  const fake = readings(); let live = true;
+  bindJudgmentPortAuthority(fake.port, () => ({ identity: fake.port, assertCurrent() { if (!live) throw new Error('Source owner retired'); } }));
+  const reader = createRepairFactUsefulnessReader();
+  await reader.read([input()]);
+  live = false;
+  expect(() => reader.assertCurrent()).toThrow();
+  await expect(reader.read([input()])).rejects.toMatchObject({ reason: 'stale' });
+});
+
+test('read captures original composition before its first queued microtask', async () => {
+  const fake = readings();
+  bindJudgmentPortAuthority(fake.port, () => ({ identity: {}, assertCurrent() {} }));
+  const reader = createRepairFactUsefulnessReader();
+  const pending = reader.read([input()]);
+  bindJudgmentPortAuthority(fake.port, () => ({ identity: {}, assertCurrent() {} }));
+  await expect(pending).rejects.toMatchObject({ reason: 'stale' });
+  expect(fake.requests).toHaveLength(0);
 });

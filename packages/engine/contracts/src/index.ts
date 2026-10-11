@@ -181,3 +181,5 @@ export function isPeerEndpointId(value: string): value is (typeof PEER_ENDPOINT_
 
 // Re-export Zod schemas + inferred shapes for runtime validation.
 export * from './zod-schemas/index.js';
+
+export { WEBUI_CODE_LANGUAGES, type WebuiCodeLanguage } from './browser-code-languages.js';

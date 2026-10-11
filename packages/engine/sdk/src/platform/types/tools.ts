@@ -89,6 +89,9 @@ export interface ToolResult {
  * cancellation into a spawned child process or an in-flight request.
  */
 export interface ToolExecuteOptions {
+  /** Additive original-caller restriction, never a permission grant. The registry
+   * also supplies the actual effective arguments at the execution boundary. */
+  readonly assertCurrent?: ((effectiveArgs?: Record<string, unknown>) => void) | undefined;
   readonly signal?: AbortSignal | undefined;
   /** Registry-issued opaque projection capability; the creating owner must validate identity. */
   readonly inputProjectionContext?: object | undefined;

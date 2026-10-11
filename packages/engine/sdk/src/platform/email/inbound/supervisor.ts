@@ -195,6 +195,8 @@ export class InboundMailSupervisor {
   private verdict: InboundCapabilityVerdict | null = null;
   private terminal: InboundMailTerminalFailure | null = null;
   private starting: Promise<InboundMailSupervisorStatus> | null = null;
+  private restartRequested = false;
+  private wantsRunning = false;
   /** Start-time steps that failed without stopping the watcher. Carried into `status`. */
   private degradations: readonly string[] = [];
 
@@ -247,17 +249,23 @@ export class InboundMailSupervisor {
    * the cluster gate exists to prevent, reproduced inside a single process.
    */
   async start(): Promise<InboundMailSupervisorStatus> {
+    this.wantsRunning = true;
     if (this.starting !== null) return this.starting;
     this.starting = this.runStart();
     try {
       return await this.starting;
     } finally {
       this.starting = null;
+      if (this.restartRequested && this.wantsRunning) {
+        this.restartRequested = false;
+        this.rebuildRetiredSource();
+      }
     }
   }
 
   private async runStart(): Promise<InboundMailSupervisorStatus> {
-    await this.stop();
+    await this.releaseSource();
+    if (!this.wantsRunning) return this.settle('inactive', 'stopped');
     // Cleared per start: a sweep that failed last time and worked this time
     // must not go on being appended to every status sentence.
     this.degradations = [];
@@ -314,6 +322,7 @@ export class InboundMailSupervisor {
       dedup: createInboundMailDedup(this.dedupTtlMs()),
       handle: this.deps.handle,
     });
+    if (!this.wantsRunning) return this.settle('inactive', 'stopped');
     const source = await this.deps.sources.create({
       kind: selection.source,
       account: this.deps.account,
@@ -331,10 +340,15 @@ export class InboundMailSupervisor {
         + 'set surfaces.email.inbound.source explicitly to the source this install can serve.');
     }
 
+    if (!this.wantsRunning) { await source.stop(); return this.settle('inactive', 'stopped'); }
     this.source = source;
     const abort = new AbortController();
     this.abort = abort;
     const verdict = await source.start(abort.signal);
+    if (!this.wantsRunning || abort.signal.aborted || source.retired) {
+      await source.stop();
+      return this.settle('inactive', source.retired ? 'The mail source was retired during startup.' : 'stopped');
+    }
     this.verdict = verdict;
     if (verdict.state === 'insufficient') {
       // §3.4b: an insufficient mailbox does not run, and the connection is
@@ -373,7 +387,13 @@ export class InboundMailSupervisor {
    */
   private watch(source: InboundMailSource, abort: AbortController): Promise<void> {
     return source.run(abort.signal).then(
-      () => { this.settleLoopEnd(abort, null); },
+      () => {
+        if (source.retired && this.abort === abort && !abort.signal.aborted) {
+          this.settle('inactive', 'The mail source was retired after an account or credential change.');
+          return;
+        }
+        this.settleLoopEnd(abort, null);
+      },
       (error: unknown) => { this.settleLoopEnd(abort, error); },
     );
   }
@@ -434,7 +454,13 @@ export class InboundMailSupervisor {
    * business, see `InboundMailSource.recheckNow`.
    */
   recheckNow(): void {
-    this.source?.recheckNow?.();
+    if (this.starting !== null && this.wantsRunning) { this.restartRequested = true; return; }
+    if (this.source?.retired && this.wantsRunning) this.rebuildRetiredSource();
+    else this.source?.recheckNow?.();
+  }
+
+  private rebuildRetiredSource(): void {
+    void this.start().catch(() => { this.settle('inactive', 'The mail source could not be rebuilt for the current configuration.'); });
   }
 
   /**
@@ -446,6 +472,8 @@ export class InboundMailSupervisor {
    * connection to one mailbox both notify.
    */
   async stop(): Promise<void> {
+    this.wantsRunning = false;
+    this.restartRequested = false;
     await this.releaseSource();
     if (this.currentStatus.running) {
       this.settle('inactive', 'stopped');

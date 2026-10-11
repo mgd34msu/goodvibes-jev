@@ -130,6 +130,7 @@ export function renderGoodVibesDaemonHelp(
     ...commands,
     '',
     `Run \`${binary} help <command>\` for a command's own arguments and flags.`,
+    `Run \`${binary} --help --json\` for the versioned machine command catalog.`,
     '',
     'Global options (accepted by every command):',
     ...GLOBAL_FLAGS.map(renderFlagLine),
@@ -145,6 +146,15 @@ export function renderGoodVibesDaemonHelp(
     `${pad('  3')}service-status only: installed, but not running`,
     `${pad('  4')}service-status only: not installed`,
   ].join('\n');
+}
+
+/** Side-effect-free machine discovery; command membership comes from the dispatch catalog. */
+export function renderDaemonCliCatalog(): string {
+  return JSON.stringify({
+    schema: 'goodvibes.daemon.cli-catalog',
+    schemaVersion: 1,
+    commands: DAEMON_COMMANDS.map(({ name, subcommands, machineQueries = [] }) => ({ name, subcommands, machineQueries })),
+  });
 }
 
 /**

@@ -1,3 +1,4 @@
+import { OwnedJudgmentWork } from '../runtime/owned-judgment-work.js';
 /**
  * distiller-compaction.ts
  *
@@ -145,6 +146,8 @@ export async function distillConversation(
   ctx: CompactionContext,
   registry: ProviderRegistry,
 ): Promise<CompactionResult> {
+  const work = new OwnedJudgmentWork(ctx);
+  work.assertCurrent();
   const tokensBeforeEstimate = estimateConversationTokens(ctx.messages);
   const transcript = buildTranscript(ctx.messages);
 
@@ -153,6 +156,7 @@ export async function distillConversation(
   }
 
   const resolved = resolveProvider(registry, ctx.extractionModelId, ctx.extractionProvider);
+  work.assertCurrent();
   if (!resolved) {
     throw new DistillerUnavailableError(
       `Extraction model '${ctx.extractionModelId}' is not available for distillation.`,
@@ -163,12 +167,15 @@ export async function distillConversation(
 
   let brief: string;
   try {
-    const response = await resolved.provider.chat({
+    const response = await work.wait(() => resolved.provider.chat({
       messages: [{ role: 'user', content: prompt }],
       model: resolved.providerModelId,
-    });
+      signal: ctx.signal,
+    }));
+    work.assertCurrent();
     brief = response.content?.trim() ?? '';
   } catch (err) {
+    work.assertCurrent();
     throw new DistillerUnavailableError(`Distiller model call failed: ${summarizeError(err)}`);
   }
 
@@ -212,6 +219,7 @@ export async function distillConversation(
     instructionsReinjected,
   };
 
+  work.assertCurrent();
   logger.info('Distiller compaction: complete', {
     trigger: ctx.trigger,
     modelId: ctx.extractionModelId,

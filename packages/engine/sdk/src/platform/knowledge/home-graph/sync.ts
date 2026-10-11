@@ -44,11 +44,12 @@ export async function runHomeGraphSnapshotSync(input: {
   readonly store: KnowledgeStore;
   readonly artifactStore: ArtifactStore;
   readonly snapshot: HomeGraphSnapshotInput;
+  readonly signal?: AbortSignal | undefined;
 }): Promise<HomeGraphSyncResult> {
   const { store, artifactStore } = input;
   const snapshot = snapshotNodeInput(input.snapshot);
-  return await store.batch(async () => {
-    const { spaceId, installationId } = resolveHomeGraphSpace(snapshot);
+  const { spaceId, installationId } = resolveHomeGraphSpace(snapshot);
+  const captured = await store.batch(async () => {
     const capturedAt = snapshot.capturedAt ?? Date.now();
     const sourceId = homeGraphSourceId(spaceId, 'snapshot', String(capturedAt));
     const canonicalUri = namespacedCanonicalUri(spaceId, 'snapshot', String(capturedAt));
@@ -76,7 +77,15 @@ export async function runHomeGraphSnapshotSync(input: {
     const activeSnapshotNodeIds = new Set([home.id]);
     const groups = await upsertSnapshotObjects(store, spaceId, installationId, snapshot, home.id, source.id, activeSnapshotNodeIds);
     await retireMissingSnapshotRecords(store, spaceId, installationId, source.id, activeSnapshotNodeIds, snapshotRetirementObjectKinds(snapshot));
-    await autoLinkExistingSources(store, spaceId, installationId);
+    return { source, home, beforeNodeIds, beforeEdgeIds, groups };
+  });
+  // batch() is a deferred save, not a rollback transaction. Finish the raw
+  // snapshot write phase before semantic readers inspect committed SQL rows.
+  // A later enrichment hold preserves this captured prefix but cannot publish
+  // an unvalidated link or generated page. Imports retain their own atomic seam.
+  const { source, home, beforeNodeIds, beforeEdgeIds, groups } = captured;
+  await autoLinkExistingSources(store, spaceId, installationId, input.signal);
+  return await store.batch(async () => {
     let issueCount = 0;
     let quality: NonNullable<HomeGraphSyncResult['quality']>;
     try {
@@ -119,10 +128,12 @@ async function autoLinkExistingSources(
   store: KnowledgeStore,
   spaceId: string,
   installationId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const state = readHomeGraphState(store, spaceId);
   const extractionBySourceId = new Map(state.extractions.map((extraction) => [extraction.sourceId, extraction]));
   await autoLinkHomeGraphSources({
+    signal,
     store,
     spaceId,
     installationId,

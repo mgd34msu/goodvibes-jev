@@ -115,25 +115,11 @@ function appendUniqueString(target: string[], value: string) {
   target.push(value);
 }
 
-const CATALOG_PROVIDER_ALIASES: Record<string, string> = {
-  'openai-subscriber': 'openai',
-  inception: 'inceptionlabs',
-  copilot: 'github-copilot',
-  'azure-openai': 'microsoft-foundry',
-  'azure-openai-responses': 'microsoft-foundry',
-  dashscope: 'qwen',
-  'volcano-engine': 'volcengine',
-  'x-ai': 'xai',
-  'z-ai': 'zai',
-  'cloudflare-gateway': 'cloudflare-ai-gateway',
-  'ai-gateway': 'vercel-ai-gateway',
-};
-
+/** Explicit wire identities only. Inferred relationships require a current catalog-provider reading. */
 export function providerModelSourceIds(provider: unknown): string[] {
   const providerId = bestId(provider);
   const ids: string[] = [];
 
-  appendUniqueString(ids, CATALOG_PROVIDER_ALIASES[providerId] ?? '');
   appendUniqueString(ids, firstString(provider, ['catalogProviderId', 'canonicalProviderId', 'subscriptionProviderId', 'baseProviderId', 'modelProviderId']));
   appendUniqueString(ids, firstString(readPath(provider, ['runtime']), ['catalogProviderId', 'canonicalProviderId', 'subscriptionProviderId', 'baseProviderId', 'modelProviderId']));
   appendUniqueString(ids, firstString(readPath(provider, ['runtime', 'models']), ['providerId', 'catalogProviderId', 'canonicalProviderId']));
@@ -145,9 +131,6 @@ export function providerModelSourceIds(provider: unknown): string[] {
     appendUniqueString(ids, firstString(route, ['providerId', 'catalogProviderId', 'subscriptionProviderId']));
   }
 
-  if (providerId.endsWith('-subscriber')) {
-    appendUniqueString(ids, providerId.slice(0, -'-subscriber'.length));
-  }
 
   return ids.filter((id) => id !== providerId);
 }
@@ -178,8 +161,8 @@ export function modelOptionsFromProvider(provider: unknown): ModelOption[] {
   return models;
 }
 
-export function modelOptionsForProvider(provider: unknown, modelCatalogProviders: unknown[] = []): ModelOption[] {
-  const aliasProviderIds = providerModelSourceIds(provider);
+export function modelOptionsForProvider(provider: unknown, modelCatalogProviders: unknown[] = [], inferredProviderIds: readonly string[] = []): ModelOption[] {
+  const aliasProviderIds = [...new Set([...providerModelSourceIds(provider), ...inferredProviderIds])];
   const aliasModels: ModelOption[] = [];
 
   for (const aliasProviderId of aliasProviderIds) {

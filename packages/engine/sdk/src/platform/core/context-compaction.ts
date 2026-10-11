@@ -1,3 +1,5 @@
+import { readCompactionSections } from '../runtime/compaction/section-readings.js';
+import { OwnedJudgmentWork } from '../runtime/owned-judgment-work.js';
 /**
  * context-compaction.ts
  *
@@ -5,8 +7,8 @@
  *
  * Architecture:
  *   - Deterministic structure: fixed sections assembled in order
- *   - Targeted LLM calls for: substance filter, tool relevance, resolved problems,
- *     older agent summary
+ *   - Canonical source-membership readings: conversation, tool results, resolved problems
+ *   - Provider prose generation only for the already-structured older contract summary
  *   - Rule-based sections: handoff, memories, current task, running agents,
  *     agent activity table, plan progress, session lineage
  *   - Post-compaction validation: sanity-checks required sections
@@ -34,7 +36,6 @@ import type {
   CompactionConfig,
 } from './compaction-types.js';
 import { DEFAULT_COMPACTION_CONFIG, IMAGE_TOKEN_ESTIMATE, estimateTokens } from './compaction-types.js';
-import { summarizeError } from '../utils/error-display.js';
 import {
   buildHandoffHeader,
   buildSessionMemories,
@@ -42,11 +43,8 @@ import {
   buildRunningAgents,
   buildCompletedAgentWork,
   gatherRecentConversation,
-  buildConversationFilterPrompt,
-  buildToolResultsPrompt,
   buildAgentActivityTable,
   buildOlderAgentSummaryPrompt,
-  buildResolvedProblemsPrompt,
   buildPlanProgress,
   buildSessionLineage,
   buildReinjectedInstructions,
@@ -268,7 +266,10 @@ async function llmExtract(
   providerName: string | undefined,
   prompt: string,
   label: string,
+  ctx: CompactionContext,
 ): Promise<string | null> {
+  const work = new OwnedJudgmentWork(ctx);
+  work.assertCurrent();
   if (!prompt.trim()) return null;
 
   let provider: LLMProvider;
@@ -284,28 +285,31 @@ async function llmExtract(
       throw new Error(`Model '${modelId}' is not in registry.`);
     }
     providerModelId = modelDef.id;
-  } catch (err) {
+  } catch {
+    work.assertCurrent();
     logger.warn(`Compaction: failed to get provider for ${label}`, {
       modelId,
-      err: summarizeError(err),
     });
     return null;
   }
 
   try {
-    const response = await provider.chat({
+    work.assertCurrent();
+    const response = await work.wait(() => provider.chat({
       messages: [{ role: 'user', content: prompt }],
       model: providerModelId,
-    });
+      signal: ctx.signal,
+    }));
+    work.assertCurrent();
     const text = response.content?.trim() ?? '';
     if (!text) {
       logger.warn(`Compaction: LLM returned empty response for ${label}`);
       return null;
     }
     return text;
-  } catch (err) {
+  } catch {
+    work.assertCurrent();
     logger.warn(`Compaction: LLM extraction failed for ${label}`, {
-      err: summarizeError(err),
     });
     return null;
   }
@@ -402,7 +406,13 @@ export async function compactMessages(
   ctx: CompactionContext,
   registry: ProviderRegistry,
 ): Promise<CompactionResult> {
-  return runCompaction(ctx, registry);
+  const sourceRevision = JSON.stringify(ctx);
+  const work = new OwnedJudgmentWork({ signal: ctx.signal, assertCurrent: () => {
+    ctx.assertCurrent?.();
+    if (JSON.stringify(ctx) !== sourceRevision) throw new Error('Compaction source changed; original conversation must be retained.');
+  } });
+  try { return await runCompaction(ctx, registry, work); }
+  finally { work.retire(); }
 }
 
 /**
@@ -415,7 +425,9 @@ export async function compactMessages(
 async function runCompaction(
   ctx: CompactionContext,
   registry: ProviderRegistry,
+  work: OwnedJudgmentWork,
 ): Promise<CompactionResult> {
+  work.assertCurrent();
   const config = DEFAULT_COMPACTION_CONFIG;
   const tokensBeforeEstimate = estimateConversationTokens(ctx.messages);
 
@@ -499,69 +511,39 @@ async function runCompaction(
   if (activitySection) sections.push(activitySection);
 
   // ---------------------------------------------------------------------------
-  // Prepare all LLM-assisted prompts
+  // Prepare canonical source selection and the older-work prose prompt
   // ---------------------------------------------------------------------------
   const gatheredMessages = gatherRecentConversation(
     messages,
     config.recentConversationBudget,
   );
-  const filterPrompt = gatheredMessages.length > 0
-    ? buildConversationFilterPrompt(gatheredMessages)
-    : '';
-
-  const toolMessages = messages.filter((m) => m.role === 'tool');
-  const toolPrompt = toolMessages.length > 0
-    ? buildToolResultsPrompt(toolMessages)
-    : '';
-
   const olderPrompt = remainingContracts.length > 0
     ? buildOlderAgentSummaryPrompt(remainingContracts)
     : '';
-
-  const allUserAssistant = messages.filter(
-    (m) => m.role === 'user' || m.role === 'assistant',
-  );
-  const problemsPrompt = allUserAssistant.length > 0
-    ? buildResolvedProblemsPrompt(allUserAssistant)
-    : '';
-
-  // ---------------------------------------------------------------------------
-  // Parallelize all 4 independent LLM extraction calls
-  // ---------------------------------------------------------------------------
-  const [filteredText, toolSummary, olderSummary, problemsText] = await Promise.all([
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, filterPrompt, 'conversation-filter'),
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, toolPrompt, 'tool-results'),
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, olderPrompt, 'older-agent-summary'),
-    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, problemsPrompt, 'resolved-problems'),
+  const [selected, olderSummary] = await Promise.all([
+    readCompactionSections({
+      messages, gathered: gatheredMessages,
+      conversationBudget: config.recentConversationBudget,
+      toolBudget: config.toolResultsBudget,
+      problemsBudget: config.resolvedProblemsBudget,
+    }, work),
+    llmExtract(registry, ctx.extractionModelId, ctx.extractionProvider, olderPrompt, 'older-agent-summary', { ...ctx, signal: work.signal, assertCurrent: work.assertCurrent }),
   ]);
+  const { conversation: filteredText, tools: toolSummary, problems: problemsText } = selected;
+  work.assertCurrent();
 
   // ---------------------------------------------------------------------------
-  // Assemble LLM-assisted sections
+  // Assemble source-selected sections and the older-work prose summary
   // ---------------------------------------------------------------------------
 
-  // Recent conversation
-  if (gatheredMessages.length > 0) {
-    if (filteredText) {
-      sections.push({
-        id: 'recent-conversation',
-        header: '## Recent Conversation',
-        content: filteredText,
-        tokens: estimateTokens('## Recent Conversation\n' + filteredText),
-      });
-    } else {
-      // Include raw gathered messages if the LLM filter fails.
-      const fallbackLines = gatheredMessages.map((m) => {
-        const text = extractText(m.content);
-        return `[${m.role}]: ${text.trim()}`;
-      });
-      const fallbackContent = fallbackLines.join('\n\n');
-      sections.push({
-        id: 'recent-conversation',
-        header: '## Recent Conversation',
-        content: fallbackContent,
-        tokens: estimateTokens('## Recent Conversation\n' + fallbackContent),
-      });
-    }
+  // Recent conversation: only qualified source membership, never prose fallback.
+  if (filteredText) {
+    sections.push({
+      id: 'recent-conversation',
+      header: '## Recent Conversation',
+      content: filteredText,
+      tokens: estimateTokens('## Recent Conversation\n' + filteredText),
+    });
   }
 
   // Tool results
@@ -585,8 +567,7 @@ async function runCompaction(
   }
 
   // Resolved problems
-  if (problemsText && problemsText.toLowerCase().trim() !== 'empty'
-      && !problemsText.toLowerCase().includes('no resolved problems')) {
+  if (problemsText) {
     sections.push({
       id: 'resolved-problems',
       header: '## Resolved Problems',
@@ -646,9 +627,11 @@ async function runCompaction(
     instructionsReinjected,
   };
 
+  work.assertCurrent();
   compactionEvents.push(event);
   if (compactionEvents.length > 50) compactionEvents.shift();
 
+  work.assertCurrent();
   logger.info('Context compaction: complete', {
     trigger: ctx.trigger,
     modelId: ctx.extractionModelId,

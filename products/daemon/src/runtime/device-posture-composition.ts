@@ -27,6 +27,7 @@
  * and the app still runs: housekeeping failing is a reason to say so, not a
  * reason to refuse to start.
  */
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { createDevicePostureRuntime, registerDevicePhoneTool } from '@goodvibes-jev/engine/sdk/platform/devices';
 import type {
@@ -44,6 +45,8 @@ export const DAEMON_DEVICE_ACTOR = 'daemon:phone-tool';
 
 export interface DevicePostureCompositionOptions {
   readonly configManager: ConfigManager;
+  readonly judgmentPort?: JudgmentPort | undefined;
+  readonly signal?: AbortSignal | undefined;
   /** The runtime devices pair onto; its listPeers/invokePeer are the transport. */
   readonly distributedRuntime: DevicePeerTransport;
   readonly approvals: DeviceApprovalBridge;
@@ -77,6 +80,9 @@ export function createDevicePostureServices(options: DevicePostureCompositionOpt
     config: options.configManager,
     stateDirectory: options.stateDirectory,
     actor: DAEMON_DEVICE_ACTOR,
+    autonomous: { port: options.judgmentPort, signal: options.signal,
+      onDidInvalidate: listener => options.configManager.onDidInvalidate(listener),
+    },
     ...(options.getSessionId ? { getSessionId: options.getSessionId } : {}),
   });
   if (options.gatewayMethods) registerDevicesGatewayMethods(options.gatewayMethods, devicePosture);

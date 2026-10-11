@@ -35,7 +35,8 @@
  *   chosen weight between them, and stays on the same 0 to 1 scale as each axis.
  */
 
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { OwnedJudgmentOptions } from '../owned-judgment-work.js';
 import type { Fidelity } from '@goodvibes-jev/judgment';
 import type { StrategyInput, StrategyOutput, CompactionStrategy } from './types.js';
 import { compactionViews } from './judged-views.js';
@@ -109,9 +110,7 @@ export interface CompactionQualityScore {
 }
 
 /** Options for one scoring. */
-export interface QualityScoreOptions {
-  readonly signal?: AbortSignal | undefined;
-}
+export interface QualityScoreOptions extends OwnedJudgmentOptions {}
 
 // ---------------------------------------------------------------------------
 // Scoring
@@ -137,13 +136,18 @@ async function readRetention(
   }
 
   const views = compactionViews(input.messages, output.messages);
-  const port = judgmentPort(COMPACTION_QUALITY_SITE);
-  const run = { site: COMPACTION_QUALITY_SITE, ...(options.signal ? { signal: options.signal } : {}) };
+  const supplied = options.port;
+  const capture = supplied ? undefined : captureJudgmentPort(COMPACTION_QUALITY_SITE, options);
+  const port = supplied ?? capture!.port;
+  const signal = options.signal ?? capture?.signal;
+  const current = () => { signal?.throwIfAborted(); options.assertCurrent?.(); capture?.assertCurrent(); };
+  const run = { site: COMPACTION_QUALITY_SITE, ...(signal ? { signal } : {}) };
   const [retention, fidelity] = await Promise.all([
     compactionRetention.run(port, { source: views.source, compacted: views.compacted }, run),
     views.written.length > 0 ? compactionFidelity.check(port, views.written, views.source, undefined, run) : undefined,
   ]);
 
+  current();
   const substance = Math.min(1, Math.max(0, retention.readings.substance.normalized));
   const contradictionProbability = fidelity?.reading?.probabilities.contradicts ?? 0;
   return {
@@ -210,6 +214,8 @@ export async function computeQualityScore(
   output: StrategyOutput,
   options: QualityScoreOptions = {},
 ): Promise<CompactionQualityScore> {
+  options.signal?.throwIfAborted();
+  options.assertCurrent?.();
   // Compression ratio: fraction of tokens removed
   const compressionRatio =
     input.tokensBefore > 0
@@ -218,6 +224,8 @@ export async function computeQualityScore(
   const compressionScore = scoreCompression(compressionRatio);
 
   const { signals, retentionScore } = await readRetention(input, output, options);
+  options.signal?.throwIfAborted();
+  options.assertCurrent?.();
   const score = Math.sqrt(compressionScore * retentionScore);
 
   const full: CompactionQualityScore = {

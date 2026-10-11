@@ -85,7 +85,7 @@ export async function handleIMessageSurfaceWebhook(req: Request, context: Surfac
     return Response.json({ acknowledged: true, continued: true, sessionId: submission.session.id, agentId: submission.activeAgentId ?? null });
   }
 
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleIMessageSurfaceWebhook',
     submission.session.id,

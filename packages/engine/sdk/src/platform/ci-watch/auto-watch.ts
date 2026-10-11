@@ -1,3 +1,7 @@
+import { nativeCiWatchOwner } from './native-owner.js';
+import { captureCiWatchOwner } from './autonomous.js';
+import { currentExternalOperationSource } from '../permissions/external-operation-scope.js';
+import type { ExternalOperationSource } from '../permissions/external-request.js';
 /**
  * ci-watch/auto-watch.ts, CI watches mint themselves at the push/PR seam.
  *
@@ -115,7 +119,7 @@ function runGit(cwd: string, args: readonly string[]): Promise<string | null> {
 
 export interface CiWatchAutoMintDeps {
   readonly service: {
-    createWatch(input: CreateCiWatchInput): Promise<CiWatchSubscription>;
+    createWatch(input: CreateCiWatchInput, operation?: ExternalOperationSource): Promise<CiWatchSubscription>;
     listWatches(): Promise<CiWatchSubscription[]>;
   };
   /** The working directory pushes resolve against when exec args carry none. */
@@ -136,6 +140,7 @@ export interface CiWatchAutoMintDeps {
  * status source could not watch it honestly).
  */
 export class CiWatchAutoMinter {
+  private mintQueue: Promise<unknown> = Promise.resolve();
   constructor(private readonly deps: CiWatchAutoMintDeps) {}
 
   /** Tool-execution observer: mints on a successful exec containing a push/PR-create. */
@@ -147,21 +152,29 @@ export class CiWatchAutoMinter {
       const cwd = typeof args.working_dir === 'string' && args.working_dir.trim()
         ? args.working_dir
         : this.deps.workingDirectory;
-      void this.mint(cwd, detected).catch((error) => {
-        logger.warn('[ci-watch] auto-mint failed', { command, error: summarizeError(error) });
-      });
+      try {
+        void this.mint(cwd, detected, captureCiWatchOwner(currentExternalOperationSource())).catch((error) => {
+          logger.warn('[ci-watch] auto-mint failed', { command, error: summarizeError(error) });
+        });
+      } catch (error) { logger.warn('[ci-watch] auto-mint refused', { error: summarizeError(error) }); }
       return; // one mint per exec call is enough
     }
   }
 
   /** GitService-path tap: a platform push through GitService mints the same way. */
   onGitPushed(input: { readonly cwd: string; readonly branch?: string | undefined }): void {
-    void this.mint(input.cwd, { kind: 'push', branch: input.branch }).catch((error) => {
-      logger.warn('[ci-watch] auto-mint failed', { cwd: input.cwd, error: summarizeError(error) });
-    });
+    try {
+      void this.mint(input.cwd, { kind: 'push', branch: input.branch }, captureCiWatchOwner(currentExternalOperationSource())).catch((error) => {
+        logger.warn('[ci-watch] auto-mint failed', { cwd: input.cwd, error: summarizeError(error) });
+      });
+    } catch (error) { logger.warn('[ci-watch] auto-mint refused', { error: summarizeError(error) }); }
   }
 
-  private async mint(cwd: string, detected: DetectedCiPush): Promise<CiWatchSubscription | null> {
+  private mint(cwd: string, detected: DetectedCiPush, operation?: ExternalOperationSource): Promise<CiWatchSubscription | null> {
+    const pending = this.mintQueue.then(() => this.mintOwned(cwd, detected, operation));
+    this.mintQueue = pending.catch(() => {}); return pending;
+  }
+  private async mintOwned(cwd: string, detected: DetectedCiPush, operation?: ExternalOperationSource): Promise<CiWatchSubscription | null> {
     const repo = await (this.deps.resolveRepoSlug
       ? this.deps.resolveRepoSlug(cwd)
       : runGit(cwd, ['remote', 'get-url', 'origin']).then((url) => (url ? parseGitHubSlug(url) : null)));
@@ -172,15 +185,18 @@ export class CiWatchAutoMinter {
       : runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']));
     if (!branch || branch === 'HEAD') return null;
 
-    // No ceremony also means no duplicates: one live watch per repo+ref.
+    // Keep repeated pushes within one owner deduplicated. A genuine native successor
+    // has its own issued lifetime, even while the previous verdict is retiring.
     const existing = await this.deps.service.listWatches();
-    if (existing.some((watch) => watch.repo === repo && watch.ref === branch)) return null;
+    const nativeOwner = nativeCiWatchOwner(operation);
+    if (existing.some((watch) => watch.repo === repo && watch.ref === branch
+      && (!nativeOwner || !watch.continuationId || watch.continuationId === nativeOwner.id))) return null;
 
     const watch = await this.deps.service.createWatch({
       repo,
       ref: branch,
       deliveryChannel: this.deps.deliveryChannel ?? DEFAULT_AUTO_WATCH_CHANNEL,
-    });
+    }, operation);
     logger.info('[ci-watch] watch self-minted at the push seam', { repo, ref: branch, id: watch.id });
     return watch;
   }

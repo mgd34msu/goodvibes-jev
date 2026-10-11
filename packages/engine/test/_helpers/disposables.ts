@@ -122,6 +122,8 @@ export function trackDisposables(options: TrackOptions = {}): DisposableRegistry
     afterAll(flush);
   } else {
     afterEach(flush);
+    // A later teardown hook may register work after the last afterEach flush.
+    afterAll(flush);
   }
 
   return {

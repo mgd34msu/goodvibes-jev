@@ -1,3 +1,4 @@
+import { completeGatewayScopePolicyBootstrap } from '../control-plane/scope-policy-bootstrap.js';
 import { runDaemonBootGuarantees } from './facade-boot-guarantees.js';
 import { logger } from '../utils/logger.js';
 import { jsonErrorResponse } from './http/error-response.js';
@@ -141,6 +142,7 @@ export class DaemonServer {
   private readonly channelPolicy: ChannelPolicyManager;
   private readonly channelPlugins: ChannelPluginRegistry;
   private readonly channelReplyPipeline: ChannelReplyPipeline;
+  private readonly workProposals: import('../agents/work-proposal-store.js').WorkProposalStore;
   /** Decides whether THIS node is the one consuming inbound channels; see facade-cluster.ts. */
   private readonly clusterCoordinator: ClusterCoordinator;
   private readonly watcherRegistry: WatcherRegistry;
@@ -185,6 +187,7 @@ export class DaemonServer {
   /** True if a config change arrived while _restarting was set; triggers a second cycle. */
   private _restartDirty = false;
   private _restartAdmissionClosed = false;
+  private stoppingRuntime: Promise<void> | null = null;
   private tornDown = false; // True once stop() tore this daemon down; cleared by a successful bind. Teardown was gated on `server === null`, which conflated "never bound a socket" with "has nothing to release". The CONSTRUCTOR starts the companion-chat GC sweep and the batch tick, so enable() plus a failed or never-called start() left both running with no reachable stop. What must not run twice is the teardown, so that is what this guards.
 
   constructor(private config: DaemonConfig = {}) {
@@ -266,6 +269,7 @@ export class DaemonServer {
     this.controlPlaneHelper = collaborators.controlPlaneHelper;
     this.surfaceDeliveryHelper = collaborators.surfaceDeliveryHelper;
     this.surfaceActionHelper = collaborators.surfaceActionHelper;
+    this.workProposals = collaborators.workProposals;
     this.transportEventsHelper = collaborators.transportEventsHelper;
     this.httpRouter = collaborators.httpRouter;
     this.channelHealth = buildDaemonChannelHealthWatcher(resolved);
@@ -327,6 +331,7 @@ export class DaemonServer {
         this.controlPlaneGateway.publishEvent(event, payload);
       },
     });
+    completeGatewayScopePolicyBootstrap(this.gatewayMethods);
   }
 
   listRecentControlPlaneEvents(limit = 100): readonly import('../control-plane/gateway.js').ControlPlaneRecentEvent[] {
@@ -407,6 +412,7 @@ export class DaemonServer {
    * Start the daemon. Refuses to start if not explicitly enabled.
    */
   async start(): Promise<void> {
+    await this.stoppingRuntime;
     if (this.server === null) this.settingsLifetime = null;
     // Guarantees the daemon refuses to inherit from its host; see
     // facade-boot-guarantees.ts for why each one is owned here and why order matters.
@@ -465,7 +471,10 @@ export class DaemonServer {
     }
     this.transportEventsHelper.emitTransportInitializing();
     try {
+      // A stop admitted during asynchronous boot still owns its write drain.
+      await this.stoppingRuntime;
       this.tlsState = resolveInboundTlsContext(this.configManager, 'controlPlane'); this.tornDown = false; // a daemon that is up again is one that can be torn down again
+      this.workProposals.startSweep();
       this.settingsLifetime = {};
       this.server = this.serveFactory({
         port: this.port,
@@ -573,6 +582,7 @@ export class DaemonServer {
         clearInterval(this.replyPoller);
         this.replyPoller = null;
       }
+      this.workProposals.dispose();
       this.pendingSurfaceReplies.clear();
       this.channelHealth.stop();
       this.automationManager.stop();
@@ -597,6 +607,12 @@ export class DaemonServer {
       this.tlsState = null;
       this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });
       this.transportEventsHelper.emitTransportTerminalFailure(message);
+      const rollbackDrain = this.workProposals.flush();
+      // A second start must not reopen admission during failed-start cleanup.
+      // An already-admitted full stop keeps ownership of its larger barrier.
+      if (!this.stoppingRuntime) this.stoppingRuntime = rollbackDrain;
+      try { await rollbackDrain; }
+      finally { if (this.stoppingRuntime === rollbackDrain) this.stoppingRuntime = null; }
       throw err;
     }
   }
@@ -639,11 +655,35 @@ export class DaemonServer {
     await this.stopRuntime(false);
   }
 
-  private async stopRuntime(forHandover: boolean): Promise<void> {
+  private stopRuntime(forHandover: boolean): Promise<void> {
+    if (this.stoppingRuntime) {
+      // A handover's own close must not wait on an external close that is
+      // itself draining that handover. Preserve the lifecycle's existing
+      // forHandover bypass while ordinary callers share the teardown drain.
+      if (forHandover) return this.performStopRuntime(true);
+      this.lifecycle?.beginStopping(false);
+      return this.stoppingRuntime.then(() => this.lifecycle?.drainHandovers(false));
+    }
+    const stopped = Promise.withResolvers<void>();
+    this.stoppingRuntime = stopped.promise;
+    // Invoke synchronously: settings retirement and proposal admission closure
+    // still precede re-entrant callbacks and the first teardown await.
+    void this.performStopRuntime(forHandover).finally(() => this.workProposals.flush()).then(() => {
+      this.stoppingRuntime = null;
+      stopped.resolve();
+    }, (error: unknown) => {
+      this.stoppingRuntime = null;
+      stopped.reject(error);
+    });
+    return stopped.promise;
+  }
+
+  private async performStopRuntime(forHandover: boolean): Promise<void> {
     const alreadyTornDown = this.tornDown;
     // Both public and update/rollback stops retire SETTINGS before synchronous
     // abort callbacks can re-enter enable() and mint a new serving lifetime.
     this.settingsLifetime = null;
+    this.workProposals.dispose();
     this.tornDown = true;
     try {
       this.lifecycle?.beginStopping(forHandover);
@@ -654,6 +694,7 @@ export class DaemonServer {
       throw error;
     }
     if (alreadyTornDown) {
+      await this.workProposals.flush();
       await this.lifecycle?.drainHandovers(forHandover);
       return;
     }
@@ -712,6 +753,9 @@ export class DaemonServer {
       if (this.ownsRuntimeServices) this.runtimeServices.dispose();
     }
 
+    // Disposal closed admission synchronously. Drain the existing serialized
+    // write chain before a host can remove or replace this daemon's root.
+    await this.workProposals.flush();
     await this.lifecycle?.onStopping(this._restarting, forHandover);
 
     this.tlsState = null;

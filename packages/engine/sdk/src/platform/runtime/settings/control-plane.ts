@@ -1,3 +1,4 @@
+import { postalConfigKey } from '../../config/postal-address.js';
 import type { ConfigManager } from '../../config/manager.js';
 import { join } from 'node:path';
 import { CONFIG_SCHEMA } from '../../config/index.js';
@@ -359,7 +360,7 @@ export function rollbackManagedApply(configManager: ConfigManager, token: string
 function buildResolvedEntries(configManager: ConfigManager, store: SettingsControlPlaneStore): ResolvedSettingEntry[] {
   const conflictKeys = new Set(store.conflicts.map((entry) => entry.key));
   return configManager.getSchema().map((setting) => {
-    const localValue = structuredClone(configManager.get(setting.key));
+    const localValue = structuredClone((postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key)));
     const syncedEntry = store.syncedSettings.find((entry) => entry.key === setting.key);
     const managedEntry = store.managedSettings.find((entry) => entry.key === setting.key);
     const overriddenSources: SettingsSource[] = [];

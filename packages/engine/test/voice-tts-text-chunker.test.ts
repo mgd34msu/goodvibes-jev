@@ -1,52 +1,66 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { TtsTextChunker } from '../sdk/src/platform/voice/spoken-turn/text-chunker.js';
 import { StreamingCodeFenceFilter, stripMarkdownForSpeech } from '../sdk/src/platform/voice/spoken-turn/speech-markdown.js';
 
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+let previous: JudgmentPort | undefined;
+beforeEach(() => {
+  previous = installJudgmentPort(fakePort((name, _question, raw) => {
+    const state = raw as { paragraph: string; candidates: number[] };
+    const offset = state.candidates[Number(name.slice(5))]!;
+    // Explicit fixture answers, never production boundary logic.
+    return noulAnswer(['Hello there.', 'This is **bold** and _italic_ text.', 'Before.', 'After.'].some(text => state.paragraph.slice(0, offset).trim() === text) ? 0.99 : 0.01);
+  }).port);
+});
+afterEach(() => { installJudgmentPort(previous); });
+
 describe('TtsTextChunker', () => {
-  test('flushes complete sentences before retaining the next fragment', () => {
+  test('flushes complete sentences before retaining the next fragment', async () => {
     const chunker = new TtsTextChunker({ minBoundaryChars: 8 });
 
-    expect(chunker.push('Hello there. Keep going')).toEqual(['Hello there.']);
-    expect(chunker.flushAll()).toEqual(['Keep going']);
+    expect(await chunker.push('Hello there. Keep going')).toEqual(['Hello there.']);
+    expect(await chunker.flushAll()).toEqual(['Keep going']);
   });
 
-  test('flushes buffered speech after max latency even without punctuation', () => {
+  test('flushes buffered speech after max latency even without punctuation', async () => {
     let now = 1_000;
     const chunker = new TtsTextChunker({
       maxLatencyMs: 500,
       now: () => now,
     });
 
-    expect(chunker.push('short phrase')).toEqual([]);
+    expect(await chunker.push('short phrase')).toEqual([]);
     now += 499;
-    expect(chunker.flushDue()).toEqual([]);
+    expect(await chunker.flushDue()).toEqual([]);
     now += 1;
-    expect(chunker.flushDue()).toEqual(['short phrase']);
+    expect(await chunker.flushDue()).toEqual(['short phrase']);
   });
 
-  test('splits long chunks at a word boundary', () => {
+  test('splits long chunks at a word boundary', async () => {
     const chunker = new TtsTextChunker({
       maxChunkChars: 18,
       minBoundaryChars: 200,
     });
 
-    expect(chunker.push('alpha beta gamma delta')).toEqual(['alpha beta gamma']);
-    expect(chunker.flushAll()).toEqual(['delta']);
+    expect(await chunker.push('alpha beta gamma delta')).toEqual(['alpha beta gamma']);
+    expect(await chunker.flushAll()).toEqual(['delta']);
   });
 
-  test('strips markdown formatting from a flushed chunk', () => {
+  test('strips markdown formatting from a flushed chunk', async () => {
     const chunker = new TtsTextChunker({ minBoundaryChars: 8 });
 
-    expect(chunker.push('This is **bold** and _italic_ text.')).toEqual(['This is bold and italic text.']);
+    expect(await chunker.push('This is **bold** and _italic_ text.')).toEqual(['This is bold and italic text.']);
   });
 
-  test('a fenced code block split across many deltas produces one placeholder and no code text', () => {
+  test('a fenced code block split across many deltas produces one placeholder and no code text', async () => {
     const chunker = new TtsTextChunker({ minBoundaryChars: 4 });
     const deltas = ['Before.\n``', '`typ', 'escript\nconst x', ' = 1;\n``', '`\nAfter.'];
 
     const chunks: string[] = [];
-    for (const delta of deltas) chunks.push(...chunker.push(delta));
-    chunks.push(...chunker.flushAll());
+    for (const delta of deltas) chunks.push(...await chunker.push(delta));
+    chunks.push(...await chunker.flushAll());
 
     const joined = chunks.join(' ');
     expect(joined).toContain('Before.');

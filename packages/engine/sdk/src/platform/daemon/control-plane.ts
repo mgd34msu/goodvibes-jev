@@ -16,6 +16,7 @@ import {
 } from '../security/http-auth.js';
 import type { ControlPlaneGateway, SharedSessionBroker } from '../control-plane/index.js';
 import type { GatewayMethodCatalog, GatewayMethodDescriptor } from '../control-plane/index.js';
+import { grantedGatewayScopes } from '../control-plane/method-catalog.js';
 import type { RuntimeEventDomain } from '../runtime/events/index.js';
 import { isRuntimeEventDomain } from '../runtime/events/index.js';
 import type { DistributedRuntimeManager } from '../runtime/remote/index.js';
@@ -361,6 +362,13 @@ export class DaemonControlPlaneHelper {
     };
     return Object.freeze({
       current,
+      ...(owner.issueNativeContinuation ? { issueContinuation: (binding: string, assertSource: () => void, sourceBinding?: string) => {
+        const expected = current(); if (!expected) throw new Error('Native continuation pairing is unavailable');
+        return owner.issueNativeContinuation!(token, expected, binding, () => {
+          assertSource(); const fresh = current();
+          if (!fresh || JSON.stringify(fresh) !== JSON.stringify(expected)) throw new Error('Native continuation pairing scopes changed');
+        }, sourceBinding);
+      } } : {}),
       withCurrent: <T>(expected: NativePairedSnapshot,
         operation: (assertCurrent: () => NativePairedSnapshot) => T | Promise<T>): Promise<T> =>
         owner.withNativeAuthority!(token, expected, (assertPaired) => {
@@ -380,13 +388,7 @@ export class DaemonControlPlaneHelper {
   }
 
   getGrantedGatewayScopes(includeWrite: boolean): readonly string[] {
-    const scopes = new Set(this.context.gatewayMethods.getAllScopes({ includeWrite }));
-    scopes.add('read:events');
-    scopes.add('read:control-plane');
-    scopes.add('read:telemetry');
-    if (includeWrite) scopes.add('read:telemetry-sensitive');
-    if (includeWrite) scopes.add('write:control-plane');
-    return [...scopes].sort();
+    return grantedGatewayScopes(this.context.gatewayMethods, includeWrite);
   }
 
   validateGatewayInvocation(

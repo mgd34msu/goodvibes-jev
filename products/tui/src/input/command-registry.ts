@@ -494,6 +494,15 @@ export function directOwnerWorkstreamInput(context: CommandContext): NativeConve
   return match ? captureNativeConversationInput(match[1] ?? '') : undefined;
 }
 
+/** Exact terminal-authored remote dispatch, retained before the handler returns.
+ * Generated delegation text and model-invoked slash commands cannot become authority.
+ */
+export function directOwnerRemoteInput(context: CommandContext): string | undefined {
+  if (!isDirectOwnerCommandContext(context, 'remote')) return undefined;
+  const raw = directOwnerCommands.get(context)?.rawInput;
+  return raw && /^\s*\/remote\s+dispatch(?:-pool)?\s/.test(raw) ? raw : undefined;
+}
+
 /** New planning goals share the terminal-only capture boundary with workstream starts.
  * Exactly one separator is syntax; the remaining source is retained verbatim.
  * Aliases resolve to project-plan in the private dispatch mark, never in source.

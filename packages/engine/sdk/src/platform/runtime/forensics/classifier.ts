@@ -16,7 +16,8 @@
  * which is the coarsening this rung needs: an unsure reading falls through to
  * the stop-reason rungs below it, as unmatched wording always did.
  */
-import { readFailure, type FailureCategory } from '@goodvibes-jev/engine/errors';
+import { readFailure, captureJudgmentPort, type FailureCategory } from '@goodvibes-jev/engine/errors';
+import type { OwnedJudgmentOptions } from '../owned-judgment-work.js';
 import type { FailureClass } from './types.js';
 
 /** Decision site for the error-message rung. */
@@ -64,7 +65,9 @@ interface ClassifierInput {
  *
  * @returns The classified FailureClass.
  */
-export async function classifyFailure(input: ClassifierInput): Promise<FailureClass> {
+export async function classifyFailure(input: ClassifierInput, options?: OwnedJudgmentOptions): Promise<FailureClass> {
+  options?.signal?.throwIfAborted();
+  options?.assertCurrent?.();
   // Explicit cancellation takes precedence
   if (input.wasCancelled) {
     return 'cancelled';
@@ -100,7 +103,15 @@ export async function classifyFailure(input: ClassifierInput): Promise<FailureCl
 
   // What the error message says: a turn deadline or a failed LLM call
   if (input.errorMessage) {
-    const { category } = await readFailure({ message: input.errorMessage }, FORENSICS_CLASSIFIER_SITE);
+    const supplied = options?.port;
+    const capture = options && !supplied ? captureJudgmentPort(FORENSICS_CLASSIFIER_SITE, options) : undefined;
+    const port = supplied ?? capture?.port;
+    const signal = options?.signal ?? capture?.signal;
+    const { category } = await readFailure({ message: input.errorMessage }, FORENSICS_CLASSIFIER_SITE,
+      port ? { port, ...(signal ? { signal } : {}) } : undefined);
+    capture?.assertCurrent();
+    options?.assertCurrent?.();
+    options?.signal?.throwIfAborted();
     const read = CLASS_FOR_CATEGORY[category];
     if (read !== undefined) return read;
   }

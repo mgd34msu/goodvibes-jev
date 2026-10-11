@@ -64,7 +64,6 @@ const KNOWN_UNDECLARED: readonly string[] = [
   './platform/channel-profiles',
   './platform/channel-sync',
   './platform/checkin',
-  './platform/ci-watch',
   './platform/principals',
   './platform/push',
 ];

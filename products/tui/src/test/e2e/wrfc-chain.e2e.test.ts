@@ -1,134 +1,173 @@
-/**
- * (d) A WRFC chain through the built binary reaches its fix phase and merges.
+/** Native reviewed-repair successor to the retired WRFC chain regression.
  *
- * The user asks for a reviewed fix; the scripted model plays every role the
- * way a real one would, through real tool calls: the main conversation spawns
- * an engineer with reviewMode=wrfc, the engineer writes src/math.ts with the
- * bug still in it, the first chain review fails with one finding, the fix
- * engineer writes the correction, the item review and the chain's second
- * review pass, and the passed chain lands the fix on the workspace's branch.
- *
- * Fails when: a failing review does not start a fix (no fix-engineer turn),
- * the fix never merges (src/math.ts on main still subtracts), or the chain
- * ends without a second review.
+ * The compiled TUI inspects an explicitly paired native work execution over the
+ * public authenticated HTTP contract. The engine-owned fixture admits real
+ * source-backed work and runs ContractRunner with real isolated git branches.
+ * A real file-evidence review fails, native bounded correction writes the fix,
+ * a fresh review reads its changed diff, and the actual merge reaches the source
+ * branch. Deterministic planner/worker/Jev fixtures replace model inference only.
+ * No main→agent(reviewMode=wrfc) topology or file-repair-as-conversation fallback.
+ * The legacy filename remains stable for existing compiled-E2E selectors.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  firstUserText, hasToolResult, inputAreaVisible, launchTui, makeHome, offeredTools, openingText,
-  startStubModel, waitFor, type ModelReply, type TuiSession,
-} from './harness.ts';
+import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
+import { createOperatorNativeWorkExecutionClient, type NativeWorkExecutionSnapshot } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
+import { beginTuiHostPairing, completeTuiHostPairing } from '../../runtime/tui-host-credential-store.ts';
+import { launchNativeIntegrationHost } from '../helpers/native-integration-host.ts';
+import { inputAreaVisible, launchTui, makeHome, screenText, startHomeDaemonServer, startStubModel, type TuiSession } from './harness.ts';
 
-const PROMPT = 'use a reviewed wrfc chain to repair the add function';
-const TASK = 'Fix add() in src/math.ts so it returns the sum of its two arguments.';
+const GOAL = 'Repair add() in src/math.ts, review the repair, and integrate it.';
+const CRITERIA = ['The exported add(a, b) returns a + b.'];
 const BUGGY = 'export function add(a: number, b: number): number {\n  return a - b;\n}\n';
-const STILL_BUGGY = '/** Adds two numbers. */\nexport function add(a: number, b: number): number {\n  return a - b;\n}\n';
 const FIXED = '/** Adds two numbers. */\nexport function add(a: number, b: number): number {\n  return a + b;\n}\n';
 
-function fenced(report: Record<string, unknown>): string {
-  return ['```json', JSON.stringify(report), '```'].join('\n');
-}
-
-function engineerReport(summary: string): ModelReply {
-  return { text: fenced({
-    version: 1, archetype: 'engineer', summary, gatheredContext: [], plannedActions: [],
-    appliedChanges: [summary], filesCreated: [], filesModified: ['src/math.ts'], filesDeleted: [],
-    decisions: [], issues: [], uncertainties: [], constraints: [],
-  }) };
-}
-
-function reviewerReport(passed: boolean): ModelReply {
-  return { text: fenced({
-    version: 1, archetype: 'reviewer', summary: passed ? 'add() returns the sum' : 'add() still subtracts',
-    score: passed ? 10 : 4, passed, dimensions: [],
-    issues: passed ? [] : [{ severity: 'major', description: 'add() still returns a - b; it must return a + b.', file: 'src/math.ts', line: 3, pointValue: 6 }],
-    constraintFindings: [],
-    acceptanceChecklist: [{ item: 'add is exported from src/math.ts', verified: true, evidence: 'read src/math.ts' }],
-  }) };
-}
-
-function write(content: string): ModelReply {
-  return { toolCalls: [{ name: 'write', arguments: { files: [{ path: 'src/math.ts', content, mode: 'overwrite' }] } }] };
-}
-
-/** What the scripted model was asked to do, in order. */
-const played: string[] = [];
-let chainReviews = 0;
-
-const model = startStubModel((request) => {
-  const opening = openingText(request);
-  const acted = hasToolResult(request);
-  if (opening.includes('Assess the following work item')) {
-    played.push('item-review');
-    return reviewerReport(true);
-  }
-  if (opening.includes('WRFC Review Request')) {
-    chainReviews += 1;
-    played.push(`chain-review-${chainReviews}`);
-    return reviewerReport(chainReviews > 1);
-  }
-  if (opening.includes('FIX THIS REVIEW FINDING')) {
-    if (acted) return engineerReport('add() now returns a + b');
-    played.push('fix-engineer');
-    return write(FIXED);
-  }
-  // The engineer opens on the user's original ask, like the main conversation,
-  // but is offered the file tools and not the agent tool.
-  const tools = offeredTools(request);
-  const asked = firstUserText(request).includes(PROMPT);
-  if (asked && tools.includes('write') && !tools.includes('agent')) {
-    if (acted) return engineerReport('documented add()');
-    played.push('engineer');
-    return write(STILL_BUGGY);
-  }
-  if (asked) {
-    if (acted) return { text: 'The reviewed chain is running.' };
-    played.push('main');
-    return { toolCalls: [{ name: 'agent', arguments: { mode: 'spawn', task: TASK, template: 'engineer', reviewMode: 'wrfc' } }] };
-  }
-  return { text: 'E2E side request' };
-});
-
-let tui: TuiSession | null = null;
-afterAll(() => { tui?.stop(); model.stop(); });
-
 function git(cwd: string, ...args: string[]): string {
-  const out = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  return out.stdout;
+  const result = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(`Reviewed native git assertion failed: ${args.join(' ')}`);
+  return result.stdout;
+}
+function live(snapshot: NativeWorkExecutionSnapshot) {
+  if (snapshot.kind !== 'execution' || snapshot.integration?.state !== 'live') throw new Error('Expected real live reviewed native integration');
+  return snapshot.integration;
+}
+/** Accumulate only rendered current panes, scrolling with real user keys. */
+async function see(tui: TuiSession, label: string, predicate: (text: string) => boolean): Promise<string> {
+  let text = '';
+  for (let i = 0; i < 100; i++) {
+    const pane = tui.screen(); text += `\n${screenText(pane)}`;
+    if (predicate(text)) return text;
+    tui.key('Down');
+    if (!await tui.waitForScreen('reviewed integration scroll', screen => screen !== pane, 2_000).catch(() => undefined)) break;
+  }
+  throw new Error(`Compiled native view did not expose ${label}\n${tui.screen()}`);
 }
 
-describe('WRFC chain', () => {
-  test('a failing review starts a fix, the re-review passes, and the fix merges', async () => {
-    const home = await makeHome(model);
-    mkdirSync(join(home.workspace, 'src'), { recursive: true });
-    writeFileSync(join(home.workspace, 'src', 'math.ts'), BUGGY);
-    spawnSync('git', ['add', '-A'], { cwd: home.workspace, env: { PATH: process.env['PATH'] ?? '', HOME: home.home } });
-    spawnSync('git', ['commit', '-q', '-m', 'add math'], { cwd: home.workspace, env: { PATH: process.env['PATH'] ?? '', HOME: home.home } });
-    const commitsBefore = Number(git(home.workspace, 'rev-list', '--count', 'HEAD').trim());
-    // Nobody answers permission prompts here: foreground and background tool
-    // calls run the way a user who allowed them runs them.
-    home.setTuiSetting('permissions.mode', 'allow-all');
-    home.setTuiSetting('permissions.backgroundAgents', 'allow-all');
-    home.setTuiSetting('wrfc.autoCommit', true);
+test('compiled native reviewed repair fails review, fixes, genuinely re-reviews, and persists its real source-branch merge', async () => {
+  const host = launchNativeIntegrationHost(false, 'reviewed-repair');
+  const model = startStubModel(() => ({ text: 'Unexpected direct model request in native reviewed repair' }));
+  let home: Awaited<ReturnType<typeof makeHome>> | undefined;
+  let proxy: Bun.Server<undefined> | undefined;
+  let client: ReturnType<typeof createOperatorNativeWorkExecutionClient> | undefined;
+  let tui: TuiSession | undefined;
+  let token = ''; let primaryError: unknown;
+  const forwarding = new Set<Promise<Response>>();
+  try {
+    home = await makeHome(model);
+    const ready = await host.ready(); token = ready.token;
+    if (!ready.projectRoot || ready.commitsBefore === undefined) throw new Error('Missing reviewed source repository');
+    const sourceRoot = ready.projectRoot;
+    const paths: string[] = [];
+    const allowed = new Set(['/api/work-ledger/snapshot', '/api/work-ledger/history', '/api/work-ledger/execution/status']);
+    proxy = await startHomeDaemonServer(home, async request => {
+      const url = new URL(request.url); paths.push(url.pathname);
+      // Count every attempt, including rejected mutation requests. The firewall
+      // is isolation, never a replacement for product read-only assertions.
+      if (!allowed.has(url.pathname)) return new Response('Owned reviewed fixture has no background service', { status: 404 });
+      const body = request.method === 'POST' ? await request.arrayBuffer() : undefined;
+      const pending = (async () => {
+        const response = await fetch(`${ready.baseUrl}${url.pathname}${url.search}`, { method: request.method, headers: request.headers, body, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+        return new Response(await response.arrayBuffer(), { status: response.status, headers: response.headers });
+      })();
+      forwarding.add(pending); try { return await pending; } finally { forwarding.delete(pending); }
+    });
+    const origin = proxy.url.origin; const now = Date.now();
+    const attempt = { attemptId: 'synthetic-reviewed-native-pairing', name: 'Owned reviewed native fixture', startedAt: now };
+    expect((await beginTuiHostPairing(home.home, origin, attempt)).status).toBe('begun');
+    expect((await completeTuiHostPairing(home.home, origin, attempt.attemptId, {
+      token, tokenId: 'synthetic-reviewed-native-token', name: attempt.name, createdAt: now,
+    })).status).toBe('paired');
+    home.setTuiSetting('controlPlane.publicBaseUrl', origin); home.setTuiSetting('daemon.enabled', true);
+    writeFileSync(join(home.home, '.goodvibes/tui/onboarding-checked.json'), JSON.stringify({ version: 1, checkedAt: now, updatedAt: now, source: 'e2e' }));
+    client = createOperatorNativeWorkExecutionClient(createOperatorSdk({ baseUrl: ready.baseUrl, authToken: token, retry: { maxAttempts: 1 } }), 'project');
+    const snapshot = () => client!.status(ready.identity, { signal: AbortSignal.timeout(10_000) });
+    const start = async () => { tui = launchTui(home!, { cols: 180, rows: 60 }); await tui.waitForScreen('compiled reviewed native input', inputAreaVisible, 45_000); };
+    const openStatus = async () => {
+      tui!.type('/work project'); tui!.key('Enter');
+      await tui!.waitForScreen('paired reviewed native Work control', screen => screen.includes('Native Work') && screen.includes(`Control ${ready.identity.workId}:`));
+      tui!.key('Down'); tui!.type('i'); for (let i = 0; i < 5; i++) tui!.key('Right');
+      await tui!.waitForScreen('actual reviewed native status reply', screen => screen.includes('Integration: live') || screenText(screen).includes('Integration unavailable: not-live.'));
+      tui!.key('Down'); // Adopt the reply's interaction-frozen row layout.
+    };
+    const close = async () => { tui!.key('Escape'); await tui!.waitForScreen('reviewed modal detached', screen => !screen.includes('Native Work') && inputAreaVisible(screen)); };
 
-    tui = launchTui(home, { cols: 120, rows: 40 });
-    await tui.waitForScreen('the input area', inputAreaVisible, 45_000);
-    tui.type(PROMPT);
-    tui.key('Enter');
+    const before = await host.reviewedProof();
+    expect(before.fixWorkers).toBe(0); expect(before.fixRounds).toBe(1); expect(before.escalations).toBe(0);
+    expect(before.checks.some(check => check.sourceRead === 'buggy' && check.result !== 'pass' && check.answered)).toBe(true);
+    expect(before.checks.some(check => check.sourceRead === 'fixed')).toBe(false);
+    expect(before.goal).toBe(GOAL); expect(before.sourceGoal).toBe(GOAL);
+    expect(before.criteria).toEqual(CRITERIA); expect(before.sourceCriteria).toEqual(CRITERIA);
+    expect(readFileSync(join(sourceRoot, 'src/math.ts'), 'utf8')).toBe(BUGGY);
+    const failed = live(await snapshot()).units.find(unit => unit.unitId === 'u1')!;
+    expect(failed.unitStatus).toBe('fixing'); expect(failed.latestCheck?.result).not.toBe('pass');
+    await start(); await openStatus();
+    await see(tui!, 'failed source review awaiting correction', text => text.includes('Unit u1 · group g1') && text.includes('Current unit status: fixing')
+      && text.includes(`${failed.latestCheck!.trigger} · ${failed.latestCheck!.result}`));
 
-    await waitFor('the second chain review', () => played.includes('chain-review-2'), 150_000, 250);
-    const landed = await waitFor('the fix on the workspace branch', () => {
-      const onDisk = readFileSync(join(home.workspace, 'src', 'math.ts'), 'utf8');
-      return onDisk === FIXED && git(home.workspace, 'show', 'HEAD:src/math.ts') === FIXED ? onDisk : false;
-    }, 60_000, 250);
+    await host.repair();
+    const reviewed = await host.reviewedProof();
+    expect(reviewed.fixWorkers).toBe(1); expect(reviewed.fixPlans).toBe(1); expect(reviewed.fixRounds).toBe(1); expect(reviewed.escalations).toBe(0);
+    const rereview = reviewed.checks.at(-1)!;
+    expect(rereview).toMatchObject({ trigger: 'fix-passed', result: 'pass', sourceRead: 'fixed', answered: true });
+    expect(before.checks.map(check => check.id)).not.toContain(rereview.id);
+    expect(before.checks.map(check => check.evidenceDigest)).not.toContain(rereview.evidenceDigest);
+    expect(reviewed.decisions).toEqual(expect.arrayContaining([
+      { stage: 'stall', outcome: 'act', sourceBound: true, answered: true },
+      { stage: 'fix-plan', outcome: 'act', sourceBound: true, answered: true },
+    ]));
+    const integrated = live(await snapshot());
+    expect(integrated.units.find(unit => unit.unitId === 'u1')).toMatchObject({ unitStatus: 'passed', latestCheck: { trigger: 'fix-passed', result: 'pass' } });
+    const repair = integrated.units.find(unit => unit.unitId === 'u1.f1.u1');
+    if (!repair || repair.item.state !== 'recorded' || !repair.item.mergeHash) throw new Error('Actual native repair has no recorded merge');
+    expect(repair.item).toMatchObject({ integration: 'merged', worktreeKept: false });
+    expect(git(sourceRoot, 'show', `${repair.item.mergeHash}:src/math.ts`)).toBe(FIXED);
+    await close(); await openStatus();
+    await see(tui!, 'fresh passing re-review and actual repair merge', text => text.includes('fix-passed · pass') && text.includes('Unit u1.f1.u1 · group u1.f1')
+      && text.includes('Recorded integration: merged') && text.includes(`Merge hash: ${repair.item.state === 'recorded' ? repair.item.mergeHash : ''}`));
 
-    expect(played.slice(0, 4)).toEqual(['main', 'engineer', 'chain-review-1', 'fix-engineer']);
-    expect(played).toContain('item-review');
-    expect(landed).toBe(FIXED);
-    expect(Number(git(home.workspace, 'rev-list', '--count', 'HEAD').trim())).toBeGreaterThan(commitsBefore);
-    expect(git(home.workspace, 'status', '--porcelain', '--', 'src/math.ts').trim()).toBe('');
-    expect(tui.alive()).toBe(true);
-  }, 240_000);
-});
+    await host.finish();
+    const finished = await host.reviewedProof();
+    expect(finished.status).toBe('passed'); expect(finished.commit?.status).toBe('committed');
+    expect(finished.commit?.hash).toBe(git(sourceRoot, 'rev-parse', 'HEAD').trim());
+    expect(finished.checks).toEqual(reviewed.checks);
+    expect(readFileSync(join(sourceRoot, 'src/math.ts'), 'utf8')).toBe(FIXED);
+    expect(git(sourceRoot, 'show', 'HEAD:src/math.ts')).toBe(FIXED);
+    expect(git(sourceRoot, 'branch', '--show-current').trim()).toBe('main');
+    expect(Number(git(sourceRoot, 'rev-list', '--count', 'HEAD').trim())).toBeGreaterThan(ready.commitsBefore);
+    expect(git(sourceRoot, 'status', '--porcelain').trim()).toBe('');
+    expect(await snapshot()).toMatchObject({ kind: 'execution', progress: { status: 'passed' }, integration: { state: 'unavailable', reason: 'not-live' } });
+    await close(); await openStatus();
+    expect(screenText(tui!.screen())).toContain('Integration unavailable: not-live.');
+    expect(await host.inspect()).toEqual({ remergeCalls: 0, escalations: 0, mutationCount: 1 });
+    expect(paths.filter(path => /\/(start|resume|cancel)$/.test(path))).toEqual([]);
+    expect(tui!.alive()).toBe(true);
+
+    // Reopen the durable contract through a genuinely new host/runner. Reading
+    // terminal work must preserve the result without silently replaying work.
+    await host.restartHost();
+    expect(await snapshot()).toMatchObject({ kind: 'execution', recovery: 'terminal', progress: { status: 'passed' } });
+    expect(await host.inspectRecovery()).toEqual({ starts: 0, resumes: 0, agents: 0 });
+    expect(await host.reviewedProof()).toEqual(finished);
+  } catch (error) { primaryError = error; throw error; }
+  finally {
+    const errors: unknown[] = [];
+    const attempt = async (action: () => unknown | Promise<unknown>) => { try { await action(); } catch (error) { errors.push(error); } };
+    let output = ''; let screen = ''; let violations = '';
+    await attempt(() => { if (tui) { output = tui.rawOutput(); screen = tui.screen(); } });
+    await attempt(() => tui?.stop()); await attempt(() => client?.dispose());
+    await attempt(async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { await Promise.race([Promise.all([...forwarding]), new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Reviewed native proxy did not drain')), 2_000);
+      })]); } finally { clearTimeout(timer); }
+    });
+    await attempt(() => host.stop()); await attempt(() => proxy?.stop(true)); await attempt(() => model.stop());
+    await attempt(() => { if (home) { const path = join(home.root, 'network-violations.log'); violations = existsSync(path) ? readFileSync(path, 'utf8') : ''; } });
+    await attempt(() => { if (home) rmSync(home.root, { recursive: true, force: true }); });
+    await attempt(() => { if (token) { expect(output).not.toContain(token); expect(screen).not.toContain(token); } });
+    await attempt(() => { expect(model.requests).toEqual([]); expect(violations).toBe(''); });
+    if (errors.length) throw new AggregateError(primaryError === undefined ? errors : [primaryError, ...errors], 'Reviewed native assertion or owned cleanup failed');
+  }
+}, 150_000);

@@ -9,9 +9,11 @@ import { JevContinuation } from '@goodvibes-jev/judgment/decisions';
 import { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
 import { JevVersionRef } from '@goodvibes-jev/judgment/decisions';
-import { JudgmentPort } from '@goodvibes-jev/judgment';
+import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
+import { JudgmentPort as JudgmentPort_2 } from '@goodvibes-jev/judgment';
 import { JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
+import type { Questions } from '@goodvibes-jev/judgment/decisions';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { Socket } from 'node:net';
 import type { Stakes } from '@goodvibes-jev/judgment';
@@ -470,7 +472,17 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
     readonly channelDeliveryRouter?: Pick<ChannelDeliveryRouter, 'deliver'> | undefined;
     // Warning: (ae-forgotten-export) The symbol "ChannelPolicyManager" needs to be exported by the entry point index.d.ts
     readonly channelPolicy?: Pick<ChannelPolicyManager, 'getPolicy'> | undefined;
-    readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'onDidInvalidate'>>;
+    // Warning: (ae-forgotten-export) The symbol "ExternalPermissionHost" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly ciAutonomousHost?: (() => ExternalPermissionHost | undefined) | undefined;
+    // Warning: (ae-forgotten-export) The symbol "ExternalOperationSource" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly ciNativeContinuationOwner?: ((watch: CiWatchSubscription) => Promise<ExternalOperationSource | undefined>) | undefined;
+    // Warning: (ae-forgotten-export) The symbol "CiWatchSubscription" needs to be exported by the entry point index.d.ts
+    readonly ciNativeContinuationRevocation?: ((watch: CiWatchSubscription) => Promise<void>) | undefined;
+    readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'> & Partial<Pick<ConfigManager, 'onDidInvalidate' | 'attachProfilePostalFallback'>>;
     // Warning: (ae-forgotten-export) The symbol "RewindConversationPort" needs to be exported by the entry point index.d.ts
     readonly conversationRewindPort?: RewindConversationPort | null | undefined;
     readonly credentialWrites?: {
@@ -492,6 +504,7 @@ export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps,
     readonly memoryGovernor?: MemoryGatewayService | undefined;
     // Warning: (ae-forgotten-export) The symbol "MemoryProjectionSource" needs to be exported by the entry point index.d.ts
     readonly memoryRegistry?: MemoryProjectionSource | undefined;
+    // (undocumented)
     readonly onCiAutoWatch?: ((observer: (toolName: string, args: Record<string, unknown>, success: boolean) => void) => void) | undefined;
     // Warning: (ae-forgotten-export) The symbol "PairingGatewayService" needs to be exported by the entry point index.d.ts
     readonly pairingTokens?: PairingGatewayService | undefined;
@@ -1375,8 +1388,8 @@ export function writeTreeStatusMarker(line: Line, glyph: string | null, fg: stri
 //
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:143:5 - (ae-forgotten-export) The symbol "PermissionPromptRequest" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:267:30 - (ae-forgotten-export) The symbol "CheckinSessionView" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:334:5 - (ae-forgotten-export) The symbol "CredentialWriteConfig" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:335:5 - (ae-forgotten-export) The symbol "CredentialWriteSecrets" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:337:5 - (ae-forgotten-export) The symbol "CredentialWriteConfig" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:338:5 - (ae-forgotten-export) The symbol "CredentialWriteSecrets" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:103:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:105:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts

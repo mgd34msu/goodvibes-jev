@@ -1,3 +1,4 @@
+import type { LocalhostFetchApproval } from '../runtime/permissions/localhost-fetch-approval.js';
 import { createCapturedCodeContext } from './captured-code-context.js';
 import { admitCapturedRegistryContext, type CapturedRegistryContext } from '../tools/registry-tool/captured-source.js';
 import { join } from 'node:path';
@@ -174,22 +175,14 @@ type AgentOrchestratorToolDeps = {
    * the exec tool's sandbox raises named escalation asks. Omitted → escalations
    * are not asked (today's behavior).
    */
-  readonly sandboxEscalationHandler?:
-    | ((input: {
-        readonly command: string;
-        readonly escalations: readonly string[];
-        readonly boundary: string;
-        readonly policyReasons: readonly string[];
-        readonly workingDirectory?: string | undefined;
-      }) => Promise<boolean>)
-    | undefined;
+  readonly sandboxEscalationHandler?: import('../runtime/permissions/sandbox-escalation-wiring.js').ExecSandboxEscalationHandler | undefined;
   /**
    * Broker the one-tap "allow localhost fetches for this project" ask through
    * the approval broker. Threaded to registerAllTools so the fetch tool can
    * ask once and persist the per-project approval. Omitted → unapproved
    * localhost fetches are refused with an honest reason.
    */
-  readonly localhostFetchApproval?: ((input: { url: string; host: string }) => Promise<boolean>) | undefined;
+  readonly localhostFetchApproval?: LocalhostFetchApproval | undefined;
   /** Reports each contained (sandboxed) command run for the announce-once containment receipt. */
   readonly onSandboxedRun?: (() => void) | undefined;
   /**
@@ -829,6 +822,7 @@ export class AgentOrchestrator {
       messageBus: this.messageBus,
       knowledgeService: this.toolDeps?.knowledgeService,
       memoryRegistry: this.toolDeps?.memoryRegistry,
+      codeReadAccessFilter: ownerReadAccess,
       codeIndex: authority ? createCapturedCodeContext({ authority, root: cwd, readAccessFilter: ownerReadAccess, registry: this.toolDeps?.memoryEmbeddingRegistry, signal }) : this.toolDeps?.codeIndex,
       isCodeInjectionSettingEnabled: this.toolDeps?.isCodeInjectionSettingEnabled,
       onToolExecuted:

@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DaemonServer } from '../sdk/src/platform/daemon/facade.ts';
+import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.ts';
 import { DaemonLifecycleRuntime, type DaemonLifecycleRuntimeOptions } from '../sdk/src/platform/daemon/facade-lifecycle.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
 import type { ServiceCommandRunner } from '../sdk/src/platform/daemon/service-handover.ts';
@@ -406,8 +407,10 @@ test('an already-torn-down facade still fences and drains a pending lifecycle ha
   h.runtime.onStarted();
   await Bun.sleep(1);
   // No server construction or listener: exercise only the actual duplicate-stop path.
+  const workProposals = new WorkProposalStore();
+  workProposals.dispose();
   const facade = Object.assign(Object.create(DaemonServer.prototype) as object, {
-    lifecycle: h.runtime, tornDown: true,
+    lifecycle: h.runtime, tornDown: true, workProposals,
   }) as unknown as DaemonServer;
   await facade.stop();
   release({ status: 'accepted' });
@@ -437,5 +440,92 @@ test('close retains a settling update until its completed disk latch is visible'
   h.runtime.onStarted();
   expect(updaterOf(h.runtime)).toBeNull();
   expect(h.runtime.updateStatus().offReason).toContain('1000.0.0 is installed on disk');
+  await h.runtime.onStopping(false);
+});
+
+for (const committed of [false, true]) {
+  test(`filesystem recovery is unarmed and retained across config restart (${committed ? 'committed' : 'uncommitted'})`, async () => {
+    const h = lifecycleWith({ version: '999.0.0-host-artifact' });
+    let ticks = 0;
+    const evidence = {
+      operation: 'update' as const, phase: committed ? 'cleanup' as const : 'commit' as const,
+      committed, recoveryRequired: true, targets: ['/opt/host/bin/host-app'],
+      recoveryPaths: ['/opt/host/bin/host-app.update-transaction'], recoveryErrors: ['synthetic cleanup failure'],
+    };
+    const updater = {
+      stop: () => {}, drainHandover: async () => {}, tick: async () => { ticks++; },
+      snapshot: () => ({ currentVersion: '999.0.0-host-artifact', releasesUrl: 'https://releases.invalid/latest',
+        checkIntervalMs: 60_000, firstCheckDelayMs: 30_000, failedCheckCount: 1,
+        lastCheckFailure: 'filesystem recovery requires inspection', pendingVersion: null,
+        appliedVersion: committed ? '1000.0.0' : null, recoveryRequired: true, transactionRecovery: evidence,
+      }),
+    };
+    (h.runtime as unknown as { autoUpdater: unknown }).autoUpdater = updater;
+    const before = h.runtime.updateStatus();
+    expect(before.armed).toBe(false);
+    expect(before.offReason).toContain('filesystem recovery');
+    expect(before.transactionRecovery).toEqual(evidence);
+    await h.runtime.onStopping(true);
+    h.runtime.onStarted();
+    expect(updaterOf(h.runtime)).toBeNull();
+    expect(h.runtime.updateStatus()).toEqual(before);
+    await h.runtime.checkForUpdatesNow();
+    expect(ticks).toBe(0);
+    expect(h.installs).toEqual([]);
+    expect(h.exits).toEqual([]);
+    await h.runtime.onStopping(false);
+    expect(h.runtime.updateStatus().transactionRecovery).toEqual(evidence);
+  });
+}
+
+test('recovery discovered while close drains is retained before a new updater can be created', async () => {
+  const h = lifecycleWith({ version: '999.0.0-host-artifact' }, { configOverrides: { 'service.enabled': false } });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let recoveryRequired = false;
+  const applying = {
+    stop: () => {}, drainHandover: () => pending,
+    snapshot: () => ({ appliedVersion: null, recoveryRequired, lastCheckFailure: 'filesystem recovery required' }),
+  };
+  (h.runtime as unknown as { autoUpdater: unknown }).autoUpdater = applying;
+  const close = h.runtime.onStopping(true);
+  h.runtime.onStarted();
+  expect((h.runtime as unknown as { autoUpdater: unknown }).autoUpdater).toBe(applying);
+  recoveryRequired = true;
+  release(); await close;
+  h.runtime.onStarted();
+  expect(updaterOf(h.runtime)).toBeNull();
+  expect(h.runtime.updateStatus().armed).toBe(false);
+  expect(h.runtime.updateStatus().recoveryRequired).toBe(true);
+  expect(h.runtime.updateStatus().offReason).toContain('filesystem recovery');
+  await h.runtime.onStopping(false);
+});
+
+test('recovery discovered during promotion prevents the next service command and any exit', async () => {
+  let release!: (outcome: { status: 'accepted' }) => void;
+  let markStarted!: () => void;
+  const started = new Promise<void>(resolve => { markStarted = resolve; });
+  const commands: string[][] = [];
+  const h = lifecycleWith({ version: '999.0.0-host-artifact' }, { runner: (argv) => {
+    commands.push([...argv]);
+    markStarted();
+    return new Promise(resolve => { release = resolve; });
+  } });
+  let recoveryRequired = false;
+  const updater = {
+    stop: () => {}, drainHandover: async () => {},
+    snapshot: () => ({ appliedVersion: null, recoveryRequired, lastCheckFailure: 'filesystem recovery required' }),
+  };
+  (h.runtime as unknown as { autoUpdater: unknown }).autoUpdater = updater;
+  h.runtime.onStarted();
+  await started;
+  expect(commands).toEqual([['systemctl', '--user', 'daemon-reload']]);
+  recoveryRequired = true;
+  release({ status: 'accepted' });
+  await h.runtime.drainHandovers();
+  expect(commands).toHaveLength(1);
+  expect(h.installs).toHaveLength(1); // Installation happened before recovery was observed.
+  expect(h.exits).toEqual([]);
+  expect(h.runtime.updateStatus().armed).toBe(false);
   await h.runtime.onStopping(false);
 });

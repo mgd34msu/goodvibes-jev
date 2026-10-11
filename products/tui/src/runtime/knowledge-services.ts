@@ -83,7 +83,7 @@ export function createKnowledgeServices(deps: KnowledgeServicesDeps): KnowledgeS
   agentKnowledgeService.attachRuntimeBus(runtimeBus);
   const homeGraphService = new HomeGraphService(homeGraphKnowledgeStore, artifactStore, { semanticService: homeGraphSemanticService, admitExpensiveWork });
   const projectPlanningProjectId = projectPlanningProjectIdFromPath(deps.workingDirectory);
-  const projectPlanningService = new ProjectPlanningService(knowledgeStore, { defaultProjectId: projectPlanningProjectId });
+  const projectPlanningService = new ProjectPlanningService(knowledgeStore, { defaultProjectId: projectPlanningProjectId, waitForStartup: () => knowledgeService.whenReady() });
   const workPlanStore = new WorkPlanStore({
     homeDirectory: deps.homeDirectory,
     projectId: projectPlanningProjectId,

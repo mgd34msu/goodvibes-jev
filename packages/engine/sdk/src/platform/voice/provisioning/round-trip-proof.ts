@@ -23,6 +23,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
+import { assertVoiceProofCurrent, beginVoiceProofReading, ownVoiceProofLifetime, readVoiceRoundTrip, type VoiceProofComparison, type VoiceProofLifetime } from './round-trip-reading.js';
+import { awaitPermission } from '../../permissions/cancellation.js';
 
 /**
  * The phrase the proof speaks. Deliberately plain, common words: the point is
@@ -31,7 +33,7 @@ import { execFile } from 'node:child_process';
  */
 export const VOICE_PROOF_PHRASE = 'the quick brown fox jumps over the lazy dog';
 
-/** How much of the phrase must survive the round trip to count as proof. */
+/** @deprecated Compatibility measurement only; never authorizes proof. */
 export const VOICE_PROOF_MIN_WORD_OVERLAP = 0.5;
 
 /** Injectable process seam, matching providers/local.ts. */
@@ -40,26 +42,47 @@ export type ProofEngineRunner = (input: {
   readonly args: readonly string[];
   readonly stdinText?: string | undefined;
   readonly timeoutMs: number;
+  readonly signal?: AbortSignal | undefined;
 }) => Promise<{ stdout: string }>;
 
 const defaultRunner: ProofEngineRunner = (input) =>
   new Promise((resolve, reject) => {
-    const child = execFile(
-      input.binary,
-      [...input.args],
-      { timeout: input.timeoutMs, maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve({ stdout });
-      },
-    );
+    input.signal?.throwIfAborted();
+    let failure: Error | undefined;
+    let output = '';
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    let closing = false;
+    const child = execFile(input.binary, [...input.args], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+      output = stdout;
+      if (error) { failure ??= error; terminate(); }
+    });
+    // execFile's abort callback can precede process close. Settlement owns the
+    // actual close event, so scratch cleanup and a new install cannot race a
+    // child that ignored SIGTERM and is still writing its output file.
+    const terminate = () => {
+      if (closing || child.exitCode !== null || child.signalCode !== null) return;
+      child.kill('SIGTERM');
+      escalation ??= setTimeout(() => { if (!closing) child.kill('SIGKILL'); }, 250);
+    };
+    const abort = () => { failure ??= new Error('The voice proof subprocess was cancelled.'); terminate(); };
+    const timeout = setTimeout(() => { failure ??= new Error('The voice proof subprocess deadline expired.'); terminate(); }, input.timeoutMs);
+    input.signal?.addEventListener('abort', abort, { once: true });
+    if (input.signal?.aborted) abort();
+    child.once('close', () => {
+      closing = true;
+      clearTimeout(timeout);
+      if (escalation) clearTimeout(escalation);
+      input.signal?.removeEventListener('abort', abort);
+      if (failure) reject(failure);
+      else resolve({ stdout: output });
+    });
     if (input.stdinText !== undefined && child.stdin) {
-      child.stdin.write(input.stdinText);
-      child.stdin.end();
+      child.stdin.on('error', () => { /* Process completion reports broken pipes. */ });
+      child.stdin.end(input.stdinText);
     }
   });
 
-export interface VoiceRoundTripProofOptions {
+export interface VoiceRoundTripProofOptions extends VoiceProofLifetime {
   readonly ttsEngine: string;
   readonly ttsBinary: string;
   readonly ttsModelPath: string;
@@ -76,6 +99,8 @@ export interface VoiceRoundTripProofOptions {
 /** What the proof did, in enough detail to report it honestly either way. */
 export interface VoiceRoundTripProof {
   readonly proved: boolean;
+  /** Semantic comparison status; missing only if an engine stage failed. */
+  readonly comparison?: VoiceProofComparison | undefined;
   /** Which stage ran last: `synthesize`, `transcribe`, or `compare`. */
   readonly stage: 'synthesize' | 'transcribe' | 'compare';
   readonly phrase: string;
@@ -110,30 +135,46 @@ export function transcriptWordOverlap(expected: string, actual: string): number 
 /**
  * Speak a phrase with the managed TTS and read it back with the managed STT.
  *
- * Never throws: a proof that blew up is a failed proof, reported as one. The
- * caller turns this into "provisioned" or "not provisioned".
+ * Engine failures are reported by stage. Cancellation, deadline and retired
+ * ownership reject instead of publishing a stale success or engine diagnosis.
  */
 export async function proveVoiceRoundTrip(options: VoiceRoundTripProofOptions): Promise<VoiceRoundTripProof> {
+  options = Object.freeze({ ...options });
   const phrase = options.phrase ?? VOICE_PROOF_PHRASE;
   const runner = options.runner ?? defaultRunner;
   const timeoutMs = options.timeoutMs ?? 120_000;
+  const deadline = AbortSignal.timeout(Math.max(1, Math.min(2_147_483_647, Math.floor(timeoutMs))));
+  const lifetime = ownVoiceProofLifetime({ signal: AbortSignal.any([deadline, ...(options.signal ? [options.signal] : [])]), assertCurrent: options.assertCurrent });
+  const check = () => assertVoiceProofCurrent(lifetime);
+  check();
+  // Capture before either subprocess; absence is an unproven comparison, not a broken engine.
+  let owner: ReturnType<typeof beginVoiceProofReading> | undefined;
+  try { owner = beginVoiceProofReading(phrase, lifetime); } catch { check(); }
+  const activeSignal = AbortSignal.any([...(owner ? [owner.signal] : []), ...(lifetime.signal ? [lifetime.signal] : [])]);
+  // Injected Promise-only seams are interruptible; the real runner itself
+  // owns termination and does not settle until its child closes.
+  const run = (input: Parameters<ProofEngineRunner>[0]) => options.runner
+    ? awaitPermission(() => runner(input), activeSignal) : runner(input);
   const scratch = options.scratchDir ?? mkdtempSync(join(tmpdir(), 'gv-voice-proof-'));
   const wavPath = join(scratch, 'proof.wav');
 
   try {
     try {
-      await runner({
+      check();
+      await run({
         binary: options.ttsBinary,
         args: ['--model', options.ttsModelPath, '--output_file', wavPath],
         stdinText: phrase,
-        timeoutMs,
+        timeoutMs, signal: activeSignal,
       });
+      check();
       // The engine may exit 0 and still have written nothing; reading it is the
       // check that the audio exists at all.
       const wav = readFileSync(wavPath);
       if (wav.byteLength === 0) throw new Error('the synthesized audio file is empty');
       writeFileSync(wavPath, wav);
     } catch (error) {
+      check();
       const detail = error instanceof Error ? error.message : String(error);
       return {
         proved: false,
@@ -145,13 +186,18 @@ export async function proveVoiceRoundTrip(options: VoiceRoundTripProofOptions): 
     }
 
     let transcript: string;
+    let rawTranscript: string;
     try {
       const args = options.sttEngine === 'whisper-cpp'
         ? ['-m', options.sttModelPath, '-f', wavPath, '--no-timestamps', '--no-prints']
         : [options.sttModelPath, wavPath];
-      const { stdout } = await runner({ binary: options.sttBinary, args, timeoutMs });
+      check();
+      const { stdout } = await run({ binary: options.sttBinary, args, timeoutMs, signal: activeSignal });
+      check();
+      rawTranscript = stdout;
       transcript = stdout.trim();
     } catch (error) {
+      check();
       const detail = error instanceof Error ? error.message : String(error);
       return {
         proved: false,
@@ -163,16 +209,19 @@ export async function proveVoiceRoundTrip(options: VoiceRoundTripProofOptions): 
     }
 
     const wordOverlap = transcriptWordOverlap(phrase, transcript);
-    const proved = wordOverlap >= VOICE_PROOF_MIN_WORD_OVERLAP;
+    const comparison = await readVoiceRoundTrip(phrase, rawTranscript, lifetime, owner);
+    check();
+    const proved = comparison === 'yes';
     return {
       proved,
+      comparison,
       stage: 'compare',
       phrase,
       transcript,
       wordOverlap,
       summary: proved
         ? `Spoke "${phrase}" with ${options.ttsEngine} and heard it back through ${options.sttEngine} as "${transcript}".`
-        : `Spoke "${phrase}" with ${options.ttsEngine}, but ${options.sttEngine} heard "${transcript}", too little of the phrase came back for this to count as working.`,
+        : `Spoke "${phrase}" with ${options.ttsEngine} and ${options.sttEngine} returned "${transcript}". The round trip remains unproven: ${comparison === 'no' ? 'the transcript does not say the complete test phrase' : comparison === 'uncertain' ? 'the comparison was uncertain' : 'the comparison was unavailable'}.`,
     };
   } finally {
     if (options.scratchDir === undefined) rmSync(scratch, { recursive: true, force: true });

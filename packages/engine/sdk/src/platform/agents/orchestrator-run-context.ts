@@ -78,6 +78,7 @@ export interface AgentOrchestratorRunContext {
    * `agent-passive-code-injection` flag (DEFAULT OFF) and `isCodeInjectionSettingEnabled`.
    */
   readonly codeIndex?: import('./turn-knowledge-injection.js').TurnCodeIndexSource | undefined;
+  readonly codeReadAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   /** Live gate for the embedder's storage.codeIndexEnabled setting. Undefined defaults to allowed. */
   readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined;
   /**

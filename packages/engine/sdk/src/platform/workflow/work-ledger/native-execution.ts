@@ -1,3 +1,7 @@
+import type { NativeContinuationGrant } from '../../pairing/pairing-token-store.js';
+import type { CiWatchSubscription } from '../../ci-watch/types.js';
+import type { ExternalOperationSource } from '../../permissions/external-request.js';
+import { createNativeCiContinuationHost, type NativeCiGrantOwner, type NativeCiContinuationPolicy } from './native-ci-continuation.js';
 import { nativeSelectedDiffEvidence } from './native-diff-evidence.js';
 import { verifyNativeWorkExecution } from './native-execution-verifier.js';
 import { nativeSettlementDigest, type NativeWorkSettlementReceipt } from './native-settlement-types.js';
@@ -22,6 +26,8 @@ export interface NativePairedExecutionSnapshot {
 }
 /** Nonserialized transport-created capability. Keep the credential inside its authenticated owner. */
 export interface NativePairedExecutionAuthority {
+  /** Authenticated transport-only issuance. No wire payload can install this owner. */
+  issueContinuation?(binding: string, assertCurrent: () => void, sourceBinding?: string): NativeContinuationGrant;
   current(): NativePairedExecutionSnapshot | null;
   withCurrent<T>(expected: NativePairedExecutionSnapshot, callback: (assertCurrent: () => NativePairedExecutionSnapshot) => T | Promise<T>): Promise<T>;
 }
@@ -51,8 +57,10 @@ export interface NativeWorkExecutionIntentStatus {
 export type NativeWorkExecutionObservation = NativeWorkExecutionStatus | NativeWorkExecutionIntentStatus;
 export interface NativeWorkExecutionHost {
   readonly nativeOwner: NativeContractCompositionOwner;
+  recoverCiWatchOwner(watch: CiWatchSubscription): ExternalOperationSource | undefined;
+  revokeCiWatch(watch: CiWatchSubscription): Promise<void>;
   attachRunner(runner: NativeRunner): void;
-  start(target: NativeWorkExecutionTarget, authority: NativePairedExecutionAuthority, options?: { readonly signal?: AbortSignal }): Promise<DurableStartedContract>;
+  start(target: NativeWorkExecutionTarget, authority: NativePairedExecutionAuthority, options?: { readonly signal?: AbortSignal; readonly taskEvidence?: string }): Promise<DurableStartedContract>;
   status(key: DurableContractKey, authority: NativePairedExecutionAuthority): NativeWorkExecutionStatus;
   statusByAttempt(workId: string, attemptId: string, authority: NativePairedExecutionAuthority): NativeWorkExecutionObservation;
   cancelTarget(target: NativeWorkExecutionTarget, authority: NativePairedExecutionAuthority, reason: string): Promise<void>;
@@ -98,6 +106,7 @@ interface ActiveOwner { readonly authority: NativePairedExecutionAuthority; read
 export function createNativeWorkExecutionHost(deps: {
   readonly projectId: string; readonly projectRoot: string; readonly sessionId: string;
   readonly storage: NativeWorkExecutionStorage; readonly scopes: NativeExecutionScopeOwner; readonly port: JudgmentPort;
+  readonly continuationGrants?: NativeCiGrantOwner; readonly continuationPolicy?: NativeCiContinuationPolicy;
   readonly decisionLog: Pick<DecisionLog, 'get'>;
   readonly verification?: { readonly settings: () => CheckSettings; readonly readAccessFilter: ReadAccessFilter; readonly automatic?: boolean };
   /** Trusted host lifetime, invoked only for this owner's actual admitted receipt. */
@@ -197,7 +206,7 @@ export function createNativeWorkExecutionHost(deps: {
       });
     });
   }
-  function requestFor(current: NativeWorkExecutionTransaction, target: NativeWorkExecutionTarget, expected: NativePairedExecutionSnapshot, expectedScope: NativeExecutionScope): DurableContractRequest {
+  function requestFor(current: NativeWorkExecutionTransaction, target: NativeWorkExecutionTarget, expected: NativePairedExecutionSnapshot, expectedScope: NativeExecutionScope, taskEvidence?: string): DurableContractRequest {
     const key = targetKey(target); const work = workFor(current, target, expected.principalId);
     const source = captureNativeContractSource({ sourceId: work.source?.sourceId ?? hash({ projectId: deps.projectId, workId: work.id }), sourceRevision: work.source?.sourceRevision ?? hash({ workId: work.id, workRevision: work.revision }),
       inputRevision: hash({ projectId: deps.projectId, target, goal: work.goal, criteria: work.criteria, ...(work.source ? { source: work.source } : {}) }),
@@ -207,14 +216,14 @@ export function createNativeWorkExecutionHost(deps: {
       actionId: hash({ projectId: deps.projectId, key, operation: 'run-native-work' }),
       actionRevision: hash({ projectRoot, sessionId: deps.sessionId, target, authorityScopes: expected.scopes }),
       ...authorityBinding(expected), ...scopeBinding(expectedScope) };
-    return freezeDurableRequest({ key, binding, input: { ask: work.title, nativeSource: source, projectRoot, sessionId: deps.sessionId, origin: 'external', isolation: 'auto' } });
+    return freezeDurableRequest({ key, binding, input: { ask: work.title, nativeSource: source, projectRoot, sessionId: deps.sessionId, origin: 'external', isolation: 'auto', ...(taskEvidence ? { taskEvidence } : {}) } });
   }
   function assertIntent(current: NativeWorkExecutionTransaction, intent: NativeWorkExecutionIntent): void {
     if (current.intent?.state === 'cancelled') throw new NativeWorkExecutionError('prevented-before-admission');
     if (current.record || !current.intent || current.intent.state !== 'admitting' || current.intent.generation !== intent.generation
       || !equalTarget(current.intent.target, intent.target) || durablePayloadRevision(current.intent.request) !== durablePayloadRevision(intent.request)) throw new NativeWorkExecutionError('stale');
   }
-  async function prepareIntent(target: NativeWorkExecutionTarget, authority: NativePairedExecutionAuthority, delivery: Delivery, resume: boolean, signal: AbortSignal): Promise<NativeWorkExecutionIntent> {
+  async function prepareIntent(target: NativeWorkExecutionTarget, authority: NativePairedExecutionAuthority, delivery: Delivery, resume: boolean, signal: AbortSignal, taskEvidence?: string): Promise<NativeWorkExecutionIntent> {
     const expected = paired(authority); const expectedScope = scope();
     return authority.withCurrent(expected, async assertAuthority => deps.scopes.withCurrentScope(expectedScope, async assertScope =>
       deps.storage.transactionByAttempt(target.attemptId, current => {
@@ -228,7 +237,7 @@ export function createNativeWorkExecutionHost(deps: {
           if (prior.state === 'associated') throw new NativeWorkExecutionError('recovery-required');
           if (!resume) throw new NativeWorkExecutionError(prior.state === 'refused' ? 'refused' : 'pending-intent');
         } else if (resume) throw new NativeWorkExecutionError('not-found');
-        const request = requestFor(current, target, expected, expectedScope);
+        const request = requestFor(current, target, expected, expectedScope, prior?.request.input.taskEvidence ?? taskEvidence);
         if (prior && durablePayloadRevision(prior.request) !== durablePayloadRevision(request)) throw new NativeWorkExecutionError('stale');
         const intent = parseNativeWorkExecutionIntent({ version: 1, projectId: deps.projectId, target, authorityScopes: expected.scopes,
           request: prior?.request ?? request, generation: (prior?.generation ?? 0) + 1, state: 'admitting' });
@@ -238,7 +247,7 @@ export function createNativeWorkExecutionHost(deps: {
   async function decide(target: NativeWorkExecutionTarget, authority: NativePairedExecutionAuthority, signal: AbortSignal, refreshDecision = false, intent?: NativeWorkExecutionIntent): Promise<NativeWorkExecutionRecord> {
     const expected = paired(authority); const expectedScope = scope(); const key = targetKey(target);
     const original = deps.storage.current(key); const work = workFor(original, target, expected.principalId);
-    const request = intent?.request ?? requestFor(original, target, expected, expectedScope);
+    const request = intent?.request ?? requestFor(original, target, expected, expectedScope, original.record?.request.input.taskEvidence);
     const source = request.input.nativeSource!; const binding = request.binding;
     const assertCurrent = () => {
       assertOpen(); const current = deps.storage.current(key);
@@ -254,7 +263,7 @@ export function createNativeWorkExecutionHost(deps: {
     const read = await decideAutonomous({ port: deps.port, site: 'work-ledger.native-start',
       instructions: 'Decide whether to start exactly this native work attempt from its complete original goal and ordered criteria. Authentication and scope are fixed host constraints. Do not ask for human approval or invent missing requirements.',
       actionDescription: 'Start the exact bound native work attempt through the durable contract runner.', binding,
-      state: { originalSource: { goal: source.goal, criteria: source.criteria, ...(source.continuation ? { conversationContext: source.continuation.messages, ...(source.continuation.selectedDiff ? { selectedDiffContext: nativeSelectedDiffEvidence(source.continuation.selectedDiff) } : {}) } : {}) }, revisions: { work: target.workRevision, criteria: target.criteriaRevision, attempt: target.attemptRevision }, operation: { kind: 'start-native-work', projectRoot }, deterministicConstraints: { existingActiveClaim: true } } as unknown as EntryType,
+      state: { originalSource: { goal: source.goal, criteria: source.criteria, ...(source.continuation ? { conversationContext: source.continuation.messages, ...(source.continuation.selectedDiff ? { selectedDiffContext: nativeSelectedDiffEvidence(source.continuation.selectedDiff) } : {}) } : {}) }, revisions: { work: target.workRevision, criteria: target.criteriaRevision, attempt: target.attemptRevision }, operation: { kind: 'start-native-work', projectRoot }, ...(request.input.taskEvidence ? { untrustedTaskEvidence: request.input.taskEvidence } : {}), deterministicConstraints: { existingActiveClaim: true } } as unknown as EntryType,
       evidence: [{ id: 'native-work-source', revision: source.inputRevision }, { id: 'native-work-attempt', revision: hash(target) }, ...(intent ? [{ id: 'native-intent-evaluation', revision: String(intent.generation) }] : [])],
       continuations: [], conditions: [], allowAct: true, assertCurrent, signal });
     assertCurrent();
@@ -342,6 +351,7 @@ export function createNativeWorkExecutionHost(deps: {
         if (!closed && deps.storage.current(key).settlement) return reconcile();
         throw error;
       }
+      await continuations.beforeSettlement(record.request.key);
       return authority.withCurrent(owner.expected, async assertAuthority => deps.scopes.withCurrentScope(owner.scope, async assertScope => {
         // A concurrent settlement is reconciled under the same owner lock before any stale-target guard.
         return publish(key, latest => {
@@ -373,7 +383,7 @@ export function createNativeWorkExecutionHost(deps: {
   async function cancelAttempt(workId: string, attemptId: string, suppliedTarget: NativeWorkExecutionTarget | undefined, authority: NativePairedExecutionAuthority, reason: string): Promise<void> {
     if (!reason.trim()) throw new NativeWorkExecutionError('invalid');
     const expected = paired(authority); const expectedScope = scope(); let validated = false;
-    let validatedKey: string | undefined; const contractIds = new Set<string>();
+    let validatedKey: string | undefined; let privateRevocationCommitted = false; const contractIds = new Set<string>();
     const drain = async () => {
       const operations = [...deliveries.values()].filter(delivery => delivery.target.workId === workId && delivery.target.attemptId === attemptId && delivery.identity.authorityId === expected.authorityId);
       for (const operation of operations) operation.controller.abort();
@@ -395,6 +405,28 @@ export function createNativeWorkExecutionHost(deps: {
       if (failed) throw failed.reason;
     };
     try {
+      // Publish irreversible private cancellation before any ledger/runner effect.
+      // The private owner reruns this exact source/paired/scope check under its
+      // own lock; do not nest it inside authority.withCurrent's non-reentrant lock.
+      const before = deps.storage.currentByAttempt(attemptId); const source = before.record ?? before.intent;
+      const request = source?.request ?? (suppliedTarget ? requestFor(before, suppliedTarget, expected, expectedScope) : undefined);
+      if (!request) throw new NativeWorkExecutionError('not-found');
+      if (source && source.target.workId !== workId) throw new NativeWorkExecutionError('not-found');
+      const assertCancellation = () => {
+        assertOpen(); const latest = deps.storage.currentByAttempt(attemptId); const live = latest.record ?? latest.intent;
+        if (source) {
+          if (!live || durablePayloadRevision(live.request) !== durablePayloadRevision(request)) throw new NativeWorkExecutionError('stale');
+          inspectAuthority(live, authority);
+        } else {
+          if (live || !suppliedTarget) throw new NativeWorkExecutionError('stale');
+          const current = paired(authority); const currentScope = scope();
+          if (canonicalJson(current as unknown as EntryType) !== canonicalJson(expected as unknown as EntryType) || currentScope.scopeId !== expectedScope.scopeId || currentScope.scopeRevision !== expectedScope.scopeRevision) throw new NativeWorkExecutionError('stale');
+          requestFor(latest, suppliedTarget, current, currentScope);
+        }
+      };
+      assertCancellation(); validated = true; validatedKey = durableKeyHash(request.key);
+      if (before.record?.receipt) contractIds.add(before.record.receipt.contractId);
+      continuations.revokeSource(request, assertCancellation); privateRevocationCommitted = deps.continuationGrants !== undefined;
       await authority.withCurrent(expected, async assertAuthority => deps.scopes.withCurrentScope(expectedScope, async assertScope =>
         deps.storage.transactionByAttempt(attemptId, current => {
           assertOpen(); assertAuthority(); assertScope();
@@ -413,7 +445,11 @@ export function createNativeWorkExecutionHost(deps: {
           return { next: null, nextIntent: intent, value: undefined };
         })));
     } catch (error) {
-      if (validated) { await Promise.allSettled([drain()]); if (!(error instanceof NativeWorkExecutionError)) throw new NativeWorkExecutionError('unavailable'); }
+      if (validated) { await Promise.allSettled([drain()]);
+        // Revocation is durable, but do not acknowledge an unconfirmed native
+        // cancellation write after this authority intentionally retired itself.
+        if (privateRevocationCommitted) throw new NativeWorkExecutionError('recovery-required');
+        if (!(error instanceof NativeWorkExecutionError)) throw new NativeWorkExecutionError('unavailable'); }
       throw error;
     }
     // Persist first, release locks, then abort and join real evaluation settlement.
@@ -432,8 +468,29 @@ export function createNativeWorkExecutionHost(deps: {
     if (cancelled || closed) await cancelAndJoin(result.admission.contractId, 'Native work was cancelled during admission');
     return result;
   }
+  const continuations = createNativeCiContinuationHost({ projectId: deps.projectId, projectRoot, storage: deps.storage,
+    scopes: deps.scopes, ...(deps.continuationGrants ? { grants: deps.continuationGrants } : {}),
+    ...(deps.continuationPolicy ? { policy: deps.continuationPolicy } : {}), signal: lifetime.signal,
+    execution: () => host,
+    sourceOwner(contract) {
+      const key = contract.durableAdmission?.key; if (!key) throw new NativeWorkExecutionError('invalid');
+      const owner = active.get(durableKeyHash(key)); const current = deps.storage.current(key);
+      if (!owner || !current.record || current.record.receipt?.contractId !== contract.id
+        || durablePayloadRevision(current.record.request) !== contract.durableAdmission!.payloadRevision) throw new NativeWorkExecutionError('recovery-required');
+      const record = current.record;
+      const assertCurrent = () => assertRecord(deps.storage.current(key), record, owner);
+      assertCurrent(); return { record, authority: owner.authority, assertCurrent };
+    },
+    async joinOriginal(record) {
+      if (!record.receipt) throw new NativeWorkExecutionError('unavailable');
+      await requireRunner().join(record.receipt.contractId); await deps.joinForeground?.(record.receipt.contractId);
+      await requireRunner().joinDurable?.(record.request.key);
+    },
+  });
   const host: NativeWorkExecutionHost = {
-    nativeOwner: { admission: { withCurrent }, decisions: { authorityOf(contract) {
+    recoverCiWatchOwner: watch => continuations.recover(watch),
+    revokeCiWatch: watch => continuations.revokeWatch(watch),
+    nativeOwner: { admission: { withCurrent }, decisions: { reserveCiContinuation: (contract, operation) => continuations.reserve(contract, operation), authorityOf(contract) {
       const key = contract.durableAdmission?.key; if (!key) throw new NativeWorkExecutionError('invalid');
       const owner = active.get(durableKeyHash(key)); const current = deps.storage.current(key);
       if (!owner || !current.record) throw new NativeWorkExecutionError('recovery-required');
@@ -452,7 +509,7 @@ export function createNativeWorkExecutionHost(deps: {
           if (!equalTarget(record.target, target) || record.state === 'cancelled') throw new NativeWorkExecutionError('conflict');
           inspectAuthority(record, authority);
         } else {
-          const intent = await prepareIntent(target, authority, delivery, false, signal);
+          const intent = await prepareIntent(target, authority, delivery, false, signal, options.taskEvidence);
           record = await decide(target, authority, signal, false, intent);
         }
         claimOwner(record, authority);
@@ -500,7 +557,7 @@ export function createNativeWorkExecutionHost(deps: {
     },
     settle,
     close() {
-      if (closing) return closing; closed = true; lifetime.abort();
+      if (closing) return closing; closed = true; continuations.close(); lifetime.abort();
       const contracts = runner?.list({ includeTerminal: false }) ?? [];
       for (const contract of contracts) if (contract.durableAdmission && active.has(durableKeyHash(contract.durableAdmission.key))) runner?.cancel(contract.id, 'Native work host closed');
       closing = Promise.allSettled([...pending, ...contracts.map(contract => runner?.join(contract.id))]).then(() => { active.clear(); }); return closing;

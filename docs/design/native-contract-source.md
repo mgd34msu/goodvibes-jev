@@ -1,6 +1,6 @@
 # Native contract source preservation
 
-Status: additive source-preservation prerequisite. This does not implement autonomous decision dispatch, durable launch fencing, or product cutover. Legacy owner-reply flows are still present and are not an autonomous fallback.
+Scope: additive source preservation. Autonomous decision dispatch, durable launch fencing and product entry points have separate owners. Legacy owner-reply flows are not an autonomous fallback.
 
 ## Input and persisted authority
 
@@ -31,7 +31,7 @@ The persisted envelope is version 3. Version 2 is already reserved by the separa
 
 The compose-time store must preserve version 3 and combine both validators: the durable receipt/checkpoint validator and the native source/root validator. Remove the standalone version-2 refusal only when the durable restore owner is present; then migrate its version-2 snapshots explicitly. Keep the durable reader's bound-resume, import and retention handling. The shared runner `create` path must capture and bind `input.nativeSource` for durable starts too, and durable checkpoint restore must reinstall source/root locks before any planner or verifier runs. Regenerate public API snapshots from the combined implementation, rather than selecting one branch's generated report. This prerequisite alone must not be presented as support for durable native execution.
 
-The native composition owner should supply `nativeSource` with `StartContractInput`, then use that projection when preparing native tool admission. It still must bind the exact current source/input/criteria revisions to its own execution receipt and durable boundary. This patch intentionally does not change the separate pending admission implementation or wire product entry points to autonomous execution.
+The native composition owner should supply `nativeSource` with `StartContractInput`, then use that projection when preparing native tool admission. It must bind the exact current source/input/criteria revisions to its own execution receipt and durable boundary. Source preservation alone does not dispatch admission or wire product execution.
 
 ## Verification
 

@@ -28,6 +28,8 @@ export interface PaymentNotifier {
   deliver(input: {
     readonly kind: 'approval' | 'veto' | 'notice';
     readonly message: string;
+    readonly assertCurrent?: (() => void) | undefined;
+    readonly signal?: AbortSignal | undefined;
   }): Promise<readonly ChannelDelivery[]>;
   /**
    * Wait for an answer, or until the deadline.

@@ -116,12 +116,12 @@ describe('shared family evidence ownership', () => {
     const gate = deferred();
     const oldPort = fakePort((_name, question) => choiceAnswer(question, 'GPT', 0.99)).port;
     installJudgmentPort({ ...oldPort, async ask(request) { await gate.promise; return oldPort.ask(request); } });
-    const oldRead = readings.read([evidence]);
+    const oldRead = readings.read([evidence]).then(() => null, error => error);
     installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'Claude', 0.99)).port);
     expect(readings.known(evidence)).toBeUndefined();
     await readings.read([evidence]);
     gate.resolve();
-    await oldRead;
+    expect(await oldRead).toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
     expect(readings.known(evidence)).toBe('Claude');
     installJudgmentPort(undefined);
     expect(readings.known(evidence)).toBeUndefined();

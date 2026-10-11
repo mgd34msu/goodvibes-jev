@@ -2,10 +2,10 @@
  * End-to-end harness: the BUILT goodvibes binary in a real terminal.
  *
  * Every test here drives the compiled artifact (`bun run build:linux-x64`, or
- * GOODVIBES_E2E_BINARY), never the source. The terminal is a tmux server this
- * harness owns (a private `-L` socket per session, killed on stop), which gives
- * a real pty, keystrokes, resizes, the rendered screen (capture-pane) and the
- * raw byte stream the program wrote (pipe-pane, where OSC sequences survive).
+ * GOODVIBES_E2E_BINARY), never the source. The terminal is the native Bun.Terminal PTY this
+ * harness owns, using the same current-frame parser as owner-pairing tests. It
+ * supplies real keystrokes, resizes, rendered screen and unchanged raw output
+ * (including OSC sequences), and stop awaits the actual binary process exit.
  *
  * Isolation: a fresh temp home per session (HOME and GOODVIBES_HOME both point
  * at it), a scratch git workspace, a PATH with nothing extra, no desktop bus,
@@ -14,10 +14,15 @@
  * OpenAI-compatible server in this test process (startStubModel).
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { getProviderModelsCachePath } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { TuiConfigManager } from '../../config/host-settings.ts';
+import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
+import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
+import { TerminalFrame } from '../helpers/terminal-frame.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..', '..');
 
@@ -38,10 +43,6 @@ export function resolveBinary(): string {
     throw new Error(`E2E: no built binary at ${candidate}. Run \`bun run build:linux-x64\` first, or set GOODVIBES_E2E_BINARY.`);
   }
   return candidate;
-}
-
-function tmuxAvailable(): boolean {
-  return spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 }
 
 /** A TCP port nothing is listening on right now. */
@@ -241,7 +242,7 @@ export async function makeHome(model: StubModel): Promise<E2EHome> {
   mkdirSync(join(tuiDir, 'providers'), { recursive: true });
   mkdirSync(daemonDir, { recursive: true });
   mkdirSync(workspace, { recursive: true });
-  // A git identity in the isolated home: WRFC lands passed work as a commit.
+  // A git identity in the isolated home for real workspace commits.
   writeFileSync(join(home, '.gitconfig'), '[user]\n\tname = E2E Owner\n\temail = e2e@example.test\n[init]\n\tdefaultBranch = main\n');
   const git = (...args: string[]) => spawnSync('git', args, { cwd: workspace, env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', HOME: home } });
   git('init', '-q', '-b', 'main');
@@ -278,6 +279,17 @@ export async function makeHome(model: StubModel): Promise<E2EHome> {
   e2eHome.setTuiSetting('provider.model', 'e2e-stub:stub-model');
   e2eHome.setDaemonPort(daemonPort);
   mergeJson(join(daemonDir, 'settings.json'), 'controlPlane.host', '127.0.0.1');
+  // These scenarios exercise terminal/runtime ownership, not remote metadata.
+  // Use current real cache envelopes without intercepting or allowing network.
+  const configManager = new TuiConfigManager({ configDir: tuiDir, homeDir: home, workingDir: workspace, surfaceRoot: 'tui' });
+  seedProviderMetadataCacheFixture({ configManager, homeDirectory: home, workingDirectory: workspace });
+  seedBenchmarkCacheFixture({ homeDirectory: home, workingDirectory: workspace, surfaceRoot: 'goodvibes' });
+  const models = getProviderModelsCachePath(configManager.getControlPlaneConfigDir(), 'openai');
+  mkdirSync(dirname(models), { recursive: true });
+  writeFileSync(models, JSON.stringify({ version: 1, fetchedAt: Date.now(), ttlMs: 86_400_000, models: [] }));
+  // The compiled process keeps the same strict network guard as source tests.
+  const guard = resolve(REPO_ROOT, '../../packages/engine/scripts/test-network-preload.ts');
+  writeFileSync(join(workspace, 'bunfig.toml'), `preload = [${JSON.stringify(guard)}]\n`);
   return e2eHome;
 }
 
@@ -314,6 +326,7 @@ export function isolatedEnv(e2eHome: E2EHome, extra: Record<string, string> = {}
     // Supported air-gapped-install policy: a fresh test home has no wake assets.
     // Keep the compiled network guard strict instead of attempting downloads.
     GOODVIBES_SKIP_WAKE_MODEL_DOWNLOAD: '1',
+    GOODVIBES_TEST_NETWORK_VIOLATIONS: join(e2eHome.root, 'network-violations.log'),
     ...extra,
   };
 }
@@ -333,62 +346,82 @@ export interface TuiSession {
   waitForScreen(what: string, predicate: (screen: string) => boolean, timeoutMs?: number): Promise<string>;
   /** True while the binary is still running in the pane. */
   alive(): boolean;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
-/** Launch the built binary in a private tmux server at `cols` x `rows`. */
+/** Launch the actual built binary in an owned native PTY at `cols` x `rows`. */
 export function launchTui(e2eHome: E2EHome, options: { cols?: number; rows?: number; env?: Record<string, string> } = {}): TuiSession {
-  if (!tmuxAvailable()) throw new Error('E2E: tmux is required (apt-get install tmux)');
   const binary = resolveBinary();
   mkdirSync(join(e2eHome.root, 'tmp'), { recursive: true });
-  const socket = `gv-e2e-${process.pid}-${++sessionCounter}`;
-  const rawPath = join(e2eHome.root, `${socket}.raw`);
-  const stderrPath = join(e2eHome.root, `${socket}.stderr`);
-  writeFileSync(rawPath, '');
-  const env = isolatedEnv(e2eHome, options.env);
-  const envArgs = Object.entries(env).map(([k, v]) => `${k}=${v}`);
-  const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, ...args], { encoding: 'utf8', env: { PATH: env.PATH!, HOME: e2eHome.home, TMUX_TMPDIR: '/tmp' } });
-
-  // `env -i` so nothing from this process (NODE_ENV=test, a desktop bus, real
-  // credentials) reaches the binary; `exec` so the pane's process IS the binary.
-  const command = ['exec', 'env', '-i', ...envArgs.map(shellQuote), shellQuote(binary), `2>${shellQuote(stderrPath)}`].join(' ');
-  const started = tmux('new-session', '-d', '-s', 'main', '-x', String(options.cols ?? 100), '-y', String(options.rows ?? 30), '-c', e2eHome.workspace, command);
-  if (started.status !== 0) throw new Error(`E2E: tmux new-session failed: ${started.stderr}`);
-  tmux('set-option', '-t', 'main', 'remain-on-exit', 'on');
-  tmux('pipe-pane', '-o', '-t', 'main', `cat >> ${shellQuote(rawPath)}`);
-
-  const session: TuiSession = {
-    screen: () => tmux('capture-pane', '-p', '-t', 'main').stdout,
+  const name = `gv-e2e-${process.pid}-${++sessionCounter}`;
+  const rawPath = join(e2eHome.root, `${name}.raw`);
+  const stderrPath = join(e2eHome.root, `${name}.stderr`);
+  writeFileSync(rawPath, ''); writeFileSync(stderrPath, '');
+  const env = isolatedEnv(e2eHome, { ...options.env, GV_E2E_STDERR: stderrPath });
+  const cols = options.cols ?? 100, rows = options.rows ?? 30;
+  const frame = new TerminalFrame(cols, rows);
+  const decoder = new TextDecoder();
+  // exec keeps the child PID on the compiled binary; only stderr is redirected,
+  // preserving the real owner-terminal contract on stdin and stdout.
+  const child = Bun.spawn(['/bin/sh', '-c', 'exec "$@" 2>"$GV_E2E_STDERR"', 'gv-e2e', binary], {
+    cwd: e2eHome.workspace, env,
+    terminal: { cols, rows, data: (terminal, bytes) => {
+      appendFileSync(rawPath, bytes);
+      frame.write(decoder.decode(bytes, { stream: true }), reply => terminal.write(reply));
+    } },
+  });
+  const keys: Readonly<Record<string, string>> = {
+    Enter: '\r', Escape: '\x1b', BSpace: '\x7f', 'C-u': '\x15',
+    Up: '\x1b[A', Down: '\x1b[B', Right: '\x1b[C', Left: '\x1b[D',
+    PageUp: '\x1b[5~', PageDown: '\x1b[6~', Home: '\x1b[H', End: '\x1b[F',
+  };
+  let stopping: Promise<void> | undefined;
+  // First paint can precede stdin subscription. The pairing driver proves the
+  // same boundary with an unsent idempotent echo, then clears it before use.
+  const ready = (async () => {
+    await waitFor('the native PTY input area', () => inputAreaVisible(frame.text()), 45_000, 15);
+    await waitFor('the live native PTY composer', () => {
+      if (frame.text().includes('┃  x')) return true;
+      child.terminal!.write('\x15x');
+      return false;
+    }, 10_000, 30);
+    child.terminal!.write('\x15');
+    await waitFor('the empty live native PTY composer', () => inputAreaVisible(frame.text()) && !frame.text().includes('┃  x'), 10_000, 15);
+  })();
+  void ready.catch(() => {});
+  return {
+    screen: () => frame.text(),
     rawOutput: () => readFileSync(rawPath, 'utf8'),
-    type: (text) => { tmux('send-keys', '-t', 'main', '-l', '--', text); },
-    key: (name) => { tmux('send-keys', '-t', 'main', name); },
-    resize: (cols, rows) => {
-      const out = tmux('resize-window', '-t', 'main', '-x', String(cols), '-y', String(rows));
-      if (out.status !== 0) throw new Error(`E2E: resize failed: ${out.stderr}`);
+    type: text => { child.terminal!.write(text); },
+    key: name => {
+      const bytes = keys[name];
+      if (bytes === undefined) throw new Error(`E2E: unsupported native PTY key ${name}`);
+      child.terminal!.write(bytes);
     },
+    resize: (cols, rows) => { frame.resize(cols, rows); child.terminal!.resize(cols, rows); },
     waitForScreen: async (what, predicate, timeoutMs = 30_000) => {
       try {
-        return await waitFor(what, () => {
-          const screen = session.screen();
-          return predicate(screen) ? screen : false;
-        }, timeoutMs);
+        await ready;
+        return await waitFor(what, () => predicate(frame.text()) && frame.text(), timeoutMs, 15);
       } catch (error) {
-        const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, 'utf8').slice(-2000) : '';
-        throw new Error(`${String(error)}\n--- screen ---\n${session.screen()}\n--- stderr ---\n${stderr}`);
+        const stderr = readFileSync(stderrPath, 'utf8').slice(-2000);
+        throw new Error(`${String(error)}\n--- screen ---\n${frame.text()}\n--- stderr ---\n${stderr}`);
       }
     },
-    alive: () => tmux('display-message', '-p', '-t', 'main', '#{pane_dead}').stdout.trim() === '0',
-    stop: () => {
-      tmux('kill-server');
-      // kill-server can leave the socket file behind; it is this session's own.
-      rmSync(join('/tmp', `tmux-${process.getuid?.() ?? 0}`, socket), { force: true });
-    },
+    alive: () => child.exitCode === null && child.signalCode === null,
+    stop: () => stopping ??= (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGTERM');
+          timer = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 2000);
+        }
+        await child.exited;
+      } finally { clearTimeout(timer); child.terminal?.close(); }
+      const violations = env.GOODVIBES_TEST_NETWORK_VIOLATIONS;
+      if (violations && existsSync(violations) && readFileSync(violations, 'utf8')) throw new Error('E2E compiled process attempted unexpected external I/O');
+    })(),
   };
-  return session;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The input area is on screen: its placeholder text and the composer bars. */

@@ -1,4 +1,6 @@
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { KnowledgeExtractionJudgmentHoldError } from './extraction-policy.js';
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { prepareRepairJudgmentResult } from './semantic/web-gap-repair/admission.js';
 import { assertJudgmentInput } from '../gate/judgment-input.js';
 import { entityAlias } from './batteries/entity-alias.js';
 
@@ -39,7 +41,9 @@ export async function readKnowledgeEntityAliases(
   input: AliasEvidence,
   signal?: AbortSignal,
   retainGuard?: (assertCurrent: () => void) => void,
+  ownerCurrent?: () => void,
 ): Promise<readonly (readonly string[])[]> {
+  ownerCurrent?.();
   if (signal?.aborted) throw new KnowledgeEntityAliasHoldError();
   if (entities.length === 0) return [];
   assertJudgmentInput({ entities, evidence: input });
@@ -69,18 +73,19 @@ export async function readKnowledgeEntityAliases(
   if (requests.length === 0) return aliases;
   const actions: Array<{ readonly record: (action: string) => void; readonly action: string }> = [];
   try {
-    const port = judgmentPort('knowledge.ingest.entity-alias');
-    const model = port.model;
+    const captured = captureJudgmentPort('knowledge.ingest.entity-alias', { signal, assertCurrent: ownerCurrent, prepareResultCapture: prepareRepairJudgmentResult });
+    const port = captured.port;
     const assertCurrent = () => {
       try {
-        if (signal?.aborted || judgmentPort('knowledge.ingest.entity-alias') !== port || port.model !== model) throw new KnowledgeEntityAliasHoldError();
+        if (signal?.aborted) throw new KnowledgeEntityAliasHoldError();
+        ownerCurrent?.(); captured.assertCurrent();
       } catch { throw new KnowledgeEntityAliasHoldError(); }
     };
     retainGuard?.(assertCurrent);
     // Sequential, at most 128 calls total, and every retained alias has its own reading.
     for (const { index, state } of requests) {
       assertCurrent();
-      const run = await abortableAliasRead(entityAlias.run(port, state, { site: 'knowledge.ingest.entity-alias', ...(signal ? { signal } : {}) }), signal);
+      const run = await abortableAliasRead(entityAlias.run(port, state, { site: 'knowledge.ingest.entity-alias', ...(signal ? { signal } : {}), beforeAttempt: assertCurrent }), signal);
       assertCurrent();
       const reading = run.readings.alias;
       if (reading.outcome !== 'act' || reading.verdict === 'uncertain') {
@@ -94,6 +99,11 @@ export async function readKnowledgeEntityAliases(
     for (const { record, action } of actions) record(action);
     return aliases;
   } catch {
+    // Lower captured ports normalize retirement. Recover only the host's
+    // CURRENT typed extraction hold, never a provider-supplied error class.
+    // Recheck the already captured callback before any attempted log effect.
+    try { ownerCurrent?.(); }
+    catch (error) { if (error instanceof KnowledgeExtractionJudgmentHoldError) throw error; }
     for (const { record } of actions) {
       try { record('held: alias batch incomplete'); } catch { /* Keep the hold value-free if recording also fails. */ }
     }

@@ -1,5 +1,11 @@
+import { assertPermissionActive, awaitPermission } from '../permissions/cancellation.js';
 /**
- * workspace-trust.ts, per-workspace trust gate.
+ * workspace-trust.ts, per-workspace trust constraint.
+ *
+ * Autonomous callers use prepareAutonomousConstraint: an explicit restricted
+ * choice blocks non-read actions; undecided actions receive per-action Jev
+ * judgment without asking a human or persisting a workspace grant. The legacy
+ * callback adapter below retains its historical explicit interactive contract.
  *
  * The first time GoodVibes opens a workspace (a cwd / project root it has no
  * prior decision for), that workspace is "undecided": only read-category
@@ -160,6 +166,9 @@ export class WorkspaceTrustManager {
   private level: WorkspaceTrustLevel | null = null; // null = undecided (new place)
   private grandfathered = false;
   private loaded = false;
+  private revision = 0;
+  private decisionRevision = 0;
+  private pendingDecisions = 0;
   private readonly store: JsonFileStore<PersistedWorkspaceTrust>;
 
   constructor(options: WorkspaceTrustManagerOptions) {
@@ -180,12 +189,32 @@ export class WorkspaceTrustManager {
    */
   async load(): Promise<void> {
     if (this.loaded) return;
+    const revision = this.revision;
     const persisted = await this.store.load().catch(() => null);
+    if (this.loaded || this.revision !== revision) return;
     if (persisted && (persisted.level === 'trusted' || persisted.level === 'restricted')) {
       this.level = persisted.level;
       this.grandfathered = persisted.grandfathered ?? false;
     }
     this.loaded = true;
+    this.revision++;
+  }
+
+  /** A per-action constraint, never a saved grant for an undecided workspace. */
+  async prepareAutonomousConstraint(category: PermissionCategory, signal?: AbortSignal): Promise<() => void> {
+    if (this.pendingDecisions > 0) throw new Error('Workspace trust decision is pending');
+    const decisionRevision = this.decisionRevision;
+    await awaitPermission(() => this.load(), signal);
+    if (this.decisionRevision !== decisionRevision) throw new Error('Workspace trust changed during autonomous preparation');
+    const revision = this.revision;
+    const assertCurrent = () => {
+      assertPermissionActive(signal);
+      if (this.pendingDecisions > 0) throw new Error('Workspace trust decision is pending');
+      if (this.revision !== revision) throw new Error('Workspace trust changed before autonomous dispatch');
+      if (this.isDecided() && !this.isCategoryAllowed(category)) throw new Error('Explicit restricted workspace forbids this operation');
+    };
+    assertCurrent();
+    return assertCurrent;
   }
 
   isDecided(): boolean {
@@ -206,10 +235,14 @@ export class WorkspaceTrustManager {
   }
 
   async setLevel(level: WorkspaceTrustLevel): Promise<void> {
+    this.decisionRevision++;
+    this.revision++;
     this.level = level;
     this.grandfathered = false;
     this.loaded = true;
-    await this.persist();
+    this.pendingDecisions++;
+    try { await this.persist(); }
+    finally { this.pendingDecisions--; }
   }
 
   /**

@@ -27,6 +27,7 @@ let invokeImpl: (method: string, input?: unknown) => Promise<unknown> = (method)
 };
 
 mock.module('../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: (method: string, input?: unknown) => invokeImpl(method, input),
   sdk: {

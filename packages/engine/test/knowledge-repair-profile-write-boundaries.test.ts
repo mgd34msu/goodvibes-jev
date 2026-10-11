@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,7 @@ afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice
 type State = { category?: { title: string }; candidate?: { text?: string }; text?: string; fact?: { title: string; value?: unknown; evidence?: unknown } };
 function readings(mode: 'yes' | 'uncertain' | 'unsupported' = 'yes', values: readonly (readonly [string, string])[] = [[display, first], [ports, last]]) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const item = state as State;
     if (name === 'wanted') return noulAnswer(values.some(([category]) => category === item.category?.title) ? 0.99 : 0.01);
     if (name === 'selected') return noulAnswer(values.some(([category, value]) => category === item.category?.title && value === item.candidate?.text) ? 0.99 : 0.01);
@@ -134,7 +136,7 @@ describe('repair profile complete-pass write boundaries', () => {
     await expect(promoteRepairSources({ store: item.store, enrichSource: async () => { atHold = snapshot(item.store); throw error; } }, spaceId, gap, [empty.id], task, Date.now() + 5_000)).rejects.toBe(error);
     expect(atHold).not.toBe(''); expect(snapshot(item.store)).toBe(atHold);
   });
-  test('selected exact spans never reenter canonical heuristics; distinct unselected evidence keeps its existing path', async () => {
+  test('canonical profile pass retains distinct display and network spans without legacy value fabrication', async () => {
     const item = await fixture();
     const selected = 'AC-7 refresh rate: 120 Hz.';
     const distinct = 'AC-7 supports Bluetooth wireless connectivity.';
@@ -142,7 +144,7 @@ describe('repair profile complete-pass write boundaries', () => {
     const observed = { id: 'exact-span-gap', kind: 'knowledge_gap' as const, slug: 'exact-span-gap', title: 'Full AC-7 specifications', status: 'active' as const, metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [item.device.id] } };
     const gap = await upsertObservedKnowledgeNode(item.store, observed, 'research-task', observed, () => observed);
     const task = await item.store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
-    readings('yes', [[display, selected]]);
+    readings('yes', [[display, selected], ['Network and wireless capabilities', distinct]]);
     for (let repeat = 0; repeat < 2; repeat++) {
       await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
       const facts = item.store.listNodes().filter((node) => node.kind === 'fact');

@@ -40,6 +40,9 @@ export class SandboxSessionRegistry {
     return next;
   }
 
+  /** The actual workspace target used to build this registry’s process plans. */
+  public getWorkspaceRoot(): string { return this.workspaceRoot; }
+
   public list(): SandboxSession[] {
     return [...this.sessions.values()].sort((a, b) => b.startedAt - a.startedAt);
   }

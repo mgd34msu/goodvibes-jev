@@ -19,11 +19,12 @@ import '../../styles/components/voice.css';
 
 interface SpeakButtonProps {
   readonly messageId: string;
+  readonly sessionId?: string;
   readonly text: string;
 }
 
-export function SpeakButton({ messageId, text }: SpeakButtonProps) {
-  const { availability, canPlay, state, isActive, speak, stop } = useTts();
+export function SpeakButton({ messageId, sessionId, text }: SpeakButtonProps) {
+  const { availability, canPlay, state, isActive, speak, stop } = useTts(sessionId ? { sessionId, messageId, content: text } : undefined);
 
   if (!text.trim()) return null;
 
@@ -70,7 +71,7 @@ export function SpeakButton({ messageId, text }: SpeakButtonProps) {
   return (
     <IconButton
       className="voice-speak-btn"
-      label="Read this reply aloud"
+      label={state.error ? `Read aloud unavailable: ${state.error} Click to retry` : "Read this reply aloud"}
       icon={<Volume2 aria-hidden />}
       onClick={() => speak(messageId, text)}
     />

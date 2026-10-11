@@ -67,6 +67,8 @@ test('rejects lost execute mode, library mode changes, missing payloads and malf
 
 test('the CLI refuses another checkout or modified tracked source before recording provenance', () => fixture(async root => {
   mkdirSync(join(root, 'scripts'));
+  mkdirSync(join(root, 'src/cli'), { recursive: true });
+  writeFileSync(join(root, 'src/cli/native-artifact.ts'), readFileSync(resolve(import.meta.dir, '../../cli/native-artifact.ts')));
   writeFileSync(join(root, 'scripts/ci-artifact.ts'), readFileSync(resolve(import.meta.dir, '../../../scripts/ci-artifact.ts')));
   writeFileSync(join(root, '.gitignore'), 'native/\n');
   writeFileSync(join(root, 'source.txt'), 'committed source\n');

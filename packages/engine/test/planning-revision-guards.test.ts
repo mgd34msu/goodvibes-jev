@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   KnowledgeStore, ProjectPlanningService,
-  type ProjectPlanningStateActionInput,
+  type ProjectPlanningStateActionInput, type ProjectPlanningStateUpsertInput,
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 
 const roots: string[] = [];
@@ -15,15 +15,16 @@ async function fixture() {
   const path = join(root, 'knowledge.sqlite');
   const store = new KnowledgeStore({ dbPath: path });
   const service = new ProjectPlanningService(store);
-  await service.upsertState({ projectId: 'fixture', state: {
+  const authored: ProjectPlanningStateUpsertInput['state'] = {
     goal: 'Inspect retry behavior only', scope: 'Retry helper', executionApproved: false,
     openQuestions: [{ id: 'q1', prompt: 'Which retry cases need coverage?', status: 'open' }],
     tasks: [{ id: 'retry', title: 'Inspect retries', verification: ['Run retry tests'] }],
     verificationGates: [{ id: 'tests', description: 'Retry tests pass' }],
-  } });
+  };
+  await service.upsertState({ projectId: 'fixture', state: authored });
   const selected = await service.getState({ projectId: 'fixture' });
   expect(selected.revision).toBeDefined();
-  return { root, path, store, service, selected };
+  return { root, path, store, service, selected, authored };
 }
 async function persisted(path: string) {
   const reopened = new KnowledgeStore({ dbPath: path });
@@ -39,7 +40,7 @@ for (const action of [{ kind: 'approve' }, { kind: 'answer', questionId: 'q1', a
     const clock = spyOn(Date, 'now').mockReturnValue(50_000);
     try {
       const f = await fixture();
-      await f.service.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'A different plan', tasks: [{ id: 'different', title: 'Different task' }] } });
+      await f.service.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'A different plan', tasks: [{ id: 'different', title: 'Different task' }] } });
       const latest = await f.service.getState({ projectId: 'fixture' });
       expect(latest.state!.updatedAt).toBe(f.selected.state!.updatedAt);
       expect(latest.revision!.generation).not.toBe(f.selected.revision!.generation);
@@ -80,7 +81,7 @@ for (const mode of ['revision', 'current'] as const) {
     f.store.init = async () => { if (++calls === 2) { entered.resolve(); await gate.promise; } await originalInit(); };
     const pending = f.service.applyStateAction({ projectId: 'fixture', expected: mode === 'current' ? { kind: 'current' } : { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } });
     await entered.promise;
-    await f.service.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'Intervening writer goal' } });
+    await f.service.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'Intervening writer goal' } });
     const bytes = readFileSync(f.path); const rows = await persisted(f.path);
     gate.resolve();
     const result = await pending;
@@ -109,7 +110,7 @@ test('caller mutation during init cannot retarget the captured revision or actio
   const action = { kind: 'answer' as const, questionId: 'q1', answer: 'Original answer' };
   const pending = f.service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision }, action });
   await entered.promise;
-  await f.service.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'A replacement plan' } });
+  await f.service.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'A replacement plan' } });
   revision.generation = (await f.service.getState({ projectId: 'fixture' })).revision!.generation;
   action.answer = 'Mutated answer';
   const bytes = readFileSync(f.path); gate.resolve();
@@ -162,7 +163,7 @@ test('legacy answer reports a persisted conflict without syncing or overwriting 
   const pending = f.service.answerQuestion({ projectId: 'fixture', questionId: 'q1', answer: 'Stale answer' });
   await entered.promise;
   const other = new ProjectPlanningService(new KnowledgeStore({ dbPath: f.path }));
-  await other.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'Other owner replacement', tasks: [{ id: 'other', title: 'Other work' }] } });
+  await other.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'Other owner replacement', tasks: [{ id: 'other', title: 'Other work' }] } });
   const bytes = readFileSync(f.path); const rows = await persisted(f.path);
   gate.resolve();
   expect(await pending).toMatchObject({ answered: false, reason: 'state-changed', state: { goal: 'Other owner replacement' }, evaluation: { state: { goal: 'Other owner replacement' } } });

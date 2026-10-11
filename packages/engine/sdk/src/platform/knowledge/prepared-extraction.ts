@@ -1,3 +1,5 @@
+import { createKnowledgeExtractionOwner } from './extraction-ownership.js';
+import type { KnowledgeIngestOwnership } from './ingest-context.js';
 import { createHash } from 'node:crypto';
 import { snapshotNodeInput } from './activation/projection.js';
 import { supportHash } from './semantic/verification/projection.js';
@@ -27,11 +29,16 @@ export async function prepareKnowledgeExtraction(
   context: KnowledgeIngestContext,
   sourceId: string,
   artifactId: string,
+  ownership: KnowledgeIngestOwnership = {},
 ): Promise<PreparedKnowledgeExtraction> {
+  const owner = createKnowledgeExtractionOwner(ownership);
+  owner.assertCurrent();
   await context.store.init();
+  owner.assertCurrent();
   const readRetained = () => ({ source: context.store.getSource(sourceId), extraction: context.store.getExtractionBySourceId(sourceId) });
   const retainedHash = supportHash(readRetained());
   const content = await context.artifactStore.readContent(artifactId);
+  owner.assertCurrent();
   const record = snapshotNodeInput(content.record);
   const { buffer } = content;
   if (record.id !== artifactId || createHash('sha256').update(buffer).digest('hex') !== record.sha256) {
@@ -41,12 +48,13 @@ export async function prepareKnowledgeExtraction(
   const canonicalSource = canonicalUri ? context.store.getSourceByCanonicalUri(canonicalUri)?.id : undefined;
   const recordHash = supportHash(record);
   const assertCurrent = () => {
+    owner.assertCurrent();
     if (supportHash(readRetained()) !== retainedHash || supportHash(context.artifactStore.getRecord(artifactId)) !== recordHash
       || (canonicalUri ? context.store.getSourceByCanonicalUri(canonicalUri)?.id : undefined) !== canonicalSource) {
       throw new KnowledgeExtractionJudgmentHoldError();
     }
   };
-  const extracted = snapshotNodeInput(await extractKnowledgeArtifact(record, buffer));
+  const extracted = snapshotNodeInput(await extractKnowledgeArtifact(record, buffer, owner));
   assertCurrent();
   const token = Object.freeze({ sourceId, artifactId, contentHash: record.sha256 });
   prepared.set(token, { record, extracted, assertCurrent });

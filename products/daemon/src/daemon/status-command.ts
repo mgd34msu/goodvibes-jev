@@ -406,14 +406,10 @@ export interface RunUpdateCommandInput extends RemoteCommandDeps {
  * receipts it wrote about swaps and restarts, the version an automatic rollback
  * rejected, and whether a rollback is in force.
  *
- * --check is honest about a gap. The daemon runs the whole self-update loop
- * itself, it checks hourly, swaps at an idle moment and keeps the outgoing
- * binary, but the control plane publishes NO verb to trigger that check early:
- * the operator contract this build was written against has no update method of
- * any kind (no `update.*`, no `admin.update`, nothing under `control.` that
- * checks). Rather than invent a verb this daemon does not answer, --check says
- * so and names the two things that do work: waiting for the hourly check, or
- * restarting the service, which checks on the way up.
+ * --check reads status only: the control plane exposes no early-check verb.
+ * Receipts do not establish that the host has configured an update artifact or
+ * release policy, so neither an hourly schedule nor restart-triggered updates
+ * may be inferred from this response.
  */
 export async function runUpdateCommand(input: RunUpdateCommandInput): Promise<DaemonCommandResult> {
   const { flags } = input;
@@ -438,9 +434,9 @@ export async function runUpdateCommand(input: RunUpdateCommandInput): Promise<Da
     ? [
       '',
       'update --check: this daemon publishes no verb to trigger an update check early.',
-      '  It checks once an hour on its own and swaps only at an idle moment.',
-      '  To make it check now, restart it; it checks on the way up:',
-      '    goodvibes-daemon restart-service',
+      '  This command only reads status; it does not request an update check.',
+      '  Automatic checks require a configured update artifact and host policy.',
+      '  These receipts do not establish an hourly or restart-triggered schedule.',
     ]
     : [];
 

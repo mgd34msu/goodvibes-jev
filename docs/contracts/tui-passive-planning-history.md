@@ -1,13 +1,10 @@
-# TUI passive historical planning (THE-105)
+# TUI passive historical planning
 
 ## Retirement boundary
 
-The October 7 correction is bounded to the TUI. Jev makes runtime decisions;
-there is no replacement human question/answer loop. This change starts from
-main `3c0e82b67bc7d5a5c15b49281d9f0378cd355001` (tree
-`bd95120d81bc9c0265bb73cbc345988f275a0b86`) and does not depend on PR #186's
-rejected native question foundation. No engine question API, schema, protocol,
-runner or hosted-session lifecycle is added or changed.
+The passive viewer is a TUI surface. Jev owns runtime semantic decisions; no
+replacement human question/answer loop, engine question API or new runner/hosted
+lifecycle is introduced by viewing historical records.
 
 `/project-plan history` now opens a saved-record viewer with exactly four read
 capabilities: `status`, `getState`, `listDecisions`, and `getLanguage`.
@@ -78,10 +75,10 @@ planning-record invariant. Negative fixture tests reject raw JSON changes,
 approval edits, and added/deleted/moved planning records. The isolated modal
 tests still require whole-file byte equality and zero write calls.
 
-Local qualification: source, renderer, real-store and compiled product-boundary
-proofs ran. Full terminal assertions did not run locally: official Debian tmux
-was extracted and verified, but creating the owned UNIX socket was denied with
-`Operation not permitted`, including the supported execution-approval retry.
-Exact-final-head hosted terminal CI is required before merge. Neither synthetic
-proofs nor terminal smoke establish live-provider qualification or complete
-end-to-end autonomous product parity.
+Full terminal assertions require a supported terminal environment and the exact
+integrated artifact; an unavailable owned socket is a setup failure, not an
+assertion pass. Synthetic proofs and terminal smoke do not establish live-provider
+qualification or complete end-to-end autonomous product parity.
+
+See [native persistence and legacy guards](native-work-persistence-and-history.md)
+for selected/current revision handling and host-owned native admission boundaries.

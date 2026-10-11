@@ -1,3 +1,5 @@
+import { knowledgeRawRepresentation, knowledgeClockIso } from '../store-record-representation.js';
+import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import { exactKnowledgeIds, generatedFactSupportMetadata, type GeneratedFactWritePlanner } from './fact-support-write-plan.js';
 import type { KnowledgeStore } from '../store.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
@@ -10,6 +12,7 @@ import type { SemanticPrimarySourcePlanner, SemanticWriteGuard } from './primary
 export function prepareSemanticSupersession(
   store: KnowledgeStore, sourceId: string, spaceId: string, activeIds: ReadonlySet<string>,
   guard: SemanticWriteGuard, planner: SemanticPrimarySourcePlanner, support: GeneratedFactWritePlanner,
+  assertCurrent?: (() => void) | undefined,
 ) {
   const readSuperseded = () => store.listNodesInSpace(spaceId).filter((node) => (
     semanticNodeReferencesSource(node, sourceId) && typeof node.metadata.semanticKind === 'string'
@@ -43,20 +46,20 @@ export function prepareSemanticSupersession(
     const writes = plans.map(({ node, supportingSourceIds, primarySourceId, supportKey }) => {
       const input: KnowledgeNodeUpsertInput = primarySourceId
         ? { ...node, sourceId: primarySourceId, metadata: semanticMetadata(spaceId, {
-          ...node.metadata, sourceId: primarySourceId, sourceIds: supportingSourceIds,
+          ...knowledgeRawRepresentation(node.metadata), sourceId: primarySourceId, sourceIds: supportingSourceIds,
           generatedFactSupport: generatedFactSupportMetadata(support.plans(supportKey!), node.metadata.generatedFactSupport),
-          detachedSourceIds: uniqueStrings([...readStringArray(node.metadata.detachedSourceIds), sourceId]), sourceDetachedAt: supersededAt,
+          detachedSourceIds: uniqueStrings([...readStringArray(node.metadata.detachedSourceIds), sourceId]), sourceDetachedAt: knowledgeClockIso(supersededAt),
         }) }
-        : { ...node, status: 'stale', metadata: { ...node.metadata, supersededAt, supersededInSpaceId: spaceId } };
+        : { ...node, status: 'stale', metadata: { ...knowledgeRawRepresentation(node.metadata), supersededAt: knowledgeClockIso(supersededAt), supersededInSpaceId: spaceId } };
       return { node, primarySourceId, input };
     });
-    const activation = await store.prepareNodeWrites(writes.map((write) => write.input), { requireAccepted: true });
+    const activation = await store.prepareNodeWrites(writes.map((write) => write.input), { requireAccepted: true, assertCurrent });
     return async () => {
       store.assertPreparedNodeWrites(activation);
       for (const [index, { node, primarySourceId }] of writes.entries()) {
         // Recheck authority before removing a retained fact's previous support.
         await store.upsertPreparedNode(activation, index);
-        if (primarySourceId) await deactivateSemanticFactSupport(store, sourceId, node.id, spaceId, supersededAt);
+        if (primarySourceId) await deactivateSemanticFactSupport(store, sourceId, node.id, spaceId, supersededAt, assertCurrent);
       }
     };
   };
@@ -96,6 +99,7 @@ async function deactivateSemanticFactSupport(
   factId: string,
   spaceId: string,
   supersededAt: number,
+  assertCurrent: () => void = () => {},
 ): Promise<void> {
   const edges = store.listEdges().filter((edge) => (
     edge.fromKind === 'source'
@@ -106,7 +110,7 @@ async function deactivateSemanticFactSupport(
     && isActiveKnowledgeEdge(edge)
   ));
   for (const edge of edges) {
-    await store.upsertEdge({
+    await store.upsertEdge(guardKnowledgeEdgeInput({
       fromKind: edge.fromKind,
       fromId: edge.fromId,
       toKind: edge.toKind,
@@ -118,7 +122,7 @@ async function deactivateSemanticFactSupport(
         deleted: true,
         supersededAt,
       }),
-    });
+    }, assertCurrent));
   }
 }
 

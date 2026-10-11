@@ -169,7 +169,7 @@ describe('native ordinary turn through the real orchestrator', () => {
     await withNativeConversationTurn(permit, async () => {
       const prepared = await prepareConversationForTurn(conversation, { getCurrentModel: () => model }, text, undefined, 'session', forbiddenPlan as Parameters<typeof prepareConversationForTurn>[5]);
       expect(prepared).toBeNull();
-      handleFinalResponseOutcome({ conversation, response: finalResponse(), runtimeBus: null, providerRegistry: { getCurrentModel: () => model },
+      await handleFinalResponseOutcome({ conversation, response: finalResponse(), runtimeBus: null, providerRegistry: { getCurrentModel: () => model },
         planManager: forbiddenPlan, preTurnPlan: { awaitingPlan: true }, setAutoSpawnTimeout: () => { timers++; } } as unknown as Parameters<typeof handleFinalResponseOutcome>[0]);
     });
     expect(timers).toBe(0); f.client.dispose();

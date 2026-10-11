@@ -482,7 +482,7 @@ function checkSize(plan: ContractPlan, shape: RequestShape, limits: PlanLimits):
  * that forbids writing) is enforced rather than checked: `unitToolContract`
  * makes every unit read-only.
  */
-export function validateContractPlan(plan: ContractPlan, ask: string, shape: RequestShape, limits: PlanLimits, nativeSource?: NativeContractSource): PlanProblem[] {
+export function validateContractPlan(plan: ContractPlan, ask: string, shape: RequestShape, limits: PlanLimits, nativeSource?: Pick<NativeContractSource, 'goal' | 'criteria'>): PlanProblem[] {
   return [
     ...checkIdsAndGraphs(plan),
     ...checkCriteriaLinks(plan),

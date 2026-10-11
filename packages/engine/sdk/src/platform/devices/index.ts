@@ -148,3 +148,5 @@ export type {
   DeviceCapabilityOutcome,
   DeviceRequestRefusal,
 } from './device-capability-service.js';
+
+export type { DeviceAutonomousOwner, DeviceAdmission } from './device-autonomous.js';

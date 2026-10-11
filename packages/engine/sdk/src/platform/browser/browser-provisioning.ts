@@ -1,9 +1,12 @@
+import { captureJudgmentFailure } from '../gate/failure-input.js';
 import { basename, dirname } from 'node:path';
+import { assertProvisionCurrent, ownProvisionLifetime, missingLibrary, networkBlocked, programNotInstalled, type BrowserProvisionLifetime } from './browser-failure-reading.js';
 import type {
   BrowserProvisionFailure,
   BrowserProvisionIo,
   BrowserProvisionReport,
   BrowserProvisionStep,
+  CommandOutcome,
 } from './browser-types.js';
 
 /**
@@ -24,7 +27,7 @@ import type {
 const DEFAULT_INSTALL_TIMEOUT_MS = 900_000;
 const VERSION_PROBE_TIMEOUT_MS = 30_000;
 
-export interface EnsureBrowserOptions {
+export interface EnsureBrowserOptions extends BrowserProvisionLifetime {
   /**
    * Set false to report what is present without downloading anything.
    *
@@ -72,13 +75,7 @@ class StepRecorder {
   }
 }
 
-function missingLibraryFrom(text: string): string | null {
-  const match = /(?:error while loading shared libraries|cannot open shared object file)[^\n]*?(lib[\w.+-]*\.so[\w.]*)/i.exec(text)
-    ?? /(lib[\w.+-]*\.so[\w.]*):[^\n]*cannot open shared object file/i.exec(text);
-  return match?.[1] ?? null;
-}
-
-async function verifyExecutable(io: BrowserProvisionIo, executablePath: string): Promise<VerificationResult> {
+async function verifyExecutable(io: BrowserProvisionIo, executablePath: string, lifetime: BrowserProvisionLifetime): Promise<VerificationResult> {
   if (!io.pathExists(executablePath)) {
     return { ok: false, failure: 'missing', detail: `no file at ${executablePath}` };
   }
@@ -90,9 +87,9 @@ async function verifyExecutable(io: BrowserProvisionIo, executablePath: string):
     return { ok: true, failure: null, detail: probe.stdout.trim() || 'reported a version' };
   }
   const combined = `${probe.stdout}\n${probe.stderr}`;
-  const missingLibrary = missingLibraryFrom(combined);
-  if (missingLibrary) {
-    return { ok: false, failure: 'missing-system-libraries', detail: missingLibrary };
+  const library = probe.timedOut ? null : await missingLibrary(executablePath, probe, lifetime);
+  if (library) {
+    return { ok: false, failure: 'missing-system-libraries', detail: library };
   }
   const reason = probe.spawnError ?? (probe.timedOut ? 'version probe timed out' : combined.trim().split('\n')[0] ?? 'unknown error');
   return { ok: false, failure: 'corrupt', detail: reason };
@@ -161,29 +158,12 @@ export function installRuntimeCandidates(): readonly InstallRuntimeCandidate[] {
   return installRuntimeCandidatesFor(process.execPath);
 }
 
-/**
- * Whether a spawn failure means "that program is not on this machine".
- *
- * Bun does not report a missing executable as ENOENT, it says
- * `Executable not found in $PATH: "node"`. Matching only ENOENT meant a missing
- * interpreter was treated as a real install failure: the loop returned on the
- * FIRST candidate instead of trying the next, and the owner was handed
- * "install exited with code null", which names nothing and suggests nothing.
- */
-function isMissingExecutable(spawnError: string | null): boolean {
-  if (!spawnError) return false;
-  return /ENOENT/i.test(spawnError) || /not found in \$PATH/i.test(spawnError);
-}
-
-function isNetworkFailure(text: string): boolean {
-  return /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|getaddrinfo|network|certificate|unable to verify|proxy|timed? ?out/i.test(text);
-}
-
 async function runInstall(
   io: BrowserProvisionIo,
   cliPath: string,
   force: boolean,
   timeoutMs: number,
+  lifetime: BrowserProvisionLifetime,
 ): Promise<{ readonly ok: boolean; readonly detail: string; readonly networkFailure: boolean }> {
   const args = [cliPath, 'install', 'chromium', '--no-shell', ...(force ? ['--force'] : [])];
   let lastDetail = 'no runtime available to execute the Playwright install step';
@@ -193,7 +173,7 @@ async function runInstall(
       // Progress bars assume a TTY; without this the captured log is unreadable noise.
       env: { PLAYWRIGHT_SKIP_BROWSER_GC: '1', ...runtime.env },
     });
-    if (isMissingExecutable(outcome.spawnError)) {
+    if (await programNotInstalled(runtime.command, outcome, lifetime)) {
       lastDetail = `${runtime.command} is not available`;
       continue;
     }
@@ -205,8 +185,8 @@ async function runInstall(
       ok: false,
       detail: outcome.timedOut
         ? `install exceeded ${Math.round(timeoutMs / 1000)}s`
-        : summarizeInstallLog(combined) || `install exited with code ${String(outcome.code)}`,
-      networkFailure: isNetworkFailure(combined),
+        : outcome.spawnError ?? (summarizeInstallLog(combined) || `install exited with code ${String(outcome.code)}`),
+      networkFailure: outcome.timedOut ? false : await networkBlocked(runtime.command, outcome, lifetime),
     };
   }
   return { ok: false, detail: lastDetail, networkFailure: false };
@@ -316,6 +296,7 @@ function report(
 async function trySystemBrowser(
   io: BrowserProvisionIo,
   recorder: StepRecorder,
+  lifetime: BrowserProvisionLifetime,
 ): Promise<string | null> {
   const candidates = io.systemBrowserCandidates();
   if (candidates.length === 0) {
@@ -324,7 +305,7 @@ async function trySystemBrowser(
   }
   for (const candidate of candidates) {
     const verification = await recorder.record('system-browser', async () => {
-      const result = await verifyExecutable(io, candidate);
+      const result = await verifyExecutable(io, candidate, lifetime);
       return { ok: result.ok, detail: `${candidate}: ${result.detail}`, value: result };
     });
     if (verification.ok) return candidate;
@@ -351,29 +332,42 @@ export function describeProvisionWork(report: BrowserProvisionReport | null): st
   return `First browser call on this machine: ${what.join(' and ')} (${seconds}s). This happens once; later calls reuse it.`;
 }
 
-const inFlight = new Map<string, Promise<BrowserProvisionReport>>();
+const inFlight = new WeakMap<BrowserProvisionIo, Map<string, Promise<BrowserProvisionReport>>>();
 
-/**
- * Ensures a usable browser binary exists, installing it if needed.
- *
- * Concurrent callers share one provisioning act: a second browser call arriving
- * mid-download waits for the same install instead of starting a competing one.
- */
-export function ensureBrowserBinary(
-  io: BrowserProvisionIo,
-  options: EnsureBrowserOptions = {},
-): Promise<BrowserProvisionReport> {
-  const key = `${io.browsersPath()}::${options.forceReinstall === true ? 'repair' : 'ensure'}`;
-  const existing = inFlight.get(key);
-  if (existing) return existing;
-  const run = provision(io, options).finally(() => {
-    inFlight.delete(key);
-  });
-  inFlight.set(key, run);
+/** Share only identical unscoped requests on the same owning IO. Scoped requests
+ * retain their own cancellation, port and current-owner checks. Readonly calls
+ * can never borrow an installing request's result. */
+export function ensureBrowserBinary(io: BrowserProvisionIo, options: EnsureBrowserOptions = {}): Promise<BrowserProvisionReport> {
+  const captured = ownProvisionLifetime(Object.freeze({ ...options }));
+  assertProvisionCurrent(captured);
+  const scoped = options.signal !== undefined || options.assertCurrent !== undefined || options.port !== undefined;
+  const key = JSON.stringify([io.browsersPath(), captured.allowDownload !== false, captured.forceReinstall === true, captured.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS]);
+  let requests = inFlight.get(io);
+  if (!requests) { requests = new Map(); inFlight.set(io, requests); }
+  if (!scoped) { const existing = requests.get(key); if (existing) return existing; }
+  const guarded: BrowserProvisionIo = {
+    ...io,
+    runCommand: async (command, args, commandOptions) => {
+      assertProvisionCurrent(captured);
+      const result = await io.runCommand(command, args, { ...commandOptions, signal: captured.signal });
+      assertProvisionCurrent(captured);
+      return captureJudgmentFailure(result) as CommandOutcome;
+    },
+    removePath: (path) => { assertProvisionCurrent(captured); io.removePath(path); },
+    ...(io.installDriver ? { installDriver: async (root: string) => {
+      assertProvisionCurrent(captured);
+      const result = await io.installDriver!(root, captured);
+      assertProvisionCurrent(captured);
+      return captureJudgmentFailure(result) as CommandOutcome;
+    } } : {}),
+  };
+  const run = provision(guarded, captured).finally(() => { if (requests.get(key) === run) requests.delete(key); });
+  if (!scoped) requests.set(key, run);
   return run;
 }
 
 async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions): Promise<BrowserProvisionReport> {
+  assertProvisionCurrent(options);
   const recorder = new StepRecorder(io);
   const browsersPath = io.browsersPath();
   const driverFix = io.driverFix?.() ?? DEFAULT_DRIVER_FIX;
@@ -426,12 +420,13 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
     }
   }
   if (!resolvedDriver.available || !resolvedDriver.cliPath) {
-    const systemBrowser = await trySystemBrowser(io, recorder);
+    const systemBrowser = await trySystemBrowser(io, recorder, options);
     if (systemBrowser) {
       // Without the driver package there is no automation API at all, so a
       // system browser cannot rescue this case. Report the real blocker.
       recorder.note('driver', 'a system browser exists but the automation driver is still required', false);
     }
+    assertProvisionCurrent(options);
     return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
       ok: false,
       failure: driverInstallSkipped ? 'driver-not-installed-yet' : 'driver-missing',
@@ -447,10 +442,11 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
   const expected = io.expectedExecutablePath();
   if (expected && options.forceReinstall !== true) {
     const verification = await recorder.record('cached-browser', async () => {
-      const result = await verifyExecutable(io, expected);
+      const result = await verifyExecutable(io, expected, options);
       return { ok: result.ok, detail: result.detail, value: result };
     });
     if (verification.ok) {
+      assertProvisionCurrent(options);
       return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
         ok: true,
         source: 'managed-cache',
@@ -458,6 +454,7 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
       });
     }
     if (verification.failure === 'missing-system-libraries') {
+      assertProvisionCurrent(options);
       return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
         ok: false,
         failure: 'missing-system-libraries',
@@ -467,14 +464,16 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
   }
 
   if (options.allowDownload === false) {
-    const systemBrowser = await trySystemBrowser(io, recorder);
+    const systemBrowser = await trySystemBrowser(io, recorder, options);
     if (systemBrowser) {
+      assertProvisionCurrent(options);
       return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
         ok: true,
         source: 'system-browser',
         executablePath: systemBrowser,
       });
     }
+    assertProvisionCurrent(options);
     return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
       ok: false,
       failure: 'binary-missing-after-install',
@@ -482,15 +481,18 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
     });
   }
 
+  assertProvisionCurrent(options);
   if (!io.directoryWritable(browsersPath)) {
-    const systemBrowser = await trySystemBrowser(io, recorder);
+    const systemBrowser = await trySystemBrowser(io, recorder, options);
     if (systemBrowser) {
+      assertProvisionCurrent(options);
       return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
         ok: true,
         source: 'system-browser',
         executablePath: systemBrowser,
       });
     }
+    assertProvisionCurrent(options);
     return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
       ok: false,
       failure: 'cache-directory-unwritable',
@@ -512,7 +514,7 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
   }
 
   const install = await recorder.record('install-browser', async () => {
-    const result = await runInstall(io, driverCliPath, options.forceReinstall === true || stalePresent, options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS);
+    const result = await runInstall(io, driverCliPath, options.forceReinstall === true || stalePresent, options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS, options);
     return { ok: result.ok, detail: result.detail, value: result };
   });
 
@@ -520,10 +522,11 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
     const installedPath = io.expectedExecutablePath();
     if (installedPath) {
       const verification = await recorder.record('verify-install', async () => {
-        const result = await verifyExecutable(io, installedPath);
+        const result = await verifyExecutable(io, installedPath, options);
         return { ok: result.ok, detail: result.detail, value: result };
       });
       if (verification.ok) {
+        assertProvisionCurrent(options);
         return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
           ok: true,
           source: 'managed-download',
@@ -531,6 +534,7 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
         });
       }
       if (verification.failure === 'missing-system-libraries') {
+        assertProvisionCurrent(options);
         return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
           ok: false,
           failure: 'missing-system-libraries',
@@ -540,8 +544,9 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
     }
   }
 
-  const systemBrowser = await trySystemBrowser(io, recorder);
+  const systemBrowser = await trySystemBrowser(io, recorder, options);
   if (systemBrowser) {
+    assertProvisionCurrent(options);
     return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
       ok: true,
       source: 'system-browser',
@@ -550,12 +555,14 @@ async function provision(io: BrowserProvisionIo, options: EnsureBrowserOptions):
   }
 
   if (!install.ok) {
+    assertProvisionCurrent(options);
     return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
       ok: false,
       failure: install.networkFailure ? 'download-blocked-offline' : 'download-failed',
       detail: install.detail,
     });
   }
+  assertProvisionCurrent(options);
   return report(recorder, browsersPath, resolvedDriver.version, driverFix, {
     ok: false,
     failure: 'binary-missing-after-install',

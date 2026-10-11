@@ -1,4 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+
+afterAll(cleanupResearchScreeningFixtures);
+import { afterAll, describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../../input/command-registry.ts';
@@ -19,10 +23,12 @@ function fakeTool(name: string, calls: Record<string, unknown>[]): Tool {
 }
 
 function makeTool(calls: Record<string, unknown>[] = []): Tool {
+  const registry = new ToolRegistry();
+  bindAgentResearchSourceOwner(registry, ordinaryResearchOwner());
   return createAgentSettingsTool({
     commandRegistry: {} as CommandRegistry,
     commandContext: { workspace: {}, platform: {} } as CommandContext,
-    toolRegistry: new ToolRegistry(),
+    toolRegistry: registry,
     harnessTool: fakeTool('agent_harness', calls),
     settingsImportTool: fakeTool('import_goodvibes_settings', calls),
   });
@@ -44,41 +50,14 @@ describe('settings adapter', () => {
     ]);
   });
 
-  test('routes confirmed setting mutations through existing confirmation gates', async () => {
+  test('direct settings mutations cannot borrow authority from a harness or confirmation metadata', async () => {
     const calls: Record<string, unknown>[] = [];
     const tool = makeTool(calls);
-
-    await tool.execute({
-      action: 'set',
-      setting: 'behavior.saveHistory',
-      value: false,
-      confirm: true,
-      explicitUserRequest: 'Disable history saving.',
-    });
-    await tool.execute({
-      action: 'reset',
-      key: 'provider.reasoningEffort',
-      confirm: true,
-      explicitUserRequest: 'Reset reasoning effort.',
-    });
-
-    expect(calls).toEqual([
-      {
-        tool: 'agent_harness',
-        mode: 'set_setting',
-        key: 'behavior.saveHistory',
-        value: false,
-        confirm: true,
-        explicitUserRequest: 'Disable history saving.',
-      },
-      {
-        tool: 'agent_harness',
-        mode: 'reset_setting',
-        key: 'provider.reasoningEffort',
-        confirm: true,
-        explicitUserRequest: 'Reset reasoning effort.',
-      },
-    ]);
+    const set = await tool.execute({ action: 'set', setting: 'behavior.saveHistory', value: false,
+      confirm: true, explicitUserRequest: 'Disable history saving.' });
+    const reset = await tool.execute({ action: 'reset', key: 'provider.reasoningEffort',
+      confirm: true, explicitUserRequest: 'Reset reasoning effort.' });
+    expect(set.success).toBe(false); expect(reset.success).toBe(false); expect(calls).toEqual([]);
   });
 
   test('previews import by default and applies only when confirmed', async () => {

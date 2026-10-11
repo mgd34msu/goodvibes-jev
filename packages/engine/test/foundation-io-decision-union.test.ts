@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
+import { toJSONSchema } from 'zod/v4';
 import { JEV_DECISION_SCHEMA } from '@goodvibes-jev/judgment/decisions';
 import { renderType } from '../scripts/foundation-io-render.js';
 import { sampleFromSchema } from '../contracts/src/testing/mock-daemon.js';
 import { firstJsonSchemaFailure } from '../transport-http/src/client-plumbing.js';
 import { CONTRACT_VIEW_SCHEMA } from '../sdk/src/platform/control-plane/operator-contract-schemas-contracts.js';
+import { nativeSelectedDiffContextSchema } from '../sdk/src/platform/workflow/work-ledger/native-diff-context.js';
 import { CONTRACT_DURABLE_ADMISSION_SCHEMA } from '../sdk/src/platform/control-plane/operator-contract-schemas-contract-inspection.js';
 
 test('literal JSON Schema const values retain their exact generated TypeScript type', () => {
@@ -46,4 +48,21 @@ test('the complete inspection contract renders and generates a schema-valid samp
   }
   expect(rendered).not.toContain('unknown');
   expect(firstJsonSchemaFailure(CONTRACT_VIEW_SCHEMA, sampleFromSchema(CONTRACT_VIEW_SCHEMA))).toBeUndefined();
+});
+
+test('schema samples retain fixed-width digest constraints in each selected-diff variant', () => {
+  const digest = { type: 'string', pattern: '^[a-f0-9]{64}$' };
+  expect(sampleFromSchema(digest)).toBe('a'.repeat(64));
+  expect(firstJsonSchemaFailure(digest, sampleFromSchema(digest))).toBeUndefined();
+  for (const [pattern, expected] of [['^[0-9]{4}$', '0000'], ['^[A-Z]{2}$', 'AA']] as const) {
+    const schema = { type: 'string', pattern };
+    expect(sampleFromSchema(schema)).toBe(expected);
+    expect(firstJsonSchemaFailure(schema, sampleFromSchema(schema))).toBeUndefined();
+  }
+  for (const branch of nativeSelectedDiffContextSchema.options) {
+    const variant = toJSONSchema(branch);
+    const sample = sampleFromSchema(variant);
+    expect(firstJsonSchemaFailure(variant, sample)).toBeUndefined();
+    expect(sample).toMatchObject({ revision: 'a'.repeat(64) });
+  }
 });

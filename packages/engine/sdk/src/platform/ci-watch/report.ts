@@ -25,7 +25,7 @@ export interface DeriveCiReportInput {
 
 /** Build the per-job report + derived verdict. */
 export function deriveCiReport(input: DeriveCiReportInput): CiReport {
-  const jobs = input.jobs;
+  const jobs = Object.freeze(input.jobs.map(job => Object.freeze({ ...job })));
   const violations: string[] = [];
 
   for (const job of jobs) {
@@ -70,7 +70,7 @@ export function deriveOverall(jobs: readonly CiJob[], hasBlockingViolation: bool
 /** The names of the jobs that did not pass (for notifications and fix-session briefs). */
 export function failingJobNames(report: CiReport): string[] {
   return report.jobs
-    .filter((j) => j.status === 'completed' && !PASSING_CONCLUSIONS.has(j.conclusion ?? ''))
+    .filter((j) => j.status === 'completed' && (j.continueOnError || !PASSING_CONCLUSIONS.has(j.conclusion ?? '')))
     .map((j) => j.name);
 }
 

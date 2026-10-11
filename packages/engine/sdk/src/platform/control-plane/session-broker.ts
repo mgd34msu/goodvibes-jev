@@ -801,9 +801,15 @@ export class SharedSessionBroker {
   async markInputDelivered(
     sessionId: string,
     inputId: string,
-    options: { readonly consumed?: boolean | undefined; readonly agentId?: string | undefined } = {},
+    options: { readonly consumed?: boolean | undefined; readonly agentId?: string | undefined; readonly beforeApply?: (() => void) | undefined } = {},
   ): Promise<SharedSessionInputRecord | null> {
     await this.start();
+    // The async startup boundary must not turn a stale source into a claim.
+    const checked: unknown = options.beforeApply?.();
+    if (checked !== undefined) {
+      void Promise.resolve(checked).catch(() => {});
+      throw new Error('Session delivery authority checks must be synchronous');
+    }
     const applied = applySurfaceInputDelivery(this.sessionInputStore(), sessionId, inputId, options, {
       publish: (event, payload) => this.publishUpdate(event, payload),
       publishInput: (event, input, extra) => this.publishInputLifecycleEvent(event, input, extra),
@@ -864,7 +870,7 @@ export class SharedSessionBroker {
       routeBinding,
     });
     if (spawned?.disposition === 'transferred') {
-      if (spawned.requestId.trim()) await this.markInputDelivered(sessionId, next.id, { consumed: true });
+      if (spawned.requestId.trim() && !spawned.inputConsumed) await this.markInputDelivered(sessionId, next.id, { consumed: true });
       return null;
     }
     if (!spawned?.agentId) return null;

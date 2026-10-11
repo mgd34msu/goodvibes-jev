@@ -1,3 +1,7 @@
+import { captureJudgmentPort, JudgmentPortMissingError, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import type { JsonValue } from '@goodvibes-jev/judgment';
+import { JudgmentInputError, snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { planningGoalSpecified } from './batteries/readiness.js';
 import type {
   ProjectPlanningEvaluation,
   ProjectPlanningGap,
@@ -6,22 +10,81 @@ import type {
   ProjectPlanningState,
 } from './types.js';
 
-const VAGUE_TERMS = [
-  'better',
-  'improve',
-  'improved',
-  'setup',
-  'integration',
-  'agent channel',
-  'remote',
-  'thing',
-  'stuff',
-  'etc',
-  'clean up',
-  'fix it',
-];
+/** A reading owns the immutable state and its publication restrictions. */
+export interface PreparedPlanningReadiness {
+  readonly evaluation: ProjectPlanningEvaluation;
+  readonly assertCurrent: () => void;
+}
 
-export function evaluateProjectPlanningReadiness(state: ProjectPlanningState): ProjectPlanningEvaluation {
+export async function evaluateProjectPlanningReadiness(
+  state: ProjectPlanningState,
+  options: JudgmentReadingOptions = {},
+): Promise<ProjectPlanningEvaluation> {
+  const prepared = await prepareProjectPlanningReadiness(state, options);
+  prepared.assertCurrent();
+  return prepared.evaluation;
+}
+
+export async function prepareProjectPlanningReadiness(
+  input: ProjectPlanningState,
+  options: JudgmentReadingOptions = {},
+): Promise<PreparedPlanningReadiness> {
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const check = () => { signal?.throwIfAborted(); callerCurrent?.(); };
+  check();
+  // Admit the complete state before projection, including unknown metadata.
+  const state = snapshotJudgmentInput(input) as ProjectPlanningState;
+  if (!state.goal.trim()) return { evaluation: composeReadiness(state, 'unavailable'), assertCurrent: check };
+  const reading = await readPlanningSemanticFacts(planningSemanticFacts(state), options);
+  reading.assertCurrent();
+  return { evaluation: composeReadiness(state, reading.semantic), assertCurrent: reading.assertCurrent };
+}
+
+/** Pure projection; it grants no input admission or publication authority. */
+export function planningSemanticFacts(state: ProjectPlanningState): Record<string, JsonValue> {
+  return JSON.parse(JSON.stringify({
+    goal: state.goal, scope: state.scope, knownContext: state.knownContext,
+    constraints: state.constraints, assumptions: state.assumptions,
+    tasks: state.tasks.map(task => ({ title: task.title, why: task.why, verification: task.verification })),
+    answeredQuestions: state.answeredQuestions.map(question => ({ prompt: question.prompt, answer: question.answer, status: question.status })),
+    decisions: state.decisions.map(decision => ({ title: decision.title, context: decision.context, decision: decision.decision, status: decision.status })),
+  })) as Record<string, JsonValue>;
+}
+
+/** Independently admit every supplied fact before acquiring the semantic port. */
+export async function readPlanningSemanticFacts(input: Record<string, JsonValue>, options: JudgmentReadingOptions = {}) {
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const check = () => { signal?.throwIfAborted(); callerCurrent?.(); };
+  check();
+  const facts = snapshotJudgmentInput(input) as Record<string, JsonValue>;
+  let authority: ReturnType<typeof captureJudgmentPort>;
+  try { authority = captureJudgmentPort(SITE, { signal, assertCurrent: check }); }
+  catch (error) {
+    if (!(error instanceof JudgmentPortMissingError)) throw error;
+    check();
+    return { semantic: 'unavailable' as const, assertCurrent: check };
+  }
+  let semantic: 'specified' | 'ambiguous' | 'unavailable' = 'unavailable';
+  try {
+    const run = await planningGoalSpecified.run(authority.port, facts, { site: SITE, signal: authority.signal });
+    authority.assertCurrent();
+    const reading = run.readings.specified;
+    if (reading.outcome === 'act') semantic = reading.verdict === 'yes' ? 'specified' : 'ambiguous';
+    run.recordAction(`readiness:${semantic}`);
+    authority.assertCurrent();
+  } catch (error) {
+    authority.assertCurrent();
+    // A failed reading remains unavailable; it cannot become a language verdict.
+    if (error instanceof JudgmentInputError) throw error;
+    semantic = 'unavailable';
+  }
+  authority.assertCurrent();
+  return { semantic, assertCurrent: authority.assertCurrent };
+}
+
+const SITE = 'knowledge.planning.goal-specified';
+
+export function composeReadiness(state: ProjectPlanningState, semantic: 'specified' | 'ambiguous' | 'unavailable'): ProjectPlanningEvaluation {
   const gaps: ProjectPlanningGap[] = [];
   const goal = state.goal.trim();
   if (!goal) {
@@ -53,15 +116,17 @@ export function evaluateProjectPlanningReadiness(state: ProjectPlanningState): P
       });
     }
   }
-  const vagueTerm = firstVagueTerm(goal);
-  if (vagueTerm && state.answeredQuestions.length === 0 && state.decisions.length === 0) {
+  if (goal && semantic === 'ambiguous') {
     gaps.push(blockingQuestion(
       'ambiguous-language',
-      `The goal uses ambiguous language (${JSON.stringify(vagueTerm)}) without recorded clarification.`,
-      `When you say ${JSON.stringify(vagueTerm)}, what concrete behavior should change?`,
-      'GoodVibes should challenge vague words before work starts so future agents do not implement the wrong thing.',
-      'Define the term in project language or replace it with concrete expected behavior.',
+      'The goal and recorded context do not yet specify a concrete outcome.',
+      'What concrete behavior or project change should this goal produce?',
+      'Clarifying the desired outcome prevents agents from implementing the wrong thing.',
+      'Describe the expected behavior and clarify how it differs from the current behavior.',
     ));
+  } else if (goal && semantic === 'unavailable') {
+    gaps.push({ id: 'readiness-unavailable', kind: 'readiness-unavailable', severity: 'blocking',
+      message: 'The semantic readiness reading is unavailable or inconclusive. Retry evaluation before execution.' });
   }
   if (goal && state.tasks.length === 0) {
     gaps.push(blockingQuestion(
@@ -134,11 +199,6 @@ function readinessFromGaps(gaps: readonly ProjectPlanningGap[]): ProjectPlanning
   if (gaps.length === 0) return 'executable';
   if (gaps.some((gap) => gap.severity === 'blocking')) return 'needs-user-input';
   return 'not-ready';
-}
-
-function firstVagueTerm(value: string): string | null {
-  const normalized = value.toLowerCase();
-  return VAGUE_TERMS.find((term) => normalized.includes(term)) ?? null;
 }
 
 function blockingQuestion(

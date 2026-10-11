@@ -105,6 +105,7 @@ function createRunHandler(service: CiWatchGatewayService): GatewayMethodHandler 
         ...(result.notificationId ? { notificationId: result.notificationId } : {}),
         fixSessionTriggered: result.fixSessionTriggered,
         ...(result.fixSessionId ? { fixSessionId: result.fixSessionId } : {}),
+        ...(result.fixSessionError ? { fixSessionError: result.fixSessionError } : {}),
       };
     } catch (error) {
       rethrow(error);

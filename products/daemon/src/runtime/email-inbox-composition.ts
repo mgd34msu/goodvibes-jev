@@ -1,3 +1,6 @@
+import { attachDaemonInboxTagging, type DaemonTriageTaggingActivation } from './tagged-inbox-composition.js';
+import { createMultiOwnerDaemonInboxFactory } from './multiowner-inbox-composition.js';
+import { createInboxRouteResolver } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { ClusterClock } from '@goodvibes-jev/engine/sdk/platform/cluster';
 import { ownInboxEligibility } from './inbox-eligibility.js';
 /** Explicit single-account mail inbox; does not enable all-provider default serve. */
@@ -12,6 +15,7 @@ import type { DaemonInboxSourceFactory } from './multiowner-inbox-composition.js
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
 export interface EmailDaemonInboxOptions {
+  readonly triageTagging?: DaemonTriageTaggingActivation;
   /** Expected TLS endpoint/account/mailbox established by the trusted host. */
   readonly account: EmailInboxAccount;
   readonly screening: ProtectedSourceOwnerOptions;
@@ -35,6 +39,10 @@ export function createEmailDaemonInboxSourceFactory(options: EmailDaemonInboxOpt
 
 export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
   factories: EmailDaemonInboxFactories = {}): DaemonInboxFactory {
+  if (options.triageTagging) {
+    if (factories.registerSurface) throw new Error('Triage tagging requires an owned source, not a legacy registrar');
+    return createMultiOwnerDaemonInboxFactory([createEmailDaemonInboxSourceFactory(options, factories)]);
+  }
   return createEmailAccountFactory(options, factories, factories.registerSurface ?? registerInboxSurface);
 }
 
@@ -42,7 +50,14 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
   factories: Pick<EmailDaemonInboxFactories, 'createOwner' | 'eligibilityClock'>,
   register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1]) => T,
 ): (...args: Parameters<DaemonInboxFactory>) => Promise<T> {
-  return async (context, _routing, controls) => {
+  const triageTagging = options.triageTagging ? Object.freeze({ onReady: options.triageTagging.onReady }) : undefined;
+  if (triageTagging && typeof triageTagging.onReady !== 'function') throw new Error('Triage tagging requires an explicit owner callback');
+  return async (context, routing, controls) => {
+    if (triageTagging && (!controls.createTriageTagging || !controls.onAccountInvalidation)) throw new Error('Triage tagging requires the canonical daemon permission and credential owners');
+    const resolveProfileId = routing.resolveProfileId.bind(routing);
+    const resolveRouteId = createInboxRouteResolver({
+      getProfileForChannel: resolveProfileId, resolveProfile: resolveProfileId,
+    });
     // The canonical daemon mailbox has no separate enable switch. Its shared
     // reader derives readiness from configured endpoint/account fields.
     const config: { get(key: string): unknown } = context.configManager;
@@ -64,7 +79,7 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
     let surface: T | undefined;
     try {
       owner = (factories.createOwner ?? createEmailInboxOwner)({ account: options.account, service: mail.service,
-        screening: options.screening, assertCurrent: current,
+        screening: options.screening, assertCurrent: current, resolveRouteId,
         getCheckpoint: () => {
           if (!surface?.getImapCheckpoint) throw new Error('Email inbox checkpoint storage is unavailable');
           return surface.getImapCheckpoint('email');
@@ -109,11 +124,15 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
       }
       return closing;
     };
-    return {
+    const result = {
       ...registration,
       unregister() { void close().catch(() => {}); },
       ready: Promise.all([registration.ready, eligibility?.ready]).then(() => {}),
       close,
     };
+    return triageTagging ? attachDaemonInboxTagging(result, triageTagging, controls, {
+      provider: 'email', accountScopeId: selectedOwner.scopeId, assertCurrent: current,
+      imap: { host: selectedOwner.account.host, port: selectedOwner.account.port, user: selectedOwner.account.username, mailbox: selectedOwner.account.mailbox },
+    }) : result;
   };
 }

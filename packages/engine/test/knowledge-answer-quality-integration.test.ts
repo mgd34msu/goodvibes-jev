@@ -33,7 +33,7 @@ async function fixture(extracted = true) {
 }
 /** The answer boundary must also reject invalid active facts left by pre-gate versions. */
 async function legacyFact(store: KnowledgeStore, fact: KnowledgeNodeRecord): Promise<KnowledgeStore> {
-  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 7 });
+  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema, { schemaVersion: 9 });
   writeKnowledgeNodeRow(sqlite, fact); await sqlite.save();
   const reloaded = new KnowledgeStore({ dbPath: store.storagePath }); await reloaded.init(); return reloaded;
 }
