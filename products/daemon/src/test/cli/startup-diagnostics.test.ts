@@ -268,14 +268,25 @@ test('a listener stopped during held boot cannot publish bound or readiness afte
 for (const shutdown of [false, true]) {
   test(`a restart admitted during boot settles before diagnostics${shutdown ? ' and shutdown fences them' : ''}`, async () => {
     const bootEntered = gate(); const bootRelease = gate(); const restartEntered = gate(); const restartRelease = gate();
+    const serve = Bun.serve;
+    let nativeListener: ReturnType<typeof Bun.serve> | undefined;
+    keep(spyOn(Bun, 'serve').mockImplementation((options) => {
+      const listener = serve(options); nativeListener = listener; return listener;
+    }));
     const f = await fixture((services) => {
       const start = services.bootTasks!.start;
       keep(spyOn(services.bootTasks!, 'start').mockImplementation(async () => { bootEntered.resolve(); await bootRelease.promise; return start(); }));
     });
     enablePairing(f); const pairing: string[] = [];
     const handle = f.start(undefined, undefined, (line) => { pairing.push(line); }); await bootEntered.promise;
-    const daemon = f.host!.daemon!; const stop = daemon.stop.bind(daemon);
-    keep(spyOn(daemon, 'stop').mockImplementationOnce(async () => { restartEntered.resolve(); await restartRelease.promise; await stop(); }));
+    const daemon = f.host!.daemon!;
+    if (!nativeListener) throw new Error('The original native listener did not bind');
+    const listener = nativeListener; const stop = listener.stop;
+    keep(spyOn(listener, 'stop').mockImplementationOnce((...args) => {
+      const closing = stop.apply(listener, args);
+      restartEntered.resolve();
+      return Promise.resolve(closing).then(() => restartRelease.promise);
+    }));
     const [newPort] = await availableLoopbackPorts(1);
     f.configuration.config.set('controlPlane.port', newPort!);
     await restartEntered.promise;
