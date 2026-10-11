@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,28 @@ const childEnv = { PATH: '/usr/bin:/bin', HOME: home, TMPDIR: join(root, 'tmp'),
   GOODVIBES_SKIP_WAKE_MODEL_DOWNLOAD: '1' };
 const writeJson = (path, value) => writeFileSync(path, JSON.stringify(value));
 const wait = ms => new Promise(yes => setTimeout(yes, ms));
+// Advisory reachability only: a connection never proves listener ownership.
+// This runs after qualification already failed, sends no bytes, and cannot
+// turn a late startup into a pass or extend the original readiness budget.
+async function observeDeadlinePort(port) {
+  const socket = createConnection({ host: '127.0.0.1', port });
+  let timer;
+  try {
+    return await new Promise(yes => {
+      let portConnection = 'unobserved', closing = false;
+      const finish = () => {
+        if (closing) return;
+        closing = true; clearTimeout(timer); socket.destroy();
+        timer = setTimeout(() => yes({ portConnection, probeClosed: false }), 500);
+      };
+      socket.once('close', () => yes({ portConnection, probeClosed: true }));
+      socket.once('connect', () => { if (!closing) portConnection = 'accepted'; finish(); });
+      socket.once('error', error => { if (!closing && error.code === 'ECONNREFUSED') portConnection = 'refused'; finish(); });
+      timer = setTimeout(finish, 500);
+    });
+  } finally { clearTimeout(timer); socket.destroy(); }
+}
+
 async function closeServer(server) {
   if (!server?.listening) return;
   server.closeAllConnections(); await new Promise((yes, no) => server.close(error => error ? no(error) : yes()));
@@ -111,8 +134,12 @@ try {
   host = spawn(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
     cwd: work, env: { ...childEnv, ...judgmentEnv, GOODVIBES_DAEMON_TOKEN: token }, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  hostPid = host.pid; let output = '', errors = '';
-  host.stdout.on('data', chunk => { output += chunk; if (output.length + errors.length > 1_048_576) signalNativeProcessGroup(host); });
+  hostPid = host.pid; let output = '', errors = '', startupBannerObservedAt;
+  host.stdout.on('data', chunk => {
+    output += chunk;
+    if (startupBannerObservedAt === undefined && output.includes(' starting:')) startupBannerObservedAt = Date.now();
+    if (output.length + errors.length > 1_048_576) signalNativeProcessGroup(host);
+  });
   host.stderr.on('data', chunk => { errors += chunk; if (output.length + errors.length > 1_048_576) signalNativeProcessGroup(host); });
   hostStopped = new Promise((yes, no) => {
     host.once('error', no); host.once('close', (code, signal) => { hostExited = true; yes({ code, signal }); });
@@ -120,7 +147,20 @@ try {
   const started = Date.now();
   while (!output.includes('host started')) {
     assert(!hostExited, `Native host exited before readiness: ${output} ${errors}`); assert.ifError(judgmentError);
-    assert(Date.now() - started < 20_000, `Native host startup deadline: ${output} ${errors}`); await wait(25);
+    const elapsedMs = Date.now() - started;
+    if (elapsedMs >= 20_000) {
+      // Capture the failing boundary before the diagnostic yields. These are
+      // fixed booleans/counts; no settings, paths, request text or errors enter it.
+      const failureOutput = output, failureErrors = errors;
+      const observation = { elapsedMs, processClosed: hostExited, requestCount: requests.length,
+        startupBannerDelayMs: startupBannerObservedAt === undefined ? null : startupBannerObservedAt - started,
+        startupBannerObserved: output.includes(' starting:'), boundBannerObserved: output.includes(' bound:'),
+        readyBannerObserved: output.includes('host started') };
+      const portObservation = await observeDeadlinePort(port).catch(() => ({ portConnection: 'unobserved', probeClosed: false }));
+      console.error(JSON.stringify({ proof: 'native-startup-deadline-observation', ...observation, ...portObservation }));
+      assert.fail(`Native host startup deadline: ${failureOutput} ${failureErrors}`);
+    }
+    await wait(25);
   }
   assert(Number.isSafeInteger(hostPid) && hostPid > 0, 'Retain the actual spawned daemon PID');
   const lines = output.trim().split('\n');
