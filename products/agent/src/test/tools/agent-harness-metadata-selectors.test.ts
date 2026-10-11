@@ -197,6 +197,60 @@ describe('canonical CLI and keybinding metadata selectors', () => {
     });
   });
 
+  test('retained metadata source guards survive execution retirement and still hold changed arguments and cancellation', async () => {
+    for (const kind of ['cli', 'keybinding', 'shortcuts']) {
+      const args = { query: '' }, controller = new AbortController(), guards: (() => void)[] = [];
+      let active = true, calls = 0;
+      const acquired = { signal: controller.signal, assertCurrent: () => {
+        calls++; if (!active) throw new Error('metadata execution retired');
+      }, retainCurrent: (guard: () => void) => { guards.push(guard); } };
+      if (kind === 'cli') await listHarnessCliCommands(args, acquired);
+      else if (kind === 'keybinding') await listHarnessKeybindings(emptyContext, args, acquired);
+      else await listHarnessShortcuts(emptyContext, args, acquired);
+      expect(calls).toBeGreaterThan(0); expect(guards.length).toBeGreaterThan(0);
+      active = false;
+      const activeCalls = calls;
+      for (const guard of guards) guard();
+      expect(calls).toBe(activeCalls);
+      args.query = 'changed original request';
+      expect(() => { for (const guard of guards) guard(); }).toThrow(ToolInputProjectionError);
+      args.query = '';
+      controller.abort(new Error('metadata source cancelled'));
+      expect(() => { for (const guard of guards) guard(); }).toThrow('metadata source cancelled');
+    }
+  });
+
+  test('the original active metadata callback still holds a result after its reading', async () => {
+    for (const kind of ['cli', 'keybinding', 'shortcuts']) {
+      let active = true;
+      const fake = readings({ doctor: 0.99, paste: 0.99 });
+      installJudgmentPort({ ...fake.port, ask: async request => {
+        const result = await fake.port.ask(request); active = false; return result;
+      } });
+      const acquired = { ...options(), assertCurrent: () => { if (!active) throw new Error('metadata execution retired'); } };
+      const pending = kind === 'cli' ? describeHarnessCliCommand({ query: 'Call isolated Agent Knowledge routes' }, acquired)
+        : kind === 'keybinding' ? describeHarnessKeybinding(emptyContext, { query: 'conversation search' }, acquired)
+        : listHarnessShortcuts(emptyContext, { query: 'conversation search' }, acquired);
+      await expect(pending).rejects.toThrow('metadata execution retired');
+      expect(fake.requests.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('a replaced metadata backend holds the old result before publication', async () => {
+    for (const kind of ['cli', 'keybinding', 'shortcuts']) {
+      const fake = readings({ doctor: 0.99, paste: 0.99 });
+      const replacement = readings({ doctor: 0.99, paste: 0.99 });
+      installJudgmentPort({ ...fake.port, ask: async request => {
+        const result = await fake.port.ask(request); installJudgmentPort(replacement.port); return result;
+      } });
+      const pending = kind === 'cli' ? describeHarnessCliCommand({ query: 'Call isolated Agent Knowledge routes' }, options())
+        : kind === 'keybinding' ? describeHarnessKeybinding(emptyContext, { query: 'conversation search' }, options())
+        : listHarnessShortcuts(emptyContext, { query: 'conversation search' }, options());
+      await expect(pending).rejects.toThrow();
+      expect(fake.requests.length).toBeGreaterThan(0); expect(replacement.requests).toHaveLength(0);
+    }
+  });
+
   test('accessor-bearing metadata arguments hold without invoking the getter', async () => {
     let touched = 0;
     const args = { get query() { touched++; return 'conversation search'; } };

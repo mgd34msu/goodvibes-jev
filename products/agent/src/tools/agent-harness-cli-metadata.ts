@@ -119,14 +119,18 @@ function captureCliSources(args: AgentHarnessCliArgs, options: CatalogRankingOpt
   const commands = captureCatalogData(readCommands());
   const input = captureCatalogData(args);
   const revision = JSON.stringify({ commands, input });
-  const assertCurrent = () => {
+  const assertBinding = () => {
     if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== outerCurrent
       || options.retainCurrent !== retainCurrent || options.requirePreservedSource !== preserved) throw new ToolInputProjectionError('held');
-    signal?.throwIfAborted(); outerCurrent?.();
+    signal?.throwIfAborted();
+  };
+  const assertSource = () => {
+    assertBinding();
     if (JSON.stringify(captureCatalogData({ commands: readCommands(), input: args })) !== revision) throw new ToolInputProjectionError('stale');
   };
+  const assertCurrent = () => { assertBinding(); outerCurrent?.(); assertSource(); };
   assertCurrent();
-  retainCurrent?.(assertCurrent, 'agent.harness.cli-commands.sources');
+  retainCurrent?.(assertSource, 'agent.harness.cli-commands.sources');
   assertCurrent();
   return { commands, input, assertCurrent };
 }

@@ -248,19 +248,23 @@ function captureKeybindingSources(context: KeybindingContext, args: HarnessKeybi
   const defaults = captureCatalogData(defaultKeybindingEntries());
   const revision = JSON.stringify({ entries, configPath, input, defaults });
   const getAll = manager?.getAll, getConfigPath = manager?.getConfigPath, format = manager?.formatCombo;
-  const assertCurrent = () => {
+  const assertBinding = () => {
     if (options.signal !== signal || options.sourceOwner !== owner || options.assertCurrent !== outerCurrent
       || options.retainCurrent !== retainCurrent || options.requirePreservedSource !== preserved) throw new ToolInputProjectionError('held');
-    signal?.throwIfAborted(); outerCurrent?.();
+    signal?.throwIfAborted();
+  };
+  const assertSource = () => {
+    assertBinding();
     if (readKeybindingsManager(context) !== manager || manager?.getAll !== getAll || manager?.getConfigPath !== getConfigPath
       || manager?.formatCombo !== format || JSON.stringify(captureCatalogData({
         entries: manager?.getAll() ?? defaultKeybindingEntries(), configPath: manager?.getConfigPath() ?? null, input: args, defaults: defaultKeybindingEntries(),
       })) !== revision) throw new ToolInputProjectionError('stale');
   };
+  const assertCurrent = () => { assertBinding(); outerCurrent?.(); assertSource(); };
   assertCurrent();
-  if (retainSources) retainCurrent?.(assertCurrent, 'agent.harness.keybindings.sources');
+  if (retainSources) retainCurrent?.(assertSource, 'agent.harness.keybindings.sources');
   assertCurrent();
-  return { manager, entries, configPath, input, assertCurrent };
+  return { manager, entries, configPath, input, assertCurrent, assertSource };
 }
 
 async function rankKeybindings(sources: ReturnType<typeof captureKeybindingSources>, query: string, options: CatalogRankingOptions) {
@@ -574,11 +578,12 @@ export async function listHarnessShortcuts(context: KeybindingContext, args: Har
   const keybindings = await listHarnessKeybindings(context, sources.input, options);
   const query = readString(sources.input.query);
   const allFixed = captureCatalogData(FIXED_SHORTCUTS);
-  const assertCurrent = () => {
-    sources.assertCurrent();
+  const assertSource = () => {
+    sources.assertSource();
     if (JSON.stringify(captureCatalogData(FIXED_SHORTCUTS)) !== JSON.stringify(allFixed)) throw new ToolInputProjectionError('stale');
   };
-  options.retainCurrent?.(assertCurrent, 'agent.harness.shortcuts.sources');
+  const assertCurrent = () => { sources.assertCurrent(); assertSource(); };
+  options.retainCurrent?.(assertSource, 'agent.harness.shortcuts.sources');
   const selected = query ? await rankHarnessCatalog(allFixed, query,
     shortcut => ({ id: shortcut.key, description: `${shortcut.key}\n${shortcut.description}`, evidence: shortcut }),
     'agent.harness.shortcuts', { ...options, requirePreservedSource: true, assertCurrent })
