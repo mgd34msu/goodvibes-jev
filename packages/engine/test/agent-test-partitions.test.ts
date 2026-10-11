@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
@@ -202,6 +202,11 @@ test('CI keeps exact artifacts, complete gates, other product commands and uncha
   for (const prerequisite of ['workspace-build-output', 'ci-artifact.ts verify "$GITHUB_SHA"', 'goodvibes-agent-linux-x64 --version', 'GOODVIBES_E2E_BINARY=', 'install --no-install-recommends -y tmux', 'git config --global user.email', 'git config --global user.name']) expect(agent).toContain(prerequisite);
   expect(agent).not.toContain('run-tests.ts');
   expect(agent).not.toContain('GOODVIBES_TEST_CEILING_MS');
+  expect(agent).toContain('id: agent-test-run');
+  expect(agent).toContain("if: ${{ always() && steps.agent-test-run.outputs.owner_evidence != '' }}");
+  expect(agent).toContain('name: agent-owner-evidence-${{ matrix.group }}-${{ github.run_attempt }}');
+  expect(agent).toContain('path: ${{ steps.agent-test-run.outputs.owner_evidence }}');
+  expect(agent).toContain('if-no-files-found: error');
   const aggregate = workflow.split('\n  agent-tests-complete:\n')[1]!.split('\n  # Exact TUI')[0]!;
   expect(aggregate).toContain('name: Product tests (agent)');
   expect(aggregate).toContain('if: always()');
@@ -327,10 +332,11 @@ for (const outcome of ['pass', 'failure', 'ceiling', 'cancel', 'force-kill', 'pa
         expect(${outcome === 'failure' && file === catalogs[0] ? 'false' : 'true'}).toBe(true);
       });
     `);
-    const log = join(root, 'run.stdout.log'), errors = join(root, 'run.stderr.log');
+    const log = join(root, 'run.stdout.log'), errors = join(root, 'run.stderr.log'), githubOutput = join(root, 'github-output');
+    writeFileSync(githubOutput, '');
     const parent = Bun.spawn([process.execPath, join(scripts, 'agent-test-partitions.ts'), 'run', '--group=remaining', `--manifest-sha256=${manifest.sha256}`], {
       cwd: root, stdout: Bun.file(log), stderr: Bun.file(errors),
-      env: { PATH: process.env.PATH ?? '', HOME: root, OPENAI_API_KEY: 'Synthetic-must-not-inherit', ...(outcome === 'ceiling' ? { GOODVIBES_TEST_CEILING_MS: '1000' } : {}) },
+      env: { PATH: process.env.PATH ?? '', HOME: root, GITHUB_OUTPUT: githubOutput, OPENAI_API_KEY: 'Synthetic-must-not-inherit', ...(outcome === 'ceiling' ? { GOODVIBES_TEST_CEILING_MS: '1000' } : {}) },
     });
     try {
       if (outcome === 'cancel' || outcome === 'force-kill' || outcome === 'parent-death') {
@@ -360,13 +366,40 @@ for (const outcome of ['pass', 'failure', 'ceiling', 'cancel', 'force-kill', 'pa
       }
       if (outcome === 'ceiling') expect(output).toContain('shared absolute deadline');
       if (outcome === 'root-removal') expect(output).toContain('The owned Agent project test root no longer exists');
-      if (outcome !== 'pass' && outcome !== 'parent-death') {
+      if (outcome !== 'parent-death') {
+        const finiteLine = /^goodvibes: test owner results (.+)$/m.exec(output)?.[1];
+        if (!finiteLine) throw new Error('Expected both settled native owner summaries before any first-owner failure');
+        const finite: unknown = JSON.parse(finiteLine);
+        if (!Array.isArray(finite)) throw new Error('Expected finite native owner result array');
+        expect(finite).toHaveLength(2);
+        for (let index = 0; index < finite.length; index++) {
+          const result: unknown = finite[index];
+          if (!result || typeof result !== 'object' || !('owner' in result) || !('status' in result)) throw new Error('Expected exact native result metadata');
+          expect(result.owner).toBe(index + 1);
+          expect(Object.keys(result).sort()).toEqual(result.status === 'fulfilled'
+            ? ['exitCode', 'outputTruncated', 'owner', 'signalCode', 'status', 'stopped'] : ['owner', 'status']);
+        }
+        const exported = readFileSync(githubOutput, 'utf8').trim().split('\n');
+        expect(exported[0]).toBe(`owner_evidence<<GOODVIBES_OWNER_EVIDENCE_${parent.pid}`);
+        expect(exported.at(-1)).toBe(`GOODVIBES_OWNER_EVIDENCE_${parent.pid}`);
+        expect(exported).toHaveLength(5);
         const retained = /^goodvibes: test owner evidence retained at (.+)$/m.exec(output)?.[1];
         if (!retained) throw new Error('Expected retained complete private owner logs');
+        expect(exported.slice(1, -1)).toEqual([join(retained, 'owner-1.log'), join(retained, 'owner-2.log'), join(retained, 'owner-results.json')]);
+        const nativeOwner: unknown = JSON.parse(readFileSync(join(retained, '.goodvibes-test-owner.json'), 'utf8'));
+        expect(nativeOwner).toEqual({ version: 1, pid: parent.pid, dev: lstatSync(retained).dev, ino: lstatSync(retained).ino });
+        for (const path of exported.slice(1, -1)) { expect(lstatSync(path).isFile()).toBe(true); expect(lstatSync(path).isSymbolicLink()).toBe(false); }
         const summary: unknown = JSON.parse(readFileSync(join(retained, 'owner-results.json'), 'utf8'));
         if (!summary || typeof summary !== 'object' || !('results' in summary) || !Array.isArray(summary.results)
           || !('plans' in summary) || !Array.isArray(summary.plans)) throw new Error('Expected complete native result and selection manifest');
         expect(summary.results).toHaveLength(2); expect(summary.plans).toHaveLength(2);
+        expect(finite).toEqual(summary.results.map((result, index) => result.status === 'fulfilled'
+          ? { owner: index + 1, status: result.status, exitCode: result.value.exitCode, signalCode: result.value.signalCode, stopped: result.value.stopped, outputTruncated: result.value.outputTruncated }
+          : { owner: index + 1, status: result.status }));
+        if (outcome === 'failure') {
+          expect(summary.results.map(result => result.value.exitCode)).toEqual([1, 0]);
+          expect(output.indexOf('goodvibes: test owner results ')).toBeLessThan(output.indexOf('bun test exited with code 1'));
+        }
         for (let index = 1; index <= 2; index++) expect(readFileSync(join(retained, `owner-${index}.log`), 'utf8')).toContain('bun test');
         if (outcome === 'force-kill') {
           expect(readFileSync(refused, 'utf8').trim().split('\n')).toHaveLength(2);
@@ -376,6 +409,7 @@ for (const outcome of ['pass', 'failure', 'ceiling', 'cancel', 'force-kill', 'pa
           expect('replay' in summary && summary.replay && typeof summary.replay === 'object' && 'outputTruncated' in summary.replay && summary.replay.outputTruncated).toBe(true);
         }
       }
+      if (outcome === 'parent-death') expect(readFileSync(githubOutput, 'utf8')).toBe('');
       const records = readFileSync(receipt, 'utf8').trim().split('\n').map(line => {
         const row: unknown = JSON.parse(line);
         if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Expected actual child receipt');
@@ -421,3 +455,36 @@ for (const outcome of ['pass', 'failure', 'ceiling', 'cancel', 'force-kill', 'pa
     }
   }, 60_000);
 }
+
+test('settled owner diagnostics refuse a replaced native log before replay or artifact export', async () => {
+  const { root, agent } = fixture(), scripts = copyRunner(root);
+  const catalogs = ['src/test/tools/agent-harness-tool.test.ts', 'src/test/tools/agent-harness-semantic-record-catalogs.test.ts'];
+  for (const file of catalogs) write(agent, file);
+  const files = agentTestManifest(agent).groups[4]!.files;
+  const peer = join(root, 'unrelated-private-log'), githubOutput = join(root, 'github-output'), nativeTmpParent = join(root, 'native-tmp');
+  mkdirSync(nativeTmpParent);
+  writeFileSync(peer, 'Unrelated private log must never be relayed or uploaded');
+  writeFileSync(githubOutput, '');
+  for (const file of files) write(agent, file, `
+    import {test,expect} from 'bun:test';
+    import {existsSync,readdirSync,renameSync,symlinkSync} from 'node:fs';
+    import {join} from 'node:path';
+    test(${JSON.stringify(file)},()=>{
+      expect(process.env.GITHUB_OUTPUT).toBeUndefined();
+      ${file === catalogs[0] ? `const names=readdirSync(${JSON.stringify(nativeTmpParent)}).filter(name=>name.startsWith('goodvibes-sdk-testrun-'+process.ppid+'-')&&existsSync(join(${JSON.stringify(nativeTmpParent)},name,'owner-1.log')));
+        expect(names).toHaveLength(1);const path=join(${JSON.stringify(nativeTmpParent)},names[0]!,'owner-1.log');renameSync(path,path+'.original');symlinkSync(${JSON.stringify(peer)},path);` : ''}
+    });
+  `);
+  const manifest = agentTestManifest(agent);
+  const parent = Bun.spawn([process.execPath, join(scripts, 'agent-test-partitions.ts'), 'run', '--group=remaining', `--manifest-sha256=${manifest.sha256}`], {
+    cwd: root, env: { PATH: process.env.PATH ?? '', HOME: root, GITHUB_OUTPUT: githubOutput, TMPDIR: nativeTmpParent, TMP: nativeTmpParent, TEMP: nativeTmpParent }, stdout: 'pipe', stderr: 'pipe',
+  });
+  const [code, stdout, stderr] = await Promise.all([parent.exited, new Response(parent.stdout).text(), new Response(parent.stderr).text()]);
+  const output = stdout + stderr;
+  expect(code).not.toBe(0);
+  expect(output).toContain('goodvibes: test owner results ');
+  expect(output).toContain('Test owner log ownership changed');
+  expect(output).not.toContain('Unrelated private log must never be relayed or uploaded');
+  expect(readFileSync(githubOutput, 'utf8')).toBe('');
+  expect(readFileSync(peer, 'utf8')).toBe('Unrelated private log must never be relayed or uploaded');
+}, 60_000);

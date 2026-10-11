@@ -1,4 +1,4 @@
-import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, createWriteStream, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
@@ -86,6 +86,17 @@ function hasExplicitTimeout(testArgs: readonly string[]): boolean {
   return testArgs.some((arg) => arg === '--timeout' || arg.startsWith('--timeout='));
 }
 
+function captureEvidenceFile(path: string): () => void {
+  const identity = lstatSync(path);
+  if (!identity.isFile() || identity.isSymbolicLink() || realpathSync(path) !== path) throw new Error('Test owner evidence must be an owned regular file');
+  return () => {
+    const current = lstatSync(path);
+    if (!current.isFile() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino || realpathSync(path) !== path) {
+      throw new Error('Test owner evidence file ownership changed');
+    }
+  };
+}
+
 /** Relay complete private logs without extending the shared execution deadline. */
 export async function replayTestOwnerLogs(paths: readonly string[], deadlineAt: number, sink: Writable = process.stdout, signal?: AbortSignal): Promise<{ outputTruncated: boolean; stopReason: string | null }> {
   const abort = new AbortController();
@@ -128,6 +139,19 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
       sweepStaleTmpDirs(projectTmpParent, RUN_TMP_PREFIX, STALE_RUN_MS);
     }
     await withRunTmpDir(TEST_TMP_ROOT, async (runTmpDir) => {
+      const runIdentity = lstatSync(runTmpDir);
+      const ownerPath = join(runTmpDir, '.goodvibes-test-owner.json');
+      const assertOwnerFile = captureEvidenceFile(ownerPath);
+      const ownerBytes = readFileSync(ownerPath, 'utf8');
+      const assertEvidenceRoot = () => {
+        const current = lstatSync(runTmpDir);
+        if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== runIdentity.dev || current.ino !== runIdentity.ino || realpathSync(runTmpDir) !== runTmpDir) {
+          throw new Error('Test owner evidence root ownership changed');
+        }
+        assertOwnerFile();
+        if (readFileSync(ownerPath, 'utf8') !== ownerBytes) throw new Error('Test owner evidence issuer changed');
+      };
+      const logFiles: { readonly path: string; readonly assertCurrent: () => void }[] = [];
       const interrupted = new AbortController();
       const onInterrupt = () => interrupted.abort(new Error('The shared test runner was interrupted'));
       const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
@@ -139,7 +163,19 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
         const deadlineAt = Date.now() + ceilingMs;
         const runPlan = async (testArgs: readonly string[], index: number) => {
           const timeoutArgs = hasExplicitTimeout(testArgs) ? [] : [`--timeout=${resolveTimeoutMs()}`];
-          const output = plans.length > 1 ? createWriteStream(join(runTmpDir, `owner-${index + 1}.log`)) : undefined;
+          const output = plans.length > 1 ? (() => {
+            assertEvidenceRoot();
+            const path = join(runTmpDir, `owner-${index + 1}.log`);
+            const fd = openSync(path, 'wx', 0o600);
+            const identity = fstatSync(fd);
+            logFiles[index] = { path, assertCurrent: () => {
+              const current = lstatSync(path);
+              if (!current.isFile() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino || realpathSync(path) !== path) {
+                throw new Error('Test owner log ownership changed');
+              }
+            } };
+            return createWriteStream(path, { fd, autoClose: true });
+          })() : undefined;
           try {
             const execute = (projectTmpRoot?: string) => {
               if (interrupted.signal.aborted) throw new Error('Test dispatch was interrupted before this child could start');
@@ -169,14 +205,33 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
         const results = await Promise.allSettled(plans.map(runPlan));
         let replay: { outputTruncated: boolean; stopReason: string | null } = { outputTruncated: false, stopReason: null };
         if (plans.length > 1) {
-          replay = await replayTestOwnerLogs(plans.map((_, index) => join(runTmpDir, `owner-${index + 1}.log`)), deadlineAt, process.stdout, interrupted.signal);
+          // Finite native result fields remain visible even when no replay time remains.
+          process.stderr.write(`goodvibes: test owner results ${JSON.stringify(results.map((result, index) => result.status === 'fulfilled'
+            ? { owner: index + 1, status: result.status, exitCode: result.value.exitCode, signalCode: result.value.signalCode, stopped: result.value.stopped, outputTruncated: result.value.outputTruncated }
+            : { owner: index + 1, status: result.status }))}\n`);
+          assertEvidenceRoot();
+          for (const file of logFiles) file.assertCurrent();
+          replay = await replayTestOwnerLogs(logFiles.map(file => file.path), deadlineAt, process.stdout, interrupted.signal);
           const failed = replay.outputTruncated || interrupted.signal.aborted || results.some(result => result.status === 'rejected'
             || result.value.exitCode !== 0 || result.value.stopped !== null || result.value.outputTruncated);
-          writeFileSync(join(runTmpDir, 'owner-results.json'), JSON.stringify({ plans, deadlineAt, replay, results: results.map(result => result.status === 'fulfilled'
-            ? result : { status: 'rejected', reason: 'Owned child lifecycle failed before settlement could be established' }) }, null, 2) + '\n');
-          if (failed) {
+          assertEvidenceRoot();
+          const resultPath = join(runTmpDir, 'owner-results.json');
+          writeFileSync(resultPath, JSON.stringify({ plans, deadlineAt, replay, results: results.map(result => result.status === 'fulfilled'
+            ? result : { status: 'rejected', reason: 'Owned child lifecycle failed before settlement could be established' }) }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+          const assertResult = captureEvidenceFile(resultPath);
+          const githubOutput = process.env.GITHUB_OUTPUT;
+          if (failed || githubOutput) {
             retainRunTmpDir(runTmpDir, 'Complete owner logs and failure/output-truncation manifest');
             process.stderr.write(`goodvibes: test owner evidence retained at ${runTmpDir}\n`);
+          }
+          if (githubOutput) {
+            assertEvidenceRoot();
+            for (const file of logFiles) file.assertCurrent();
+            assertResult();
+            const paths = [...logFiles.map(file => file.path), resultPath];
+            if (paths.some(path => /[\r\n]/.test(path))) throw new Error('Test owner evidence paths cannot contain newlines');
+            const delimiter = `GOODVIBES_OWNER_EVIDENCE_${process.pid}`;
+            appendFileSync(githubOutput, `owner_evidence<<${delimiter}\n${paths.join('\n')}\n${delimiter}\n`);
           }
         }
         for (const result of results) {

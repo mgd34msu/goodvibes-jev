@@ -454,10 +454,19 @@ jobs:
           git config --global user.email "ci@goodvibes.local"
           git config --global user.name "GoodVibes CI"
       - name: Run complete Agent test group through the owned runner
+        id: agent-test-run
         env:
           AGENT_GROUP: ${{ matrix.group }}
           AGENT_MANIFEST_SHA256: ${{ matrix.manifest-sha256 }}
         run: bun packages/engine/scripts/agent-test-partitions.ts run --group="$AGENT_GROUP" --manifest-sha256="$AGENT_MANIFEST_SHA256"
+      - name: Upload exact settled Agent owner diagnostics
+        if: ${{ always() && steps.agent-test-run.outputs.owner_evidence != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-owner-evidence-${{ matrix.group }}-${{ github.run_attempt }}
+          path: ${{ steps.agent-test-run.outputs.owner_evidence }}
+          if-no-files-found: error
+          retention-days: 7
 
   # Stable external full-Agent check. Never treat a skipped/cancelled group as green.
   agent-tests-complete:
