@@ -1,5 +1,9 @@
 import { JudgmentAuthorityRetiredError, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { captureOwnedJson, JudgmentInputError, snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { retainStrictJudgmentJson } from '../../gate/judgment-result.js';
+import { retainConfiguredWorkspace, type ConfigManager } from '../../config/manager.js';
+import { dirname, resolve } from 'node:path';
+import { types as nativeTypes } from 'node:util';
 import { SQLiteObservationRetiredError } from '../../state/sqlite-store.js';
 import { randomUUID } from 'node:crypto';
 import { knowledgeSpaceMetadata, normalizeProjectId } from '../spaces.js';
@@ -21,6 +25,7 @@ import {
   projectPlanningArtifactSummary,
   projectPlanningCanonicalUri,
   projectPlanningSourceId,
+  projectPlanningProjectIdFromPath,
   readPlanningMetadataObject,
   resolveProjectPlanningSpace,
   stablePlanningId,
@@ -84,26 +89,147 @@ export interface ProjectPlanningServiceOptions {
   readonly runtimeBus?: RuntimeEventBus | null | undefined;
 }
 
+interface NativePlanningDefault {
+  readonly projectId: string;
+  readonly store: KnowledgeStore;
+  readonly startup: (() => Promise<void>) | undefined;
+  readonly assertCurrent: () => void;
+}
+const nativePlanningOptions = new WeakMap<ProjectPlanningServiceOptions, NativePlanningDefault>();
+const nativeStoreMethods = [
+  ['init', KnowledgeStore.prototype.init],
+  ['captureSourcePublication', KnowledgeStore.prototype.captureSourcePublication],
+  ['getSourceSnapshot', KnowledgeStore.prototype.getSourceSnapshot],
+  ['listSources', KnowledgeStore.prototype.listSources],
+] as const;
+
+function captureNativePlanningOptions(options: Omit<ProjectPlanningServiceOptions, 'defaultProjectId'>) {
+  if (nativeTypes.isProxy(options) || (Object.getPrototypeOf(options) !== Object.prototype && Object.getPrototypeOf(options) !== null)) {
+    throw new JudgmentInputError('unsupported-input');
+  }
+  const keys = Reflect.ownKeys(options);
+  const slots = keys.map(key => {
+    const descriptor = Object.getOwnPropertyDescriptor(options, key);
+    if (!descriptor || !('value' in descriptor) || typeof key !== 'string') throw new JudgmentInputError('unsupported-input');
+    return { key, descriptor };
+  });
+  const extra: Record<string, unknown> = {};
+  let startup: (() => Promise<void>) | undefined;
+  let bus: RuntimeEventBus | null | undefined;
+  for (const { key, descriptor } of slots) {
+    const value: unknown = descriptor.value;
+    if (key === 'waitForStartup') {
+      if (value !== undefined && typeof value !== 'function') throw new JudgmentInputError('unsupported-input');
+      startup = options.waitForStartup;
+    } else if (key === 'runtimeBus') bus = options.runtimeBus;
+    else Object.defineProperty(extra, key, descriptor);
+  }
+  const retained = retainStrictJudgmentJson(extra, () => new JudgmentInputError('unsupported-input'));
+  snapshotJudgmentInput(retained.snapshot);
+  if (keys.includes('defaultProjectId')) throw new TypeError('Native planning composition cannot select a default project ID');
+  const prototype = Object.getPrototypeOf(options);
+  const assertCurrent = () => {
+    if (nativeTypes.isProxy(options) || Object.getPrototypeOf(options) !== prototype) throw new JudgmentAuthorityRetiredError();
+    const currentKeys = Reflect.ownKeys(options);
+    if (currentKeys.length !== keys.length) throw new JudgmentAuthorityRetiredError();
+    for (const [index, { key, descriptor }] of slots.entries()) {
+      const current = Object.getOwnPropertyDescriptor(options, key);
+      if (currentKeys[index] !== key || !current || !('value' in current) || current.value !== descriptor.value
+        || current.writable !== descriptor.writable || current.enumerable !== descriptor.enumerable
+        || current.configurable !== descriptor.configurable) throw new JudgmentAuthorityRetiredError();
+    }
+    retained.assertCurrent();
+  };
+  return { startup, bus, assertCurrent };
+}
+
 export class ProjectPlanningService {
+  readonly #nativeDefault: NativePlanningDefault | undefined;
   private readonly defaultProjectId: string;
   private readonly waitForStartup: (() => Promise<void>) | undefined;
   private runtimeBus: RuntimeEventBus | null;
   private runtimeBusEpoch = 0;
   private readonly readinessOwners = new WeakMap<ProjectPlanningEvaluation, () => void>();
 
+  /** Native composition derives this identity from the actual configured workspace. */
+  static forConfiguredWorkspace(
+    store: KnowledgeStore,
+    configManager: ConfigManager,
+    workingDirectory: string,
+    options: Omit<ProjectPlanningServiceOptions, 'defaultProjectId'> = {},
+  ): { readonly service: ProjectPlanningService; readonly projectId: string } {
+    const workspace = retainConfiguredWorkspace(configManager);
+    const captured = captureNativePlanningOptions(options);
+    const projectId = projectPlanningProjectIdFromPath(workingDirectory);
+    workspace.assertCurrent(); captured.assertCurrent();
+    if (workspace.directory === null || workspace.directory !== resolve(workingDirectory)) {
+      // A directory supplied only by an embedder has no native source binding.
+      return { projectId, service: new ProjectPlanningService(store, {
+        defaultProjectId: projectId, waitForStartup: captured.startup, runtimeBus: captured.bus,
+      }) };
+    }
+    if (nativeTypes.isProxy(store) || Object.getPrototypeOf(store) !== KnowledgeStore.prototype) throw new JudgmentAuthorityRetiredError();
+    const storeSlots = ['dbPath', 'sqlite', 'closed'].map(key => {
+      const slot = Object.getOwnPropertyDescriptor(store, key);
+      if (!slot || !('value' in slot)) throw new JudgmentAuthorityRetiredError();
+      return { key, slot };
+    });
+    const path = storeSlots.find(slot => slot.key === 'dbPath')?.slot.value;
+    if (typeof path !== 'string' || dirname(path) !== workspace.configDirectory) throw new JudgmentAuthorityRetiredError();
+    const assertCurrent = () => {
+      if (nativeTypes.isProxy(store) || Object.getPrototypeOf(store) !== KnowledgeStore.prototype) throw new JudgmentAuthorityRetiredError();
+      for (const { key, slot } of storeSlots) {
+        const current = Object.getOwnPropertyDescriptor(store, key);
+        if (!current || !('value' in current) || current.value !== slot.value || (key === 'closed' && current.value !== false)
+          || current.writable !== slot.writable || current.enumerable !== slot.enumerable
+          || current.configurable !== slot.configurable) throw new JudgmentAuthorityRetiredError();
+      }
+      for (const [key, method] of nativeStoreMethods) {
+        const own = Object.getOwnPropertyDescriptor(store, key);
+        const current = own ?? Object.getOwnPropertyDescriptor(KnowledgeStore.prototype, key);
+        if (!current || !('value' in current) || current.value !== method) throw new JudgmentAuthorityRetiredError();
+      }
+      workspace.assertCurrent(); captured.assertCurrent();
+    };
+    assertCurrent();
+    const nativeOptions = Object.freeze({ defaultProjectId: projectId, waitForStartup: captured.startup, runtimeBus: captured.bus });
+    nativePlanningOptions.set(nativeOptions, Object.freeze({ projectId, store, startup: captured.startup, assertCurrent }));
+    try { return { projectId, service: new ProjectPlanningService(store, nativeOptions) }; }
+    finally { nativePlanningOptions.delete(nativeOptions); }
+  }
+
   constructor(
     private readonly store: KnowledgeStore,
     options: ProjectPlanningServiceOptions = {},
   ) {
-    const defaultProjectId = snapshotJudgmentInput(options.defaultProjectId) as string | undefined;
+    const native = nativePlanningOptions.get(options);
+    native?.assertCurrent();
+    const defaultProjectId = options.defaultProjectId;
+    snapshotJudgmentInput(native ? { kind: 'native-project-reference' } : defaultProjectId);
+    if (native && (native.store !== store || native.projectId !== defaultProjectId)) throw new JudgmentAuthorityRetiredError();
     this.defaultProjectId = normalizeProjectId(defaultProjectId ?? 'default');
     this.runtimeBus = options.runtimeBus ?? null;
     this.waitForStartup = options.waitForStartup;
+    this.#nativeDefault = native;
+    this.#assertNativeDefaultCurrent();
+  }
+
+  #assertNativeDefaultCurrent(): void {
+    const native = this.#nativeDefault;
+    if (!native) return;
+    for (const [key, value] of [['store', native.store], ['defaultProjectId', native.projectId], ['waitForStartup', native.startup]] as const) {
+      const slot = Object.getOwnPropertyDescriptor(this, key);
+      if (!slot || !('value' in slot) || slot.value !== value) throw new JudgmentAuthorityRetiredError();
+    }
+    native.assertCurrent();
   }
 
   private async initialize(): Promise<void> {
+    this.#assertNativeDefaultCurrent();
     await this.store.init();
+    this.#assertNativeDefaultCurrent();
     await this.waitForStartup?.();
+    this.#assertNativeDefaultCurrent();
   }
 
   attachRuntimeBus(runtimeBus: RuntimeEventBus | null | undefined): void {
@@ -280,7 +406,7 @@ export class ProjectPlanningService {
     check(); await this.initialize(); check();
     const space = this.resolveSpace(captured);
     const observed = this.store.captureSourcePublication();
-    const current = () => { check(); observed(); };
+    const current = () => { this.#assertNativeDefaultCurrent(); check(); observed(); this.#assertNativeDefaultCurrent(); };
     let state: ProjectPlanningState;
     if (captured.state) state = normalizeState(captured.state, space.projectId, space.knowledgeSpaceId);
     else {
@@ -630,7 +756,9 @@ export class ProjectPlanningService {
   }
 
   private resolveSpace(input: ProjectPlanningSpaceInput = {}) {
-    snapshotJudgmentInput({ input, defaultProjectId: this.defaultProjectId });
+    this.#assertNativeDefaultCurrent();
+    snapshotJudgmentInput({ input, defaultProjectId: this.#nativeDefault ? { kind: 'native-project-reference' } : this.defaultProjectId });
+    this.#assertNativeDefaultCurrent();
     return resolveProjectPlanningSpace(input, this.defaultProjectId);
   }
 
@@ -694,8 +822,10 @@ export class ProjectPlanningService {
     const busEpoch = this.runtimeBusEpoch;
     let observation = initialObservation;
     const current = () => {
+      this.#assertNativeDefaultCurrent();
       signal?.throwIfAborted(); callerCurrent?.(); observation();
       if (this.runtimeBusEpoch !== busEpoch) throw new JudgmentAuthorityRetiredError();
+      this.#assertNativeDefaultCurrent();
     };
     const workSnapshot = this.getArtifactSnapshot(space.knowledgeSpaceId, 'work-plan', 'current');
     // Inspect complete persisted sources before selecting state fields or acquiring a port.

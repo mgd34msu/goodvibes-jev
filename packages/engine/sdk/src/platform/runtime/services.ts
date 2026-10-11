@@ -26,7 +26,6 @@ import {
   ProjectPlanningService,
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
-  projectPlanningProjectIdFromPath,
 } from '../knowledge/index.js';
 import {
   GOODVIBES_AGENT_KNOWLEDGE_DB_FILE,
@@ -695,9 +694,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     semanticService: homeGraphSemanticService,
     admitExpensiveWork,
   });
-  const projectPlanningService = new ProjectPlanningService(knowledgeStore, {
+  const { service: projectPlanningService } = ProjectPlanningService.forConfiguredWorkspace(knowledgeStore, configManager, workingDirectory, {
     waitForStartup: () => knowledgeService.whenReady(),
-    defaultProjectId: projectPlanningProjectIdFromPath(workingDirectory),
     runtimeBus: options.runtimeBus,
   });
   const voiceProviders = new VoiceProviderRegistry();

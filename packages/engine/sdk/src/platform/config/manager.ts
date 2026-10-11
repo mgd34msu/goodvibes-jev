@@ -4,6 +4,8 @@ import { observeImportFile } from './prepared-import.js';
 import { PreparedSettingsTarget } from './prepared-target.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { types as nativeTypes } from 'node:util';
+import { JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import type { GoodVibesConfig, ConfigKey, ConfigValue, ConfigSetting } from './schema.js';
 import { CONFIG_SCHEMA } from './schema.js';
@@ -55,6 +57,13 @@ export type { PreparedConfigMutation, PreparedConfigMutationTransition, Prepared
 
 /** Typed values for a single daemon-settings update; scope is checked at runtime. */
 export type DaemonConfigPatch = { readonly [K in ConfigKey]?: ConfigValue<K> };
+
+/** Internal native composition reference; no caller-selected project identity. */
+export interface ConfiguredWorkspaceReference {
+  readonly directory: string | null;
+  readonly configDirectory: string;
+  readonly assertCurrent: () => void;
+}
 
 /** Deep immutable type, prevents mutation of nested objects returned from getAll(). */
 export type DeepReadonly<T> = {
@@ -134,6 +143,20 @@ export type ConfigUnsubscribe = () => void;
  * API keys are never persisted, loaded from env vars only.
  */
 export class ConfigManager {
+  readonly #workspaceOwner: Readonly<{
+    workingDirectory: string | null;
+    configDir: string;
+    projectConfigPath: string | null;
+    homeDirectory: string | null;
+  }>;
+  readonly #workspaceSlots: readonly { readonly key: string; readonly slot: PropertyDescriptor }[];
+  static readonly #workspaceMethods = [
+    ['getWorkingDirectory', ConfigManager.prototype.getWorkingDirectory],
+    ['getControlPlaneConfigDir', ConfigManager.prototype.getControlPlaneConfigDir],
+    ['getProjectConfigPath', ConfigManager.prototype.getProjectConfigPath],
+    ['getHomeDirectory', ConfigManager.prototype.getHomeDirectory],
+    ['retainConfiguredWorkspace', ConfigManager.prototype.retainConfiguredWorkspace],
+  ] as const;
   private profilePostalReader: ProfilePostalReader | null = null;
   private profilePostalEpoch = 0;
   private readonly readOnly: boolean;
@@ -199,6 +222,13 @@ export class ConfigManager {
     this.projectConfigPath = this.workingDirectory
       ? resolveSurfaceDirectory(this.workingDirectory, surfaceRoot!, 'settings.json')
       : null;
+    this.#workspaceOwner = Object.freeze({ workingDirectory, configDir: base,
+      projectConfigPath: this.projectConfigPath, homeDirectory });
+    this.#workspaceSlots = Object.keys(this.#workspaceOwner).map(key => {
+      const slot = Object.getOwnPropertyDescriptor(this, key);
+      if (!slot || !('value' in slot)) throw new JudgmentAuthorityRetiredError();
+      return { key, slot };
+    });
     this.config = cloneDefaultConfig();
     this.hostSettings.apply(this.config, this.hostSettings.defaults());
     this.runtimeState = new ConfigRuntimeState(structuredClone(this.config));
@@ -259,6 +289,37 @@ export class ConfigManager {
 
   getWorkingDirectory(): string | null {
     return this.workingDirectory;
+  }
+
+  /** Used through the pinned internal bridge, never a receiver-supplied getter. */
+  retainConfiguredWorkspace(): ConfiguredWorkspaceReference {
+    // The private brand is checked before inspecting any receiver-owned slot.
+    const owner = this.#workspaceOwner;
+    const assertCurrent = () => {
+      if (this.#workspaceOwner !== owner) throw new JudgmentAuthorityRetiredError();
+      for (const { key, slot } of this.#workspaceSlots) {
+        const current = Object.getOwnPropertyDescriptor(this, key);
+        if (!current || !('value' in current) || current.value !== slot.value
+          || current.writable !== slot.writable || current.enumerable !== slot.enumerable
+          || current.configurable !== slot.configurable) throw new JudgmentAuthorityRetiredError();
+      }
+      for (const [key, method] of ConfigManager.#workspaceMethods) {
+        let object: object | null = this;
+        let found = false;
+        while (object) {
+          if (nativeTypes.isProxy(object)) throw new JudgmentAuthorityRetiredError();
+          const slot = Object.getOwnPropertyDescriptor(object, key);
+          if (slot) {
+            if (!('value' in slot) || slot.value !== method) throw new JudgmentAuthorityRetiredError();
+            found = true; break;
+          }
+          object = Object.getPrototypeOf(object);
+        }
+        if (!found) throw new JudgmentAuthorityRetiredError();
+      }
+    };
+    assertCurrent();
+    return Object.freeze({ directory: owner.workingDirectory, configDirectory: owner.configDir, assertCurrent });
   }
 
   getHomeDirectory(): string | null {
@@ -1514,6 +1575,12 @@ export class ConfigManager {
     // the complete live state; the next accepted load reconciles those bytes.
     this.publishState(staged, effective);
   }
+}
+
+const nativeWorkspaceReader = ConfigManager.prototype.retainConfiguredWorkspace;
+/** Internal module bridge deliberately absent from the public config barrel. */
+export function retainConfiguredWorkspace(configManager: ConfigManager): ConfiguredWorkspaceReference {
+  return nativeWorkspaceReader.call(configManager);
 }
 
 /** Deep-merge source into target. Returns a new object. Source non-objects are ignored, target clone is returned.

@@ -26,7 +26,6 @@ import {
   KnowledgeStore,
   ProjectPlanningService,
   createProviderBackedKnowledgeSemanticLlm,
-  projectPlanningProjectIdFromPath,
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -82,8 +81,7 @@ export function createKnowledgeServices(deps: KnowledgeServicesDeps): KnowledgeS
   const agentKnowledgeService = new KnowledgeService(agentKnowledgeStore, artifactStore, undefined, { memoryRegistry, runtimeBus, semanticService: agentKnowledgeSemanticService, admitExpensiveWork });
   agentKnowledgeService.attachRuntimeBus(runtimeBus);
   const homeGraphService = new HomeGraphService(homeGraphKnowledgeStore, artifactStore, { semanticService: homeGraphSemanticService, admitExpensiveWork });
-  const projectPlanningProjectId = projectPlanningProjectIdFromPath(deps.workingDirectory);
-  const projectPlanningService = new ProjectPlanningService(knowledgeStore, { defaultProjectId: projectPlanningProjectId, waitForStartup: () => knowledgeService.whenReady() });
+  const { service: projectPlanningService, projectId: projectPlanningProjectId } = ProjectPlanningService.forConfiguredWorkspace(knowledgeStore, configManager, deps.workingDirectory, { waitForStartup: () => knowledgeService.whenReady() });
   const workPlanStore = new WorkPlanStore({
     homeDirectory: deps.homeDirectory,
     projectId: projectPlanningProjectId,

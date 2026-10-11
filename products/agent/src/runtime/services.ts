@@ -114,7 +114,6 @@ import {
   ProjectPlanningService,
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
-  projectPlanningProjectIdFromPath,
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { MediaProviderRegistry, ensureBuiltinMediaProviders } from '@goodvibes-jev/engine/sdk/platform/media';
 import { MultimodalService } from '@goodvibes-jev/engine/sdk/platform/multimodal';
@@ -1457,10 +1456,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     semanticService: homeGraphSemanticService,
     admitExpensiveWork,
   });
-  const projectPlanningProjectId = projectPlanningProjectIdFromPath(workingDirectory);
-  const projectPlanningService = new ProjectPlanningService(agentKnowledgeStore, {
+  const { service: projectPlanningService, projectId: projectPlanningProjectId } = ProjectPlanningService.forConfiguredWorkspace(agentKnowledgeStore, configManager, workingDirectory, {
     waitForStartup: () => agentKnowledgeService.whenReady(),
-    defaultProjectId: projectPlanningProjectId,
   });
   const workPlanStore = new WorkPlanStore({
     homeDirectory,
