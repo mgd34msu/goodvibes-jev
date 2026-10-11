@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { Agent } from 'undici';
 import { fieldKind, redactionCredential, residualCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { sessionEventDecoder, syntheticSystemOneAnswers } from './hosted-session-protocol.mjs';
 
@@ -89,7 +90,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ model: body.model, answers, usage: { input_tokens: 1, output_tokens: 1 } }));
   });
-  let host, stopped, childPid, exited = true, output = '', errors = '';
+  let host, stopped, childPid, client, exited = true, output = '', errors = '';
   const streams = [];
   const readers = [];
   let streamError;
@@ -101,7 +102,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     const base = `http://127.0.0.1:${port}`;
     async function request(path, body, credential = token) {
       assert.ifError(peerError);
-      const response = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json', Connection: 'close' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10_000) });
+      const response = await fetch(base + path, { dispatcher: client, method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json', Connection: 'close' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10_000) });
       const text = await response.text(); return { status: response.status, value: text ? JSON.parse(text) : null };
     }
     async function invoke(method, body, expectedStatus = 200) {
@@ -109,6 +110,8 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       assert.equal(result.status, expectedStatus, `${method}: ${JSON.stringify(result.value)}`); return result.value;
     }
     async function start() {
+      assert.equal(client, undefined, 'The previous boot HTTP client must drain before restart');
+      client = new Agent();
       output = ''; errors = ''; childPid = undefined; exited = false;
       host = spawn('bwrap', [...boundary.slice(0, -1), '--as-pid-1', '--json-status-fd', '3', '--', binary, 'serve', '--hostname', '127.0.0.1', '--port', String(port)], {
         env: { ...env, HOME: home, GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, GOODVIBES_DAEMON_TOKEN: token,
@@ -139,7 +142,8 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       assert.equal(readlinkSync(`/proc/${childPid}/exe`), binary);
       process.kill(childPid, 'SIGTERM'); await until(() => exited, 'host graceful shutdown', 15_000);
       assert.deepEqual(await stopped, { code: 0, signal: null }, errors);
-      await assert.rejects(fetch(`${base}/api/channels/inbox`, { signal: AbortSignal.timeout(1_000) }));
+      await assert.rejects(fetch(`${base}/api/channels/inbox`, { dispatcher: client, signal: AbortSignal.timeout(1_000) }));
+      await client.destroy(); client = undefined;
       host.stdout.destroy(); host.stderr.destroy(); host.stdio[3].destroy();
     }
     async function attach(sessionId, clientId = 'owned-reader') { return invoke('sessions.hosted.attach', { sessionId, clientId }); }
@@ -148,7 +152,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       const headerDeadline = setTimeout(() => controller.abort(new Error('Session event headers deadline exceeded')), 5_000);
       let response;
       try {
-        response = await fetch(`${base}/api/sessions/${sessionId}/events`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        response = await fetch(`${base}/api/sessions/${sessionId}/events`, { dispatcher: client, headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
         assert.equal(response.status, 200);
       } finally { clearTimeout(headerDeadline); }
       const decode = sessionEventDecoder(value => {
@@ -298,6 +302,7 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     console.error('HOSTED FAILURE DETAILS', JSON.stringify({ output, errors, modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, events: events.filter(event => event.value.type).map(event => event.value) })); throw error;
   } finally {
     for (const controller of streams) controller.abort();
+    await client?.destroy(); client = undefined;
     if (!exited) host.kill('SIGKILL');
     if (stopped) {
       try { await stopped; }
