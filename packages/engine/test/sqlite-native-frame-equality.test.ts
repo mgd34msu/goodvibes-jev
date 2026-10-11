@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
@@ -23,7 +23,9 @@ function path() {
 async function fixture(projection: boolean, primedReaderAtBirth = false) {
   const filename = path(), sqlite = new SQLiteStore(filename, { coordinated: true });
   databases.push(sqlite);
-  await sqlite.init(db => db.run('CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY,title TEXT)'));
+  let facade: SqlDatabase | undefined;
+  await sqlite.init(db => { facade = db; db.run('CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY,title TEXT)'); });
+  if (!facade) throw new Error('No original public schema facade');
   sqlite.run("INSERT INTO knowledge_sources VALUES('original','Complete original source')");
   await sqlite.save();
   const SQL = await loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare, execute = SQL.Database.prototype.exec;
@@ -59,7 +61,7 @@ async function fixture(projection: boolean, primedReaderAtBirth = false) {
     return Object.values(registry);
   };
   const read = () => sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values;
-  return { sqlite, filename, currentRaw, read, preparedSql, statementPrototype, liveStatements };
+  return { sqlite, facade, filename, currentRaw, read, preparedSql, statementPrototype, liveStatements };
 }
 
 test.each([true, false])('fresh native and original complete fallback agree on unchanged/high-version rows (projection %s)', async projection => {
@@ -150,7 +152,7 @@ test.each([false, true])('primed reset/step replacements cannot grant scalar equ
   expect(preparedSql[0]).toContain('AS shadowed');
 });
 
-test('fresh scalar execution leaves no native statement across caller callbacks', async () => {
+test('fresh scalar execution exposes no registered live statement across caller callbacks', async () => {
   const { sqlite, filename, currentRaw, liveStatements, read } = await fixture(true);
   const before = readFileSync(filename); let consumed = false, invoked = 0;
   let other: ReturnType<NativeDatabase['prepare']> | undefined;
@@ -273,4 +275,256 @@ test('owner cancellation still holds at the actual source guard inside a native 
     guard.assertCurrent(); controller.abort(); guard.assertCurrent(); consumed = true;
   })).toThrow(KnowledgeSourceQualityHeldError);
   expect(consumed).toBe(false);
+});
+
+
+function nativeRegistry(raw: NativeDatabase): object {
+  const registry: unknown = Object.getOwnPropertyDescriptor(raw, 'gb')?.value;
+  if (!registry || typeof registry !== 'object') throw new Error('No actual native registry');
+  return registry;
+}
+
+test('a genuine scalar preparation error retains complete native fallback and releases its unsuccessful preparation', async () => {
+  const { sqlite, filename, liveStatements, read } = await fixture(true);
+  sqlite.run('CREATE TABLE pragma_function_list(unrelated TEXT)');
+  await sqlite.save();
+  const before = readFileSync(filename);
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); });
+    expect(liveStatements()).toEqual([]);
+  })).not.toThrow();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('an empty registry that no longer permits genuine registration uses complete native fallback', async () => {
+  const { sqlite, filename, currentRaw, liveStatements, read } = await fixture(true);
+  sqlite.assertPersistedReadFrame(() => { read(); });
+  Object.preventExtensions(nativeRegistry(currentRaw()));
+  const before = readFileSync(filename);
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); });
+  })).not.toThrow();
+  expect(liveStatements()).toEqual([]); expect(readFileSync(filename)).toEqual(before);
+});
+
+test.each(['value', 'accessor', 'prototype'] as const)('native release remains independent of a replaced registry %s', async kind => {
+  const { sqlite, filename, currentRaw, read } = await fixture(true);
+  const before = readFileSync(filename); let consumed = false, invoked = 0;
+  let raw: NativeDatabase | undefined, descriptor: PropertyDescriptor | undefined;
+  let registry: object | undefined, prototype: object | null | undefined;
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      read(); raw = currentRaw(); descriptor = Object.getOwnPropertyDescriptor(raw, 'gb');
+      registry = nativeRegistry(raw); prototype = Object.getPrototypeOf(registry);
+      if (!descriptor) throw new Error('No original registry descriptor');
+      if (kind === 'value') Object.defineProperty(raw, 'gb', { ...descriptor, value: {} });
+      else if (kind === 'accessor') Object.defineProperty(raw, 'gb', { configurable: true, get() { invoked++; throw new Error('Borrowed registry getter'); } });
+      else Object.setPrototypeOf(registry, {});
+      sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+    })).toThrow(SQLiteObservationRetiredError);
+  } finally {
+    if (raw && descriptor) Object.defineProperty(raw, 'gb', descriptor);
+    if (registry && prototype !== undefined) Object.setPrototypeOf(registry, prototype);
+  }
+  expect(consumed).toBe(false); expect(invoked).toBe(0);
+  expect(currentRaw().exec('SELECT 1')).toEqual([{ columns: ['1'], values: [[1]] }]);
+  expect(() => sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); })).not.toThrow();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test.each(['export', 'close', 'facade-export'] as const)('actual native %s retires a private executable without leaving a registered handle', async action => {
+  const { sqlite, facade, filename, currentRaw, liveStatements, read } = await fixture(true);
+  const before = readFileSync(filename); let consumed = false;
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    read(); expect(liveStatements()).toEqual([]);
+    if (action === 'facade-export') facade.export();
+    else if (action === 'export') currentRaw().export();
+    else currentRaw().close();
+    sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+  })).toThrow(SQLiteObservationRetiredError);
+  expect(consumed).toBe(false); expect(liveStatements()).toEqual([]);
+  expect(readFileSync(filename)).toEqual(before);
+  if (action !== 'close') expect(() => sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); })).not.toThrow();
+});
+
+test.each(['_sqlite3_finalize', '_sqlite3_step', '_sqlite3_prepare_v2', 'UTF8ToString'] as const)('a replaced module dependency %s cannot run or prevent original native release', async key => {
+  const { sqlite, filename, read } = await fixture(true), SQL = await loadSqlJsEngine();
+  const descriptor = Object.getOwnPropertyDescriptor(SQL, key);
+  if (!descriptor || typeof descriptor.value !== 'function') throw new Error('No genuine module dependency');
+  const before = readFileSync(filename); let consumed = false, invoked = 0;
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      read();
+      Object.defineProperty(SQL, key, { configurable: true, get() { invoked++; throw new Error('Borrowed native module getter'); } });
+      sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+    })).toThrow(SQLiteObservationRetiredError);
+  } finally { Object.defineProperty(SQL, key, descriptor); }
+  expect(consumed).toBe(false); expect(invoked).toBe(0);
+  expect(() => sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); })).not.toThrow();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+function actualMethodOwner(prototype: object, key: string): { owner: object; descriptor: PropertyDescriptor } {
+  let owner: object | null = prototype;
+  while (owner) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor) return { owner, descriptor };
+    owner = Object.getPrototypeOf(owner);
+  }
+  throw new Error('No actual dispatch owner');
+}
+
+test.each(['charCodeAt', 'codePointAt', 'decode', 'subarray'] as const)('original Unicode rows retain producer/decoder dependency %s guards', async key => {
+  const { sqlite, filename, read } = await fixture(true);
+  const title = 'A complete café source — 日本語';
+  sqlite.run('UPDATE knowledge_sources SET title=? WHERE id=?', [title, 'original']); await sqlite.save();
+  const prototype = key === 'decode' ? TextDecoder.prototype : key === 'subarray' ? Uint8Array.prototype : String.prototype;
+  const { owner, descriptor } = actualMethodOwner(prototype, key);
+  const before = readFileSync(filename); let consumed = false, invoked = 0;
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', title]]);
+    Object.defineProperty(owner, key, { ...descriptor, value: () => { invoked++; throw new Error('Borrowed decoder'); } });
+    try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+    finally { Object.defineProperty(owner, key, descriptor); }
+  })).toThrow(SQLiteObservationRetiredError);
+  expect(consumed).toBe(false); expect(invoked).toBe(0); expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a callback error stays exact while the registry getter is replaced through native release', async () => {
+  const { sqlite, filename, currentRaw, read } = await fixture(true);
+  const before = readFileSync(filename), original = new Error('Original callback refusal');
+  let raw: NativeDatabase | undefined, descriptor: PropertyDescriptor | undefined, invoked = 0, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      read(); raw = currentRaw(); descriptor = Object.getOwnPropertyDescriptor(raw, 'gb');
+      Object.defineProperty(raw, 'gb', { configurable: true, get() { invoked++; throw new Error('Borrowed registry getter'); } });
+      throw original;
+    });
+  } catch (error) { caught = error; }
+  finally { if (raw && descriptor) Object.defineProperty(raw, 'gb', descriptor); }
+  expect(caught).toBe(original); expect(invoked).toBe(0);
+  expect(() => sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); })).not.toThrow();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('mutable bookkeeping and freeze hooks never receive the private executable or prevent cleanup', async () => {
+  const { sqlite, facade, filename, read } = await fixture(true);
+  const freezeDescriptor = Object.getOwnPropertyDescriptor(Object, 'freeze');
+  const getDescriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, 'get');
+  const setDescriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, 'set');
+  const deleteDescriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, 'delete');
+  if (!freezeDescriptor || !getDescriptor || !setDescriptor || !deleteDescriptor) throw new Error('No original native bookkeeping');
+  const define = Object.defineProperty, freeze = Object.freeze, get = WeakMap.prototype.get,
+    set = WeakMap.prototype.set, remove = WeakMap.prototype.delete;
+  let exposed = false, removalInvoked = 0;
+  const observe = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    const execution: unknown = Object.getOwnPropertyDescriptor(value, 'execution')?.value;
+    if (execution && typeof execution === 'object' && Object.getOwnPropertyDescriptor(execution, 'executable')) exposed = true;
+  };
+  const before = readFileSync(filename);
+  try {
+    define(Object, 'freeze', { ...freezeDescriptor, value: <T>(value: T): Readonly<T> => { observe(value); return freeze(value); } });
+    define(WeakMap.prototype, 'get', { ...getDescriptor, value: function(this: WeakMap<object, unknown>, key: object): unknown { const value = get.call(this, key); observe(value); return value; } });
+    define(WeakMap.prototype, 'set', { ...setDescriptor, value: function(this: WeakMap<object, unknown>, key: object, value: unknown) { observe(value); return set.call(this, key, value); } });
+    define(WeakMap.prototype, 'delete', { ...deleteDescriptor, value: function(this: WeakMap<object, unknown>, key: object) { removalInvoked++; return remove.call(this, key); } });
+    sqlite.assertPersistedReadFrame(() => {
+      read(); sqlite.assertPersistedReadFrame(() => { read(); });
+      // Native retirement and the outer finally both encounter this lifetime;
+      // a borrowed bookkeeping hook never controls the release operation.
+      facade.export();
+    });
+  } catch (error) { if (!(error instanceof SQLiteObservationRetiredError)) throw error; }
+  finally {
+    define(Object, 'freeze', freezeDescriptor); define(WeakMap.prototype, 'get', getDescriptor);
+    define(WeakMap.prototype, 'set', setDescriptor); define(WeakMap.prototype, 'delete', deleteDescriptor);
+  }
+  expect(exposed).toBe(false); expect(removalInvoked).toBe(0);
+  expect(() => sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); })).not.toThrow();
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+
+test.each(['plan-value', 'plan-accessor', 'frame-value', 'frame-accessor'] as const)('substituting the mutable %s slot cannot select or suppress native cleanup', async kind => {
+  const { sqlite, filename, currentRaw, read } = await fixture(true);
+  const before = readFileSync(filename); let consumed = false, invoked = 0;
+  let owner: object | undefined, key: string | undefined, descriptor: PropertyDescriptor | undefined;
+  try {
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      read();
+      const frame: unknown = Object.getOwnPropertyDescriptor(sqlite, 'persistedReadFrame')?.value;
+      if (!frame || typeof frame !== 'object') throw new Error('No actual active native frame');
+      const state: unknown = Object.getOwnPropertyDescriptor(frame, 'localState')?.value;
+      if (!state || typeof state !== 'object') throw new Error('No original native owner');
+      owner = kind.startsWith('plan') ? state : frame;
+      key = kind.startsWith('plan') ? 'probePlans' : 'localState';
+      descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (!descriptor || !('value' in descriptor)) throw new Error('No original data owner slot');
+      if (kind.endsWith('accessor')) Object.defineProperty(owner, key, { configurable: true, get() { invoked++; throw new Error('Borrowed owner getter'); } });
+      else Object.defineProperty(owner, key, { ...descriptor, value: { dispose() { invoked++; } } });
+      sqlite.assertPersistedReadFrame(() => { read(); consumed = true; });
+    })).toThrow(SQLiteObservationRetiredError);
+  } finally { if (owner && key && descriptor) Object.defineProperty(owner, key, descriptor); }
+  expect(consumed).toBe(false); expect(invoked).toBe(0);
+  expect(currentRaw().exec('SELECT 1')).toEqual([{ columns: ['1'], values: [[1]] }]);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+
+test('caller-authored constructor-proof fields are never consumed as native birth provenance', async () => {
+  const { sqlite, filename, read } = await fixture(true);
+  let state: object | undefined, invoked = 0;
+  sqlite.assertPersistedReadFrame(() => {
+    read();
+    const frame: unknown = Object.getOwnPropertyDescriptor(sqlite, 'persistedReadFrame')?.value;
+    const value: unknown = frame && typeof frame === 'object' ? Object.getOwnPropertyDescriptor(frame, 'localState')?.value : undefined;
+    if (!value || typeof value !== 'object') throw new Error('No actual original owner');
+    state = value;
+  });
+  if (!state) throw new Error('No actual native owner');
+  Object.defineProperty(state, 'birthRegistry', { configurable: true, get() { invoked++; throw new Error('Caller-authored constructor proof'); } });
+  const before = readFileSync(filename);
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    expect(read()).toEqual([['original', 'Complete original source']]);
+    sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); });
+  })).not.toThrow();
+  expect(invoked).toBe(0); expect(readFileSync(filename)).toEqual(before);
+});
+
+
+test('an actual constructor hook cannot grant native birth provenance to a proxied registry', async () => {
+  await loadSqlJsEngine();
+  const random = Math.random, define = Object.defineProperty, remove = Reflect.deleteProperty;
+  const original = Object.getOwnPropertyDescriptor(Object.prototype, 'gb');
+  let exposed = 0;
+  const observing = spyOn(Math, 'random').mockImplementation(() => {
+    const result = random();
+    define(Object.prototype, 'gb', { configurable: true, set(this: object, value: unknown) {
+      if (!value || typeof value !== 'object') throw new Error('No genuine constructor registry');
+      const registry = new Proxy(value, { set(target, key, assigned: unknown, receiver: object) {
+        if (assigned && typeof assigned === 'object' && typeof Object.getOwnPropertyDescriptor(assigned, 'Qa')?.value === 'number') exposed++;
+        return Reflect.set(target, key, assigned, receiver);
+      } });
+      define(this, 'gb', { value: registry, configurable: true, writable: true, enumerable: true });
+      if (original) define(Object.prototype, 'gb', original); else remove(Object.prototype, 'gb');
+    } });
+    return result;
+  });
+  try {
+    const filename = path(), sqlite = new SQLiteStore(filename, { coordinated: true }); databases.push(sqlite);
+    await sqlite.init(db => db.run('CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY,title TEXT)'));
+    sqlite.run("INSERT INTO knowledge_sources VALUES('original','Complete original source')"); await sqlite.save();
+    const before = readFileSync(filename);
+    const read = () => sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values;
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      sqlite.assertPersistedReadFrame(() => { expect(read()).toEqual([['original', 'Complete original source']]); });
+    })).not.toThrow();
+    expect(exposed).toBe(0); expect(readFileSync(filename)).toEqual(before);
+  } finally {
+    observing.mockRestore();
+    if (original) define(Object.prototype, 'gb', original); else remove(Object.prototype, 'gb');
+  }
 });

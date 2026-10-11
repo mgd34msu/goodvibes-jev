@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
+import { types as nativeNodeTypes } from 'node:util';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { openVersionedSchema, sqlJsVersionHandle } from './store-versioning.js';
@@ -24,11 +25,13 @@ export function loadSqlJsEngine(): Promise<SqlJsStatic> {
       .then((mod) => mod.default() as Promise<SqlJsStatic>)
       .then(engine => {
         const constructor = engine.Database, prototype = constructor.prototype;
-        nativeEngineIdentities.set(engine, Object.freeze({ constructor, prototype,
-          methods: Object.freeze({ run: prototype.run, exec: prototype.exec,
+        const scalar = captureNativeScalarRuntime(engine);
+        privateMapSet(nativeEngineIdentities, engine, nativeFreeze({ constructor, prototype,
+          methods: nativeFreeze({ run: prototype.run, exec: prototype.exec,
             export: prototype.export, close: prototype.close,
             prepare: prototype.prepare, create_function: prototype.create_function }),
           statement: captureNativeStatementIdentity(constructor),
+          scalar,
         }));
         return engine;
       })
@@ -78,8 +81,8 @@ function captureExpectedReadsets(value: readonly ExpectedKnowledgeRecordReadsetI
     if (Reflect.ownKeys(fields).length !== 2 || !fields.expected || !fields.selectors
       || !('value' in fields.expected) || !('value' in fields.selectors)) throw new TypeError('SQLiteStore: invalid expected readset');
     const expected: unknown = fields.expected.value;
-    if (!expected || typeof expected !== 'object' || !expectedRecordReadsets.has(expected)) throw new TypeError('SQLiteStore: unknown expected readset');
-    const retained = expectedRecordReadsets.get(expected);
+    if (!expected || typeof expected !== 'object' || !privateMapHas(expectedRecordReadsets, expected)) throw new TypeError('SQLiteStore: unknown expected readset');
+    const retained = privateMapGet(expectedRecordReadsets, expected);
     if (!retained) throw new TypeError('SQLiteStore: unknown expected readset');
     captured.push({ expected: retained.token, selectors: captureRecordSelectors(fields.selectors.value) });
   }
@@ -127,12 +130,40 @@ interface NativeSqlDatabase extends SqlDatabase {
 
 interface SqlJsStatic {
   Database: { new (data?: Uint8Array | Buffer): NativeSqlDatabase; readonly prototype: NativeSqlDatabase };
+  readonly _sqlite3_prepare_v2?: ((...args: number[]) => number) | undefined;
+  readonly _sqlite3_step?: ((statement: number) => number) | undefined;
+  readonly _sqlite3_reset?: ((statement: number) => number) | undefined;
+  readonly _sqlite3_clear_bindings?: ((statement: number) => number) | undefined;
+  readonly _sqlite3_finalize?: ((statement: number) => number) | undefined;
+  readonly _sqlite3_column_count?: ((statement: number) => number) | undefined;
+  readonly _sqlite3_data_count?: ((statement: number) => number) | undefined;
+  readonly _sqlite3_column_type?: ((statement: number, column: number) => number) | undefined;
+  readonly _sqlite3_column_double?: ((statement: number, column: number) => number) | undefined;
+  readonly _sqlite3_column_name?: ((statement: number, column: number) => number) | undefined;
+  readonly UTF8ToString?: ((pointer: number) => string) | undefined;
 }
 
 type NativeEngineMethods = Pick<NativeSqlDatabase, 'run' | 'exec' | 'export' | 'close' | 'prepare' | 'create_function'>;
 type NativeStatementMethods = Pick<NativeSqlStatement, 'reset' | 'step' | 'get' | 'getColumnNames' | 'free'>;
 const nativeOwnKeys = Reflect.ownKeys, nativeApply = Reflect.apply;
 const nativeGetPrototypeOf = Object.getPrototypeOf, nativeGetDescriptor = Object.getOwnPropertyDescriptor, nativeHasOwn = Object.hasOwn;
+const nativeDefineProperty = Object.defineProperty, nativeDeleteProperty = Reflect.deleteProperty, nativeIsExtensible = Object.isExtensible;
+const nativeEntries = Object.entries, nativeIsProxy = nativeNodeTypes.isProxy;
+const nativeString = String, nativeSafeInteger = Number.isSafeInteger, nativeIsArray = Array.isArray, nativeFreeze = Object.freeze;
+const nativeWeakMapGet = WeakMap.prototype.get, nativeWeakMapSet = WeakMap.prototype.set,
+  nativeWeakMapHas = WeakMap.prototype.has, nativeWeakMapDelete = WeakMap.prototype.delete;
+function privateMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return nativeApply(nativeWeakMapGet, map, [key]);
+}
+function privateMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  nativeApply(nativeWeakMapSet, map, [key, value]);
+}
+function privateMapHas<K extends object, V>(map: WeakMap<K, V>, key: K): boolean {
+  return nativeApply(nativeWeakMapHas, map, [key]);
+}
+function privateMapDelete<K extends object, V>(map: WeakMap<K, V>, key: K): void {
+  nativeApply(nativeWeakMapDelete, map, [key]);
+}
 function nativeEvery<T>(values: readonly T[], predicate: (value: T) => boolean): boolean {
   for (let index = 0; index < values.length; index++) {
     const value = values[index];
@@ -146,11 +177,11 @@ interface NativeObjectFacts {
   readonly slots: readonly { readonly key: PropertyKey; readonly descriptor: Readonly<PropertyDescriptor> }[];
 }
 function captureNativeObjectFacts(object: object): NativeObjectFacts {
-  return Object.freeze({ object, prototype: nativeGetPrototypeOf(object),
-    slots: Object.freeze(nativeOwnKeys(object).map(key => {
+  return nativeFreeze({ object, prototype: nativeGetPrototypeOf(object),
+    slots: nativeFreeze(nativeOwnKeys(object).map(key => {
       const descriptor = nativeGetDescriptor(object, key);
       if (!descriptor) throw new SQLiteObservationRetiredError();
-      return Object.freeze({ key, descriptor: Object.freeze(descriptor) });
+      return nativeFreeze({ key, descriptor: nativeFreeze(descriptor) });
     })) });
 }
 function nativeDescriptorMatches(current: PropertyDescriptor | undefined, original: Readonly<PropertyDescriptor>): boolean {
@@ -168,7 +199,7 @@ function captureNativePrototypeFacts(prototype: object | null): readonly NativeO
     if (seen.has(current)) throw new SQLiteObservationRetiredError();
     seen.add(current); facts.push(captureNativeObjectFacts(current));
   }
-  return Object.freeze(facts);
+  return nativeFreeze(facts);
 }
 interface NativeStatementIdentity {
   readonly constructor: object;
@@ -190,14 +221,14 @@ function captureNativeStatementIdentity(Database: SqlJsStatic['Database']): Nati
       const constructor: unknown = nativeGetDescriptor(prototype, 'constructor')?.value;
       const constructorPrototype = typeof constructor === 'function' ? nativeGetDescriptor(constructor, 'prototype') : undefined;
       if (typeof constructor !== 'function' || !constructorPrototype || constructorPrototype.value !== prototype) return undefined;
-      const methods = Object.freeze({ reset: statement.reset, step: statement.step, get: statement.get,
+      const methods = nativeFreeze({ reset: statement.reset, step: statement.step, get: statement.get,
         getColumnNames: statement.getColumnNames, free: statement.free });
       const bigint = Object.getOwnPropertyDescriptor(globalThis, 'BigInt');
       if (!bigint || typeof bigint.value !== 'function') return undefined;
-      const candidate = Object.freeze({ constructor, constructorPrototype: Object.freeze(constructorPrototype),
+      const candidate = nativeFreeze({ constructor, constructorPrototype: nativeFreeze(constructorPrototype),
         prototype, methods, prototypes: captureNativePrototypeFacts(prototype),
-        ownerPrototypes: captureNativePrototypeFacts(Object.getPrototypeOf(raw)), bigint: Object.freeze(bigint),
-        arrayPrototypes: Object.freeze(Object.values(Object.getOwnPropertyDescriptors(statement)).flatMap(descriptor => Array.isArray(descriptor.value)
+        ownerPrototypes: captureNativePrototypeFacts(Object.getPrototypeOf(raw)), bigint: nativeFreeze(bigint),
+        arrayPrototypes: nativeFreeze(Object.values(Object.getOwnPropertyDescriptors(statement)).flatMap(descriptor => Array.isArray(descriptor.value)
           ? [captureNativePrototypeFacts(Object.getPrototypeOf(descriptor.value))] : [])) });
       if (nativeStatementMethodsMatch(candidate, statement)) original = candidate;
     }
@@ -218,15 +249,18 @@ function nativeStatementMethodsMatch(original: NativeStatementIdentity, statemen
     && original.prototypes.every(fact => fact.slots.every(({ key }) => !Object.hasOwn(statement, key)))
     && Object.values(original.methods).every(method => typeof method === 'function');
 }
-/** Native exec creates and frees its statement before returning. Only the
- * executable definition and original dependencies cross caller callbacks. */
-function nativeOwnerDependenciesMatch(original: NativeStatementIdentity, raw: NativeSqlDatabase): boolean {
-  // The scalar calls the loader-pinned exec directly. Public exec observers
-  // cannot replace that implementation; every dependency it dereferences stays native.
+/** The public native execution path creates and frees its JavaScript statement
+ * before returning; the private executable has a separate owned lifetime. */
+function nativeOwnerPrototypeFactsMatch(original: NativeStatementIdentity): boolean {
   return nativeEvery(original.ownerPrototypes, facts => nativeGetPrototypeOf(facts.object) === facts.prototype
     && nativeOwnKeys(facts.object).length === facts.slots.length
     && nativeEvery(facts.slots, ({ key, descriptor }) => key === 'exec'
-      || nativeDescriptorMatches(nativeGetDescriptor(facts.object, key), descriptor)))
+      || nativeDescriptorMatches(nativeGetDescriptor(facts.object, key), descriptor)));
+}
+function nativeOwnerDependenciesMatch(original: NativeStatementIdentity, raw: NativeSqlDatabase): boolean {
+  // Only the loader-pinned implementation executes; public exec observers may
+  // observe complete probes but cannot supply the scalar implementation.
+  return nativeOwnerPrototypeFactsMatch(original)
     && nativeEvery(original.ownerPrototypes, facts => nativeEvery(facts.slots, ({ key }) => key === 'exec' || !nativeHasOwn(raw, key)));
 }
 function nativeExecutionDependenciesMatch(original: NativeStatementIdentity, raw: NativeSqlDatabase): boolean {
@@ -236,14 +270,66 @@ function nativeExecutionDependenciesMatch(original: NativeStatementIdentity, raw
     && nativeDescriptorMatches(nativeGetDescriptor(globalThis, 'BigInt'), original.bigint)
     && nativeOwnerDependenciesMatch(original, raw);
 }
+interface NativeScalarRuntime {
+  readonly module: SqlJsStatic;
+  readonly exports: readonly { readonly key: keyof SqlJsStatic; readonly descriptor: Readonly<PropertyDescriptor> }[];
+  readonly globals: readonly { readonly key: string; readonly descriptor: Readonly<PropertyDescriptor>; readonly facts: readonly NativeObjectFacts[] }[];
+  readonly step: (statement: number) => number;
+  readonly reset: (statement: number) => number;
+  readonly clear: (statement: number) => number;
+  readonly finalize: (statement: number) => number;
+  readonly count: (statement: number) => number;
+  readonly dataCount: (statement: number) => number;
+  readonly type: (statement: number, column: number) => number;
+  readonly value: (statement: number, column: number) => number;
+  readonly name: (statement: number, column: number) => number;
+  readonly decode: (pointer: number) => string;
+}
+function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | undefined {
+  const step = module._sqlite3_step, reset = module._sqlite3_reset, clear = module._sqlite3_clear_bindings,
+    finalize = module._sqlite3_finalize, count = module._sqlite3_column_count, dataCount = module._sqlite3_data_count,
+    type = module._sqlite3_column_type, value = module._sqlite3_column_double, name = module._sqlite3_column_name,
+    decode = module.UTF8ToString;
+  if (typeof module._sqlite3_prepare_v2 !== 'function' || typeof step !== 'function' || typeof reset !== 'function'
+    || typeof clear !== 'function' || typeof finalize !== 'function' || typeof count !== 'function'
+    || typeof dataCount !== 'function' || typeof type !== 'function' || typeof value !== 'function'
+    || typeof name !== 'function' || typeof decode !== 'function') return undefined;
+  const keys: readonly (keyof SqlJsStatic)[] = ['_sqlite3_prepare_v2', '_sqlite3_step', '_sqlite3_reset',
+    '_sqlite3_clear_bindings', '_sqlite3_finalize', '_sqlite3_column_count', '_sqlite3_data_count',
+    '_sqlite3_column_type', '_sqlite3_column_double', '_sqlite3_column_name', 'UTF8ToString'];
+  const exports: NativeScalarRuntime['exports'][number][] = [];
+  for (const key of keys) {
+    const descriptor = nativeGetDescriptor(module, key);
+    if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'function') return undefined;
+    exports.push(nativeFreeze({ key, descriptor: nativeFreeze(descriptor) }));
+  }
+  const globals: NativeScalarRuntime['globals'][number][] = [];
+  for (const key of ['String', 'Uint8Array', 'TextDecoder']) {
+    const descriptor = nativeGetDescriptor(globalThis, key), constructor: unknown = descriptor?.value;
+    if (!descriptor || !('value' in descriptor) || typeof constructor !== 'function') return undefined;
+    const prototype: unknown = nativeGetDescriptor(constructor, 'prototype')?.value;
+    if (!prototype || typeof prototype !== 'object') return undefined;
+    globals.push(nativeFreeze({ key, descriptor: nativeFreeze(descriptor), facts: nativeFreeze([
+      ...captureNativePrototypeFacts(constructor), ...captureNativePrototypeFacts(prototype),
+    ]) }));
+  }
+  return nativeFreeze({ module, exports: nativeFreeze(exports), globals: nativeFreeze(globals),
+    step, reset, clear, finalize, count, dataCount, type, value, name, decode });
+}
+function nativeScalarRuntimeMatches(runtime: NativeScalarRuntime): boolean {
+  return nativeEvery(runtime.exports, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(runtime.module, key), descriptor))
+    && nativeEvery(runtime.globals, ({ key, descriptor, facts }) => nativeDescriptorMatches(nativeGetDescriptor(globalThis, key), descriptor)
+      && nativeEvery(facts, nativeObjectFactsMatch));
+}
 const nativeEngineIdentities = new WeakMap<SqlJsStatic, {
   readonly constructor: SqlJsStatic['Database'];
   readonly prototype: NativeSqlDatabase;
   readonly methods: Readonly<NativeEngineMethods>;
   readonly statement: NativeStatementIdentity | undefined;
+  readonly scalar: NativeScalarRuntime | undefined;
 }>();
 function assertNativeEngineIdentity(engine: SqlJsStatic | null): void {
-  const original = engine ? nativeEngineIdentities.get(engine) : undefined;
+  const original = engine ? privateMapGet(nativeEngineIdentities, engine) : undefined;
   if (original && (Object.getOwnPropertyDescriptor(engine, 'Database')?.value !== original.constructor
     || Object.getOwnPropertyDescriptor(original.constructor, 'prototype')?.value !== original.prototype)) {
     throw new SQLiteObservationRetiredError();
@@ -251,17 +337,17 @@ function assertNativeEngineIdentity(engine: SqlJsStatic | null): void {
 }
 function currentDatabaseConstructor(engine: SqlJsStatic): SqlJsStatic['Database'] {
   assertNativeEngineIdentity(engine);
-  return nativeEngineIdentities.get(engine)?.constructor ?? engine.Database;
+  return privateMapGet(nativeEngineIdentities, engine)?.constructor ?? engine.Database;
 }
 function nativeMethodsMatch(engine: SqlJsStatic | null, raw: NativeSqlDatabase | undefined): boolean {
-  const original = engine ? nativeEngineIdentities.get(engine) : undefined;
+  const original = engine ? privateMapGet(nativeEngineIdentities, engine) : undefined;
   if (!original || !raw || !engine || Object.getPrototypeOf(raw) !== original.prototype) return false;
   assertNativeEngineIdentity(engine);
   return Object.entries(original.methods).every(([name, method]) => !Object.hasOwn(raw, name)
     && Object.getOwnPropertyDescriptor(original.prototype, name)?.value === method);
 }
 function nativePrepareMatch(engine: SqlJsStatic | null, raw: NativeSqlDatabase): boolean {
-  const original = engine ? nativeEngineIdentities.get(engine) : undefined;
+  const original = engine ? privateMapGet(nativeEngineIdentities, engine) : undefined;
   if (!original || !engine || Object.getPrototypeOf(raw) !== original.prototype) return false;
   assertNativeEngineIdentity(engine);
   return !Object.hasOwn(raw, 'prepare')
@@ -295,9 +381,14 @@ interface NativeFrameComparison {
   readonly raw: NativeSqlDatabase;
   readonly signature: string;
   readonly sql: string;
-  readonly execute: NativeSqlDatabase['exec'];
+  readonly execution: { readonly kind: 'exec'; readonly execute: NativeSqlDatabase['exec'] }
+    | { readonly kind: 'native'; readonly executable: NativeScalarExecutable };
   readonly origin: NativeStatementIdentity;
   readonly owner: NativeObjectFacts;
+}
+interface NativeScalarExecutable {
+  readonly read: (assertDependencies: () => void) => boolean | undefined;
+  readonly dispose: () => void;
 }
 // Executable plans only. Every invocation still steps fresh native values.
 const nativeFrameComparisons = new WeakMap<NativeProbePlans, NativeFrameComparison>();
@@ -322,7 +413,7 @@ function nativeFrameComparisonSql(probe: DatabaseProbe): string | undefined {
 }
 function matchesNativeFrameProbe(raw: NativeSqlDatabase, plans: NativeProbePlans | undefined, signature: string | undefined): boolean | undefined {
   if (!plans || plans.retired || !signature) return undefined;
-  const comparison = nativeFrameComparisons.get(plans);
+  const comparison = privateMapGet(nativeFrameComparisons, plans);
   if (!comparison || comparison.raw !== raw || comparison.signature !== signature) return undefined;
   const assertDependencies = () => {
     if (!nativePrepareMatch(comparison.engine, raw) || !nativeExecutionDependenciesMatch(comparison.origin, raw)
@@ -331,9 +422,15 @@ function matchesNativeFrameProbe(raw: NativeSqlDatabase, plans: NativeProbePlans
   let recognized = false;
   try {
     assertDependencies();
-    // The genuine native implementation creates an unregistered lexical
-    // statement, steps it and frees it synchronously, including failure paths.
-    const result: ReturnType<NativeSqlDatabase['exec']> = nativeApply(comparison.execute, raw, [comparison.sql, undefined, { useBigInt: true }]);
+    if (comparison.execution.kind === 'native') {
+      const value = comparison.execution.executable.read(assertDependencies);
+      assertDependencies();
+      recognized = value !== undefined;
+      return value;
+    }
+    // Unknown birth/registry/decoder shapes retain the genuine lexical native
+    // implementation, which creates and frees its statement before returning.
+    const result: ReturnType<NativeSqlDatabase['exec']> = nativeApply(comparison.execution.execute, raw, [comparison.sql, undefined, { useBigInt: true }]);
     assertDependencies();
     const packet = result[0], row = packet?.values[0];
     if (result.length !== 1 || !packet || packet.columns.length !== 1
@@ -347,6 +444,113 @@ function matchesNativeFrameProbe(raw: NativeSqlDatabase, plans: NativeProbePlans
   finally { if (!recognized) plans.dispose(); }
 }
 
+/** Only an original constructor birth can supply the private registry proof.
+ * Unknown/custom births retain their ordinary facade and fresh-exec fallback. */
+function constructOwnedDatabase(engine: SqlJsStatic, data?: Uint8Array | Buffer,
+  Constructor: SqlJsStatic['Database'] = engine.Database): SqlDatabase {
+  const original = privateMapGet(nativeEngineIdentities, engine), origin = original?.statement, runtime = original?.scalar,
+    originalPrototype = original?.prototype;
+  const genuine = !!original && Constructor === original.constructor
+    && nativeGetDescriptor(engine, 'Database')?.value === Constructor
+    && nativeGetDescriptor(Constructor, 'prototype')?.value === originalPrototype
+    && !!origin && nativeOwnerPrototypeFactsMatch(origin) && !!runtime && nativeScalarRuntimeMatches(runtime);
+  const raw = new Constructor(data), facade = ownDatabase(raw), state = privateMapGet(ownedDatabases, facade);
+  if (genuine && original && origin && runtime && state && !nativeIsProxy(raw) && nativePrepareMatch(engine, raw)
+    && nativeExecutionDependenciesMatch(origin, raw) && nativeScalarRuntimeMatches(runtime)) {
+    const descriptor = nativeGetDescriptor(raw, 'gb'), registry: unknown = descriptor?.value;
+    if (descriptor && 'value' in descriptor && registry && typeof registry === 'object' && !nativeIsProxy(registry)
+      && nativeGetPrototypeOf(registry) === Object.prototype && nativeOwnKeys(registry).length === 0
+      && nativeIsExtensible(registry)) privateMapSet(nativeBirthRegistries, state, captureNativeObjectFacts(registry));
+  }
+  return facade;
+}
+
+/** Genuine prepare mints the native pointer; no live JavaScript statement is
+ * exposed through the registry across an assertion callback. Finalization uses
+ * its independent original WASM function, even after owner/helper retirement. */
+function preparePrivateNativeScalar(state: OwnedSqlDatabase, engine: SqlJsStatic, sql: string): NativeScalarExecutable | undefined {
+  const original = privateMapGet(nativeEngineIdentities, engine), origin = original?.statement, runtime = original?.scalar;
+  const birth = privateMapGet(nativeBirthRegistries, state), registryDescriptor = nativeGetDescriptor(state.raw, 'gb');
+  if (!original || !origin || !runtime || !birth || registryDescriptor?.value !== birth.object
+    || !nativeObjectFactsMatch(birth) || birth.slots.length !== 0 || !nativeIsExtensible(birth.object)
+    || !nativePrepareMatch(engine, state.raw) || !nativeExecutionDependenciesMatch(origin, state.raw)
+    || !nativeScalarRuntimeMatches(runtime)) return undefined;
+  let statement: NativeSqlStatement;
+  try { statement = nativeApply(original.methods.prepare, state.raw, [sql]); }
+  catch (error) {
+    // The genuine native API returns a null statement on preparation failure.
+    // It cannot authorize a borrowed resource or a changed registry transition.
+    if (!nativeObjectFactsMatch(birth) || !nativePrepareMatch(engine, state.raw)
+      || !nativeExecutionDependenciesMatch(origin, state.raw) || !nativeScalarRuntimeMatches(runtime)) throw new SQLiteObservationRetiredError();
+    return undefined;
+  }
+  // The actual original producer returns its own data pointer. Record release
+  // ownership immediately, before any subsequent validation or detach can fail.
+  const pointerDescriptor = nativeGetDescriptor(statement, 'Qa'), pointer: unknown = pointerDescriptor?.value;
+  if (!pointerDescriptor || !('value' in pointerDescriptor) || typeof pointer !== 'number'
+    || !nativeSafeInteger(pointer) || pointer <= 0) throw new SQLiteObservationRetiredError();
+  let released = false;
+  const dispose = () => {
+    if (released) return;
+    released = true;
+    // Finalize destroys the allocation even if its status reports a prior SQL
+    // error. It must never be retried or depend on the current JS registry.
+    runtime.finalize(pointer);
+  };
+  try {
+    const ownerDescriptor = nativeGetDescriptor(statement, 'db'), cursor = nativeGetDescriptor(statement, 'Oa'),
+      buffersDescriptor = nativeGetDescriptor(statement, 'mb'), buffers: unknown = buffersDescriptor?.value;
+    const entries = nativeOwnKeys(birth.object), entry = entries.length === 1 ? nativeGetDescriptor(birth.object, nativeString(pointer)) : undefined;
+    if (nativeOwnKeys(statement).length !== 4 || !pointerDescriptor.writable || !pointerDescriptor.configurable
+      || !ownerDescriptor || !('value' in ownerDescriptor) || ownerDescriptor.value !== state.raw
+      || !cursor || !('value' in cursor) || cursor.value !== 1
+      || !buffersDescriptor || !('value' in buffersDescriptor) || !nativeIsArray(buffers)
+      || nativeGetPrototypeOf(buffers) !== Array.prototype || buffers.length !== 0 || nativeOwnKeys(buffers).length !== 1
+      || entries[0] !== nativeString(pointer) || !entry || !('value' in entry) || entry.value !== statement || !entry.configurable) {
+      throw new SQLiteObservationRetiredError();
+    }
+    // No borrowed operation runs between detachment and neutralization. The
+    // detached pointer is now owned only by this private synchronous closure.
+    nativeDefineProperty(statement, 'Qa', { ...pointerDescriptor, value: 0 });
+    if (!nativeDeleteProperty(birth.object, nativeString(pointer))) throw new SQLiteObservationRetiredError();
+    if (!nativeObjectFactsMatch(birth) || nativeGetDescriptor(statement, 'Qa')?.value !== 0
+      || !nativePrepareMatch(engine, state.raw) || !nativeExecutionDependenciesMatch(origin, state.raw)
+      || !nativeScalarRuntimeMatches(runtime) || !nativeStatementMethodsMatch(origin, statement)) throw new SQLiteObservationRetiredError();
+  } catch (error) {
+    // Partial mint cleanup closes the original JavaScript handle before native
+    // release, so later raw export/close cannot finalize the same pointer twice.
+    try {
+      nativeDefineProperty(statement, 'Qa', { ...pointerDescriptor, value: 0 });
+      const entry = nativeGetDescriptor(birth.object, nativeString(pointer));
+      if (entry && 'value' in entry && entry.value === statement && entry.configurable) nativeDeleteProperty(birth.object, nativeString(pointer));
+    } finally { dispose(); }
+    throw error;
+  }
+  return nativeFreeze({ dispose, read(assertDependencies: () => void): boolean | undefined {
+    const current = () => {
+      assertDependencies();
+      if (released || !nativeObjectFactsMatch(birth) || !nativeScalarRuntimeMatches(runtime)) throw new SQLiteObservationRetiredError();
+    };
+    current();
+    if (runtime.clear(pointer) !== 0 || runtime.reset(pointer) !== 0) return undefined;
+    let result: boolean | undefined;
+    try {
+      const first = runtime.step(pointer);
+      current();
+      if (first === 100 && runtime.count(pointer) === 1 && runtime.dataCount(pointer) === 1
+        && runtime.type(pointer, 0) === 1 && runtime.decode(runtime.name(pointer, 0)) === 'frame_matches') {
+        const value = runtime.value(pointer, 0);
+        current();
+        if ((value === 0 || value === 1) && runtime.step(pointer) === 101) result = value === 1;
+      }
+    } finally {
+      if (runtime.reset(pointer) !== 0) result = undefined;
+    }
+    current();
+    return result;
+  } });
+}
+
 interface OwnedSqlDatabase {
   readonly raw: NativeSqlDatabase;
   readonly identity: bigint;
@@ -358,14 +562,28 @@ interface OwnedSqlDatabase {
 }
 let nextDatabaseIdentity = 0n;
 const ownedDatabases = new WeakMap<SqlDatabase, OwnedSqlDatabase>();
+const nativeBirthRegistries = new WeakMap<OwnedSqlDatabase, NativeObjectFacts>();
+const nativeOwnedProbePlans = new WeakMap<OwnedSqlDatabase, NativeProbePlans>();
+const nativeFrameReleases = new WeakMap<object, () => void>();
 const unownedIdentities = new WeakMap<SqlDatabase, bigint>();
 
 /** Never return sql.js's chainable run result or a native property/statement.
  * Every supported callback receives the same immutable four-method facade. */
+function ownedProbePlans(state: OwnedSqlDatabase): NativeProbePlans | undefined {
+  const original = privateMapGet(nativeOwnedProbePlans, state), descriptor = nativeGetDescriptor(state, 'probePlans');
+  if (descriptor && (!('value' in descriptor) || descriptor.value !== original)) throw new SQLiteObservationRetiredError();
+  if (original && (!descriptor || nativeGetDescriptor(state, 'raw')?.value !== original.raw)) throw new SQLiteObservationRetiredError();
+  return original;
+}
 function retireDatabaseProbe(state: OwnedSqlDatabase): void {
-  const plans = state.probePlans;
-  state.probePlans = undefined;
-  plans?.dispose();
+  const original = privateMapGet(nativeOwnedProbePlans, state);
+  privateMapDelete(nativeOwnedProbePlans, state);
+  try {
+    const descriptor = nativeGetDescriptor(state, 'probePlans');
+    // A replaced slot cannot select cleanup or receive a setter invocation.
+    if (descriptor && 'value' in descriptor && descriptor.value === original
+      && (descriptor.writable || descriptor.configurable)) nativeDefineProperty(state, 'probePlans', { ...descriptor, value: undefined });
+  } finally { original?.dispose(); }
 }
 
 function ownDatabase(raw: NativeSqlDatabase): SqlDatabase {
@@ -375,7 +593,7 @@ function ownDatabase(raw: NativeSqlDatabase): SqlDatabase {
     try { retireDatabaseProbe(state); return run(); }
     finally { state.revision++; state.inFlight--; state.memo = undefined; state.cleanMemo = undefined; }
   };
-  const facade: SqlDatabase = Object.freeze({
+  const facade: SqlDatabase = nativeFreeze({
     run(sql: string, params?: (string | number | Uint8Array | null)[]) {
       operation(() => { raw.run(sql, params); });
     },
@@ -385,13 +603,13 @@ function ownDatabase(raw: NativeSqlDatabase): SqlDatabase {
     export() { return operation(() => raw.export()); },
     close() { operation(() => { raw.close(); }); },
   });
-  ownedDatabases.set(facade, state);
+  privateMapSet(ownedDatabases, facade, state);
   return facade;
 }
 
 /** This path is only for fixed internal SQL, never caller SQL or callbacks. */
 function readDatabaseRow(db: SqlDatabase, sql: string, params: string[]) {
-  const state = ownedDatabases.get(db);
+  const state = privateMapGet(ownedDatabases, db);
   if (state?.inFlight) throw new SQLiteObservationRetiredError();
   return (state?.raw ?? db).exec(sql, params);
 }
@@ -439,35 +657,55 @@ function executeProbePlans(statements: readonly NativeSqlStatement[]): ReturnTyp
 
 /** Only executable plans survive within the private synchronous frame. Every
  * probe steps fresh values, including native alias data_version changes. */
-function installDatabaseProbe(state: OwnedSqlDatabase, probe: DatabaseProbe, engine: SqlJsStatic | null): void {
+function installDatabaseProbe(state: OwnedSqlDatabase, probe: DatabaseProbe, engine: SqlJsStatic | null, frame: object): void {
   retireDatabaseProbe(state);
   const identities = probe.identities;
   // This sql.js build's table-valued version PRAGMAs report main only.
   // Other database sets retain the complete schema-qualified PRAGMA path.
   if (identities.length !== 1 || identities[0]?.[0] !== '0' || identities[0]?.[1] !== 'main') return;
-  const identity = engine ? nativeEngineIdentities.get(engine) : undefined;
+  const identity = engine ? privateMapGet(nativeEngineIdentities, engine) : undefined;
   const origin = identity?.statement;
   const owner = origin ? captureNativeObjectFacts(state.raw) : undefined;
   const comparisonSql = origin && owner && nativeEvery(owner.slots, ({ descriptor }) => 'value' in descriptor)
     && nativeExecutionDependenciesMatch(origin, state.raw)
     && nativePrepareMatch(engine, state.raw) ? nativeFrameComparisonSql(probe) : undefined;
-  let statement: NativeSqlStatement | undefined;
-  if (!comparisonSql) { try { statement = state.raw.prepare(nativeProbeSql); } catch { return; } }
-  let retired = false;
-  const dispose = () => {
-    if (retired) return;
-    retired = true;
-    nativeFrameComparisons.delete(plans);
-    if (statement && !statement.free()) throw new SQLiteObservationRetiredError();
-  };
-  const plans: NativeProbePlans = statement
-    ? { raw: state.raw, identities: JSON.stringify(identities), kind: 'columns', statement, get retired() { return retired; }, dispose }
-    : { raw: state.raw, identities: JSON.stringify(identities), kind: 'scalar', get retired() { return retired; }, dispose };
-  if (comparisonSql && probe.signature && engine && identity && origin && owner) {
-    nativeFrameComparisons.set(plans, Object.freeze({ engine, raw: state.raw, signature: probe.signature,
-      sql: comparisonSql, execute: identity.methods.exec, origin, owner }));
+  let executable: NativeScalarExecutable | undefined, statement: NativeSqlStatement | undefined;
+  let installed = false;
+  try {
+    executable = comparisonSql && engine ? preparePrivateNativeScalar(state, engine, comparisonSql) : undefined;
+    if (!comparisonSql) { try { statement = state.raw.prepare(nativeProbeSql); } catch { return; } }
+    let retired = false;
+    const dispose = () => {
+      if (retired) return;
+      retired = true;
+      try { privateMapDelete(nativeFrameComparisons, plans); }
+      finally {
+        try { executable?.dispose(); }
+        finally { if (statement && !statement.free()) throw new SQLiteObservationRetiredError(); }
+      }
+    };
+    const candidate: NativeProbePlans = statement
+      ? { raw: state.raw, identities: JSON.stringify(identities), kind: 'columns', statement, get retired() { return retired; }, dispose }
+      : { raw: state.raw, identities: JSON.stringify(identities), kind: 'scalar', get retired() { return retired; }, dispose };
+    const plans = nativeFreeze(candidate);
+    if (comparisonSql && probe.signature && engine && identity && origin && owner) {
+      const execution: NativeFrameComparison['execution'] = executable
+        ? { kind: 'native', executable } : { kind: 'exec', execute: identity.methods.exec };
+      privateMapSet(nativeFrameComparisons, plans, nativeFreeze({ engine, raw: state.raw, signature: probe.signature,
+        sql: comparisonSql, execution, origin, owner }));
+    }
+    nativeDefineProperty(state, 'probePlans', { value: plans, writable: true, configurable: true, enumerable: true });
+    privateMapSet(nativeOwnedProbePlans, state, plans);
+    privateMapSet(nativeFrameReleases, frame, () => retireDatabaseProbe(state));
+    installed = true;
+  } finally {
+    // Minted ownership transfers only after the actual plan is installed. No
+    // formatting/registration exception may strand a detached native pointer.
+    if (!installed) {
+      try { executable?.dispose(); }
+      finally { if (statement && !statement.free()) throw new SQLiteObservationRetiredError(); }
+    }
   }
-  state.probePlans = plans;
 }
 
 function databaseProbe(raw: SqlDatabase, plans?: NativeProbePlans): DatabaseProbe {
@@ -475,7 +713,7 @@ function databaseProbe(raw: SqlDatabase, plans?: NativeProbePlans): DatabaseProb
   if (plans?.retired) plans = undefined;
   // Full observations keep all original native fields. The scalar plan is
   // used only for equality fences and is never an observed signature.
-  if (plans && nativeFrameComparisons.has(plans)) { plans.dispose(); plans = undefined; }
+  if (plans && privateMapHas(nativeFrameComparisons, plans)) { plans.dispose(); plans = undefined; }
   if (plans) {
     let result: ReturnType<SqlDatabase['exec']> | undefined;
     if (raw === plans.raw && plans.kind === 'columns') {
@@ -547,19 +785,19 @@ function databaseProbe(raw: SqlDatabase, plans?: NativeProbePlans): DatabaseProb
  * Native data_version fences other SQL connections; facade revisions fence all
  * owner operations, including failed writes, rollback and export/reopen ABA. */
 function observeDatabase(db: SqlDatabase, mode: 'observation' | 'clean-content' = 'observation'): string {
-  const state = ownedDatabases.get(db);
+  const state = privateMapGet(ownedDatabases, db);
   if (!state) {
-    let identity = unownedIdentities.get(db);
-    if (identity === undefined) { identity = ++nextDatabaseIdentity; unownedIdentities.set(db, identity); }
+    let identity = privateMapGet(unownedIdentities, db);
+    if (identity === undefined) { identity = ++nextDatabaseIdentity; privateMapSet(unownedIdentities, db, identity); }
     return JSON.stringify([String(identity), mode === 'observation' ? '0' : 'clean-content', null, sqliteLocalObservation(db, mode)]);
   }
   try {
     if (state.inFlight) throw new SQLiteObservationRetiredError();
-    const revision = state.revision, before = databaseProbe(state.raw, state.probePlans);
+    const revision = state.revision, before = databaseProbe(state.raw, ownedProbePlans(state));
     const memo = mode === 'observation' ? state.memo : state.cleanMemo;
     const digest = before.cacheable && memo?.revision === revision && memo.probe === before.signature
       ? memo.digest : sqliteLocalObservation(state.raw, mode);
-    const after = databaseProbe(state.raw, state.probePlans);
+    const after = databaseProbe(state.raw, ownedProbePlans(state));
     if (state.inFlight || state.revision !== revision || before.signature !== after.signature) throw new SQLiteObservationRetiredError();
     const next = before.cacheable && after.cacheable && after.signature !== null
       ? { revision, probe: after.signature, digest } : undefined;
@@ -633,9 +871,17 @@ const nativeReadFrameIdentities = new WeakMap<object, {
   readonly observation?: NativeReadFrameObservation;
 }>();
 function assertReadFrameOrigin(store: SQLiteStore, frame: object) {
-  const original = nativeReadFrameIdentities.get(frame);
-  if (original?.store !== store || Object.getOwnPropertyDescriptor(frame, 'assertCurrent')?.value !== original.assertCurrent) {
+  const original = privateMapGet(nativeReadFrameIdentities, frame);
+  if (original?.store !== store || nativeGetDescriptor(frame, 'assertCurrent')?.value !== original.assertCurrent) {
     throw new SQLiteObservationRetiredError();
+  }
+  if (original.observation) {
+    for (const key of nativeOwnKeys(original.observation)) {
+      const expected = nativeGetDescriptor(original.observation, key), actual = nativeGetDescriptor(frame, key);
+      if (!expected || !('value' in expected) || !actual || !('value' in actual) || actual.value !== expected.value) {
+        throw new SQLiteObservationRetiredError();
+      }
+    }
   }
   return original;
 }
@@ -651,13 +897,13 @@ function currentNativeReadImage(store: SQLiteStore, frame: object | null, db: Sq
   assertNativeEngineIdentity(engine);
   if (frame) {
     const original = assertReadFrameOrigin(store, frame);
-    if (original.observation && Object.entries(original.observation).some(([name, value]) => {
+    if (original.observation && nativeEntries(original.observation).some(([name, value]) => {
       const field = Object.getOwnPropertyDescriptor(frame, name);
       return !field || !('value' in field) || field.value !== value;
     })) throw new SQLiteObservationRetiredError();
   }
-  const image = frame ? nativeReadImages.get(frame) : undefined;
-  if (image && (image.store !== store || image.db !== db || ownedDatabases.get(image.db) !== image.state
+  const image = frame ? privateMapGet(nativeReadImages, frame) : undefined;
+  if (image && (image.store !== store || image.db !== db || privateMapGet(ownedDatabases, image.db) !== image.state
     || image.state.inFlight || image.state.revision !== image.revision)) throw new SQLiteObservationRetiredError();
   return image;
 }
@@ -855,8 +1101,8 @@ export class SQLiteStore {
       const db = frame?.db ?? this.getDb();
       frame?.assertCurrent();
       const originalGenerations = readActualRecordGenerations(db, captured);
-      const native = frame?.db ? ownedDatabases.get(frame.db) : undefined;
-      let canonical = Boolean(frame && image?.store === this && image.origin === nativeReadFrameIdentities.get(frame)?.identity
+      const native = frame?.db ? privateMapGet(ownedDatabases, frame.db) : undefined;
+      let canonical = Boolean(frame && image?.store === this && image.origin === privateMapGet(nativeReadFrameIdentities, frame)?.identity
         && image.digest === frame.persisted && image.state === native && image.revision === native?.revision && !native?.inFlight
         && frame.localState && frame.persisted
         && nativeMethodsMatch(this.sqlEngine, native?.raw) && nativeMethodsMatch(this.sqlEngine, frame.localState.raw)
@@ -869,8 +1115,8 @@ export class SQLiteStore {
       currentNativeReadImage(this, frame, frame?.db, this.sqlEngine);
       frame?.assertCurrent();
       const expected = Object.freeze<ExpectedKnowledgeRecordReadset>({ [expectedReadsetBrand]: true });
-      expectedRecordReadsets.set(expected, Object.freeze({ token: expected, store: this,
-        origin: frame ? nativeReadFrameIdentities.get(frame)?.identity : undefined, persistence: this.persistence,
+      privateMapSet(expectedRecordReadsets, expected, nativeFreeze({ token: expected, store: this,
+        origin: frame ? privateMapGet(nativeReadFrameIdentities, frame)?.identity : undefined, persistence: this.persistence,
         plan: this.nativeSchemaReadPlan, validator: this.validateCurrentSchema, schemaVersion: this.schemaVersion,
         digest: frame?.persisted, canonical, selectors: Object.freeze(captured.map(selector => Object.freeze(selector))),
         generations: originalGenerations }));
@@ -886,7 +1132,7 @@ export class SQLiteStore {
     try {
       const captured = captureExpectedReadsets(inputs);
       for (const input of captured) {
-        const retained = expectedRecordReadsets.get(input.expected);
+        const retained = privateMapGet(expectedRecordReadsets, input.expected);
         if (!retained || retained.store !== this || retained.selectors.length !== input.selectors.length
           || retained.selectors.some((selector, index) => selector.kind !== input.selectors[index]?.kind || selector.id !== input.selectors[index]?.id)) {
           throw new TypeError('SQLiteStore: expected readset does not belong to this selection');
@@ -900,16 +1146,16 @@ export class SQLiteStore {
         this.readPrivatePersistedRows('SELECT 1', [], true);
         const frame = this.persistedReadFrame;
         frame?.assertCurrent();
-        const native = frame?.db ? ownedDatabases.get(frame.db) : undefined;
+        const native = frame?.db ? privateMapGet(ownedDatabases, frame.db) : undefined;
         const image = currentNativeReadImage(this, frame, frame?.db, this.sqlEngine);
-        const closed = Boolean(frame && image?.store === this && image.origin === nativeReadFrameIdentities.get(frame)?.identity
+        const closed = Boolean(frame && image?.store === this && image.origin === privateMapGet(nativeReadFrameIdentities, frame)?.identity
           && image.digest === frame.persisted && image.state === native && image.revision === native?.revision && !native?.inFlight
           && frame.localState
           && nativeMethodsMatch(this.sqlEngine, native?.raw) && nativeMethodsMatch(this.sqlEngine, frame.localState.raw)
           && nativeKnowledgeSchemaReadPlanMatches(this.nativeSchemaReadPlan, this.validateCurrentSchema, this.schemaVersion));
         const values: boolean[] = [];
         for (const input of captured) {
-          const retained = expectedRecordReadsets.get(input.expected);
+          const retained = privateMapGet(expectedRecordReadsets, input.expected);
           if (!retained) throw new TypeError('SQLiteStore: unknown expected readset');
           if (closed && retained.canonical && retained.origin && retained.persistence === this.persistence
             && retained.plan === this.nativeSchemaReadPlan && retained.validator === this.validateCurrentSchema
@@ -980,19 +1226,19 @@ export class SQLiteStore {
       if (!frame.db) {
         frame.identity = this.persistence?.observationIdentity();
         frame.local = observeDatabase(this.getDb());
-        const localState = ownedDatabases.get(this.getDb()), revision = localState?.revision;
+        const localState = privateMapGet(ownedDatabases, this.getDb()), revision = localState?.revision;
         const probe = localState ? databaseProbe(localState.raw) : undefined;
         if (localState && probe?.guarded && probe.signature !== null) {
           if (localState.inFlight || localState.revision !== revision) throw new SQLiteObservationRetiredError();
           frame.localState = localState; frame.localRevision = revision;
           frame.localProbe = probe.signature; frame.localIsolated = probe.isolated;
-          installDatabaseProbe(localState, probe, this.sqlEngine);
+          installDatabaseProbe(localState, probe, this.sqlEngine, frame);
         }
         const persisted = this.persistence?.read();
         frame.persisted = persisted ? imageDigest(persisted) : undefined;
         const origin = assertReadFrameOrigin(this, frame);
         if (origin.observation) throw new SQLiteObservationRetiredError();
-        nativeReadFrameIdentities.set(frame, Object.freeze({ ...origin, observation: Object.freeze({
+        privateMapSet(nativeReadFrameIdentities, frame, nativeFreeze({ ...origin, observation: nativeFreeze({
           identity: frame.identity, local: frame.local, persisted: frame.persisted, localState: frame.localState,
           localRevision: frame.localRevision, localProbe: frame.localProbe, localIsolated: frame.localIsolated,
         }) }));
@@ -1001,12 +1247,12 @@ export class SQLiteStore {
           && nativeKnowledgeSchemaReadPlanMatches(plan, this.validateCurrentSchema, this.schemaVersion)
           ? Object.freeze<NativeFrameImageStamp>({ [frameImageStampBrand]: true }) : undefined;
         if (stamp && persisted && this.persistence && plan && frame.persisted) {
-          frameImageStamps.set(stamp, { store: this, frame, data: persisted, persistence: this.persistence,
+          privateMapSet(frameImageStamps, stamp, { store: this, frame, data: persisted, persistence: this.persistence,
             plan, validator: this.validateCurrentSchema, schemaVersion: this.schemaVersion,
             imageEpoch: this.imageEpoch, observationEpoch: this.observationEpoch, digest: frame.persisted });
         }
         try { frame.db = this.openPrivateReadImage(stamp); }
-        finally { if (stamp) frameImageStamps.delete(stamp); }
+        finally { if (stamp) privateMapDelete(frameImageStamps, stamp); }
         frame.owned = true;
         frame.assertCurrent();
       }
@@ -1042,7 +1288,7 @@ export class SQLiteStore {
         if (active.db) {
           const localState = active.localState;
           if (localState) {
-            const state = ownedDatabases.get(this.getDb());
+            const state = privateMapGet(ownedDatabases, this.getDb());
             if (state !== localState || state.inFlight || state.revision !== active.localRevision) throw new SQLiteObservationRetiredError();
           } else if (observeDatabase(this.getDb()) !== active.local) throw new SQLiteObservationRetiredError();
         }
@@ -1066,18 +1312,18 @@ export class SQLiteStore {
           throw new SQLiteObservationRetiredError();
         }
         if (original?.localState) {
-          const state = ownedDatabases.get(this.getDb());
+          const state = privateMapGet(ownedDatabases, this.getDb());
           if (state !== original.localState || state.inFlight || state.revision !== original.localRevision) throw new SQLiteObservationRetiredError();
           if (verifyNative && !original.localIsolated) {
-            const matches = matchesNativeFrameProbe(state.raw, state.probePlans, original.localProbe);
+            const matches = matchesNativeFrameProbe(state.raw, ownedProbePlans(state), original.localProbe);
             if (matches === false || (matches === undefined
-              && databaseProbe(state.raw, state.probePlans).signature !== original.localProbe)) throw new SQLiteObservationRetiredError();
+              && databaseProbe(state.raw, ownedProbePlans(state)).signature !== original.localProbe)) throw new SQLiteObservationRetiredError();
           }
         }
       },
     };
     const assertCurrent = frame.assertCurrent;
-    nativeReadFrameIdentities.set(frame, Object.freeze({ store: this, identity: Object.freeze({}), assertCurrent }));
+    privateMapSet(nativeReadFrameIdentities, frame, nativeFreeze({ store: this, identity: nativeFreeze({}), assertCurrent }));
     this.persistedReadFrame = frame;
     try {
       invoke();
@@ -1094,7 +1340,9 @@ export class SQLiteStore {
       }
     } finally {
       this.persistedReadFrame = null;
-      try { if (frame.localState) retireDatabaseProbe(frame.localState); }
+      const release = privateMapGet(nativeFrameReleases, frame);
+      privateMapDelete(nativeFrameReleases, frame);
+      try { release?.(); }
       finally { if (frame.owned && frame.db) this.closeReadImage(frame.db); }
     }
   }
@@ -1176,7 +1424,7 @@ export class SQLiteStore {
     const original = this.getDb(), persistence = this.persistence, epoch = this.imageEpoch;
     const prefix = original.export();
     const local = observeDatabase(original);
-    const staged = ownDatabase(new this.sqlEngine!.Database(prefix));
+    const staged = constructOwnedDatabase(this.sqlEngine!, prefix);
     let data: Uint8Array, cleanContent: string | null, stagedLocal: string;
     try {
       const result: unknown = operation(staged);
@@ -1351,10 +1599,10 @@ export class SQLiteStore {
       this.persistence?.acceptBaseline(original);
 
       if (existedOnDisk) {
-        this.db = ownDatabase(new SQL.Database(original!));
+        this.db = constructOwnedDatabase(SQL, original!);
         logger.info('SQLiteStore: loaded from disk', { path: dbPath });
       } else {
-        this.db = ownDatabase(new SQL.Database());
+        this.db = constructOwnedDatabase(SQL);
         logger.info('SQLiteStore: initialized in-memory');
       }
 
@@ -1379,7 +1627,7 @@ export class SQLiteStore {
           ? (snapshotPath) => {
               if (!this.coordinated) restoreStoreSnapshot(dbPath!, snapshotPath);
               if (this.coordinated) this.db?.close();
-              this.db = ownDatabase(new SQL.Database(readFileSync(dbPath!)));
+              this.db = constructOwnedDatabase(SQL, readFileSync(dbPath!));
             }
           : undefined,
       });
@@ -1427,7 +1675,7 @@ export class SQLiteStore {
     if (this.privateSchemaImages.delete(exposed)) return exposed;
     try {
       const bytes = exposed.export(), Database = currentDatabaseConstructor(this.sqlEngine!);
-      return ownDatabase(new Database(bytes));
+      return constructOwnedDatabase(this.sqlEngine!, bytes, Database);
     }
     finally { this.closeReadImage(exposed); }
   }
@@ -1442,8 +1690,8 @@ export class SQLiteStore {
     let entryBytes: Uint8Array | undefined;
     let entryDigest: string | undefined;
     if (stamp) {
-      const captured = frameImageStamps.get(stamp), frame = this.persistedReadFrame;
-      if (captured?.store === this) frameImageStamps.delete(stamp);
+      const captured = privateMapGet(frameImageStamps, stamp), frame = this.persistedReadFrame;
+      if (captured?.store === this) privateMapDelete(frameImageStamps, stamp);
       if (captured?.store === this && captured.frame === frame && frame && frame.db === null
         && captured.persistence === this.persistence && captured.plan === privateReadPlan && privateReadPlan === this.nativeSchemaReadPlan
         && captured.validator === this.validateCurrentSchema && captured.schemaVersion === this.schemaVersion
@@ -1459,7 +1707,7 @@ export class SQLiteStore {
     const data = entryBytes ?? (this.persistence ? this.persistence.read() : this.cleanBytes);
     if (data !== null) assertSqliteImage(data);
     const Database = currentDatabaseConstructor(this.sqlEngine!);
-    const current = ownDatabase(new Database(data ?? undefined));
+    const current = constructOwnedDatabase(this.sqlEngine!, data ?? undefined, Database);
     try {
       if (data === null) {
         this.schema!(current);
@@ -1470,8 +1718,8 @@ export class SQLiteStore {
       if (data !== null && nativeKnowledgeSchemaReadPlanMatches(privateReadPlan, this.validateCurrentSchema, this.schemaVersion)
         && validateNativeKnowledgeReadSchema({ exec: sql => readDatabaseRow(current, sql, []) })) {
         this.privateSchemaImages.add(current);
-        const frame = this.persistedReadFrame, state = ownedDatabases.get(current), origin = frame ? nativeReadFrameIdentities.get(frame)?.identity : undefined;
-        if (entryDigest && origin && state && frame) nativeReadImages.set(frame, Object.freeze({ db: current, store: this, origin,
+        const frame = this.persistedReadFrame, state = privateMapGet(ownedDatabases, current), origin = frame ? privateMapGet(nativeReadFrameIdentities, frame)?.identity : undefined;
+        if (entryDigest && origin && state && frame) privateMapSet(nativeReadImages, frame, nativeFreeze({ db: current, store: this, origin,
           digest: entryDigest, state, revision: state.revision }));
       } else this.validateCurrentSchema?.(current);
       return current;
