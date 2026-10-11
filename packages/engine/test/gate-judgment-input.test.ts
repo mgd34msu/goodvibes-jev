@@ -574,3 +574,85 @@ test('explicit credential field syntax remains protected across casing, with ref
   }
   expect(judgmentInputProblem({ API_KEY_NOTE: 'ordinary documentation' })).toBeUndefined();
 });
+
+
+describe('complete declared path inspection', () => {
+  test('direct and card-context fields preserve their first refusal before ancestor declarations', () => {
+    const direct = { GOODVIBES_CALENDAR_SUBSCRIPTION_: { cvv: '123' } };
+    expect(judgmentInputProblem(direct)).toBe('card-material');
+    expect(judgmentInputCardProblem(direct)).toBe('card-material');
+    expect(judgmentInputProblem({ apiKey: PAN })).toBe('credential-material');
+    expect(judgmentInputCardProblem({ apiKey: PAN })).toBe('card-material');
+    expect(judgmentInputProblem({ card: { number: SECRET } })).toBe('card-material');
+    expect(judgmentInputProblem({ cardMaterial: { expiryMonth: '07' } })).toBe('card-material');
+    const ordered = { GOODVIBES_CALENDAR_SUBSCRIPTION_: { ordinary: SECRET, tail: PAN } };
+    expect(judgmentInputProblem(ordered)).toBe('credential-material');
+    expect(judgmentInputCardProblem(ordered)).toBe('card-material');
+    expect(judgmentInputProblem({ tail: PAN, apiKey: SECRET })).toBe('card-material');
+  });
+
+  test('dotted and empty property names retain their exact declared suffixes', () => {
+    for (const value of [
+      { envelope: { 'surfaces.slack': { botToken: SECRET } } },
+      { envelope: { surfaces: { 'slack.botToken': SECRET } } },
+      { envelope: { 'surfaces.slack.botToken': SECRET } },
+      { '': { surfaces: { slack: { botToken: SECRET } } } },
+      { GOODVIBES_CALENDAR_SUBSCRIPTION_: { '': SECRET } },
+    ]) expect(judgmentInputProblem(value)).toBe('credential-material');
+    for (const value of [
+      { surfaces: { '': { slack: { botToken: SECRET } } } },
+      { 'surfaces.': { slack: { botToken: SECRET } } },
+      { ' surfaces': { slack: { botToken: SECRET } } },
+      { GOODVIBES_CALENDAR_SUBSCRIPTION_: { '': REF } },
+      { envelope: { 'surfaces.slack': { botToken: REF } } },
+    ]) expect(judgmentInputProblem(value)).toBeUndefined();
+  });
+
+  test('encoded JSON inherits exact parent fields and suffixes at every decoding step', () => {
+    for (const value of [
+      { envelope: { 'surfaces.slack': JSON.stringify({ botToken: SECRET }) } },
+      { surfaces: JSON.stringify({ slack: JSON.stringify({ botToken: SECRET }) }) },
+      { GOODVIBES_CALENDAR_SUBSCRIPTION_: JSON.stringify({ '': SECRET }) },
+    ]) expect(judgmentInputProblem(value)).toBe('credential-material');
+    expect(judgmentInputProblem({ card: JSON.stringify({ number: SECRET }) })).toBe('card-material');
+    expect(judgmentInputProblem(JSON.stringify({ apiKey: PAN }))).toBe('credential-material');
+    expect(judgmentInputCardProblem(JSON.stringify({ apiKey: PAN }))).toBe('card-material');
+    expect(judgmentInputProblem({ surfaces: JSON.stringify({ slack: JSON.stringify({ botToken: REF }) }) })).toBeUndefined();
+    expect(judgmentInputProblem({ 'surfaces.': JSON.stringify({ slack: { botToken: SECRET } }) })).toBeUndefined();
+  });
+
+  test('complete encoded depth and node limits still refuse the original input', () => {
+    const nested = (levels: number): unknown => {
+      let value: unknown = 'ordinary';
+      for (let index = 0; index < levels; index++) value = { child: value };
+      return value;
+    };
+    expect(judgmentInputProblem(JSON.stringify(nested(63)))).toBeUndefined();
+    expect(judgmentInputProblem(JSON.stringify(nested(64)))).toBe('unsupported-input');
+    expect(judgmentInputProblem(JSON.stringify(Array.from({ length: 19_998 }, () => null)))).toBeUndefined();
+    expect(judgmentInputProblem(JSON.stringify(Array.from({ length: 19_999 }, () => null)))).toBe('unsupported-input');
+    const complete = Array.from({ length: 19_997 }, () => null);
+    expect(judgmentInputProblem(JSON.stringify([...complete, PAN]))).toBe('card-material');
+  });
+
+  test('complete decoded text retains the original whole-source character bound', () => {
+    expect(judgmentInputProblem(JSON.stringify(['x'.repeat(499_998)]))).toBeUndefined();
+    expect(judgmentInputProblem(JSON.stringify(['x'.repeat(499_999)]))).toBe('unsupported-input');
+    const prefix = 'ordinary '.repeat(1_100);
+    expect(judgmentInputProblem({ surfaces: { slack: JSON.stringify({ botToken: `${prefix}${SECRET}` }) } })).toBe('credential-material');
+    expect(judgmentInputCardProblem(JSON.stringify({ apiKey: SECRET, tail: `${prefix}${PAN}` }))).toBe('card-material');
+  });
+
+  test('native data shapes retain exact paths while hidden accessors remain unread', () => {
+    const value: Record<string, unknown> = Object.create(null);
+    Object.defineProperty(value, '__proto__', { enumerable: true, value: { '': { surfaces: { 'slack.botToken': SECRET } } } });
+    expect(judgmentInputProblem(value)).toBe('credential-material');
+    expect(judgmentInputProblem(hiddenArrayValue({ surfaces: { slack: { botToken: SECRET } } }, 3))).toBe('credential-material');
+    let reads = 0;
+    const malformed = { GOODVIBES_CALENDAR_SUBSCRIPTION_: { cvv: '123' } };
+    Object.defineProperty(malformed, 'late', { get() { reads++; return PAN; }, enumerable: false });
+    expect(judgmentInputProblem(malformed)).toBe('unsupported-input');
+    expect(judgmentInputCardProblem(malformed)).toBe('unsupported-input');
+    expect(reads).toBe(0);
+  });
+});

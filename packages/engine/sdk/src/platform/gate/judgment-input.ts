@@ -258,7 +258,7 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false): Ju
   let nodes = 0;
   let chars = 0;
   const ancestors = new Set<object>();
-  function visit(entry: unknown, path: readonly string[], operation: string, depth: number): JudgmentInputProblem | undefined {
+  function visit(entry: unknown, suffixes: readonly string[], parentKey: string | undefined, operation: string, depth: number): JudgmentInputProblem | undefined {
     if (++nodes > MAX_NODES || depth > MAX_DEPTH) return 'unsupported-input';
     if (typeof entry === 'string') {
       chars += entry.length;
@@ -267,7 +267,7 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false): Ju
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         let decoded: unknown;
         try { decoded = JSON.parse(entry); } catch { return inlineProblem(entry, cardOnly); }
-        return visit(decoded, path, operation, depth + 1);
+        return visit(decoded, suffixes, parentKey, operation, depth + 1);
       }
       return inlineProblem(entry, cardOnly);
     }
@@ -311,17 +311,23 @@ function snapshotProblem(value: unknown, toolName: string, cardOnly = false): Ju
       for (const [key, child] of Object.entries(fields)) {
         const keyProblem = inlineProblem(key, cardOnly);
         if (keyProblem) return keyProblem;
-        const fullPath = [...path, key];
-        const cardField = (path.at(-1) === 'cardMaterial' && (CARD_FIELD_NAMES as readonly string[]).includes(key)) || (path.at(-1) === 'card' && (key === 'number' || key === 'expiry'));
-        const declared = (cardField ? 'card-material' : protectedKey(key)) ?? fullPath.map((_, index) => fullPath.slice(index).join('.')).map(protectedKey).find(Boolean);
+        const fullSuffixes = [...suffixes.map(suffix => `${suffix}.${key}`), key];
+        const cardField = (parentKey === 'cardMaterial' && (CARD_FIELD_NAMES as readonly string[]).includes(key)) || (parentKey === 'card' && (key === 'number' || key === 'expiry'));
+        let declared: JudgmentInputProblem | undefined = cardField ? 'card-material' : protectedKey(key);
+        if (declared === undefined) {
+          for (const suffix of fullSuffixes) {
+            declared = protectedKey(suffix);
+            if (declared !== undefined) break;
+          }
+        }
         if (declared && (!cardOnly || declared === 'card-material') && present(child) && !reference(child) && !fieldDeclaration(child)) return declared;
-        const problem = visit(child, fullPath, op, depth + 1);
+        const problem = visit(child, fullSuffixes, key, op, depth + 1);
         if (problem) return problem;
       }
       return undefined;
     } finally { ancestors.delete(entry); }
   }
-  return inlineProblem(toolName, cardOnly) ?? visit(value, [], toolName, 0);
+  return inlineProblem(toolName, cardOnly) ?? visit(value, [], undefined, toolName, 0);
 }
 
 /** Native evidence inspection only: no credential exception, projection or admission is produced. */
