@@ -4,7 +4,7 @@ import { SOURCE_SCREENING_LIMITS, type ProtectedSource, type ProtectedSourceOwne
 import { ToolInputProjectionError, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import type { CommandContext } from '../input/command-registry.ts';
-import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
 import type { ProviderApiLike, ArtifactListLike } from './agent-harness-model-routing-types.ts';
 import { contextWindowFor, modelRegistryKey } from './agent-harness-model-catalog.ts';
 
@@ -18,27 +18,50 @@ export interface ModelReadingOptions {
 
 /** Inspect every descriptor, including fields consumers do not display. */
 function captureModelReadingData<T>(value: T): T {
-  const captured = captureCatalogData(value);
-  // Complete source includes hidden data properties. JSON's enumerability
-  // convention is not permission to omit a semantic field from screening.
+  const budget = { nodes: 0, characters: 0, slots: 0 };
+  const ancestors = new Set<object>();
   const copies = new WeakMap<object, object>();
-  const enumerable = (entry: unknown): unknown => {
-    if (entry === null || typeof entry !== 'object') return entry;
+  const arrays: { readonly length: number; readonly keys: readonly string[] }[] = [];
+  const invalid = (): never => { throw new ToolInputProjectionError('invalid'); };
+  const capture = (entry: unknown, depth: number): unknown => {
+    if (++budget.nodes > 100_000 || depth > 64) return invalid();
+    if (typeof entry === 'string') { budget.characters += entry.length; if (budget.characters > 1_000_000) return invalid(); return entry; }
+    if (entry === null || entry === undefined || typeof entry === 'boolean') return entry;
+    if (typeof entry === 'number') return Number.isFinite(entry) ? entry : invalid();
+    if (typeof entry !== 'object' || nodeTypes.isProxy(entry) || ancestors.has(entry)) return invalid();
     const existing = copies.get(entry); if (existing) return existing;
     const array = Array.isArray(entry);
+    const prototype: unknown = Object.getPrototypeOf(entry);
+    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return invalid();
     const descriptors = Object.getOwnPropertyDescriptors(entry);
-    if (array && (Object.keys(descriptors).length !== entry.length + 1 || Object.keys(descriptors).some(key => key !== 'length'
-      && (!Number.isSafeInteger(Number(key)) || String(Number(key)) !== key || Number(key) < 0 || Number(key) >= entry.length))))
-      throw new ToolInputProjectionError('invalid');
-    const result: object = array ? new Array(entry.length) : Object.create(null) as object;
-    copies.set(entry, result);
-    for (const [key, descriptor] of Object.entries(descriptors)) {
-      if (array && key === 'length') continue;
-      Object.defineProperty(result, key, { value: enumerable(descriptor.value), enumerable: true });
-    }
-    return Object.freeze(result);
+    if (Object.getOwnPropertySymbols(entry).length > 0 || Object.hasOwn(descriptors, 'toJSON')
+      || (array && Object.hasOwn(descriptors, 'constructor'))
+      || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return invalid();
+    const length: unknown = array ? descriptors.length?.value : 0;
+    if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 20_000) return invalid();
+    if (array && (budget.slots += length) > 100_000) return invalid();
+    if (array) arrays.push({ length, keys: Object.keys(descriptors) });
+    const result: object = array ? new Array(length) : Object.create(null);
+    ancestors.add(entry);
+    try {
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (array && key === 'length') continue;
+        budget.characters += key.length;
+        if (budget.characters > 1_000_000) return invalid();
+        // Hidden source data is screened through the same final enumerable DTO.
+        Object.defineProperty(result, key, { value: capture(descriptor.value, depth + 1), enumerable: true });
+      }
+      Object.freeze(result); copies.set(entry, result); return result;
+    } finally { ancestors.delete(entry); }
   };
-  const data = enumerable(captured);
+  const data = capture(value, 0);
+  // Keep the original array-layout checks after complete source capture. They
+  // inspect only the captured key lists, so a second detached tree is unnecessary.
+  for (const { length, keys } of arrays) {
+    if (keys.length !== length + 1 || keys.some(key => key !== 'length'
+      && (!Number.isSafeInteger(Number(key)) || String(Number(key)) !== key || Number(key) < 0 || Number(key) >= length)))
+      throw new ToolInputProjectionError('invalid');
+  }
   // Bound expanded JSON work as well as unique DAG nodes. An alias added during
   // a late mutation cannot make equality checking expand exponentially.
   let nodes = 0, characters = 0;
