@@ -54,6 +54,7 @@ export function registerNativeAutomationGatewayMethods(catalog: GatewayMethodCat
       const expected = patch.expectedMutationRevision;
       const selected = expected ? retainTarget.call(manager, jobId, expected) : undefined;
       const updated = await runNativeMutation({ host, method: 'automation.jobs.update', body, context,
+        automationTarget: selected,
         target: selected ? nativeJobMeaning(selected.job) : { jobId },
         scopes: ['write:automation'], confirmation: 'none',
         assertTargetCurrent: () => { current(); selected?.assertCurrent(); },
@@ -109,6 +110,7 @@ export function registerNativeAutomationGatewayMethods(catalog: GatewayMethodCat
         current();
         const selected = typeof revision === 'string' ? retainTarget.call(manager, jobId, revision) : undefined;
         return await runNativeMutation({ host, method, body, context, target: selected ? nativeJobMeaning(selected.job) : { jobId }, scopes: ['write:automation'], confirmation: 'none',
+          automationTarget: selected,
           assertTargetCurrent: () => { current(); selected?.assertCurrent(); },
           mutate: async (assertCurrent, _admission, withPublication) => {
             const options = { signal: context.signal, assertCurrent: () => { current(); assertCurrent(); }, withPublication };

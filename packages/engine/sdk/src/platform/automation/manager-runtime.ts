@@ -10,7 +10,10 @@ import { AgentMessageBus } from '../agents/message-bus.js';
 import { computeSchedulerCapacity, type SchedulerCapacityReport } from './scheduler-capacity.js';
 import { AutomationJobStore } from './store/jobs.js';
 import { AutomationRunStore } from './store/runs.js';
-import { AutomationJobMap, automationJobRevision, ownedAutomationJob, AutomationJobCommitIndeterminateError, AutomationJobMutationStaleError, retainAutomationMutation, type AutomationJobMutationOptions } from './job-mutations.js';
+import { AutomationJobMap, automationJobRevision, ownedAutomationJob, hasOwnedAutomationRevision, AutomationJobCommitIndeterminateError, AutomationJobMutationStaleError, retainAutomationMutation, type AutomationJobMutationOptions, type RetainedAutomationJobTarget } from './job-mutations.js';
+import { types as nodeTypes } from 'node:util';
+import { captureOwnedJson } from '../gate/judgment-input.js';
+import { isRecord } from '../utils/record-coerce.js';
 import { AutomationDeliveryManager } from './delivery-manager.js';
 import { RouteBindingManager } from '../channels/index.js';
 import type { AutomationJob, ManagedAutomationJob } from './jobs.js';
@@ -83,6 +86,44 @@ import {
 import type { FeatureFlagReader } from '../runtime/feature-flags/index.js';
 import { isFeatureGateEnabled, requireFeatureGate } from '../runtime/feature-flags/index.js';
 
+const retainedTargetReferences = new WeakMap<RetainedAutomationJobTarget, {
+  readonly selected: ManagedAutomationJob;
+  readonly job: ManagedAutomationJob;
+  readonly jobBytes: string;
+  readonly assertCurrent: () => void;
+}>();
+const nativeSelectedMethods = new Set([
+  'automation.jobs.update', 'automation.jobs.enable', 'automation.jobs.disable', 'automation.jobs.delete',
+  'automation.schedules.enable', 'automation.schedules.disable', 'automation.schedules.delete',
+]);
+
+export function assertRetainedAutomationTargetCurrent(target: RetainedAutomationJobTarget): void {
+  const known = retainedTargetReferences.get(target);
+  if (!known) throw new AutomationJobMutationStaleError();
+  const identity = () => {
+    const job = Object.getOwnPropertyDescriptor(target, 'job'), assertion = Object.getOwnPropertyDescriptor(target, 'assertCurrent');
+    if (!hasOwnedAutomationRevision(known.selected) || Reflect.ownKeys(target).length !== 2
+      || !job || !('value' in job) || job.value !== known.job
+      || !assertion || !('value' in assertion) || assertion.value !== known.assertCurrent
+      || JSON.stringify(captureOwnedJson(known.job, nodeTypes.isProxy)) !== known.jobBytes) throw new AutomationJobMutationStaleError();
+  };
+  identity(); known.assertCurrent(); identity();
+}
+
+/** Internal native adapter: only the actual retained owner can issue this reference. */
+export function projectRetainedAutomationRequest(target: RetainedAutomationJobTarget, method: string, body: unknown): unknown {
+  const known = retainedTargetReferences.get(target);
+  if (!known || !nativeSelectedMethods.has(method)) throw new AutomationJobMutationStaleError();
+  assertRetainedAutomationTargetCurrent(target);
+  const captured = captureOwnedJson(body, nodeTypes.isProxy);
+  const selector = method.startsWith('automation.schedules.') ? 'scheduleId' : 'jobId';
+  if (!isRecord(captured) || captured[selector] !== known.selected.id
+    || captured.expectedMutationRevision !== automationJobRevision(known.selected)) throw new AutomationJobMutationStaleError();
+  const projected = { ...captured, expectedMutationRevision: { kind: 'selected-native-revision', target: 'selected-automation-target' } };
+  assertRetainedAutomationTargetCurrent(target);
+  return projected;
+}
+
 export type {
   CreateAutomationJobInput,
   UpdateAutomationJobInput,
@@ -125,6 +166,16 @@ export interface AutomationHeartbeatResult {
 }
 
 export class AutomationManager {
+  static readonly #managerOwnershipMethods = Object.getOwnPropertyDescriptors(AutomationManager.prototype);
+  static readonly #storeOwnershipMethods = Object.getOwnPropertyDescriptors(AutomationJobStore.prototype);
+  static readonly #mapGet = Map.prototype.get;
+  static readonly #mapIterator = Map.prototype[Symbol.iterator];
+  readonly #retainedTargetOwner: {
+    readonly jobs: AutomationJobMap;
+    readonly store: AutomationJobStore;
+    readonly featureFlags: FeatureFlagReader;
+    readonly storeFields: PropertyDescriptorMap;
+  };
   private readonly jobStore: AutomationJobStore;
   private readonly runStore: AutomationRunStore;
   private readonly spawnTask?: ((input: SpawnAutomationTaskInput) => string) | undefined;
@@ -177,6 +228,45 @@ export class AutomationManager {
     this.runtimeBus = config.runtimeBus ?? null;
     this.deliveryManager = config.deliveryManager ?? null;
     this.featureFlags = config.featureFlags ?? null;
+    this.#retainedTargetOwner = { jobs: this.jobs, store: this.jobStore, featureFlags: this.featureFlags,
+      storeFields: nodeTypes.isProxy(this.jobStore) ? {} : Object.getOwnPropertyDescriptors(this.jobStore) };
+  }
+
+  #assertRetainedTargetOwner() {
+    const owner = this.#retainedTargetOwner;
+    const jobs = Object.getOwnPropertyDescriptor(this, 'jobs'), store = Object.getOwnPropertyDescriptor(this, 'jobStore');
+    const featureFlags = Object.getOwnPropertyDescriptor(this, 'featureFlags');
+    if (!jobs || !('value' in jobs) || jobs.value !== owner.jobs || !store || !('value' in store) || store.value !== owner.store
+      || !featureFlags || !('value' in featureFlags) || featureFlags.value !== owner.featureFlags
+      || nodeTypes.isProxy(owner.jobs) || nodeTypes.isProxy(owner.store)
+      || Object.getPrototypeOf(this) !== AutomationManager.prototype
+      || Object.getPrototypeOf(owner.jobs) !== AutomationJobMap.prototype
+      || Object.getPrototypeOf(owner.store) !== AutomationJobStore.prototype
+      || Object.getPrototypeOf(AutomationJobMap.prototype) !== Map.prototype) throw new AutomationJobMutationStaleError();
+    for (const [object, prototype, key, original] of [
+      [this, AutomationManager.prototype, 'requireEnabled', AutomationManager.#managerOwnershipMethods.requireEnabled],
+      ...['assertCurrent', 'fileIdentity', 'directoryIdentity', 'parentIdentity'].map(key =>
+        [owner.store, AutomationJobStore.prototype, key, AutomationManager.#storeOwnershipMethods[key]] as const),
+    ] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key) ?? Object.getOwnPropertyDescriptor(prototype, key);
+      if (!original || !('value' in original) || !descriptor || !('value' in descriptor) || descriptor.value !== original.value) throw new AutomationJobMutationStaleError();
+    }
+    const get = Object.getOwnPropertyDescriptor(owner.jobs, 'get') ?? Object.getOwnPropertyDescriptor(AutomationJobMap.prototype, 'get')
+      ?? Object.getOwnPropertyDescriptor(Map.prototype, 'get');
+    if (!get || !('value' in get) || get.value !== AutomationManager.#mapGet) throw new AutomationJobMutationStaleError();
+    for (const key of ['store', 'writes', 'path', 'anchor', 'anchorIdentity', 'parents']) {
+      const original = owner.storeFields[key], current = Object.getOwnPropertyDescriptor(owner.store, key);
+      if (!original || !('value' in original) || !current || !('value' in current) || current.value !== original.value) throw new AutomationJobMutationStaleError();
+    }
+    const parents: unknown = owner.storeFields.parents?.value;
+    if (!parents || typeof parents !== 'object' || nodeTypes.isProxy(parents) || !nodeTypes.isMap(parents)
+      || Object.getPrototypeOf(parents) !== Map.prototype) throw new AutomationJobMutationStaleError();
+    const iterator = Object.getOwnPropertyDescriptor(parents, Symbol.iterator) ?? Object.getOwnPropertyDescriptor(Map.prototype, Symbol.iterator);
+    if (!iterator || !('value' in iterator) || iterator.value !== AutomationManager.#mapIterator) throw new AutomationJobMutationStaleError();
+    if (Object.values(Object.getOwnPropertyDescriptors(owner.store)).some(descriptor => !('value' in descriptor))) throw new AutomationJobMutationStaleError();
+    const lifetime = Object.getOwnPropertyDescriptor(this, 'mutationLifetime');
+    if (!lifetime || !('value' in lifetime) || !lifetime.value || typeof lifetime.value !== 'object' || nodeTypes.isProxy(lifetime.value)) throw new AutomationJobMutationStaleError();
+    return owner;
   }
 
   private isEnabled(): boolean {
@@ -255,17 +345,24 @@ export class AutomationManager {
     return current;
   }
 
-  retainJobTarget(jobId: string, expectedMutationRevision: string): { readonly job: ManagedAutomationJob; readonly assertCurrent: () => void } {
+  retainJobTarget(jobId: string, expectedMutationRevision: string): RetainedAutomationJobTarget {
+    const owner = this.#assertRetainedTargetOwner();
     const selected = this.jobs.get(jobId);
-    if (!selected || automationJobRevision(selected) !== expectedMutationRevision) throw new AutomationJobMutationStaleError();
+    if (!selected || !hasOwnedAutomationRevision(selected) || automationJobRevision(selected) !== expectedMutationRevision) throw new AutomationJobMutationStaleError();
     const original = JSON.stringify(selected), lifetime = this.mutationLifetime, store = this.jobStore;
     const current = () => {
+      if (this.#assertRetainedTargetOwner() !== owner || this.mutationLifetime !== lifetime) throw new AutomationJobMutationStaleError();
       this.requireEnabled('update automation job');
+      if (this.#assertRetainedTargetOwner() !== owner || this.mutationLifetime !== lifetime) throw new AutomationJobMutationStaleError();
       store.assertCurrent();
+      if (this.#assertRetainedTargetOwner() !== owner || this.mutationLifetime !== lifetime) throw new AutomationJobMutationStaleError();
       if (this.jobStore !== store || this.mutationLifetime !== lifetime || this.jobs.get(jobId) !== selected || JSON.stringify(selected) !== original) throw new AutomationJobMutationStaleError();
     };
     current();
-    return { job: { ...structuredClone(selected), mutationRevision: expectedMutationRevision }, assertCurrent: current };
+    const job = { ...structuredClone(selected), mutationRevision: expectedMutationRevision };
+    const target = { job, assertCurrent: current };
+    retainedTargetReferences.set(target, { selected, job, jobBytes: JSON.stringify(captureOwnedJson(job, nodeTypes.isProxy)), assertCurrent: current });
+    return target;
   }
 
   private commitJob(previous: AutomationJob | undefined, next: AutomationJob, options?: AutomationJobMutationOptions): Promise<ManagedAutomationJob>;

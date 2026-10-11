@@ -1,6 +1,6 @@
 import { KnowledgeRecordAdmissionHeldError, knowledgeEdgeSnapshotFromRows, knowledgeRecordGenerationFromRows, knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
 import { captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
-import { JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { validateCurrentKnowledgeSchema } from './store-current-schema-validation.js';
 import { prepareNativeKnowledgeSchemaReadPlan } from '../state/knowledge-schema-read-plan.js';
 import { createNativeCiContinuationTable, validateNativeCiContinuationTable } from './store-native-ci-continuation.js';
@@ -576,16 +576,24 @@ export class KnowledgeStore {
     assertCurrent: () => void,
     published: (sources: readonly KnowledgeSourceSnapshot[], successor: () => void) => void,
   ): Promise<readonly KnowledgeSourceSnapshot[]> {
-    const captured = snapshotJudgmentInput(writes) as typeof writes;
+    const captured = captureOwnedJson(writes) as typeof writes;
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(captured))) {
+      const index = Number(key);
+      if (key !== 'length' && (!Number.isInteger(index) || index < 0 || String(index) !== key || index >= captured.length)) {
+        snapshotJudgmentInput({ [key]: descriptor.value });
+      }
+    }
     await this.init();
     assertCurrent();
     const result = await this.sqlite.transactPersisted<readonly KnowledgeSourceSnapshot[]>((db) => {
       assertCurrent();
-      const prepared = captured.map(({ input, generation }) => {
+      const prepared = captured.map((write) => {
+        const { input, generation } = write;
         if (!input.id) throw new TypeError('Owned source publication requires an exact identity');
         if (input.connectorId !== 'goodvibes-project-planning') throw new TypeError('Canonical source clocks require a planning artifact');
         const current = readKnowledgeSourceSnapshot(db, { id: input.id });
-        if (current.generation !== generation) throw new KnowledgeSourcePublicationHeldError('state-changed');
+        if (current.generation !== generation) { snapshotJudgmentInput(write); throw new KnowledgeSourcePublicationHeldError('state-changed'); }
+        snapshotJudgmentInput({ ...write, generation: generation === null ? null : { kind: 'selected-native-source-revision' } });
         // Admission owns the original persisted values, never the numeric
         // compatibility view. Generic metadata and caller lastCrawledAt are not
         // rewritten. A legacy clock can migrate only after this full admission.

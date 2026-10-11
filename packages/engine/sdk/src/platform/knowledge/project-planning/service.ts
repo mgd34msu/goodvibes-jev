@@ -163,7 +163,7 @@ export class ProjectPlanningService {
     // Capture before the first await. Later caller mutations cannot change the
     // selected source, expected generation, or requested operator action.
     options = { signal: options.signal, assertCurrent: options.assertCurrent };
-    const captured = snapshotJudgmentInput(input) as ProjectPlanningStateActionInput;
+    const captured = captureOwnedJson(input) as ProjectPlanningStateActionInput;
     options.signal?.throwIfAborted();
     options.assertCurrent?.();
     if (captured.expected?.kind !== 'current' && captured.expected?.kind !== 'revision') throw new TypeError('Invalid planning state expectation');
@@ -180,7 +180,7 @@ export class ProjectPlanningService {
     Object.freeze(captured.action);
     await this.initialize();
     options.signal?.throwIfAborted(); options.assertCurrent?.();
-    const space = this.resolveSpace(captured);
+    const space = this.resolveSpace({ projectId: captured.projectId, knowledgeSpaceId: captured.knowledgeSpaceId });
     const observation = this.store.captureSourcePublication();
     const snapshot = this.getArtifactSnapshot(space.knowledgeSpaceId, 'state', normalizePlanningId(captured.planningId));
     const current = snapshot.source ? readState(snapshot.source) : null;
@@ -188,36 +188,45 @@ export class ProjectPlanningService {
     const hold = (reason: Extract<ProjectPlanningStateActionResult, { applied: false }>['reason']): ProjectPlanningStateActionResult => ({
       ok: true, applied: false, reason, state: current, ...(revision ? { revision } : {}),
     });
-    if (!current || !snapshot.source || !revision) return hold('no-state');
-    if (captured.expected.kind === 'revision' && (captured.expected.revision.sourceId !== revision.sourceId || captured.expected.revision.generation !== revision.generation)) return hold('state-changed');
-    // Current-mode captures once here, then uses the same compare-and-write as
-    // view-selected actions. It never silently retargets a later state.
-    let question: ProjectPlanningQuestion | undefined;
-    let changed: ProjectPlanningState;
-    if (captured.action.kind === 'approve') {
-      changed = { ...current, executionApproved: true,
-        metadata: { ...(current.metadata ?? {}), approvedFrom: 'plan-command', approvedAt: Date.now() },
-      };
-    } else if (captured.action.kind === 'dismiss') {
-      changed = { ...current, metadata: { ...(current.metadata ?? {}), active: false,
-        dismissedAt: new Date(Date.now()).toISOString(), dismissedFrom: 'plan-command' } };
-    } else {
-      const answer = captured.action.answer.trim();
-      if (!answer) return hold('empty-answer');
-      const { questionId, questionIndex } = captured.action;
-      if (questionId === undefined && questionIndex === undefined) return hold('missing-selector');
-      const index = questionId !== undefined
-        ? current.openQuestions.findIndex((entry) => entry.id === questionId)
-        : Number.isInteger(questionIndex) && questionIndex! >= 0 && questionIndex! < current.openQuestions.length ? questionIndex! : -1;
-      if (index < 0) return hold('question-not-found');
-      question = { ...current.openQuestions[index]!, status: 'answered', answer, answeredAt: Date.now() };
-      changed = { ...current,
-        openQuestions: current.openQuestions.filter((_, at) => at !== index),
-        answeredQuestions: [...current.answeredQuestions.filter((entry) => entry.id !== question!.id), question],
-      };
+    if (!current || !snapshot.source || !revision) { snapshotJudgmentInput(captured); return hold('no-state'); }
+    if (captured.expected.kind === 'revision' && (captured.expected.revision.sourceId !== revision.sourceId || captured.expected.revision.generation !== revision.generation)) {
+      snapshotJudgmentInput(captured); return hold('state-changed');
     }
     let published = false;
     try {
+      if (captured.expected.kind === 'revision') {
+        observation(); options.signal?.throwIfAborted(); options.assertCurrent?.(); observation();
+        snapshotJudgmentInput({ ...captured, expected: { ...captured.expected, revision: { ...captured.expected.revision,
+          generation: { kind: 'selected-native-source-revision' },
+        } } });
+        observation();
+      } else snapshotJudgmentInput(captured);
+      // Current-mode captures once here, then uses the same compare-and-write as
+      // view-selected actions. It never silently retargets a later state.
+      let question: ProjectPlanningQuestion | undefined;
+      let changed: ProjectPlanningState;
+      if (captured.action.kind === 'approve') {
+        changed = { ...current, executionApproved: true,
+          metadata: { ...(current.metadata ?? {}), approvedFrom: 'plan-command', approvedAt: Date.now() },
+        };
+      } else if (captured.action.kind === 'dismiss') {
+        changed = { ...current, metadata: { ...(current.metadata ?? {}), active: false,
+          dismissedAt: new Date(Date.now()).toISOString(), dismissedFrom: 'plan-command' } };
+      } else {
+        const answer = captured.action.answer.trim();
+        if (!answer) return hold('empty-answer');
+        const { questionId, questionIndex } = captured.action;
+        if (questionId === undefined && questionIndex === undefined) return hold('missing-selector');
+        const index = questionId !== undefined
+          ? current.openQuestions.findIndex((entry) => entry.id === questionId)
+          : Number.isInteger(questionIndex) && questionIndex! >= 0 && questionIndex! < current.openQuestions.length ? questionIndex! : -1;
+        if (index < 0) return hold('question-not-found');
+        question = { ...current.openQuestions[index]!, status: 'answered', answer, answeredAt: Date.now() };
+        changed = { ...current,
+          openQuestions: current.openQuestions.filter((_, at) => at !== index),
+          answeredQuestions: [...current.answeredQuestions.filter((entry) => entry.id !== question!.id), question],
+        };
+      }
       const committed = await this.publishPlanningReadiness(space, normalizeState(changed, space.projectId, space.knowledgeSpaceId), snapshot, options, observation);
       published = true;
       committed.assertCurrent();

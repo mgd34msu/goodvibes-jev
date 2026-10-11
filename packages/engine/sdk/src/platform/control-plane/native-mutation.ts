@@ -8,6 +8,8 @@ import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.
 import { assertConfirmed, HandlerError, type HandlerContextEnvelope } from './host-handlers.js';
 import type { MutationPublication } from '../utils/file-mutation.js';
 import type { ToolExecutionEffect } from '../tools/registry.js';
+import type { RetainedAutomationJobTarget } from '../automation/job-mutations.js';
+import { assertRetainedAutomationTargetCurrent, projectRetainedAutomationRequest } from '../automation/manager-runtime.js';
 
 export type NativeMutationHost = ExternalPermissionHost;
 export interface NativeMutationAdmission { readonly kind: 'native-recorded-mutation'; }
@@ -80,6 +82,7 @@ export async function runNativeMutation<T>(input: {
   readonly context: HandlerContextEnvelope;
   readonly invocation?: object | undefined;
   readonly target: unknown;
+  readonly automationTarget?: RetainedAutomationJobTarget | undefined;
   readonly assertTargetCurrent: () => void;
   readonly scopes?: readonly string[] | undefined;
   readonly confirmation?: 'required' | 'none' | undefined;
@@ -106,7 +109,10 @@ export async function runNativeMutation<T>(input: {
   // Keep the complete original bytes local and project only through the canonical protected boundary.
   const original = captureOwnedJson(body, nodeTypes.isProxy);
   const originalBytes = JSON.stringify(original);
-  const args = { method: input.method, request: snapshotJudgmentInput(original), selectedTarget: snapshotJudgmentInput(input.target) };
+  const automationTarget = input.automationTarget, originalMethod = input.method;
+  const request = automationTarget === undefined ? original
+    : projectRetainedAutomationRequest(automationTarget, originalMethod, original);
+  const args = { method: input.method, request: snapshotJudgmentInput(request), selectedTarget: snapshotJudgmentInput(input.target) };
   const invalidation = new AbortController();
   const unsubscribe = host.config.onDidInvalidate(() => invalidation.abort());
   const signal = AbortSignal.any([host.signal, invalidation.signal, ...(context.signal ? [context.signal] : [])]);
@@ -127,6 +133,10 @@ export async function runNativeMutation<T>(input: {
   };
   const assertCurrent = () => {
     signal.throwIfAborted(); assertPaired();
+    if (input.automationTarget !== automationTarget || (automationTarget !== undefined && input.method !== originalMethod)) {
+      throw new HandlerError('Native mutation selected reference changed', 'NATIVE_MUTATION_STALE', 409);
+    }
+    if (automationTarget !== undefined) assertRetainedAutomationTargetCurrent(automationTarget);
     if (context.isAuthorized !== authorized || context.signal !== originalSignal || context.isAuthorized?.(scopes) !== true || context.nativeExecutionAuthority !== authority
       || JSON.stringify({ principalId: context.principalId, principalKind: context.principalKind,
         admin: context.admin, scopes: context.scopes, explicitUserRequest: context.explicitUserRequest }) !== originalContext

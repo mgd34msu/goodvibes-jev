@@ -18,6 +18,11 @@ export function ownedAutomationJob(job: AutomationJob, revision: string = random
 
 export function hasOwnedAutomationRevision(job: AutomationJob): boolean { return ownedJobs.has(job); }
 
+export interface RetainedAutomationJobTarget {
+  readonly job: ManagedAutomationJob;
+  readonly assertCurrent: () => void;
+}
+
 export interface AutomationJobMutationOptions {
   readonly signal?: AbortSignal | undefined;
   readonly assertCurrent?: (() => void) | undefined;
