@@ -1,6 +1,7 @@
 import { agentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { captureTranscriptSource } from './transcript-reading.ts';
-import type { CommandRegistry } from '../command-registry.ts';
+import type { CommandRegistry, SlashCommand } from '../command-registry.ts';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { requireYesFlag, stripYesFlag } from './confirmation.ts';
@@ -70,8 +71,31 @@ function parseSettingListArgs(args: readonly string[]): {
   };
 }
 
+const nativeSettingsCommands = new WeakMap<SlashCommand, SlashCommand['handler']>();
+
+/** Only the actual registered settings command has this typed mutation route. */
+export function nativeSettingsCommandMutation(command: SlashCommand, args: readonly string[]):
+  | { readonly action: 'set'; readonly key: string; readonly value: string | boolean }
+  | { readonly action: 'reset'; readonly key: string }
+  | undefined {
+  const handler = nativeSettingsCommands.get(command);
+  if (!handler) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(command, 'handler');
+  if (!descriptor || !('value' in descriptor) || descriptor.value !== handler) throw new ToolInputProjectionError('binding-changed');
+  const tokens = stripYesFlag(args).rest;
+  const key = tokens[1];
+  if (!key) return undefined;
+  if (tokens[0] === 'reset') return { action: 'reset', key };
+  if (tokens[0] !== 'set') return undefined;
+  const rawValue = tokens.slice(2).join(' ');
+  if (!rawValue) return undefined;
+  const value = key === AGENT_NOTIFICATIONS_METADATA_ONLY_KEY && (rawValue === 'true' || rawValue === 'false')
+    ? rawValue === 'true' : rawValue;
+  return { action: 'set', key, value };
+}
+
 export function registerOperatorRuntimeCommands(registry: CommandRegistry): void {
-  registry.register({
+  const settingsCommand: SlashCommand = {
     name: 'settings',
     aliases: ['cfg-ui'],
     description: 'Open, inspect, or update Agent settings',
@@ -171,7 +195,9 @@ export function registerOperatorRuntimeCommands(registry: CommandRegistry): void
       if (ctx.openSettingsModal) ctx.openSettingsModal(sub);
       else ctx.print('Configuration workspace is not available in this runtime.');
     },
-  });
+  };
+  nativeSettingsCommands.set(settingsCommand, settingsCommand.handler);
+  registry.register(settingsCommand);
 
   registry.register({
     name: 'context',

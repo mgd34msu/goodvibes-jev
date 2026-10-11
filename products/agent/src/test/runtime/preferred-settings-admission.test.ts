@@ -472,7 +472,7 @@ function importSources(f: Awaited<ReturnType<typeof fixture>>, credentials = fal
   return path;
 }
 const importArgs = (name: string): Record<string, unknown> => name === 'agent_harness'
-  ? { mode: 'run_workspace_action', actionId: 'import-goodvibes-tui-settings' } : { action: 'import' };
+  ? { mode: 'run_workspace_action', actionId: 'import-goodvibes-tui-settings', action: 'import' } : { action: 'import' };
 test.each(['settings', 'import_goodvibes_settings', 'agent_harness'])('%s imports a complete captured plan without confirmation flags', async name => {
   const f = await fixture(); const source = importSources(f), before = readFileSync(source, 'utf8');
   const result = await f.run(name, importArgs(name));

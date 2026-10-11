@@ -32,9 +32,9 @@ function hasHostedScreeningOwners(input: MailInput): input is MailInput & {
 export async function registerOwnedMailInbox(factory: DaemonInboxFactory, context: HandlerContext,
   routing: RoutingRegistration, controls: Pick<DaemonInboxControls, 'gatePolling' | 'gatePollingOwned'>,
   mailInput: MailInput, triageHost?: DaemonTriagePermissionHost): Promise<OwnedHandlerSurface> {
-  const mailClosers: Array<() => void> = [];
+  const mailClosers = new Set<() => void>();
   const taggingOwners: OwnedInboxTagging[] = [];
-  const screeningAcquisitions: HostedInboxScreeningAcquisition[] = [];
+  const screeningAcquisitions = new Set<HostedInboxScreeningAcquisition>();
   const lifetime = new AbortController();
   const listeners = new Set<() => void>();
   let retired = false, initialized = false, epoch = 0;
@@ -54,8 +54,20 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
       if (retired) throw new Error('Inbox account lifecycle is retired');
       let stopConfig: (() => void) | undefined, stopSecrets: (() => void) | undefined;
       let closed = false;
-      const close = () => { if (closed) return; closed = true; try { stopConfig?.(); } finally { stopSecrets?.(); } };
-      mailClosers.push(close);
+      let closeFailure: AggregateError | undefined;
+      const close = () => {
+        if (closed) { if (closeFailure) throw closeFailure; return; }
+        closed = true;
+        const failures: unknown[] = [];
+        try { stopConfig?.(); } catch (error) { failures.push(error); }
+        try { stopSecrets?.(); } catch (error) { failures.push(error); }
+        if (failures.length) {
+          closeFailure = new AggregateError(failures, 'Inbox account subscriptions did not close');
+          throw closeFailure;
+        }
+        mailClosers.delete(close);
+      };
+      mailClosers.add(close);
       try {
         stopConfig = mailInput.configManager.onDidInvalidate!(listener);
         stopSecrets = credentialInvalidation(listener);
@@ -67,7 +79,7 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
     if (retired) return;
     retired = true;
     const errors: unknown[] = [];
-    for (const close of mailClosers.reverse()) { try { close(); } catch (error) { errors.push(error); } }
+    for (const close of [...mailClosers].reverse()) { try { close(); } catch (error) { errors.push(error); } }
     listeners.clear();
     if (errors.length) throw new AggregateError(errors, 'Inbox mail lifetimes did not close cleanly');
   };
@@ -76,14 +88,14 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
     if (results.some(result => result.status === 'rejected')) throw new Error('Inbox tagging did not drain; source dependencies retained');
   };
   const drainScreening = async () => {
-    const results = await Promise.allSettled(screeningAcquisitions.map(owner => owner.close()));
+    const results = await Promise.allSettled([...screeningAcquisitions].map(owner => owner.close()));
     if (results.some(result => result.status === 'rejected')) throw new Error('Hosted inbox screening acquisition did not close cleanly');
   };
   try {
     // Subscribe before invoking the asynchronous source factory, closing startup ABA gaps.
     if (triageHost && mailInput.secretsManager.resolveLocalCredentialSnapshot && onAccountInvalidation) {
-      mailClosers.push(mailInput.configManager.onDidInvalidate!(invalidate));
-      mailClosers.push(mailInput.secretsManager.onDidChange!(invalidate));
+      mailClosers.add(mailInput.configManager.onDidInvalidate!(invalidate));
+      mailClosers.add(mailInput.secretsManager.onDidChange!(invalidate));
     }
     const snapshot = mailInput.secretsManager.resolveLocalCredentialSnapshot;
     const createTagging = triageHost && snapshot && onAccountInvalidation ? createDaemonTriageTaggingFactory({
@@ -96,10 +108,17 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
         assertCurrent();
         const acquisition = await acquireHostedInboxScreening({ config: mailInput.configManager, secrets: mailInput.secretsManager,
           signal: lifetime.signal }, source, operation);
-        screeningAcquisitions.push(acquisition);
-        try { assertCurrent(); acquisition.options.authority.assertCurrent(); }
-        catch (error) { await acquisition.close(); throw error; }
-        return acquisition;
+        let closing: Promise<void> | undefined;
+        const owned: HostedInboxScreeningAcquisition = { options: acquisition.options,
+          close() {
+            if (!closing) closing = acquisition.close().then(() => { screeningAcquisitions.delete(owned); });
+            return closing;
+          },
+        };
+        screeningAcquisitions.add(owned);
+        try { assertCurrent(); owned.options.authority.assertCurrent(); }
+        catch (error) { await owned.close(); throw error; }
+        return owned;
       } } satisfies Pick<DaemonInboxControls, 'acquireHostedScreening'> : {}),
       ...(onAccountInvalidation ? { onAccountInvalidation } : {}),
       ...(subscribeConfig ? { onConfigurationChange: (key, listener) => {
@@ -112,14 +131,19 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
         if (retired) throw new Error('Inbox mail constructor is retired');
         const disposers: Array<() => void> = [];
         let closed = false;
+        let closeFailure: AggregateError | undefined;
         const close = (): void => {
-          if (closed) return;
+          if (closed) { if (closeFailure) throw closeFailure; return; }
           closed = true;
           const errors: unknown[] = [];
           for (const dispose of disposers.reverse()) { try { dispose(); } catch (error) { errors.push(error); } }
-          if (errors.length) throw new AggregateError(errors, 'Inbox mail service did not close cleanly');
+          if (errors.length) {
+            closeFailure = new AggregateError(errors, 'Inbox mail service did not close cleanly');
+            throw closeFailure;
+          }
+          mailClosers.delete(close);
         };
-        mailClosers.push(close);
+        mailClosers.add(close);
         try {
           const { emailServiceDeps } = composeMailDeps({ ...mailInput, registerDispose: dispose => { disposers.push(dispose); } });
           return Object.freeze({ service: new EmailService(emailServiceDeps), close });
@@ -137,7 +161,7 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
       return closing;
     };
     const ready = Promise.resolve(registration.ready).then(() => {
-      if (taggingOwners.length || screeningAcquisitions.length) assertCurrent();
+      if (taggingOwners.length || screeningAcquisitions.size) assertCurrent();
       initialized = true;
     }).catch(async error => { await close(); throw error; });
     void ready.catch(() => {});

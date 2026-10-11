@@ -83,6 +83,58 @@ test('a child has a separate recorded act, exact arguments, and original parent 
   expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
 });
 
+test('a nested restriction checks its exact parent proof while the child keeps its own context', async () => {
+  let childEntered = false, checkedDuringChild = false;
+  let retained: { readonly args: Record<string, unknown>; readonly options: ToolExecuteOptions; readonly assertCurrent: () => void } | undefined;
+  const f = fixture(async (args, options) => {
+    if (!options) throw new Error('The recorded parent options are missing.');
+    const assertCurrent = () => {
+      expect(assertCurrentToolEffect(args, options, 'write')).toBe(true);
+      expect(() => assertCurrentToolEffect({ ...args }, options)).toThrow();
+      expect(() => assertCurrentToolEffect(args, { ...options })).toThrow();
+      if (childEntered) checkedDuringChild = true;
+    };
+    retained = { args, options, assertCurrent };
+    const result = await f.registry.executeNested('restricted-child', CHILD, { target: 'captured-target' }, options, { assertCurrent });
+    expect(assertCurrentToolEffect(args, options, 'write')).toBe(true);
+    return result;
+  });
+  const execute = f.child.execute;
+  f.child.execute = async (args, options) => {
+    childEntered = true;
+    if (!retained) throw new Error('The parent restriction was not captured.');
+    expect(() => assertCurrentToolEffect(retained.args, retained.options, 'write')).toThrow();
+    const result = await execute.call(f.child, args, options);
+    expect(assertCurrentToolEffect(args, options, 'write')).toBe(true);
+    return result;
+  };
+  expect(await f.run()).toMatchObject({ success: true, output: 'captured-target' });
+  expect(checkedDuringChild).toBe(true); expect(f.effects).toBe(1);
+  expect(states).toHaveLength(2); expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+  expect(() => retained?.assertCurrent()).toThrow();
+});
+
+test.each(['cancel', 'revoke', 'source'] as const)('a parent %s during its nested restriction holds the child before effects', async kind => {
+  let childEntered = false, retired = false;
+  const controller = new AbortController();
+  const f = fixture(async (args, options) => {
+    const assertCurrent = () => {
+      expect(assertCurrentToolEffect(args, options, 'write')).toBe(true);
+      if (!childEntered || retired) return;
+      retired = true;
+      if (kind === 'cancel') controller.abort();
+      else if (kind === 'revoke') f.setMode('plan');
+      else f.setSource('Changed parent intent during the child effect check');
+    };
+    return f.registry.executeNested('retiring-restriction', CHILD, { target: 'captured-target' }, options, { assertCurrent });
+  });
+  const execute = f.child.execute;
+  f.child.execute = async (args, options) => { childEntered = true; return execute.call(f.child, args, options); };
+  await expect(f.run(controller.signal)).rejects.toThrow();
+  expect(retired).toBe(true); expect(f.effects).toBe(0);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(2);
+});
+
 test('raw callbacks and copied parent options cannot admit or dispatch a child', async () => {
   let projects = 0;
   const f = fixture(async (_args, options) => {

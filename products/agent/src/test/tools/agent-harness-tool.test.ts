@@ -7,7 +7,7 @@ import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { hashState, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { securityPort } from '../helpers/security-readings.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -44,6 +44,7 @@ import { registerAgentDocumentsTool } from '../../tools/agent-documents-tool.ts'
 import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { createAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { registerAgentTerminalProcessTools } from '../../tools/agent-terminal-process-tools.ts';
+import { registerAgentSettingsTool } from '../../tools/agent-settings-tool.ts';
 import { registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
 import { registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
 import { registerAgentReviewPacketPresetsTool } from '../../tools/agent-review-packet-presets-tool.ts';
@@ -14658,22 +14659,108 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       registerOperatorRuntimeCommands(fixture.commandRegistry);
-
+      registerAgentSettingsTool(fixture.toolRegistry, fixture.commandRegistry, fixture.context);
+      fixture.configManager.flushConfigFileChanges();
+      const before = JSON.stringify(fixture.configManager.getRaw());
+      const paths = [fixture.configManager.getConfigPath(), fixture.configManager.getProjectConfigPath(),
+        fixture.paths.resolveUserPath('daemon', 'settings.json'), fixture.paths.resolveUserPath('daemon', 'secrets.enc')]
+        .filter((path): path is string => typeof path === 'string');
+      const files = paths.map(path => existsSync(path) ? readFileSync(path) : null);
+      const secretBefore = await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'));
       const result = await fixture.admittedTool.execute({
         mode: 'run_command',
         command: '/settings set surfaces.slack.botToken xoxb-secret-value --yes',
         confirm: true,
         explicitUserRequest: 'Set the Slack bot token.',
-      });
-
-      expect(result.success, result.error).toBe(true);
-      expect(result.output).toContain('Command /settings completed.');
-      expect(result.output).toContain('<secret-ref>');
-      expect(result.output).not.toContain('xoxb-secret-value');
-      expect(await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBe('xoxb-secret-value');
+      }).catch((error: unknown) => error);
+      expect<unknown>(result).toBeInstanceOf(ToolInputProjectionError);
+      expect(String(result)).not.toContain('xoxb-secret-value');
+      expect(JSON.stringify(fixture.configManager.getRaw())).toBe(before);
+      expect(paths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(files);
+      expect(await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBe(secretBefore);
     } finally {
       fixture.cleanup();
     }
+  });
+
+  test('runs model settings commands through the recorded owning-store mutation', async () => {
+    const fixture = makeFixture();
+    try {
+      registerOperatorRuntimeCommands(fixture.commandRegistry);
+      registerAgentSettingsTool(fixture.toolRegistry, fixture.commandRegistry, fixture.context);
+      const source = { goal: 'Verify the exact Agent harness operation requested by this isolated test',
+        criteria: ['Only modify temporary fixture files, stubbed service owners, and explicitly configured loopback hosts'] };
+      const battery = gateJudgmentRegistry.get('engine.gate.settings-hazard');
+      if (!battery || !('items' in battery) || !battery.items || typeof battery.items !== 'object') throw new Error('Canonical settings questions are unavailable.');
+      const questions = Object.fromEntries(Object.entries(battery.items).map(([name, item]) => {
+        if (!item || typeof item !== 'object' || !('question' in item)) throw new Error('Invalid canonical settings question.');
+        return [name, item.question];
+      }));
+      const key = 'behavior.saveHistory';
+      const setting = CONFIG_SCHEMA.find(setting => setting.key === key);
+      if (!setting || typeof setting.default !== 'boolean') throw new Error('Native history setting is unavailable.');
+      const defaultValue = setting.default;
+      const original = fixture.configManager.get(key);
+      const next = !Boolean(original);
+      const expectedState = (action: 'set' | 'reset', value: boolean, previous: unknown) => ({
+        key, value: JSON.stringify(value),
+        invocation: { action, key, ...(action === 'set' ? { value: String(value) } : {}), mode: action },
+        source, request: JSON.stringify(source),
+        effect: { operation: action, key, value, previous, appliedBy: 'local',
+          destinations: [{ path: fixture.paths.resolveUserPath('agent', 'settings.json'), tier: 'global', operation: action === 'set' ? 'set' : 'remove' }] },
+      });
+      let expected = expectedState('set', next, original);
+      let observations = 0;
+      let cancel: AbortController | undefined;
+      const cancellation = new Error('Cancel this exact settings command.');
+      const readings = fakePort((name, question, state) => {
+        expect<unknown>(state).toEqual(expected);
+        expect<unknown>(question).toEqual(questions[name]);
+        if (name === 'hazard' && question.type === 'choice' && Object.hasOwn(question.criteria, 'none')) return choiceAnswer(question, 'none', 0.999);
+        if (name === 'requested' && question.type === 'noul') return noulAnswer(0.001);
+        throw new Error('Unexpected exact command settings observation.');
+      });
+      const base = judgmentPort('agent.harness.settings-command-fixture');
+      using log = new SqliteDecisionLog(':memory:');
+      const scoped: JudgmentPort = { model: base.model, ask(request) {
+        if (request.context?.battery !== 'engine.gate.settings-hazard') return base.ask(request);
+        expect(request.context.site).toBe('engine.gate.settings-write');
+        expect<unknown>(request.questions).toEqual(questions); observations++;
+        if (cancel) { expect<unknown>(request.state).toEqual(expected); cancel.abort(cancellation); }
+        return readings.port.ask(request);
+      } };
+      const previous = installJudgmentPort(withDecisionLog(scoped, log));
+      try {
+        fixture.configManager.flushConfigFileChanges();
+        const configPath = fixture.configManager.getConfigPath();
+        const before = existsSync(configPath) ? readFileSync(configPath) : undefined;
+        cancel = new AbortController();
+        const cancelled = await fixture.admittedTool.execute({ mode: 'run_command', command: `/settings set ${key} ${next}` },
+          { signal: cancel.signal }).catch((error: unknown) => error);
+        expect(cancel.signal.aborted).toBe(true);
+        expect<unknown>(cancelled).toBeInstanceOf(JudgmentError);
+        expect<unknown>(cancelled).toMatchObject({ kind: 'aborted' });
+        expect(String(cancelled)).not.toContain(cancellation.message);
+        expect(JSON.stringify(cancelled)).not.toContain(cancellation.message);
+        expect(fixture.configManager.get(key)).toBe(original);
+        expect(existsSync(configPath) ? readFileSync(configPath) : undefined).toEqual(before);
+        cancel = undefined;
+        const set = await fixture.admittedTool.execute({ mode: 'run_command', command: `/settings set ${key} ${next}` });
+        expect(set.success, set.error).toBe(true);
+        expect(set.output).toContain('Command /settings completed.');
+        expect(set.output).toContain('"status":"committed"');
+        expect(set.output).toContain('"verifiedInOwningStore":true');
+        expect(fixture.configManager.get(key)).toBe(next);
+        const stored: unknown = JSON.parse(readFileSync(fixture.paths.resolveUserPath('agent', 'settings.json'), 'utf8'));
+        expect<unknown>(stored).toMatchObject({ behavior: { saveHistory: next } });
+        expected = expectedState('reset', defaultValue, next);
+        const reset = await fixture.admittedTool.execute({ mode: 'run_command', command: `/cfg-ui reset ${key}` });
+        expect(reset.success, reset.error).toBe(true);
+        expect(fixture.configManager.get(key)).toBe(defaultValue);
+        expect(reset.output).toContain('"verifiedInOwningStore":true');
+        expect(observations).toBe(3);
+      } finally { installJudgmentPort(previous); }
+    } finally { fixture.cleanup(); }
   });
 
   test('model_routing cookbook recipes include hardwareFit annotation for known stacks', async () => {

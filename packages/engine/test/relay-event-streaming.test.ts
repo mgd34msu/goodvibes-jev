@@ -101,6 +101,26 @@ async function readUntil(
   throw new Error(`predicate not satisfied within ${timeoutMs}ms; got: ${acc}`);
 }
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function withinStreamBudget<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Relay stream operation did not settle within 3000ms.')), 3000);
+  });
+  try { return await Promise.race([work, deadline]); }
+  finally { clearTimeout(timer); }
+}
+
+async function waitForStreamCondition(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !check(); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  if (!check()) throw new Error('Relay stream native condition did not settle within 2000ms.');
+}
+
 describe('relay event streaming', () => {
   test('an SSE subscription streams events over the relay; the hub sees only ciphertext', async () => {
     const source = makePushableSource();
@@ -179,6 +199,132 @@ describe('relay event streaming', () => {
 
     client.close();
     daemon.reg.stop();
+  });
+
+  test('request signal abort rejects a pending read and unsubscribes the daemon source', async () => {
+    const source = makePushableSource();
+    let daemonRequest: Request | undefined;
+    const daemon = await standUpDaemon('rid-stream-request-abort', async (req) => {
+      if (new URL(req.url).pathname !== '/api/events-test') return null;
+      daemonRequest = req;
+      return source.response();
+    });
+    const abort = new AbortController();
+    const reason = new DOMException('Subscription cancelled.', 'AbortError');
+    let client: ReturnType<typeof createRelayClient> | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      client = createRelayClient({ pairing: await daemon.reg.mintPairing() });
+      await client.connect();
+      const response = await client.fetch('https://relay.invalid/api/events-test', {
+        headers: { accept: 'text/event-stream' }, signal: abort.signal,
+      });
+      if (!response.body) throw new Error('Relay subscription has no response body.');
+      reader = response.body.getReader();
+      source.push('data: subscribed\n\n');
+      expect(await withinStreamBudget(readUntil(reader, (text) => text.includes('subscribed')))).toContain('subscribed');
+
+      const pendingRead = withinStreamBudget(reader.read());
+      abort.abort(reason);
+      await expect(pendingRead).rejects.toBe(reason);
+      await waitForStreamCondition(() => source.cancelled && daemonRequest?.signal.aborted === true);
+      expect(source.cancelled).toBe(true);
+      expect(daemonRequest?.signal.aborted).toBe(true);
+      expect(client.ready).toBe(true);
+    } finally {
+      abort.abort(reason);
+      await reader?.cancel().catch(() => {});
+      reader?.releaseLock();
+      client?.close();
+      daemon.reg.stop();
+      source.close();
+    }
+  });
+
+  test('abort during deferred dispatch cancels its late body without delivering stale bytes', async () => {
+    const source = makePushableSource();
+    const lateResponse = source.response();
+    const entered = deferred<Request>();
+    const dispatch = deferred<Response>();
+    const daemon = await standUpDaemon('rid-stream-late-dispatch', async (req) => {
+      if (new URL(req.url).pathname !== '/api/events-test') return null;
+      entered.resolve(req);
+      return dispatch.promise;
+    });
+    const abort = new AbortController();
+    const reason = new DOMException('Deferred subscription cancelled.', 'AbortError');
+    let client: ReturnType<typeof createRelayClient> | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      client = createRelayClient({ pairing: await daemon.reg.mintPairing() });
+      await client.connect();
+      const response = await client.fetch('https://relay.invalid/api/events-test', {
+        headers: { accept: 'text/event-stream' }, signal: abort.signal,
+      });
+      if (!response.body) throw new Error('Relay subscription has no response body.');
+      reader = response.body.getReader();
+      const daemonRequest = await withinStreamBudget(entered.promise);
+      const pendingRead = withinStreamBudget(reader.read());
+      abort.abort(reason);
+      await expect(pendingRead).rejects.toBe(reason);
+      await waitForStreamCondition(() => daemonRequest.signal.aborted);
+      expect(daemonRequest.signal.aborted).toBe(true);
+      expect(source.cancelled).toBe(false);
+
+      source.push('data: STALE-LATE-DISPATCH\n\n');
+      dispatch.resolve(lateResponse);
+      await waitForStreamCondition(() => source.cancelled);
+      expect(source.cancelled).toBe(true);
+      await expect(withinStreamBudget(reader.read())).rejects.toBe(reason);
+      expect(client.ready).toBe(true);
+    } finally {
+      abort.abort(reason);
+      dispatch.resolve(lateResponse);
+      await reader?.cancel().catch(() => {});
+      reader?.releaseLock();
+      client?.close();
+      daemon.reg.stop();
+      source.close();
+    }
+  });
+
+  test('the final event survives an immediate clean source end before any client read', async () => {
+    const source = makePushableSource();
+    const daemon = await standUpDaemon('rid-stream-final-event', async (req) =>
+      new URL(req.url).pathname === '/api/events-test' ? source.response() : null,
+    );
+    let client: ReturnType<typeof createRelayClient> | undefined;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      client = createRelayClient({ pairing: await daemon.reg.mintPairing() });
+      await client.connect();
+      const response = await client.fetch('https://relay.invalid/api/events-test', { headers: { accept: 'text/event-stream' } });
+      if (!response.body) throw new Error('Relay subscription has no response body.');
+      const activeReader = response.body.getReader();
+      reader = activeReader;
+      const finalEvent = 'event: terminal\ndata: {"final":true}\n\n';
+      source.push(finalEvent);
+      source.close();
+
+      const received = await withinStreamBudget((async () => {
+        const decoder = new TextDecoder();
+        let text = '';
+        for (;;) {
+          const { done, value } = await activeReader.read();
+          if (done) return text + decoder.decode();
+          text += decoder.decode(value, { stream: true });
+        }
+      })());
+      expect(received).toBe(finalEvent);
+      expect(source.cancelled).toBe(false);
+      expect(client.ready).toBe(true);
+    } finally {
+      await reader?.cancel().catch(() => {});
+      reader?.releaseLock();
+      client?.close();
+      daemon.reg.stop();
+      source.close();
+    }
   });
 
   test('a bounded send buffer surfaces overflow as a visible relay-overflow event', async () => {

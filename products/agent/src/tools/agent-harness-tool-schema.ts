@@ -149,8 +149,8 @@ export const AGENT_HARNESS_PARAMETER_PROPERTIES = {
   },
   action: {
     type: 'string',
-    enum: BACKGROUND_PROCESS_ACTION_VALUES,
-    description: 'Process-style action alias for run_background_process.',
+    enum: [...BACKGROUND_PROCESS_ACTION_VALUES, 'preview', 'import', 'apply'],
+    description: 'Process-style action alias, or preview/import/apply for settings-import workspace actions.',
   },
   cwd: {
     type: 'string',

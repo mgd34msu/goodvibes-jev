@@ -133,6 +133,12 @@ function requestMethod(input: RequestInfo | URL, init: RequestInit | undefined):
   return method.toUpperCase();
 }
 
+/** RequestInit owns an explicit signal override, including null; otherwise inherit the Request. */
+function requestSignal(input: RequestInfo | URL, init: RequestInit | undefined): AbortSignal | undefined {
+  if (init?.signal !== undefined) return init.signal ?? undefined;
+  return input instanceof Request ? input.signal : undefined;
+}
+
 /** The request path (no host) a fetch call targets, what the step-up ceremony binds against. */
 function requestPath(input: RequestInfo | URL): string {
   try {
@@ -165,15 +171,17 @@ function withAssertion(
   init: RequestInit | undefined,
   retryRequest: Request | null,
   assertion: string,
+  signal: AbortSignal | undefined,
 ): Promise<Response> {
+  signal?.throwIfAborted();
   if (retryRequest) {
     const headers = new Headers(retryRequest.headers);
     headers.set(STEP_UP_ASSERTION_HEADER, assertion);
-    return relayClient.fetch(new Request(retryRequest, { headers }));
+    return relayClient.fetch(new Request(retryRequest, { headers, signal: signal ?? null }));
   }
   const headers = new Headers(init?.headers ?? undefined);
   headers.set(STEP_UP_ASSERTION_HEADER, assertion);
-  return relayClient.fetch(input, { ...init, headers });
+  return relayClient.fetch(input, { ...init, headers, signal: signal ?? null });
 }
 
 /**
@@ -183,17 +191,30 @@ function withAssertion(
  * ceremony) is returned unchanged so the caller sees the honest outcome.
  */
 async function relayFetchWithStepUp(relayClient: RelayClient, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const mutating = !READ_METHODS.has(requestMethod(input, init));
-  // Only mutating calls can be gated; clone a Request body up front so a retry is possible
-  // (a Request's body is single-use). Reads never need a retry path.
-  const retryRequest = mutating && input instanceof Request ? input.clone() : null;
+  // Apply RequestInit once, before either dispatch consumes a native Request body.
+  const effectiveRequest = input instanceof Request
+    ? new Request(input, init?.signal === null ? { ...init, signal: new AbortController().signal } : init)
+    : null;
+  const requestInput = effectiveRequest ?? input;
+  const requestInit = effectiveRequest ? undefined : init;
+  const signal = requestSignal(requestInput, requestInit);
+  signal?.throwIfAborted();
+  const mutating = !READ_METHODS.has(requestMethod(requestInput, requestInit));
+  // The retry preserves the effective method/body/headers/signal, adding only its assertion.
+  const retryRequest = mutating && effectiveRequest ? effectiveRequest.clone() : null;
 
-  const first = await relayClient.fetch(input, init);
-  if (!mutating || !(await isStepUpRequired(first))) return first;
+  const first = await relayClient.fetch(requestInput, requestInit);
+  signal?.throwIfAborted();
+  if (!mutating) return first;
+  const required = await isStepUpRequired(first);
+  signal?.throwIfAborted();
+  if (!required) return first;
 
-  const assertion = await resolveStepUp({ method: requestMethod(input, init), path: requestPath(input) });
+  const assertion = await resolveStepUp({ method: requestMethod(requestInput, requestInit), path: requestPath(requestInput),
+    ...(signal === undefined ? {} : { signal }) });
+  signal?.throwIfAborted();
   if (!assertion) return first; // no prompter / cancelled / unsupported, surface the 401 honestly
-  return withAssertion(relayClient, input, init, retryRequest, assertion);
+  return withAssertion(relayClient, requestInput, requestInit, retryRequest, assertion, signal);
 }
 
 /**

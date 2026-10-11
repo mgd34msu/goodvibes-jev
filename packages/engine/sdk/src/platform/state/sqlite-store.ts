@@ -218,6 +218,7 @@ interface NativeStatementIdentity {
   readonly prototypes: readonly NativeObjectFacts[];
   readonly ownerPrototypes: readonly NativeObjectFacts[];
   readonly arrayPrototypes: readonly (readonly NativeObjectFacts[])[];
+  readonly uniqueExecutionFacts: readonly NativeObjectFacts[] | undefined;
   readonly bigint: Readonly<PropertyDescriptor>;
 }
 function captureNativeStatementIdentity(Database: SqlJsStatic['Database']): NativeStatementIdentity | undefined {
@@ -234,11 +235,21 @@ function captureNativeStatementIdentity(Database: SqlJsStatic['Database']): Nati
         getColumnNames: statement.getColumnNames, free: statement.free });
       const bigint = Object.getOwnPropertyDescriptor(globalThis, 'BigInt');
       if (!bigint || typeof bigint.value !== 'function') return undefined;
-      const candidate = nativeFreeze({ constructor, constructorPrototype: nativeFreeze(constructorPrototype),
-        prototype, methods, prototypes: captureNativePrototypeFacts(prototype),
-        ownerPrototypes: captureNativePrototypeFacts(Object.getPrototypeOf(raw)), bigint: nativeFreeze(bigint),
-        arrayPrototypes: nativeFreeze(Object.values(Object.getOwnPropertyDescriptors(statement)).flatMap(descriptor => Array.isArray(descriptor.value)
-          ? [captureNativePrototypeFacts(Object.getPrototypeOf(descriptor.value))] : [])) });
+      const constructorPrototypeSnapshot = nativeFreeze(constructorPrototype);
+      const prototypes = captureNativePrototypeFacts(prototype);
+      const ownerPrototypes = captureNativePrototypeFacts(Object.getPrototypeOf(raw));
+      const bigintSnapshot = nativeFreeze(bigint);
+      const arrayPrototypes = nativeFreeze(Object.values(Object.getOwnPropertyDescriptors(statement)).flatMap(descriptor => Array.isArray(descriptor.value)
+        ? [captureNativePrototypeFacts(Object.getPrototypeOf(descriptor.value))] : []));
+      const groups: { readonly facts: readonly NativeObjectFacts[] }[] = [{ facts: prototypes }];
+      for (let index = 0; index < arrayPrototypes.length; index++) {
+        const facts = arrayPrototypes[index];
+        if (!facts) return undefined;
+        nativeDefineProperty(groups, groups.length, { value: { facts }, configurable: true, enumerable: true, writable: true });
+      }
+      const candidate = nativeFreeze({ constructor, constructorPrototype: constructorPrototypeSnapshot,
+        prototype, methods, prototypes, ownerPrototypes, bigint: bigintSnapshot, arrayPrototypes,
+        uniqueExecutionFacts: uniqueNativeFacts(groups) });
       if (nativeStatementMethodsMatch(candidate, statement)) original = candidate;
     }
   } catch { /* Unsupported native statement identities keep the original full path. */ }
@@ -274,8 +285,9 @@ function nativeOwnerDependenciesMatch(original: NativeStatementIdentity, raw: Na
 }
 function nativeExecutionDependenciesMatch(original: NativeStatementIdentity, raw: NativeSqlDatabase): boolean {
   return nativeDescriptorMatches(nativeGetDescriptor(original.constructor, 'prototype'), original.constructorPrototype)
-    && nativeEvery(original.prototypes, nativeObjectFactsMatch)
-    && nativeEvery(original.arrayPrototypes, facts => nativeEvery(facts, nativeObjectFactsMatch))
+    && (original.uniqueExecutionFacts ? nativeEvery(original.uniqueExecutionFacts, nativeObjectFactsMatch)
+      : nativeEvery(original.prototypes, nativeObjectFactsMatch)
+        && nativeEvery(original.arrayPrototypes, facts => nativeEvery(facts, nativeObjectFactsMatch)))
     && nativeDescriptorMatches(nativeGetDescriptor(globalThis, 'BigInt'), original.bigint)
     && nativeOwnerDependenciesMatch(original, raw);
 }
@@ -297,13 +309,13 @@ interface NativeScalarRuntime {
 }
 /** Only repeated ordinary original objects can share one complete descriptor
  * traversal. Unsupported or conflicting captures keep the original checks. */
-function uniqueNativeScalarGlobalFacts(globals: NativeScalarRuntime['globals']): readonly NativeObjectFacts[] | undefined {
+function uniqueNativeFacts(groups: readonly { readonly facts: readonly NativeObjectFacts[] }[]): readonly NativeObjectFacts[] | undefined {
   const unique: NativeObjectFacts[] = [];
-  for (let globalIndex = 0; globalIndex < globals.length; globalIndex++) {
-    const global = globals[globalIndex];
-    if (!global) return undefined;
-    for (let factIndex = 0; factIndex < global.facts.length; factIndex++) {
-      const facts = global.facts[factIndex];
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+    const group = groups[groupIndex];
+    if (!group) return undefined;
+    for (let factIndex = 0; factIndex < group.facts.length; factIndex++) {
+      const facts = group.facts[factIndex];
       if (!facts || nativeIsProxy(facts.object)) return undefined;
       let duplicate = false;
       for (let uniqueIndex = 0; uniqueIndex < unique.length; uniqueIndex++) {
@@ -351,7 +363,7 @@ function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | 
     ]) }));
   }
   return nativeFreeze({ module, exports: nativeFreeze(exports), globals: nativeFreeze(globals),
-    uniqueGlobalFacts: uniqueNativeScalarGlobalFacts(globals),
+    uniqueGlobalFacts: uniqueNativeFacts(globals),
     step, reset, clear, finalize, count, dataCount, type, value, name, decode });
 }
 function nativeScalarRuntimeMatches(runtime: NativeScalarRuntime): boolean {

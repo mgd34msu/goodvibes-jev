@@ -37,7 +37,7 @@ import {
 } from './device-capability-service.js';
 import { DeviceGrantStore } from './device-grants.js';
 import { DeviceCaptureArtifactStore } from './device-capture-artifacts.js';
-import { DeviceHousekeeper } from './device-housekeeping.js';
+import { DeviceHousekeeper, type DeviceHousekeepingOptions } from './device-housekeeping.js';
 import {
   DEVICE_CAPABILITY_WORK_TYPE,
   buildDeviceCapabilityWorkRequest,
@@ -113,6 +113,7 @@ export interface DevicePostureRuntimeOptions {
   readonly autonomous?: DeviceAutonomousOwner | undefined;
   readonly approvals: DeviceApprovalBridge;
   readonly config: DevicePostureConfigReader;
+  readonly observeRecovery?: DeviceHousekeepingOptions['observeRecovery'];
   /** Directory the grants ledger, captures, and disclosure log live under. */
   readonly stateDirectory: string;
   /**
@@ -322,6 +323,7 @@ export function createDevicePostureRuntime(options: DevicePostureRuntimeOptions)
     grants,
     artifacts,
     disclosurePath: join(stateDirectory, 'device-housekeeping.json'),
+    ...(options.observeRecovery ? { observeRecovery: options.observeRecovery } : {}),
   });
 
   const capabilities = new DeviceCapabilityService({

@@ -20,7 +20,7 @@
  * a toast), or 'error' when the fragment was malformed.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   decodeRelayPairingCode,
   parseRelayPairingFromHash,
@@ -57,13 +57,15 @@ export function resetRelayPairingCaptureForTest(): void {
 }
 
 export function useRelayPairingHandoff(): RelayPairingHandoff {
+  const [code] = useState(captureRelayPairingCode);
+  const consumed = useRef(false);
   const [status, setStatus] = useState<RelayPairingHandoffStatus>('idle');
   const [error, setError] = useState<unknown>(null);
   const [pairing, setPairing] = useState<RelayPairingPayload | null>(null);
 
   useEffect(() => {
-    const code = captureRelayPairingCode();
-    if (code === null) return;
+    if (code === null || consumed.current) return;
+    consumed.current = true;
     try {
       const decoded = decodeRelayPairingCode(code);
       storeRelayPairing(decoded);
@@ -77,7 +79,7 @@ export function useRelayPairingHandoff(): RelayPairingHandoff {
     // a new hand-off. No reactive value is read here (decode/store are pure/local), so
     // the empty deps array is genuinely exhaustive, unlike usePairingHandoff's version,
     // which also touches queryClient.
-  }, []);
+  }, [code]);
 
   return { status, error, pairing };
 }

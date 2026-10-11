@@ -113,14 +113,9 @@ export function useDaemonHealth(): DaemonHealth {
   const [sseState, setSseState] = useState<SseState>('connecting');
 
   useEffect(() => {
-    // Event streams are not tunneled over the relay (see relay-connection.ts's header
-    // comment), an honest, immediate verdict rather than attempting a subscription
-    // that can only time out. Skip the attempt entirely while routed over relay.
-    if (storeRoute === 'relay') {
-      setSseState('relay-unsupported');
-      return undefined;
-    }
-
+    // The SDK opens SSE through routedFetch on both direct and relay routes.
+    // A route change retires this subscription before opening a fresh one, with
+    // reconnect and authentication still owned by the existing SDK transport.
     setSseState('connecting');
     let mounted = true;
     const unsubs: (() => void)[] = [];

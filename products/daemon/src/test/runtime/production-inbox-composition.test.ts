@@ -13,6 +13,14 @@ import { createDiscordInboxOwner, createSlackInboxOwner, createEmailInboxOwner }
 import type { OwnedInboxSource } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { HostedInboxScreeningAcquisition } from '../../runtime/hosted-source-screening-composition.js';
 
+async function initialReady(created: ReturnType<DaemonInboxFactory>): Promise<void> {
+  const surface = await created;
+  try {
+    if (!surface.ready) throw new Error('Expected owned inbox source readiness');
+    await surface.ready;
+  } finally { await surface.close(); }
+}
+
 function fixture() {
   const root = makeOwnedTempDir('production-inbox');
   const values = new Map<string, string>();
@@ -54,7 +62,7 @@ test('fresh production membership reports all three unconfigured sources with no
 for (const key of ['surfaces.slack.botToken', 'surfaces.discord.botToken', 'surfaces.email.imapPassword']) {
   test(`configured ${key} without trusted account authority refuses and rolls back all owners`, async () => {
     const f = fixture(); f.values.set(key, 'synthetic-configured-secret');
-    await expect(createProductionDaemonInboxFactory()(f.ctx, routing, f.controls)).rejects.toThrow('requires an admitted account');
+    await expect(initialReady(createProductionDaemonInboxFactory()(f.ctx, routing, f.controls))).rejects.toThrow('requires an admitted account');
     expect(f.listeners.size).toBe(0); expect(f.polling).toBe(0);
     expect(f.ctx.catalog.hasHandler('channels.inbox.list')).toBe(false);
   });
@@ -64,7 +72,7 @@ test('native account and DM settings cannot create screening authority', async (
   const f = fixture(); f.configManager.set('surfaces.discord.enabled', true);
   f.configManager.set('surfaces.discord.inboxBotUserId', '100000000000000001');
   f.configManager.set('surfaces.discord.inboxChannelIds', '100000000000000002');
-  await expect(createProductionDaemonInboxFactory()(f.ctx, routing, f.controls)).rejects.toThrow('requires an admitted account');
+  await expect(initialReady(createProductionDaemonInboxFactory()(f.ctx, routing, f.controls))).rejects.toThrow('requires an admitted account');
   expect(f.listeners.size).toBe(0); expect(f.polling).toBe(0);
 });
 
@@ -79,9 +87,9 @@ for (const [userId, channels] of [
     f.configManager.set('surfaces.discord.inboxBotUserId', userId!);
     f.configManager.set('surfaces.discord.inboxChannelIds', channels!);
     let owners = 0;
-    await expect(createProductionDaemonInboxFactory({}, { discord: { async createOwner() {
+    await expect(initialReady(createProductionDaemonInboxFactory({}, { discord: { async createOwner() {
       owners++; throw new Error('Invalid registry must not acquire a provider');
-    } } }, syntheticScreening)(f.ctx, routing, f.controls)).rejects.toThrow('Discord inbox');
+    } } }, syntheticScreening)(f.ctx, routing, f.controls))).rejects.toThrow('Discord inbox');
     expect(owners).toBe(0); expect(f.listeners.size).toBe(0); expect(f.polling).toBe(0);
   });
 }
@@ -119,14 +127,17 @@ test('an independently changed credential fails read validation even without a l
 test('unrelated invalidation rechecks absent sources without disabling fresh-install inbox', async () => {
   const f = fixture(); const surface = await createProductionDaemonInboxFactory()(f.ctx, routing, f.controls);
   try {
+    await surface.ready;
     for (const listener of f.listeners) listener();
+    // The real absence replacements have no I/O; observe their completed turn.
+    await new Promise<void>(resolve => { setImmediate(resolve); });
     expect(await f.invoke()).toMatchObject({ partial: false });
   } finally { await surface.close(); }
 });
 
 test('unknown local credential state cannot masquerade as an unconfigured provider', async () => {
   const f = fixture(); f.ctx.credentials.inspectConfigSecret = () => 'unavailable';
-  await expect(createProductionDaemonInboxFactory()(f.ctx, routing, f.controls)).rejects.toThrow('credential admission is unavailable');
+  await expect(initialReady(createProductionDaemonInboxFactory()(f.ctx, routing, f.controls))).rejects.toThrow('credential admission is unavailable');
   expect(f.listeners.size).toBe(0); expect(f.polling).toBe(0);
 });
 
@@ -135,7 +146,7 @@ test('quarantined source settings cannot masquerade as default unconfigured inte
   writeFileSync(path, JSON.stringify({ surfaces: { slack: { botToken: 123 } } }));
   const configManager = new ConfigManager({ workingDir: f.root, homeDir: f.root, surfaceRoot: 'daemon',
     daemonTierPath: path, diagnosticMode: 'structural' });
-  await expect(createProductionDaemonInboxFactory()({ ...f.ctx, configManager }, routing, f.controls))
+  await expect(initialReady(createProductionDaemonInboxFactory()({ ...f.ctx, configManager }, routing, f.controls)))
     .rejects.toThrow('configuration admission is unavailable');
   expect(f.listeners.size).toBe(0);
 });
@@ -147,7 +158,7 @@ test('unreadable real credential storage cannot masquerade as a fresh install', 
   const credentials = createDaemonCredentialStore(secrets);
   expect(await credentials.resolveConfigSecret('surfaces.slack.botToken')).toBeNull();
   expect(credentials.inspectConfigSecret!('surfaces.slack.botToken')).toBe('unavailable');
-  await expect(createProductionDaemonInboxFactory()({ ...f.ctx, credentials }, routing, f.controls))
+  await expect(initialReady(createProductionDaemonInboxFactory()({ ...f.ctx, credentials }, routing, f.controls)))
     .rejects.toThrow('credential admission is unavailable');
   expect(f.listeners.size).toBe(0);
 });
@@ -219,8 +230,8 @@ for (const provider of ['slack', 'discord', 'email'] as const) {
       const nativeRouting: Parameters<DaemonInboxFactory>[1] = {
         async initialize() {}, async close() {}, unregister() {}, resolveProfileId() { return 'synthetic-profile'; },
       };
-      await expect(registerOwnedMailInbox(factory, { ...f.ctx, credentials: createDaemonCredentialStore(secretsManager) }, nativeRouting, f.controls,
-        { configManager: f.configManager, secretsManager })).rejects.toThrow();
+      await expect(initialReady(registerOwnedMailInbox(factory, { ...f.ctx, credentials: createDaemonCredentialStore(secretsManager) }, nativeRouting, f.controls,
+        { configManager: f.configManager, secretsManager }))).rejects.toThrow();
       expect(admitted).toBe(1); expect(owners).toHaveLength(1);
       expect(f.polling).toBe(0); expect(f.listeners.size).toBe(0);
       expect(f.ctx.catalog.hasHandler('channels.inbox.list')).toBe(false);

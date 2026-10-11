@@ -304,6 +304,12 @@ export class ProjectPlanningService {
     if (captured.action?.kind !== 'approve' && captured.action?.kind !== 'answer' && captured.action?.kind !== 'dismiss') throw new TypeError('Invalid planning state action');
     if (captured.action.kind === 'answer' && typeof captured.action.answer !== 'string') throw new TypeError('Invalid planning answer');
     Object.freeze(captured.action);
+    // A validated generation is an opaque comparison token on held paths too.
+    // Only its inspection representation changes; comparisons keep the original.
+    const inspectActionInput = () => snapshotJudgmentInput(captured.expected.kind === 'revision'
+      ? { ...captured, expected: { ...captured.expected, revision: { ...captured.expected.revision,
+        generation: { kind: 'selected-native-source-revision' },
+      } } } : captured);
     await this.initialize();
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const space = this.resolveSpace({ projectId: captured.projectId, knowledgeSpaceId: captured.knowledgeSpaceId });
@@ -314,19 +320,17 @@ export class ProjectPlanningService {
     const hold = (reason: Extract<ProjectPlanningStateActionResult, { applied: false }>['reason']): ProjectPlanningStateActionResult => ({
       ok: true, applied: false, reason, state: current, ...(revision ? { revision } : {}),
     });
-    if (!current || !snapshot.source || !revision) { snapshotJudgmentInput(captured); return hold('no-state'); }
+    if (!current || !snapshot.source || !revision) { inspectActionInput(); return hold('no-state'); }
     if (captured.expected.kind === 'revision' && (captured.expected.revision.sourceId !== revision.sourceId || captured.expected.revision.generation !== revision.generation)) {
-      snapshotJudgmentInput(captured); return hold('state-changed');
+      inspectActionInput(); return hold('state-changed');
     }
     let published = false;
     try {
       if (captured.expected.kind === 'revision') {
         observation(); options.signal?.throwIfAborted(); options.assertCurrent?.(); observation();
-        snapshotJudgmentInput({ ...captured, expected: { ...captured.expected, revision: { ...captured.expected.revision,
-          generation: { kind: 'selected-native-source-revision' },
-        } } });
+        inspectActionInput();
         observation();
-      } else snapshotJudgmentInput(captured);
+      } else inspectActionInput();
       // Current-mode captures once here, then uses the same compare-and-write as
       // view-selected actions. It never silently retargets a later state.
       let question: ProjectPlanningQuestion | undefined;

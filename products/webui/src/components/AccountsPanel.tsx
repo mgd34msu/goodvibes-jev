@@ -11,6 +11,7 @@
  * it for the boot snapshot), this component only renders whatever result it
  * is handed, honestly.
  */
+import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './feedback/EmptyState';
 import { ErrorState } from './feedback/ErrorState';
@@ -28,6 +29,8 @@ export interface AccountsPanelProps {
   onRetry: () => void;
 }
 
+type ProviderRecommendedAction = OperatorMethodOutput<'accounts.snapshot'>['providers'][number]['recommendedActions'][number];
+
 interface AccountRow {
   readonly providerId: string;
   readonly configured: boolean;
@@ -36,7 +39,17 @@ interface AccountRow {
   readonly modelCount: number;
   readonly usageWindows: readonly { label: string; detail: string }[];
   readonly issues: readonly string[];
-  readonly recommendedActions: readonly string[];
+  readonly recommendedActions: readonly ProviderRecommendedAction[];
+}
+
+function toRecommendedAction(raw: unknown): ProviderRecommendedAction | null {
+  const record = asRecord(raw);
+  if (typeof record.description !== 'string') return null;
+  if (record.command === undefined) return { description: record.description };
+  const command = asRecord(record.command);
+  if (typeof command.name !== 'string' || !Array.isArray(command.args)
+    || !command.args.every((argument): argument is string => typeof argument === 'string')) return null;
+  return { description: record.description, command: { name: command.name, args: [...command.args] } };
 }
 
 function toAccountRow(raw: unknown): AccountRow | null {
@@ -54,7 +67,7 @@ function toAccountRow(raw: unknown): AccountRow | null {
       detail: firstString(w, ['detail']),
     })),
     issues: firstArrayAtPath(record, [['issues']]).filter((i): i is string => typeof i === 'string'),
-    recommendedActions: firstArrayAtPath(record, [['recommendedActions']]).filter((i): i is string => typeof i === 'string'),
+    recommendedActions: firstArrayAtPath(record, [['recommendedActions']]).map(toRecommendedAction).filter((action): action is ProviderRecommendedAction => action !== null),
   };
 }
 
@@ -111,7 +124,7 @@ export function AccountsPanel({ data, isLoading, isError, error, onRetry }: Acco
                     {row.recommendedActions.length > 0 && (
                       <ul className="accounts-panel__notes accounts-panel__actions-list">
                         {row.recommendedActions.map((action) => (
-                          <li key={action}>{action}</li>
+                          <li key={JSON.stringify(action)}>{action.description}</li>
                         ))}
                       </ul>
                     )}

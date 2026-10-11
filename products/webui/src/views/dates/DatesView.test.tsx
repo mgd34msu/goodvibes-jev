@@ -27,6 +27,7 @@ let listImpl: () => Promise<ListResult> = () => Promise.resolve({ today: '2026-0
 let pendingImpl: () => Promise<PendingResult> = () => Promise.resolve({ today: '2026-07-29', nudge: null, conflicts: [], interviews: [] });
 let plansImpl: () => Promise<PlansResult> = () => Promise.resolve({ today: '2026-07-29', plans: [], unparsed: [], awayNow: null });
 let stateImpl: () => Promise<StateResultShape> = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
+let giftsImpl: (occasionId: string) => Promise<OperatorMethodOutput<'occasions.gifts'>> = (occasionId) => Promise.resolve({ occasionId, gifts: [] });
 let sweepImpl: () => Promise<OperatorMethodOutput<'occasions.sweep'>> = () => Promise.reject(new Error('not used'));
 let forgetImpl: (input: OperatorMethodInput<'profile.forget'>) => Promise<unknown> = () => Promise.reject(new Error('not used'));
 let interviewAnswerImpl: (input: OperatorMethodInput<'occasions.interview.answer'>) => Promise<OperatorMethodOutput<'occasions.interview.answer'>> = () => Promise.reject(new Error('not used'));
@@ -74,7 +75,7 @@ mock.module('../../lib/goodvibes', () => ({
         confirm: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
         gifts: (occasionId: string) => {
           giftsCalls.push(occasionId);
-          return Promise.resolve({ occasionId, gifts: [] });
+          return giftsImpl(occasionId);
         },
         sweep: () => sweepImpl(),
         conflict: { resolve: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })) },
@@ -152,6 +153,7 @@ afterEach(() => {
   pendingImpl = () => Promise.resolve({ today: '2026-07-29', nudge: null, conflicts: [], interviews: [] });
   plansImpl = () => Promise.resolve({ today: '2026-07-29', plans: [], unparsed: [], awayNow: null });
   stateImpl = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
+  giftsImpl = (occasionId) => Promise.resolve({ occasionId, gifts: [] });
   sweepImpl = () => Promise.reject(new Error('not used'));
   forgetImpl = () => Promise.reject(new Error('not used'));
   interviewAnswerImpl = () => Promise.reject(new Error('not used'));
@@ -243,6 +245,114 @@ describe('DatesView: native gift interview progress', () => {
       await waitFor(() => el.textContent?.includes(exhausted.steps[2]!.prompt) === true);
       expect(interviewAnswerCalls).toEqual([{ interviewId: exhausted.interviewId, stepId: 'contrast', text: 'Something to keep' }]);
       expect(interviewRecordCalls).toEqual([]);
+    } finally { unmount(); }
+  });
+
+  test('separate interviews retain their own unanswered drafts across close and reopen', async () => {
+    const first = { ...exhausted, nextStep: exhausted.steps[0]! };
+    const second = { ...first, interviewId: 'interview:other@2027-05-01', occasionId: 'other' };
+    pendingImpl = () => Promise.resolve({ today: '2026-10-11', nudge: null, conflicts: [], interviews: [first, second] });
+    const { el, unmount } = render();
+    const select = (index: number) => {
+      const row = el.querySelectorAll('[data-testid="dates-interview-list"] .gv-row__main')[index];
+      if (!(row instanceof HTMLElement)) throw new Error('Missing selected native interview');
+      flushSync(() => row.click());
+    };
+    try {
+      await openInterview(el); fillInterview(el, 'Sarah has been knitting');
+      flushSync(() => buttonNamed(el, 'Close interview')?.click());
+      select(1);
+      expect(el.querySelector('.dates-interview input')?.getAttribute('value')).toBe('');
+      expect(buttonNamed(el, 'Answer')?.disabled).toBe(true);
+      fillInterview(el, 'Another person enjoys cycling');
+      select(0);
+      expect(el.querySelector('.dates-interview input')?.getAttribute('value')).toBe('Sarah has been knitting');
+      select(1);
+      expect(el.querySelector('.dates-interview input')?.getAttribute('value')).toBe('Another person enjoys cycling');
+      expect(interviewAnswerCalls).toEqual([]);
+    } finally { unmount(); }
+  });
+
+  test('a native missing answer reports absence and retains the submitted draft', async () => {
+    const remaining = { ...exhausted, nextStep: exhausted.steps[1]! };
+    showInterview(remaining);
+    interviewAnswerImpl = () => Promise.resolve({ present: false, interview: null });
+    const { el, unmount } = render();
+    try {
+      await openInterview(el); const input = fillInterview(el, 'Something to keep');
+      flushSync(() => buttonNamed(el, 'Answer')?.click());
+      await waitFor(() => el.textContent?.includes('Answer not recorded') === true);
+      expect(el.textContent).toContain('This interview is no longer available.');
+      expect(input.value).toBe('Something to keep');
+      expect(interviewAnswerCalls).toEqual([{ interviewId: exhausted.interviewId, stepId: 'contrast', text: 'Something to keep' }]);
+      expect(interviewRecordCalls).toEqual([]);
+    } finally { unmount(); }
+  });
+
+  test('a successful native outcome opens the matching occasion and its actual gift history', async () => {
+    const occasion = {
+      id: exhausted.occasionId, title: 'Anniversary', date: { kind: 'recurring', month: 5, day: 1 },
+      recurrence: 'annual', kind: 'gift-giving', person: 'Sarah', selfDeclared: false, subject: 'other', leadDays: 10, mirrored: false,
+      extras: [], lineIndex: 5, text: 'Anniversary · 2027-05-01 · annual · gift-giving · for Sarah',
+    } satisfies OperatorMethodOutput<'occasions.list'>['occasions'][number]['occasion'];
+    listImpl = () => Promise.resolve({
+      today: '2026-10-11', timezone: 'America/Chicago',
+      occasions: [{ occasion, nextOccurrence: '2027-05-01', daysUntil: 202, leadDays: 10, inLeadWindow: false, answer: 'yes', mirrored: false }],
+      unparsed: [], conflicts: [],
+    });
+    showInterview(exhausted);
+    interviewRecordImpl = () => {
+      pendingImpl = () => Promise.resolve({ today: '2026-10-11', nudge: null, conflicts: [], interviews: [] });
+      giftsImpl = (occasionId) => Promise.resolve({ occasionId, gifts: [{ occasionId, occurrence: exhausted.occurrence, landedOn: 'A scarf', recordedAt: 1 }] });
+      return Promise.resolve({ present: true, interview: { ...exhausted, complete: true, landedOn: 'A scarf' } });
+    };
+    const { el, unmount } = render();
+    try {
+      await openInterview(el); fillInterview(el, 'A scarf');
+      flushSync(() => buttonNamed(el, 'Record')?.click());
+      await waitFor(() => el.querySelector('[data-testid="dates-gift-peek-list"]') !== null);
+      expect(el.querySelector('[data-testid="dates-gift-peek-list"]')?.textContent).toContain('A scarf');
+      expect(buttonNamed(el, 'Close occasion')).toBeDefined();
+      expect(buttonNamed(el, 'Close interview')).toBeUndefined();
+      expect(giftsCalls).toContain(exhausted.occasionId);
+      expect(interviewRecordCalls).toEqual([{ interviewId: exhausted.interviewId, landedOn: 'A scarf' }]);
+    } finally { unmount(); }
+  });
+
+  test('a late successful record cannot replace a later interview selection', async () => {
+    const other = { ...exhausted, interviewId: 'interview:other@2027-05-01', occasionId: 'other', nextStep: exhausted.steps[0]! };
+    pendingImpl = () => Promise.resolve({ today: '2026-10-11', nudge: null, conflicts: [], interviews: [exhausted, other] });
+    let complete: ((result: OperatorMethodOutput<'occasions.interview.record'>) => void) | undefined;
+    interviewRecordImpl = () => new Promise((resolve) => { complete = resolve; });
+    const { el, unmount } = render();
+    try {
+      await openInterview(el); fillInterview(el, 'A scarf');
+      flushSync(() => buttonNamed(el, 'Record')?.click());
+      await waitFor(() => complete !== undefined);
+      const second = el.querySelectorAll('[data-testid="dates-interview-list"] .gv-row__main')[1];
+      if (!(second instanceof HTMLElement)) throw new Error('Missing other native interview');
+      flushSync(() => second.click());
+      pendingImpl = () => Promise.resolve({ today: '2026-10-11', nudge: null, conflicts: [], interviews: [other] });
+      if (complete === undefined) throw new Error('Missing native record resolver');
+      complete({ present: true, interview: { ...exhausted, complete: true, landedOn: 'A scarf' } });
+      await waitFor(() => el.textContent?.includes('Recorded what you landed on') === true);
+      expect(buttonNamed(el, 'Close interview')).toBeDefined();
+      expect(el.textContent).toContain(other.nextStep.prompt);
+      expect(interviewRecordCalls).toEqual([{ interviewId: exhausted.interviewId, landedOn: 'A scarf' }]);
+    } finally { unmount(); }
+  });
+
+  test('a present but uncompleted native record never reports completion', async () => {
+    showInterview(exhausted);
+    interviewRecordImpl = () => Promise.resolve({ present: true, interview: exhausted });
+    const { el, unmount } = render();
+    try {
+      await openInterview(el); const input = fillInterview(el, 'A scarf');
+      flushSync(() => buttonNamed(el, 'Record')?.click());
+      await waitFor(() => el.textContent?.includes('The daemon did not confirm') === true);
+      expect(el.textContent).not.toContain('Recorded what you landed on');
+      expect(input.value).toBe('A scarf');
+      expect(buttonNamed(el, 'Close interview')).toBeDefined();
     } finally { unmount(); }
   });
 

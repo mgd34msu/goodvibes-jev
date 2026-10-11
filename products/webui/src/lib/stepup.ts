@@ -307,7 +307,7 @@ export async function registerPasskey(options: { userName: string; userDisplayNa
  * returned. When a credentialId is known (registered on this device) it is passed as an
  * allowCredentials hint so the OS shows the right passkey.
  */
-export async function runAssertion(options: { challenge: string; credentialId?: string }): Promise<{ envelope: StepUpAssertionEnvelope; headerValue: string }> {
+export async function runAssertion(options: { challenge: string; credentialId?: string; signal?: AbortSignal }): Promise<{ envelope: StepUpAssertionEnvelope; headerValue: string }> {
   const availability = stepUpAvailability();
   if (!availability.supported) throw new StepUpError('unsupported', availability.reason ?? 'Passkeys are not supported here.');
 
@@ -323,7 +323,7 @@ export async function runAssertion(options: { challenge: string; credentialId?: 
 
   let assertion: PublicKeyCredential | null;
   try {
-    assertion = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
+    assertion = (await navigator.credentials.get({ publicKey, ...(options.signal ? { signal: options.signal } : {}) })) as PublicKeyCredential | null;
   } catch (error) {
     throw normalizeCeremonyError(error, false);
   }

@@ -74,7 +74,8 @@ function nativeRequestShape(body) {
   return 'other';
 }
 const startupPhases = ['runtime-base', 'handler-surfaces', 'contract-recovery', 'provider-preload', 'listener-construction',
-  'secondary-listener-construction', 'cluster-startup', 'device-recovery', 'listener-startup', 'secondary-listener-startup',
+  'secondary-listener-construction', 'cluster-startup', 'device-recovery', 'device-grant-sweep', 'device-capture-sweep',
+  'device-disclosure-read', 'device-disclosure-persist', 'listener-startup', 'secondary-listener-startup',
   'boot-tasks', 'foreground-ready'];
 function retainStartupPhases() {
   const history = [], seen = new Set();

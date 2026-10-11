@@ -1,3 +1,4 @@
+import { fieldKind, redactionCredential, residualCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
 import nativeRoute from '../fixtures/e2e-judgments/native-route.json';
 import nativeTurn from '../fixtures/e2e-judgments/native-turn.json';
 import modelIdentity from '../fixtures/e2e-judgments/model-identity.json';
@@ -21,13 +22,184 @@ export function nativeFixtureShape(value: unknown): string {
     return slot;
   });
 }
+
+type PrivacyKind = 'privacy-field' | 'privacy-source' | 'privacy-residual';
+// Explicit authored roles for these native diagnostic fields. Unknown names
+// still fail; names that do not establish a value role remain uncertain.
+const privacyFieldRoles = {
+  "count": "other",
+  "sampleIds": "other",
+  "path": "other",
+  "cachePath": "other",
+  "exists": "other",
+  "invalidFields": "other",
+  "kind": "other",
+  "type": "other",
+  "method": "other",
+  "url": "other",
+  "status": "other",
+  "latencyMs": "other",
+  "provider": "other",
+  "resumed": "other",
+  "queued": "other",
+  "reaped": "other",
+  "skipped": "other",
+  "projectRoot": "other",
+  "movedTo": "other",
+  "moved": "other",
+  "discarded": "other",
+  "mode": "other",
+  "allowInsecureLocalhost": "other",
+  "customCaEntryCount": "other",
+  "effectiveCaStrategy": "other",
+  "gitDir": "other",
+  "ready": "other",
+  "port": "other",
+  "host": "other",
+  "tlsMode": "other",
+  "scheme": "other",
+  "trustProxy": "other",
+  "canonicalPath": "other",
+  "totalImported": "other",
+  "totalSkipped": "other",
+  "missing": "other",
+  "failed": "other",
+  "filePath": "other",
+  "tokenCount": "other",
+  "max_tokens": "other",
+  "requestId": "other",
+  "retryStatus": "other",
+  "error": "content",
+  "lines": "content",
+  "proseLines": "content",
+  "report": "content",
+  "errors": "content",
+  "announcement": "content",
+  "stdout": "content",
+  "message": "content",
+  "ENOENT": "uncertain",
+  "fields": "uncertain",
+  "ledger": "uncertain",
+  "sources": "uncertain",
+  "unlockPassphrase": "secret",
+  "privateSigningMaterial": "secret",
+  "loginPassword": "secret",
+  "shippingAddress": "owner_profile",
+  "billing_address": "owner_profile"
+} as const;
+const ordinaryDiagnosticTexts = [
+  'Unable to connect. Is the computer able to access the url?',
+  'the judgment request was rejected',
+] as const;
+const ordinaryMissingFileSuffixes = [
+  "/.goodvibes/daemon/provider-models/aihubmix.json",
+  "/.goodvibes/daemon/provider-models/anthropic.json",
+  "/.goodvibes/daemon/provider-models/cerebras.json",
+  "/.goodvibes/daemon/provider-models/cloudflare-ai-gateway.json",
+  "/.goodvibes/daemon/provider-models/copilot-proxy.json",
+  "/.goodvibes/daemon/provider-models/deepseek.json",
+  "/.goodvibes/daemon/provider-models/fireworks.json",
+  "/.goodvibes/daemon/provider-models/gemini.json",
+  "/.goodvibes/daemon/provider-models/groq.json",
+  "/.goodvibes/daemon/provider-models/huggingface.json",
+  "/.goodvibes/daemon/provider-models/litellm.json",
+  "/.goodvibes/daemon/provider-models/llm7.json",
+  "/.goodvibes/daemon/provider-models/microsoft-foundry.json",
+  "/.goodvibes/daemon/provider-models/minimax.json",
+  "/.goodvibes/daemon/provider-models/mistral.json",
+  "/.goodvibes/daemon/provider-models/moonshot.json",
+  "/.goodvibes/daemon/provider-models/nvidia.json",
+  "/.goodvibes/daemon/provider-models/ollama-cloud.json",
+  "/.goodvibes/daemon/provider-models/openrouter.json",
+  "/.goodvibes/daemon/provider-models/qianfan.json",
+  "/.goodvibes/daemon/provider-models/qwen.json",
+  "/.goodvibes/daemon/provider-models/sglang.json",
+  "/.goodvibes/daemon/provider-models/stepfun.json",
+  "/.goodvibes/daemon/provider-models/together.json",
+  "/.goodvibes/daemon/provider-models/venice.json",
+  "/.goodvibes/daemon/provider-models/vercel-ai-gateway.json",
+  "/.goodvibes/daemon/provider-models/volcengine.json",
+  "/.goodvibes/daemon/provider-models/xai.json",
+  "/.goodvibes/daemon/provider-models/xiaomi.json",
+  "/.goodvibes/daemon/provider-models/zai.json",
+  "/.goodvibes/tui/model-tiers.json",
+  "/.goodvibes/tui/provider-models/aihubmix.json",
+  "/.goodvibes/tui/provider-models/anthropic.json",
+  "/.goodvibes/tui/provider-models/cerebras.json",
+  "/.goodvibes/tui/provider-models/cloudflare-ai-gateway.json",
+  "/.goodvibes/tui/provider-models/copilot-proxy.json",
+  "/.goodvibes/tui/provider-models/deepseek.json",
+  "/.goodvibes/tui/provider-models/fireworks.json",
+  "/.goodvibes/tui/provider-models/gemini.json",
+  "/.goodvibes/tui/provider-models/groq.json",
+  "/.goodvibes/tui/provider-models/huggingface.json",
+  "/.goodvibes/tui/provider-models/inceptionlabs.json",
+  "/.goodvibes/tui/provider-models/litellm.json",
+  "/.goodvibes/tui/provider-models/llm7.json",
+  "/.goodvibes/tui/provider-models/microsoft-foundry.json",
+  "/.goodvibes/tui/provider-models/minimax.json",
+  "/.goodvibes/tui/provider-models/mistral.json",
+  "/.goodvibes/tui/provider-models/moonshot.json",
+  "/.goodvibes/tui/provider-models/nvidia.json",
+  "/.goodvibes/tui/provider-models/ollama-cloud.json",
+  "/.goodvibes/tui/provider-models/openrouter.json",
+  "/.goodvibes/tui/provider-models/qianfan.json",
+  "/.goodvibes/tui/provider-models/qwen.json",
+  "/.goodvibes/tui/provider-models/sglang.json",
+  "/.goodvibes/tui/provider-models/stepfun.json",
+  "/.goodvibes/tui/provider-models/together.json",
+  "/.goodvibes/tui/provider-models/venice.json",
+  "/.goodvibes/tui/provider-models/vercel-ai-gateway.json",
+  "/.goodvibes/tui/provider-models/volcengine.json",
+  "/.goodvibes/tui/provider-models/xai.json",
+  "/.goodvibes/tui/provider-models/xiaomi.json",
+  "/.goodvibes/tui/provider-models/zai.json",
+  "/.goodvibes/tui/synthetic-identities.json"
+] as const;
+
+function privacyAnswers(body: unknown, ordinaryMissingFiles: readonly string[]): { kind: PrivacyKind; answers: unknown } | undefined {
+  const serialized = stable(body);
+  const matches = (state: unknown, questions: unknown) => serialized === stable({ state, questions, model: nativeRoute.model });
+  for (const [field, role] of Object.entries(privacyFieldRoles)) {
+    if (!matches({ field }, { kind: fieldKind.items.kind.question })) continue;
+    const probabilities = { secret: 0, owner_profile: 0, content: 0, other: 0 };
+    if (role === 'uncertain') {
+      return { kind: 'privacy-field', answers: { kind: { type: 'choice', choice: 'other', confidence: 0.25,
+        probabilities: { secret: 0.25, owner_profile: 0.25, content: 0.25, other: 0.25 } } } };
+    }
+    probabilities[role] = 1;
+    return { kind: 'privacy-field', answers: { kind: { type: 'choice', choice: role, confidence: 1, probabilities } } };
+  }
+  for (const text of ordinaryDiagnosticTexts) {
+    if (matches({ phase: 'source', parts: [{ kind: 'text', text }], target: 'whole-line' }, {
+      lineHasCredential: redactionCredential.items.lineHasCredential.question,
+      spanIsCredential: redactionCredential.items.spanIsCredential.question,
+    })) return { kind: 'privacy-source', answers: {
+      lineHasCredential: { type: 'noul', noul: 0 }, spanIsCredential: { type: 'noul', noul: 0 },
+    } };
+  }
+  const residuals: unknown[] = [
+    { parts: [{ kind: 'text', text: "'fleet.snapshot' failed: " }, { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] },
+    ...ordinaryMissingFiles.map(path => ({ parts: [{ kind: 'text', text: 'ENOENT: ' },
+      { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: `, open '${path}'` }] })),
+  ];
+  for (const state of residuals) {
+    if (matches(state, { credentialRemains: residualCredential.items.credentialRemains.question })) {
+      return { kind: 'privacy-residual', answers: { credentialRemains: { type: 'noul', noul: 0 } } };
+    }
+  }
+  return undefined;
+}
+
 const nativePrompt = nativeRoute.state.originalSource.text;
 function nativeRequest(template: typeof nativeRoute | typeof nativeTurn, prompt: string): unknown {
   return JSON.parse(JSON.stringify(template).split(JSON.stringify(nativePrompt)).join(JSON.stringify(prompt)));
 }
 
 /** Exact captured synthetic requests, never an approval/classification shortcut. */
-export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' | 'native-route' | 'native-turn'; answers: unknown } | undefined {
+export function e2eJudgmentAnswers(body: unknown, ordinaryMissingFiles: readonly string[] = []): { kind: 'tier' | 'identity' | 'native-route' | 'native-turn' | PrivacyKind; answers: unknown } | undefined {
+  const privacy = privacyAnswers(body, ordinaryMissingFiles);
+  if (privacy) return privacy;
   const serialized = stable(body);
   if (serialized === stable(modelTier)) return { kind: 'tier', answers: {
     frontier: { type: 'noul', noul: 0 }, small: { type: 'noul', noul: 1 },
@@ -48,7 +220,11 @@ export function e2eJudgmentAnswers(body: unknown): { kind: 'tier' | 'identity' |
   return undefined;
 }
 
-export function startE2EJudgments() {
+export function startE2EJudgments(options: { readonly ordinaryHomes?: readonly string[] } = {}) {
+  // These exact roots are supplied by the owning temporary-home fixture.
+  // No arbitrary path shape or text is treated as safe.
+  const ordinaryMissingFiles = Object.freeze((options.ordinaryHomes ?? []).flatMap(home =>
+    ordinaryMissingFileSuffixes.map(suffix => `${home}${suffix}`)));
   const accepted: string[] = [];
   const rejected: unknown[] = [];
   const unexpected: unknown[] = [];
@@ -59,7 +235,7 @@ export function startE2EJudgments() {
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/systemone') return new Response('not found', { status: 404 });
     let body: unknown;
     try { body = await request.json(); } catch { return new Response('invalid JSON', { status: 400 }); }
-    const reading = e2eJudgmentAnswers(body);
+    const reading = e2eJudgmentAnswers(body, ordinaryMissingFiles);
     if (!reading) {
       rejected.push(body);
       if (!expectedNegative.has(stable(body))) unexpected.push(body);

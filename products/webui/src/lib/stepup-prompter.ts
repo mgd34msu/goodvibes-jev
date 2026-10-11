@@ -18,6 +18,8 @@ export interface StepUpContext {
   readonly method: string;
   /** The request path (no host) of the gated call. */
   readonly path: string;
+  /** Cancellation of this exact gated caller, independent of an explicit UI Cancel. */
+  readonly signal?: AbortSignal;
 }
 
 /** Produce a step-up assertion header value for a gated call, or null to give up honestly. */
@@ -36,15 +38,34 @@ export function hasStepUpPrompter(): boolean {
 }
 
 /**
- * Ask the registered prompter for an assertion header value. Returns null, never throws,
- * when no prompter is registered or the ceremony fails/cancels, so the caller can surface the
- * original 401 honestly instead of a dead-end.
+ * Ask the registered prompter for an assertion header value. Missing UI or an explicit UI
+ * cancellation returns null so the original 401 surfaces. Caller cancellation preserves its
+ * native abort reason and cannot leave this transport waiting on an abandoned ceremony.
  */
 export async function resolveStepUp(context: StepUpContext): Promise<string | null> {
-  if (!prompter) return null;
+  const signal = context.signal;
+  signal?.throwIfAborted();
+  const currentPrompter = prompter;
+  if (!currentPrompter) return null;
+  let onAbort: (() => void) | undefined;
+  const interrupted = signal === undefined ? undefined : new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
   try {
-    return await prompter(context);
+    // Attach the race before invoking borrowed UI code, including synchronous failures.
+    const pending = Promise.resolve().then(() => {
+      signal?.throwIfAborted();
+      return currentPrompter(context);
+    });
+    const assertion = await (interrupted ? Promise.race([pending, interrupted]) : pending);
+    signal?.throwIfAborted();
+    return assertion;
   } catch {
+    signal?.throwIfAborted();
     return null;
+  } finally {
+    if (signal && onAbort) signal.removeEventListener('abort', onAbort);
   }
 }

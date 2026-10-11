@@ -1032,7 +1032,8 @@ export class ToolRegistry {
       if (restrictions && (projectionProperty(restrictions, 'signal') !== restrictionSignal
         || projectionProperty(restrictions, 'assertCurrent') !== restrictionCurrent)) throw new ToolInputProjectionError('stale');
       if (restrictionCurrent) {
-        assertProjectionCurrent(restrictionCurrent); assertParentProof(); assertProjectionSignal(restrictionSignal);
+        executingContext.run(context, () => assertProjectionCurrent(restrictionCurrent));
+        assertParentProof(); assertProjectionSignal(restrictionSignal);
       }
     };
     assertParent();

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
@@ -549,3 +549,43 @@ test('owner-log replay pins original files across awaited headers and closes eve
     }
   }
 }, 60_000);
+
+
+test('owner-log replay refuses borrowed callback replacement of original native capture records', async () => {
+  const { root } = fixture(), owned = join(root, 'owned-logs');
+  mkdirSync(owned);
+  const first = join(owned, 'first.log'), second = join(owned, 'second.log'), peer = join(root, 'peer.log');
+  const marker = 'Foreign synthetic peer bytes must not replace the native selection';
+  writeFileSync(first, 'Original first owner bytes\n'); writeFileSync(second, 'Original second owner bytes\n'); writeFileSync(peer, marker);
+  const files = [first, second].map(path => { const { dev, ino } = lstatSync(path); return { path, dev, ino }; });
+  const rootIdentity = lstatSync(owned);
+  const chunks: Buffer[] = [];
+  const sink = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+  let changed = false;
+  try {
+    const result = await replayTestOwnerLogs(files, Date.now() + 1000, sink, undefined, () => {
+      const current = lstatSync(owned);
+      if (!current.isDirectory() || current.dev !== rootIdentity.dev || current.ino !== rootIdentity.ino) throw new Error('Native log root retired');
+      if (!changed) {
+        const replacement = lstatSync(peer), selected = files[1];
+        if (!selected) throw new Error('Missing original selected native log');
+        selected.path = peer; selected.dev = replacement.dev; selected.ino = replacement.ino;
+        changed = true;
+      }
+    });
+    expect(changed).toBe(true);
+    expect(result.outputTruncated).toBe(true);
+    expect(result.stopReason).toContain('Owner-log replay failed');
+    expect(Buffer.concat(chunks).toString()).not.toContain(marker);
+    expect(readFileSync(peer, 'utf8')).toBe(marker);
+    expect(readFileSync(first, 'utf8')).toBe('Original first owner bytes\n');
+    expect(readFileSync(second, 'utf8')).toBe('Original second owner bytes\n');
+    if (process.platform === 'linux') {
+      const openLogs = readdirSync('/proc/self/fd').flatMap(fd => {
+        try { const path = readlinkSync(`/proc/self/fd/${fd}`); return path.startsWith(root) ? [path] : []; }
+        catch { return []; }
+      });
+      expect(openLogs).toEqual([]);
+    }
+  } finally { sink.destroy(); }
+});

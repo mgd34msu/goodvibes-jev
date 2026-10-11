@@ -25,58 +25,94 @@ import {
 } from '../../lib/stepup';
 import { registerStepUpPrompter, type StepUpContext, type StepUpPrompter } from '../../lib/stepup-prompter';
 
+interface StepUpRequest {
+  readonly context: StepUpContext;
+  readonly resolve: (value: string | null) => void;
+  readonly releaseAbort: () => void;
+}
+
+interface StepUpVerification {
+  readonly request: StepUpRequest;
+  readonly controller: AbortController;
+  readonly completion: Promise<void>;
+}
+
 export function StepUpHost() {
-  const resolverRef = useRef<((value: string | null) => void) | null>(null);
-  const [request, setRequest] = useState<StepUpContext | null>(null);
+  const requestRef = useRef<StepUpRequest | null>(null);
+  const verificationRef = useRef<StepUpVerification | null>(null);
+  const [request, setRequest] = useState<StepUpRequest | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const settle = useCallback((value: string | null) => {
-    const resolve = resolverRef.current;
-    resolverRef.current = null;
+  const settle = useCallback((ownedRequest: StepUpRequest, value: string | null) => {
+    if (requestRef.current !== ownedRequest) return;
+    requestRef.current = null;
+    ownedRequest.releaseAbort();
+    const verification = verificationRef.current;
+    if (value === null && verification?.request === ownedRequest) verification.controller.abort();
     setRequest(null);
     setRunning(false);
     setError(null);
-    resolve?.(value);
+    ownedRequest.resolve(value);
   }, []);
 
   const prompter = useCallback<StepUpPrompter>((context) => {
-    // Only one ceremony at a time, decline a second requirement honestly rather than stack.
-    if (resolverRef.current) return Promise.resolve(null);
+    // A cancelled verification still owns its native work until it settles.
+    const signal = context.signal;
+    if (signal?.aborted || requestRef.current || verificationRef.current) return Promise.resolve(null);
     return new Promise<string | null>((resolve) => {
-      resolverRef.current = resolve;
-      setRequest(context);
+      const onAbort = () => settle(ownedRequest, null);
+      const ownedRequest: StepUpRequest = { context, resolve,
+        releaseAbort: () => signal?.removeEventListener('abort', onAbort) };
+      requestRef.current = ownedRequest;
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) { settle(ownedRequest, null); return; }
+      setRequest(ownedRequest);
       setRunning(false);
       setError(null);
     });
-  }, []);
+  }, [settle]);
 
   useEffect(() => {
     registerStepUpPrompter(prompter);
     return () => {
       registerStepUpPrompter(null);
-      // If this host unmounts mid-ceremony, resolve any pending request so the caller does
-      // not hang forever waiting on a prompter that no longer exists.
-      resolverRef.current?.(null);
-      resolverRef.current = null;
+      const ownedRequest = requestRef.current;
+      requestRef.current = null;
+      ownedRequest?.releaseAbort();
+      verificationRef.current?.controller.abort();
+      ownedRequest?.resolve(null);
     };
   }, [prompter]);
 
-  const verify = useCallback(async () => {
+  const verify = useCallback((ownedRequest: StepUpRequest) => {
+    if (requestRef.current !== ownedRequest || verificationRef.current) return;
+    const controller = new AbortController();
+    const isCurrent = () => requestRef.current === ownedRequest && !controller.signal.aborted;
     setRunning(true);
     setError(null);
-    try {
-      const challenge = await sdk.operator.stepup.mintChallenge({});
-      const registered = getRegisteredCredential();
-      const { headerValue } = await runAssertion({
-        challenge: challenge.challenge,
-        credentialId: registered?.credentialId,
-      });
-      settle(headerValue);
-    } catch (ceremonyError) {
-      setRunning(false);
-      setError(describeStepUpError(ceremonyError));
-    }
+    const completion = Promise.resolve().then(async () => {
+      try {
+        if (!isCurrent()) return;
+        const challenge = await sdk.operator.stepup.mintChallenge({}, controller.signal);
+        if (!isCurrent()) return;
+        const registered = getRegisteredCredential();
+        const { headerValue } = await runAssertion({
+          challenge: challenge.challenge,
+          credentialId: registered?.credentialId,
+          signal: controller.signal,
+        });
+        if (!isCurrent()) return;
+        settle(ownedRequest, headerValue);
+      } catch (ceremonyError) {
+        if (!isCurrent()) return;
+        setRunning(false);
+        setError(describeStepUpError(ceremonyError));
+      } finally {
+        if (verificationRef.current?.controller === controller) verificationRef.current = null;
+      }
+    });
+    verificationRef.current = { request: ownedRequest, controller, completion };
   }, [settle]);
 
   if (!request) return null;
@@ -87,15 +123,15 @@ export function StepUpHost() {
   return (
     <Dialog
       open
-      onClose={() => settle(null)}
+      onClose={() => settle(request, null)}
       title="Verify to continue"
       footer={(
         <>
-          <Button onClick={() => settle(null)} disabled={running}>
+          <Button onClick={() => settle(request, null)}>
             Cancel
           </Button>
           {availability.supported && (
-            <Button variant="primary" onClick={() => void verify()} disabled={running}>
+            <Button variant="primary" onClick={() => verify(request)} disabled={running}>
               {running ? 'Waiting for passkey…' : 'Verify with passkey'}
             </Button>
           )}
@@ -108,7 +144,7 @@ export function StepUpHost() {
           <span>This action changes something over the relay connection, so it needs a passkey confirmation.</span>
         </p>
         <p className="stepup-target">
-          <code>{`${request.method} ${request.path}`}</code>
+          <code>{`${request.context.method} ${request.context.path}`}</code>
         </p>
 
         {!availability.supported ? (

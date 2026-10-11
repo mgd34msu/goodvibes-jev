@@ -1,4 +1,6 @@
-import type { Tool } from '../../types/tools.js';
+import { types as nodeTypes } from 'node:util';
+import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
+import { assertCurrentToolInvocation } from '../registry.js';
 import type { ConfigManager } from '../../config/manager.js';
 import { AGENT_TOOL_SCHEMA } from './schema.js';
 import type { AgentInput, ProposedUnit } from './schema.js';
@@ -6,7 +8,7 @@ import { ArchetypeLoader } from '../../agents/archetypes.js';
 import { AgentMessageBus } from '../../agents/message-bus.js';
 import type { ContractRunner, StartedContract } from '../../contract/runner.js';
 import { contractChecks, summarizeCheck, summarizeContract, summarizeContractDecision, summarizeEscalation } from './contract-views.js';
-import { AGENT_TEMPLATES, AgentManager, type AgentRecord } from './manager.js';
+import { AGENT_TEMPLATES, AgentManager, type AgentRecord, type OwnedAgentExecution } from './manager.js';
 import { evaluateOrchestrationSpawn, ORCHESTRATION_CAP_KEYS } from '../../runtime/orchestration/spawn-policy.js';
 import { isNativeConversationTurn, NATIVE_TURN_EXECUTION_REFUSAL } from '../../core/native-turn-scope.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -59,10 +61,12 @@ function agentExecutionContract(record: AgentRecord) {
  * cleanly-completed agents. The transcript tail is pulled from the manager's
  * live-or-frozen snapshot (honest partial output, never fabricated).
  */
-async function childFailureFor(manager: AgentManager, record: AgentRecord): Promise<ChildFailureEnvelope | null> {
+async function childFailureFor(manager: AgentManager, record: AgentRecord,
+  options?: { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined },
+): Promise<ChildFailureEnvelope | null> {
   if (!isChildFailureTerminal(record)) return null;
   const transcriptTail = manager.getConversationSnapshot(record.id);
-  return buildChildFailureEnvelope(record, { transcriptTail });
+  return buildChildFailureEnvelope(record, { transcriptTail, ...options });
 }
 
 function agentSummary(record: AgentRecord) {
@@ -142,11 +146,43 @@ export interface AgentToolConfig {
   readonly configManager: Pick<ConfigManager, 'get'>;
   readonly archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
   /** Starts the contract spawn and batch-spawn hand work to, and answers the contracts and contract-history modes. */
-  readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get'>;
+  readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get'> & Partial<Pick<ContractRunner, 'cancel' | 'join'>>;
   /** The project a contract started here works in. */
   readonly projectRoot: string;
   /** The conversation session a contract started here belongs to, read on each call. */
   readonly resolveSessionId: () => string;
+}
+
+/** Pins the owner slot without invoking a replacement property getter at dispatch. */
+function retainContractProperty(object: object, key: 'contractRunner' | 'start' | 'cancel' | 'join'): () => void {
+  const path: { object: object; prototype: object | null; descriptor: PropertyDescriptor | undefined }[] = [];
+  const visited = new Set<object>();
+  let current: object | null = object;
+  while (current !== null) {
+    if (nodeTypes.isProxy(current) || visited.has(current)) throw new Error('Unsupported Agent contract owner');
+    visited.add(current);
+    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor !== undefined && !('value' in descriptor)) throw new Error('Unsupported accessor-backed Agent contract owner');
+    const prototype: object | null = Object.getPrototypeOf(current);
+    path.push({ object: current, prototype, descriptor });
+    if (descriptor !== undefined) break;
+    current = prototype;
+  }
+  return () => {
+    for (const entry of path) {
+      if (nodeTypes.isProxy(entry.object) || Object.getPrototypeOf(entry.object) !== entry.prototype) {
+        throw new Error('Agent contract owner changed before dispatch');
+      }
+      const actual = Object.getOwnPropertyDescriptor(entry.object, key);
+      const original = entry.descriptor;
+      if (original === undefined ? actual !== undefined : actual === undefined
+        || actual.configurable !== original.configurable || actual.enumerable !== original.enumerable
+        || actual.writable !== original.writable || actual.get !== original.get || actual.set !== original.set
+        || !Object.is(actual.value, original.value)) {
+        throw new Error('Agent contract owner changed before dispatch');
+      }
+    }
+  };
 }
 
 export function createAgentTool(config: AgentToolConfig): Tool {
@@ -156,21 +192,121 @@ export function createAgentTool(config: AgentToolConfig): Tool {
    * Starts one contract for work handed to the tool (design 10.3). The unit
    * leaf refusal runs first, in AgentManager, so it is decided in one place.
    */
-  function startContract(input: AgentInput, ask: string, proposedUnits: readonly ProposedUnit[]): StartedContract {
+  function startContract(input: AgentInput, ask: string, proposedUnits: readonly ProposedUnit[], assertCurrent: () => void, dispatch: ContractRunner['start']): StartedContract {
     config.manager.guardContractLeafSpawn(input.parentAgentId);
-    return config.contractRunner.start({
+    const contractInput = {
       ask,
       sessionId: config.resolveSessionId(),
-      origin: 'agent-tool',
+      origin: 'agent-tool' as const,
       projectRoot: config.projectRoot,
       proposedUnits,
       ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
-    });
+    };
+    assertCurrent();
+    return dispatch(contractInput);
   }
   return {
     definition: AGENT_TOOL_SCHEMA,
 
-    async execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string }> {
+    async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
+    const signal = options?.signal;
+    const ownedSpawns: OwnedAgentExecution[] = [];
+    const ownedContracts: (() => void)[] = [];
+    let retired = false;
+    const cancelOwned = () => {
+      const failures: unknown[] = [];
+      for (const owned of ownedSpawns) { try { owned.cancel(); } catch (error) { failures.push(error); } }
+      for (const cancel of ownedContracts) { try { cancel(); } catch (error) { failures.push(error); } }
+      if (failures.length) throw new AggregateError(failures, 'Owned Agent cancellation failed');
+    };
+    const assertCurrent = () => {
+      try {
+        if (retired) throw new Error('Agent invocation is no longer current');
+        signal?.throwIfAborted();
+        assertCurrentToolInvocation(args, options);
+        signal?.throwIfAborted();
+      } catch (error) {
+        retired = true;
+        cancelOwned();
+        throw error;
+      }
+    };
+    const publish = <T>(result: T): T => { assertCurrent(); return result; };
+    const spawnOwned = (input: AgentInput): AgentRecord => {
+      assertCurrent();
+      if (options === undefined) return manager.spawn(input);
+      const owned = manager.spawnOwned(input, { signal });
+      ownedSpawns.push(owned);
+      assertCurrent();
+      return owned.record;
+    };
+    const startOwnedContract = (input: AgentInput, ask: string, units: readonly ProposedUnit[]): StartedContract => {
+      assertCurrent();
+      if (options === undefined) {
+        return startContract(input, ask, units, assertCurrent, (contractInput) => config.contractRunner.start(contractInput));
+      }
+      const assertRunnerHolder = retainContractProperty(config, 'contractRunner');
+      const runner = config.contractRunner;
+      const assertStart = retainContractProperty(runner, 'start');
+      const assertCancel = retainContractProperty(runner, 'cancel');
+      const assertJoin = retainContractProperty(runner, 'join');
+      const start = runner.start, cancel = runner.cancel, join = runner.join;
+      const assertRunner = () => { assertRunnerHolder(); assertStart(); assertCancel(); assertJoin(); };
+      if ((signal !== undefined || options?.assertCurrent !== undefined)
+        && (typeof cancel !== 'function' || typeof join !== 'function')) {
+        throw new Error('Agent caller cancellation requires contract cancellation and settlement');
+      }
+      let started: StartedContract | undefined;
+      let contractId: string | undefined;
+      let cancelRequested = false, cancelIssued = false, settlementTracked = false;
+      const cancelStarted = () => {
+        cancelRequested = true;
+        if (contractId !== undefined && !cancelIssued && cancel) {
+          cancelIssued = true;
+          cancel.call(runner, contractId, 'The owning Agent tool invocation was cancelled');
+        }
+      };
+      const cleanup = () => signal?.removeEventListener('abort', cancelStarted);
+      signal?.addEventListener('abort', cancelStarted, { once: true });
+      try {
+        assertCurrent();
+        started = startContract(input, ask, units, assertCurrent, (contractInput) => {
+          assertRunner();
+          signal?.throwIfAborted();
+          return start.call(runner, contractInput);
+        });
+        contractId = started.contract.id;
+        ownedContracts.push(cancelStarted);
+        if (cancelRequested || signal?.aborted) cancelStarted();
+        const settled = started.settled ?? join?.call(runner, contractId);
+        if (settled) { void settled.then(cleanup, cleanup); settlementTracked = true; }
+        else cleanup();
+        assertCurrent();
+        return started;
+      } catch (error) {
+        try { if (started) cancelStarted(); } finally { if (!settlementTracked) cleanup(); }
+        throw error;
+      }
+    };
+    const waitForPoll = (milliseconds: number): Promise<void> => {
+      signal?.throwIfAborted();
+      return new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const cleanup = () => {
+          if (timer !== undefined) clearTimeout(timer);
+          signal?.removeEventListener('abort', abort);
+        };
+        const abort = () => {
+          cleanup();
+          try { signal?.throwIfAborted(); } catch (error) { reject(error); }
+        };
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) { abort(); return; }
+        timer = setTimeout(() => { cleanup(); resolve(); }, milliseconds);
+        if (signal?.aborted) abort();
+      });
+    };
+    assertCurrent();
     // Validate required fields before casting
     if (!args || typeof args !== 'object') {
       return { success: false, error: 'Invalid args: expected an object' };
@@ -206,7 +342,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         if (!input.outsideContract) {
           let started: StartedContract;
           try {
-            started = startContract(
+            started = startOwnedContract(
               input,
               input.authoritativeTask && input.authoritativeTask.trim() !== '' ? input.authoritativeTask : input.task,
               [{ task: input.task, ...(input.template ? { template: input.template } : {}) }],
@@ -215,7 +351,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
             return { success: false, error: summarizeError(error) };
           }
           const owner = started.owner;
-          return {
+          return publish({
             success: true,
             output: JSON.stringify({
               ...startedContractFields(started),
@@ -226,12 +362,12 @@ export function createAgentTool(config: AgentToolConfig): Tool {
               ...agentExecutionContract(owner),
               ...agentTopology(owner),
             }),
-          };
+          });
         }
 
         let record;
         try {
-          record = manager.spawn(input);
+          record = spawnOwned(input);
         } catch (error) {
           return {
             success: false,
@@ -241,7 +377,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           };
         }
 
-        return {
+        return publish({
           success: true,
           output: JSON.stringify({
             agentId: record.id,
@@ -251,7 +387,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
             ...agentExecutionContract(record),
             ...agentTopology(record),
           }),
-        };
+        });
       }
 
       case 'status': {
@@ -466,7 +602,9 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           return { success: false, error: 'Missing required parameter for wait: agentId' };
         }
 
+        assertCurrent();
         const record = manager.getStatus(input.agentId);
+        assertCurrent();
         if (!record) {
           return { success: false, error: `Unknown agent: '${input.agentId}'` };
         }
@@ -477,8 +615,9 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 
         if (terminalStatuses.has(record.status)) {
-          const waitFailure = await childFailureFor(manager, record);
-          return {
+          const waitFailure = await childFailureFor(manager, record, { signal, assertCurrent });
+          assertCurrent();
+          return publish({
             success: true,
             output: JSON.stringify({
               agentId: input.agentId,
@@ -486,7 +625,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
               timedOut: false,
               ...(waitFailure ? { failure: waitFailure } : {}),
             }),
-          };
+          });
         }
 
         // If a timeoutMs is requested, poll briefly, capped at 5000ms to avoid
@@ -499,23 +638,26 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           const start = Date.now();
           const pollIntervalMs = 50;
           while (true) {
+            assertCurrent();
             const current = manager.getStatus(input.agentId);
+            assertCurrent();
             if (!current || terminalStatuses.has(current.status)) break;
             if (Date.now() - start >= timeoutMs) break;
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(resolve, pollIntervalMs);
-              timer.unref?.();
-            });
+            await waitForPoll(pollIntervalMs);
+            assertCurrent();
           }
         }
 
+        assertCurrent();
         const finalRecord = manager.getStatus(input.agentId);
+        assertCurrent();
         if (!finalRecord) {
-          return { success: true, output: JSON.stringify({ agentId: input.agentId, status: 'deleted', error: 'Agent was removed during wait' }) };
+          return publish({ success: true, output: JSON.stringify({ agentId: input.agentId, status: 'deleted', error: 'Agent was removed during wait' }) });
         }
         const finalStatus = finalRecord.status;
-        const finalFailure = await childFailureFor(manager, finalRecord);
-        return {
+        const finalFailure = await childFailureFor(manager, finalRecord, { signal, assertCurrent });
+        assertCurrent();
+        return publish({
           success: true,
           output: JSON.stringify({
             agentId: input.agentId,
@@ -524,7 +666,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
             hint: terminalStatuses.has(finalStatus) ? undefined : 'Agent still running. Use mode=status to poll again.',
             ...(finalFailure ? { failure: finalFailure } : {}),
           }),
-        };
+        });
       }
 
       case 'message': {
@@ -595,7 +737,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           }));
           let started: StartedContract;
           try {
-            started = startContract(input, batchAsk(input, units), units);
+            started = startOwnedContract(input, batchAsk(input, units), units);
           } catch (error) {
             return { success: false, error: summarizeError(error) };
           }
@@ -633,7 +775,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
             for (const spawnInput of toSpawn) {
               let record;
               try {
-                record = manager.spawn(spawnInput);
+                record = spawnOwned(spawnInput);
               } catch (error) {
                 return { success: false, error: summarizeError(error) };
               }
@@ -652,10 +794,10 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         batchOutput.agents = results;
         batchOutput.count = results.length;
         batchOutput.skipped = skipped;
-        return {
+        return publish({
           success: true,
           output: JSON.stringify(batchOutput),
-        };
+        });
       }
 
       case 'cohort-status': {

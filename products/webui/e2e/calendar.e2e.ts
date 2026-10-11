@@ -164,6 +164,33 @@ test('creating an event posts the form with confirm:true and closes the dialog',
   expect(creates[0]?.body).toMatchObject({ title: 'Planning sync', confirm: true });
 });
 
+for (const selection of [
+  { timezoneId: 'UTC', day: '2026-10-11', start: '2026-10-11T13:00:00.000Z', end: '2026-10-11T13:30:00.000Z' },
+  { timezoneId: 'America/Chicago', day: '2026-10-11', start: '2026-10-11T18:00:00.000Z', end: '2026-10-11T18:30:00.000Z' },
+  { timezoneId: 'America/Chicago', day: '2026-01-11', start: '2026-01-11T19:00:00.000Z', end: '2026-01-11T19:30:00.000Z' },
+]) {
+  test.describe(`calendar creation in ${selection.timezoneId} on ${selection.day}`, () => {
+    test.use({ timezoneId: selection.timezoneId });
+
+    test('posts the browser-selected instant with an explicit timezone', async ({ page }) => {
+      const daemon = await installMockDaemon(page, { calendar: 'configured' });
+      await page.goto(CALENDAR);
+      await page.getByRole('button', { name: 'New event' }).click();
+      const dialog = page.getByRole('dialog', { name: 'New event' });
+      await dialog.getByLabel('Title').fill('Planning sync');
+      await dialog.getByLabel('Start', { exact: true }).fill(`${selection.day} 13:00`);
+      await dialog.getByLabel('End', { exact: true }).fill(`${selection.day} 13:30`);
+      await dialog.getByRole('button', { name: 'Create event' }).click();
+      await expect(dialog).toHaveCount(0);
+      const creates = daemon.requests.filter((request) => request.method === 'POST' && request.path === '/api/calendar/events');
+      expect(creates).toHaveLength(1);
+      expect(creates[0]?.body).toMatchObject({
+        title: 'Planning sync', start: selection.start, end: selection.end, confirm: true,
+      });
+    });
+  });
+}
+
 test('exporting the range as .ics asks the daemon for the agenda\'s window', async ({ page }) => {
   const daemon = await installMockDaemon(page, { calendar: 'configured' });
   await page.goto(CALENDAR);

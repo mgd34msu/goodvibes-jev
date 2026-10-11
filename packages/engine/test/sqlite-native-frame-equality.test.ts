@@ -20,21 +20,29 @@ function path() {
   const root = mkdtempSync(join(tmpdir(), 'native-frame-equality-'));
   roots.push(root); return join(root, 'knowledge.sqlite');
 }
-async function fixture(projection: boolean, primedReaderAtBirth = false) {
-  const filename = path(), sqlite = new SQLiteStore(filename, { coordinated: true });
+async function fixture(projection: boolean, primedReaderAtBirth = false,
+  native: Pick<typeof import('../sdk/src/platform/state/sqlite-store.js'), 'SQLiteStore' | 'loadSqlJsEngine'> = { SQLiteStore, loadSqlJsEngine }) {
+  const filename = path(), sqlite = new native.SQLiteStore(filename, { coordinated: true });
   databases.push(sqlite);
   let facade: SqlDatabase | undefined;
   await sqlite.init(db => { facade = db; db.run('CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY,title TEXT)'); });
   if (!facade) throw new Error('No original public schema facade');
   sqlite.run("INSERT INTO knowledge_sources VALUES('original','Complete original source')");
   await sqlite.save();
-  const SQL = await loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare, execute = SQL.Database.prototype.exec;
+  const SQL = await native.loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare, execute = SQL.Database.prototype.exec;
   const scratch = new SQL.Database(), sample = scratch.prepare('SELECT 1');
-  let statementPrototype: object;
+  let statementPrototype: object, statementParent: object, bufferPrototype: object;
   try {
     const candidate: unknown = Object.getPrototypeOf(sample);
     if (!candidate || typeof candidate !== 'object') throw new Error('No actual native statement prototype');
     statementPrototype = candidate;
+    const parent: unknown = Object.getPrototypeOf(candidate);
+    const buffers: unknown = Object.getOwnPropertyDescriptor(sample, 'mb')?.value;
+    const bufferParent: unknown = Array.isArray(buffers) ? Object.getPrototypeOf(buffers) : undefined;
+    if (!parent || typeof parent !== 'object' || !bufferParent || typeof bufferParent !== 'object') {
+      throw new Error('No actual native statement and buffer parents');
+    }
+    statementParent = parent; bufferPrototype = bufferParent;
   } finally { sample.free(); scratch.close(); }
   const preparedSql: string[] = [];
   let owner: NativeDatabase | undefined;
@@ -61,7 +69,7 @@ async function fixture(projection: boolean, primedReaderAtBirth = false) {
     return Object.values(registry);
   };
   const read = () => sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values;
-  return { sqlite, facade, filename, currentRaw, read, preparedSql, statementPrototype, liveStatements };
+  return { sqlite, facade, filename, currentRaw, read, preparedSql, statementPrototype, statementParent, bufferPrototype, liveStatements, SQL };
 }
 
 test.each([true, false])('fresh native and original complete fallback agree on unchanged/high-version rows (projection %s)', async projection => {
@@ -652,6 +660,171 @@ test('a late global capture setter cannot omit complete private native facts', a
   sqlite.run("INSERT INTO knowledge_sources VALUES('original','Complete original source')");
   await sqlite.save();
   const before = readFileSync(filename), shared = Function.prototype;
+  const key = Symbol('original complete acquisition prototype field');
+  const read = () => sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values;
+  let consumed = false, getter = 0, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      define(shared, key, { configurable: true, get() { getter++; throw new Error('Borrowed omitted complete acquisition field'); } });
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally { remove(shared, key); }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(isolated.SQLiteObservationRetiredError);
+  expect(consumed).toBe(false); expect(getter).toBe(0);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+async function nativePrefixFixture() {
+  const modulePath = '../sdk/src/platform/state/sqlite-store.js?native-adjacent-facts-prefix-guard';
+  const native: typeof import('../sdk/src/platform/state/sqlite-store.js') = await import(modulePath);
+  if (native.loadSqlJsEngine === loadSqlJsEngine) throw new Error('The prefix control requires a distinct actual source loader');
+  return { ...await fixture(true, false, native), heldError: native.SQLiteObservationRetiredError };
+}
+
+function requireNativePrefixFrame(sqlite: SQLiteStore): void {
+  const own = Object.getOwnPropertyDescriptor;
+  const frame: unknown = own(sqlite, 'persistedReadFrame')?.value;
+  if (!frame || typeof frame !== 'object') throw new Error('No actual prefix read frame');
+  const state: unknown = own(frame, 'localState')?.value;
+  const plans: unknown = state && typeof state === 'object' ? own(state, 'probePlans')?.value : undefined;
+  if (own(frame, 'localIsolated')?.value !== false || !plans || typeof plans !== 'object'
+    || own(plans, 'kind')?.value !== 'scalar') throw new Error('No actual non-isolated scalar prefix plan');
+}
+
+test.each(['own-key', 'descriptor', 'prototype'] as const)('the complete statement/array prefix holds %s changes before a later row', async mutation => {
+  const { sqlite, filename, read, statementParent, bufferPrototype, heldError } = await nativePrefixFixture();
+  const before = readFileSync(filename), shared = mutation === 'prototype' ? bufferPrototype : statementParent;
+  const originalParent = Object.getPrototypeOf(shared), key = mutation === 'own-key' ? Symbol('shared statement parent field') : 'toString';
+  const descriptor = Object.getOwnPropertyDescriptor(shared, key);
+  if (mutation === 'descriptor' && (!descriptor || !descriptor.configurable)) throw new Error('No original shared parent descriptor');
+  const define = Object.defineProperty, parent = Object.setPrototypeOf, remove = Reflect.deleteProperty;
+  let consumed = false, invoked = 0, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      requireNativePrefixFrame(sqlite);
+      if (mutation === 'prototype') parent(shared, Object.create(originalParent));
+      else define(shared, key, { configurable: true, get() { invoked++; throw new Error('Borrowed shared statement parent getter'); } });
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally {
+        if (mutation === 'prototype') parent(shared, originalParent);
+        else if (descriptor) define(shared, key, descriptor);
+        else remove(shared, key);
+      }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(heldError);
+  expect(consumed).toBe(false); expect(invoked).toBe(0);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a call-through descriptor callback cannot restore shared statement facts before their original prefix check', async () => {
+  const { sqlite, filename, read, SQL, statementParent, heldError } = await nativePrefixFixture();
+  const before = readFileSync(filename), own = Object.getOwnPropertyDescriptor;
+  const method = own(Object, 'getOwnPropertyDescriptor');
+  if (!method || !('value' in method) || method.value !== own || !method.configurable) throw new Error('No original descriptor dispatch');
+  const define = Object.defineProperty, remove = Reflect.deleteProperty, shared = statementParent;
+  const key = Symbol('transient shared statement parent field');
+  let firstCallback = 0, restorationCallback = 0, getter = 0, consumed = false, caught: unknown;
+  function reflecting(target: object, field: PropertyKey): PropertyDescriptor | undefined {
+    const descriptor = own(target, field);
+    if (target === SQL.Database.prototype && field === 'prepare') {
+      firstCallback++;
+      define(shared, key, { configurable: true, get() { getter++; throw new Error('Borrowed transient shared statement parent getter'); } });
+    } else if (target === SQL && field === 'Database' && firstCallback) {
+      restorationCallback++; remove(shared, key);
+    }
+    return descriptor;
+  }
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      requireNativePrefixFrame(sqlite);
+      define(Object, 'getOwnPropertyDescriptor', { ...method, value: reflecting });
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally { define(Object, 'getOwnPropertyDescriptor', method); remove(shared, key); }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(heldError);
+  expect(firstCallback).toBeGreaterThan(0); expect(restorationCallback).toBe(0);
+  expect(consumed).toBe(false); expect(getter).toBe(0);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test('a late statement capture setter cannot omit complete private native facts', async () => {
+  // A separate actual source module keeps this acquisition control from
+  // changing the engine provenance used by every other whole-file control.
+  const modulePath = '../sdk/src/platform/state/sqlite-store.js?native-adjacent-facts-acquisition';
+  const isolated: typeof import('../sdk/src/platform/state/sqlite-store.js') = await import(modulePath);
+  if (isolated.loadSqlJsEngine === loadSqlJsEngine) throw new Error('The acquisition control requires a distinct actual source loader');
+  const own = Object.getOwnPropertyDescriptor, descriptors = Object.getOwnPropertyDescriptors;
+  const parent = Object.getPrototypeOf, define = Object.defineProperty, remove = Reflect.deleteProperty;
+  const isArray = Array.isArray;
+  const parentSlot = own(Object, 'getPrototypeOf');
+  const descriptorsSlot = own(Object, 'getOwnPropertyDescriptors'), zeroSlot = own(Array.prototype, '0');
+  if (!parentSlot || !descriptorsSlot || zeroSlot) throw new Error('No original native acquisition reflection slots');
+  let armed = false, captured = 0, restored = 0, exposed = 0;
+  let statementPrototype: object | undefined;
+  const isStatement = (target: object) => {
+    const pointer: unknown = own(target, 'Qa')?.value, buffers: unknown = own(target, 'mb')?.value;
+    return typeof pointer === 'number' && Number.isSafeInteger(pointer) && pointer > 0
+      && own(target, 'Oa')?.value === 1 && typeof own(target, 'db')?.value === 'object' && isArray(buffers);
+  };
+  const restore = () => {
+    remove(Array.prototype, '0');
+    define(Object, 'getPrototypeOf', parentSlot);
+    define(Object, 'getOwnPropertyDescriptors', descriptorsSlot);
+  };
+  const installSetter = () => {
+    if (armed) return;
+    armed = true; captured++;
+    define(Array.prototype, '0', { configurable: true, set(this: object, value: unknown) {
+      if (value && typeof value === 'object') {
+        const object: unknown = own(value, 'object')?.value, slots: unknown = own(value, 'slots')?.value;
+        if (object && (typeof object === 'object' || typeof object === 'function') && isArray(slots) && object === statementPrototype) {
+          exposed++; return;
+        }
+      }
+      // Ordinary native writes still perform their exact real array append.
+      define(this, '0', { value, configurable: true, enumerable: true, writable: true });
+    } });
+  };
+  function reflectingParent(target: object): object | null {
+    const result: unknown = parent(target);
+    if (result !== null && typeof result !== 'object' && typeof result !== 'function') throw new Error('No actual native prototype');
+    if (isStatement(target) && result) {
+      statementPrototype = result;
+      if (armed) { restored++; restore(); }
+    }
+    return result;
+  }
+  function reflectingDescriptors(target: object): PropertyDescriptorMap {
+    const fields = descriptors(target);
+    if (isStatement(target)) {
+      // The original buffer-array descriptor precedes this final observation,
+      // so its complete prototype facts have already been captured.
+      const afterOriginalArray: PropertyDescriptor = {};
+      define(afterOriginalArray, 'value', { configurable: true, get() { installSetter(); return undefined; } });
+      define(fields, 'afterOriginalArray', { value: afterOriginalArray, configurable: true, enumerable: true, writable: true });
+    }
+    return fields;
+  }
+  try {
+    define(Object, 'getPrototypeOf', { ...parentSlot, value: reflectingParent });
+    define(Object, 'getOwnPropertyDescriptors', { ...descriptorsSlot, value: reflectingDescriptors });
+    await isolated.loadSqlJsEngine();
+  } finally { restore(); }
+  expect(captured).toBe(1); expect(restored).toBe(1); expect(exposed).toBe(0);
+  if (!statementPrototype) throw new Error('No actual original statement prototype');
+  const filename = path();
+  const sqlite = new isolated.SQLiteStore(filename, { coordinated: true });
+  databases.push(sqlite);
+  await sqlite.init(db => { db.run('CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY,title TEXT)'); });
+  sqlite.run("INSERT INTO knowledge_sources VALUES('original','Complete original source')");
+  await sqlite.save();
+  const before = readFileSync(filename), shared = statementPrototype;
   const key = Symbol('original complete acquisition prototype field');
   const read = () => sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values;
   let consumed = false, getter = 0, caught: unknown;

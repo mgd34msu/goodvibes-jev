@@ -157,8 +157,14 @@ test('CI builds once after canonical restore, verifies before execution and gate
   expect(consumer.steps[verify + 1]!.run).toBe('bun run --cwd products/daemon verify:binary');
   expect(consumer.steps.find(step => step.name === 'Download daemon native artifact')?.with?.name).toBe('daemon-native-linux-x64');
   for (const step of [record, upload, ...consumer.steps]) expect(step['continue-on-error']).toBeUndefined();
-  const commands = Object.values(jobs).flatMap(job => job.steps ?? []).map(step => step.run ?? '').join('\n');
-  expect(commands.match(/bun run --cwd products\/daemon build:binary/g)).toHaveLength(1);
+  const nativeBuildCommands = Object.entries(jobs).flatMap(([job, definition]) => (definition.steps ?? []).flatMap(step =>
+    (step.run ?? '').split('\n').filter(command => /bun run --cwd products\/daemon build:binary\b/.test(command))
+      .map(command => ({ job, command })),
+  ));
+  expect(nativeBuildCommands).toEqual([
+    { job: 'product-tests', command: 'bun run --cwd products/daemon build:binary --target linux-x64' },
+    { job: 'daemon-native-produce', command: 'bun run --cwd products/daemon build:binary --target "$NATIVE_TARGET"' },
+  ]);
   expect(jobs['auto-release']!.needs).toContain('daemon-native');
   expect(jobs['auto-release']!.if).toBe("github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'");
 });

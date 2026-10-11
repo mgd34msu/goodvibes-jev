@@ -212,7 +212,10 @@ class DaemonStreamPump {
   private dropped = 0;
   private seq = 0;
   private flushing = false;
+  private flushingDone: Promise<void> = Promise.resolve();
+  private closing: Promise<void> | null = null;
   private closed = false;
+  private cancelPending = false;
 
   constructor(
     private readonly streamId: string,
@@ -228,22 +231,29 @@ class DaemonStreamPump {
       return;
     }
     this.queue.push(chunk);
-    void this.flush();
+    if (this.flushing) return;
+    let resolveFlush: () => void = () => {};
+    let rejectFlush: (error: unknown) => void = () => {};
+    // Install completion before sendFrame can synchronously retire this pump.
+    this.flushingDone = new Promise<void>((resolve, reject) => {
+      resolveFlush = resolve;
+      rejectFlush = reject;
+    });
+    this.flushing = true;
+    void this.flush().then(resolveFlush, rejectFlush);
   }
 
   private async flush(): Promise<void> {
-    if (this.flushing) return;
-    this.flushing = true;
     try {
       while (this.queue.length > 0 && !this.closed) {
         const chunk = this.queue.shift()!;
         const frame = encodeTunnelFrame({ id: this.streamId, kind: 'stream-data', seq: this.seq++ }, chunk);
-        await this.send(frame);
+        await this.send(frame, () => !this.cancelPending);
         if (this.dropped > 0 && !this.closed) {
           const dropped = this.dropped;
           this.dropped = 0;
           const notice = encodeTunnelFrame({ id: this.streamId, kind: 'stream-overflow', dropped }, new Uint8Array(0));
-          await this.send(notice);
+          await this.send(notice, () => !this.cancelPending);
         }
       }
     } catch (error) {
@@ -253,21 +263,29 @@ class DaemonStreamPump {
     }
   }
 
-  async close(reason?: string): Promise<void> {
-    if (this.closed) return;
+  close(reason?: string, cancelPending = false): Promise<void> {
+    // A clean end retains its accepted in-flight frame; cancellation suppresses
+    // it even when a clean close is already awaiting that same flush.
+    this.cancelPending ||= cancelPending;
+    if (this.closing) return this.closing;
     this.closed = true;
     this.queue.length = 0;
-    try {
-      const frame = encodeTunnelFrame({ id: this.streamId, kind: 'stream-close', ...(reason ? { reason } : {}) }, new Uint8Array(0));
-      await this.send(frame);
-    } catch (error) {
-      this.onError(error);
-    }
+    this.closing = (async () => {
+      try {
+        await this.flushingDone;
+        const frame = encodeTunnelFrame({ id: this.streamId, kind: 'stream-close', ...(reason ? { reason } : {}) }, new Uint8Array(0));
+        await this.send(frame);
+      } catch (error) {
+        this.onError(error);
+      }
+    })();
+    return this.closing;
   }
 }
 
 interface DaemonStreamRecord {
   readonly pump: DaemonStreamPump;
+  readonly abort: AbortController;
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
 }
 
@@ -377,11 +395,15 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
   function closePipeStreams(pipeKey: string): void {
     const streams = pipeStreams.get(pipeKey);
     if (!streams) return;
-    for (const record of streams.values()) {
-      record.reader?.cancel().catch(() => {});
-      void record.pump.close('pipe-closed');
-    }
+    // Retire the exact map before abort/cancel can call back into the daemon.
     pipeStreams.delete(pipeKey);
+    const records = [...streams.values()];
+    streams.clear();
+    for (const record of records) {
+      void record.pump.close('pipe-closed', true);
+      record.abort.abort();
+      void record.reader?.cancel().catch(() => {});
+    }
   }
 
   function setStatus(next: RelayRegistrationStatus): void {
@@ -569,64 +591,102 @@ export function createRelayDaemonRegistration(options: RelayDaemonRegistrationOp
   ): Promise<void> {
     const streams = pipeStreams.get(pipeKey) ?? new Map<string, DaemonStreamRecord>();
     pipeStreams.set(pipeKey, streams);
-    const pump = new DaemonStreamPump(header.id, (frame, wanted) => sendFrame(frame, channel, pipeIdBytes, ws, wanted), streamBufferChunks, (error) =>
-      logger.error('relay stream send failed', { error: String(error) }),
-    );
     // Per-pipe stream cap: refuse a new stream with an immediate close notice.
     if (streams.size >= maxStreamsPerPipe || streams.has(header.id)) {
-      await pump.close('stream-limit');
+      const refused = new DaemonStreamPump(header.id, (frame, wanted) => sendFrame(frame, channel, pipeIdBytes, ws, wanted), streamBufferChunks, (error) =>
+        logger.error('relay stream send failed', { error: String(error) }),
+      );
+      await refused.close('stream-limit');
       return;
     }
-    const record: DaemonStreamRecord = { pump, reader: null };
+    const abort = new AbortController();
+    const ownsSlot = () => pipeStreams.get(pipeKey) === streams && streams.get(header.id) === record;
+    const isCurrent = () => !abort.signal.aborted && !stopped && socket === ws && channels.get(pipeKey) === channel && ownsSlot();
+    // A cancellation acknowledgement may outlive removal of its own slot, but
+    // must never close a replacement with the same stream ID or pipe map.
+    const canClose = () => {
+      const currentStreams = pipeStreams.get(pipeKey);
+      return (currentStreams === undefined || currentStreams === streams)
+        && (streams.get(header.id) === undefined || streams.get(header.id) === record);
+    };
+    const pump = new DaemonStreamPump(header.id, (frame, wanted) =>
+      sendFrame(frame, channel, pipeIdBytes, ws, () => wanted ? isCurrent() && wanted() : canClose()),
+    streamBufferChunks, (error) => logger.error('relay stream send failed', { error: String(error) }));
+    const record: DaemonStreamRecord = { pump, abort, reader: null };
     streams.set(header.id, record);
 
-    const request = new Request(new URL(header.path, options.localBaseUrl), {
-      method: header.method,
-      headers: [...header.headers.map(([k, v]) => [k, v] as [string, string]), [RELAY_VIA_HEADER, '1']],
-    });
-    let response: Response | null;
     try {
-      response = await options.dispatch(request);
-    } catch (err) {
-      logger.error('relay stream dispatch failed', { error: String(err) });
-      response = null;
-    }
-    if (!response || !response.body) {
-      streams.delete(header.id);
-      await pump.close('no-stream');
-      return;
-    }
-    const reader = response.body.getReader();
-    record.reader = reader;
-    // Pump loop: read the daemon's event source and forward chunks. The await on
-    // each read applies natural backpressure to the source; the pump's bounded
-    // buffer + overflow notice covers the send side.
-    void (async () => {
+      const request = new Request(new URL(header.path, options.localBaseUrl), {
+        method: header.method,
+        headers: [...header.headers.map(([k, v]) => [k, v] as [string, string]), [RELAY_VIA_HEADER, '1']],
+        signal: abort.signal,
+      });
+      if (!isCurrent()) return;
+      let response: Response | null;
+      try {
+        response = await options.dispatch(request);
+      } catch (err) {
+        if (isCurrent()) logger.error('relay stream dispatch failed', { error: String(err) });
+        response = null;
+      }
+      const body = response?.body;
+      if (!isCurrent()) {
+        // Cancellation settles native pending reads without waiting for an
+        // arbitrary underlying source's cancellation promise to settle.
+        if (body) void body.cancel().catch(() => {});
+        return;
+      }
+      if (!body) {
+        await pump.close('no-stream');
+        return;
+      }
+      const reader = body.getReader();
+      record.reader = reader;
+      if (!isCurrent()) {
+        void reader.cancel().catch(() => {});
+        return;
+      }
+      // Retain the reader/pump chain in this owned operation. Each awaited read
+      // is fenced before its bytes can be enqueued; queued sends are fenced too.
       try {
         for (;;) {
+          if (!isCurrent()) return;
           const { done, value } = await reader.read();
+          if (!isCurrent()) return;
           if (done) break;
-          if (value) pump.enqueue(new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)) as Uint8Array<ArrayBuffer>);
+          if (value) pump.enqueue(new Uint8Array(value));
         }
         await pump.close('source-ended');
       } catch (err) {
-        logger.warn('relay stream source error', { error: String(err) });
+        if (isCurrent()) {
+          logger.warn('relay stream source error', { error: String(err) });
+          await pump.close('source-error');
+        }
+      }
+    } finally {
+      if (streams.get(header.id) === record) streams.delete(header.id);
+      if (streams.size === 0 && pipeStreams.get(pipeKey) === streams) pipeStreams.delete(pipeKey);
+      abort.abort();
+      try {
         await pump.close('source-error');
       } finally {
-        streams.delete(header.id);
-        if (streams.size === 0) pipeStreams.delete(pipeKey);
+        record.reader?.releaseLock();
+        record.reader = null;
       }
-    })();
+    }
   }
 
   function closeTunneledStream(pipeKey: string, streamId: string): void {
     const streams = pipeStreams.get(pipeKey);
-    const record = streams?.get(streamId);
+    if (!streams) return;
+    const record = streams.get(streamId);
     if (!record) return;
-    record.reader?.cancel().catch(() => {});
-    void record.pump.close('client-unsubscribed');
-    streams!.delete(streamId);
-    if (streams!.size === 0) pipeStreams.delete(pipeKey);
+    // Removal and pump retirement precede callbacks from native cancellation.
+    streams.delete(streamId);
+    if (streams.size === 0 && pipeStreams.get(pipeKey) === streams) pipeStreams.delete(pipeKey);
+    void record.pump.close('client-unsubscribed', true);
+    record.abort.abort();
+    void record.reader?.cancel().catch(() => {});
   }
 
   function openConnection(): void {

@@ -76,6 +76,7 @@ interface PendingRequest {
 
 interface PendingStream {
   readonly controller: ReadableStreamDefaultController<Uint8Array>;
+  readonly detachAbort: () => void;
   closed: boolean;
 }
 
@@ -173,14 +174,15 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
     return work;
   }
 
-  function closeStream(id: string, error?: unknown): void {
+  function closeStream(id: string, failure?: { readonly error: unknown }): void {
     const stream = streams.get(id);
     if (!stream) return;
     streams.delete(id);
+    stream.detachAbort();
     if (stream.closed) return;
     stream.closed = true;
     try {
-      if (error) stream.controller.error(error);
+      if (failure) stream.controller.error(failure.error);
       else stream.controller.close();
     } catch {
       // controller already closed
@@ -192,7 +194,7 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
       p.reject(error);
     }
     pending.clear();
-    for (const id of [...streams.keys()]) closeStream(id, error);
+    for (const id of [...streams.keys()]) closeStream(id, { error });
   }
 
   function teardown(error: unknown = new GoodVibesSdkError('Relay connection closed.', { category: 'network', source: 'transport', recoverable: true })): void {
@@ -338,28 +340,45 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
     headers: Array<[string, string]>,
     activeChannel: RelaySecureChannel,
     activeSocket: RelayWebSocketLike,
+    signal: AbortSignal,
   ): Promise<Response> {
     const id = createUuidV4();
-    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let owner: PendingStream | undefined;
+    let sent = false;
+    let closing: Promise<void> | undefined;
+    const current = (): boolean => owner !== undefined && streams.get(id) === owner && !owner.closed;
+    const cancel = (failure?: { readonly error: unknown }): Promise<void> => {
+      if (!current()) return closing ?? Promise.resolve();
+      closeStream(id, failure);
+      if (!sent) return Promise.resolve();
+      const frame = encodeTunnelFrame({ id, kind: 'stream-close' }, new Uint8Array(0));
+      closing = sendFrame(frame, activeChannel, activeSocket).catch(() => { /* socket already gone */ });
+      return closing;
+    };
+    const abort = (): void => { void cancel({ error: signal.reason }); };
     const body = new ReadableStream<Uint8Array>({
-      start(controller) { streamController = controller; },
-      cancel() {
-        // The consumer stopped reading, tell the daemon to unsubscribe.
-        const stream = streams.get(id);
-        if (stream) stream.closed = true;
-        streams.delete(id);
-        void (async () => {
-          try {
-            const frame = encodeTunnelFrame({ id, kind: 'stream-close' }, new Uint8Array(0));
-            await sendFrame(frame, activeChannel, activeSocket);
-          } catch { /* socket already gone */ }
-        })();
+      start(controller) {
+        owner = { controller, closed: false, detachAbort: () => signal.removeEventListener('abort', abort) };
+        streams.set(id, owner);
       },
+      cancel: () => cancel(),
     });
-    streams.set(id, { controller: streamController!, closed: false });
-    const openFrame = encodeTunnelFrame({ id, kind: 'stream-open', method: 'GET', path, headers }, new Uint8Array(0));
-    await sendFrame(openFrame, activeChannel, activeSocket);
-    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    const response = new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      if (signal.aborted) abort();
+      signal.throwIfAborted();
+      const openFrame = encodeTunnelFrame({ id, kind: 'stream-open', method: 'GET', path, headers }, new Uint8Array(0));
+      await whileActive(sendFrame(openFrame, activeChannel, activeSocket, current, () => { sent = true; }), signal);
+      signal.throwIfAborted();
+      if (channel !== activeChannel || socket !== activeSocket) {
+        throw new GoodVibesSdkError('Relay connection changed.', { category: 'network', source: 'transport', recoverable: true });
+      }
+      return response;
+    } catch (error) {
+      void cancel({ error });
+      throw error;
+    }
   }
 
   const relayFetch: FetchLike = async (input, init) => {
@@ -378,7 +397,7 @@ export function createRelayClient(options: RelayClientOptions): RelayClient {
     // calls fetch and reads the streaming body, then works over the relay.
     const accept = request.headers.get('accept') ?? '';
     if (request.method === 'GET' && accept.includes('text/event-stream')) {
-      return openStream(`${url.pathname}${url.search}`, headers, channel, socket);
+      return openStream(`${url.pathname}${url.search}`, headers, activeChannel, activeSocket, request.signal);
     }
     const bodyText = request.method === 'GET' || request.method === 'HEAD' ? '' : await whileActive(request.text(), request.signal);
     request.signal.throwIfAborted();

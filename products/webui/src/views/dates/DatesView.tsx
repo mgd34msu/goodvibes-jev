@@ -254,7 +254,7 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
   const [plan, setPlan] = useState<PlanDraft>(EMPTY_PLAN);
   const [planProposal, setPlanProposal] = useState<OperatorMethodOutput<'occasions.plans.propose'> | null>(null);
 
-  const [interviewDrafts, setInterviewDrafts] = useState<Record<string, string>>({});
+  const [interviewDrafts, setInterviewDrafts] = useState<Record<string, Record<string, string>>>({});
   const [landedOnDrafts, setLandedOnDrafts] = useState<Record<string, string>>({});
 
   const list = useQuery({ queryKey: queryKeys.occasionsList, queryFn: () => sdk.operator.occasions.list() });
@@ -332,21 +332,39 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
 
   const answerInterview = useMutation({
     mutationFn: (input: OperatorMethodInput<'occasions.interview.answer'>) => sdk.operator.occasions.interview.answer(input),
-    onSuccess: async () => {
+    onSuccess: async (result, input) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.occasionsPending });
+      if (!result.present || result.interview === null) {
+        toast({ title: 'Answer not recorded', description: 'This interview is no longer available.', tone: 'danger' });
+        return;
+      }
+      setInterviewDrafts((current) => {
+        const draft = current[input.interviewId];
+        if (draft?.[input.stepId]?.trim() !== input.text) return current;
+        const { [input.stepId]: _submitted, ...remaining } = draft;
+        return { ...current, [input.interviewId]: remaining };
+      });
     },
     onError: (error: unknown) => toast({ title: 'Failed to record interview answer', description: formatError(error), tone: 'danger' }),
   });
 
   const recordInterview = useMutation({
     mutationFn: (input: OperatorMethodInput<'occasions.interview.record'>) => sdk.operator.occasions.interview.record(input),
-    onSuccess: async (result) => {
+    onSuccess: async (result, input) => {
       await invalidateAll();
       if (!result.present || result.interview === null) {
         toast({ title: 'Not recorded', description: 'This interview is no longer available.', tone: 'danger' });
         return;
       }
-      await queryClient.invalidateQueries({ queryKey: queryKeys.occasionsGifts(result.interview.occasionId) });
+      if (!result.interview.complete) {
+        toast({ title: 'Not recorded', description: 'The daemon did not confirm that this interview was completed.', tone: 'danger' });
+        return;
+      }
+      const occasionId = result.interview.occasionId;
+      await queryClient.invalidateQueries({ queryKey: queryKeys.occasionsGifts(occasionId) });
+      setSelection((current) => current?.kind === 'interview' && current.id === input.interviewId
+        ? { kind: 'occasion', id: occasionId }
+        : current);
       toast({ title: 'Recorded what you landed on', tone: 'success' });
     },
     onError: (error: unknown) => toast({ title: 'Failed to close the interview', description: formatError(error), tone: 'danger' }),
@@ -635,21 +653,27 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
               className="dates-interview"
               onSubmit={(event) => {
                 event.preventDefault();
-                const text = (interviewDrafts[step.id] ?? '').trim();
+                const text = (interviewDrafts[interview.interviewId]?.[step.id] ?? '').trim();
                 if (text) answerInterview.mutate({ interviewId: interview.interviewId, stepId: step.id, text });
               }}
             >
               <Field label={step.prompt}>
                 <Input
-                  value={interviewDrafts[step.id] ?? ''}
-                  onChange={(event) => setInterviewDrafts((current) => ({ ...current, [step.id]: event.target.value }))}
+                  value={interviewDrafts[interview.interviewId]?.[step.id] ?? ''}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setInterviewDrafts((current) => ({
+                      ...current,
+                      [interview.interviewId]: { ...current[interview.interviewId], [step.id]: text },
+                    }));
+                  }}
                 />
               </Field>
               <div>
                 <Button
                   variant="primary"
                   type="submit"
-                  disabled={answerInterview.isPending || !(interviewDrafts[step.id] ?? '').trim()}
+                  disabled={answerInterview.isPending || !(interviewDrafts[interview.interviewId]?.[step.id] ?? '').trim()}
                 >
                   Answer
                 </Button>
@@ -737,7 +761,7 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
               <Row
                 key={interview.interviewId}
                 title={occasionTitleFor(interview.occasionId)}
-                meta={interview.complete ? 'What did you land on?' : (interview.nextStep?.prompt ?? 'Waiting on the next step')}
+                meta={interview.complete ? 'Recorded' : (interview.nextStep?.prompt ?? 'What did you land on?')}
                 selected={selection?.kind === 'interview' && selection.id === interview.interviewId}
                 onSelect={() => setSelection({ kind: 'interview', id: interview.interviewId })}
               />

@@ -8,7 +8,8 @@
 // envelope is assembled ENTIRELY from what the child's own record + transcript
 // actually hold; partialOutputs is whatever the child genuinely produced (its
 // last committed output and a transcript-tail summary), never fabricated.
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
+import { assertProjectionCurrent } from '../input-projection.js';
 import { childFailureReason, childFailureView } from '../batteries/child-failure-reason.js';
 import type { AgentRecord } from './manager.js';
 import type { ConversationMessageSnapshot } from '../../core/conversation.js';
@@ -66,6 +67,17 @@ const STAMPED_REASON_CODES: ReadonlySet<string> = new Set<ChildFailureReasonCode
 
 const CHILD_FAILURE_SITE = 'tools.agent.child-failure-reason';
 
+interface ChildFailureReadingOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
+
+function assertChildFailureCurrent(options: ChildFailureReadingOptions | undefined): void {
+  options?.signal?.throwIfAborted();
+  assertProjectionCurrent(options?.assertCurrent);
+  options?.signal?.throwIfAborted();
+}
+
 /**
  * Classify why a child terminated. Cancellation and a stamped
  * `failureReason` are structure and decide in code; a free-text error is
@@ -75,19 +87,36 @@ const CHILD_FAILURE_SITE = 'tools.agent.child-failure-reason';
  */
 export async function classifyChildFailureReason(
   record: Pick<AgentRecord, 'status' | 'terminationKind' | 'error' | 'failureReason'>,
+  options?: ChildFailureReadingOptions,
 ): Promise<ChildFailureReasonCode> {
+  assertChildFailureCurrent(options);
   if (record.status === 'cancelled') {
-    return record.terminationKind === 'interrupt' ? 'interrupted' : 'killed';
+    const code = record.terminationKind === 'interrupt' ? 'interrupted' : 'killed';
+    assertChildFailureCurrent(options);
+    return code;
   }
   if (record.failureReason && STAMPED_REASON_CODES.has(record.failureReason)) {
-    return record.failureReason as ChildFailureReasonCode;
+    const code = record.failureReason as ChildFailureReasonCode;
+    assertChildFailureCurrent(options);
+    return code;
   }
   const error = record.error?.trim() ?? '';
-  if (error.length === 0) return 'error';
-  const run = await childFailureReason.run(judgmentPort(CHILD_FAILURE_SITE), childFailureView(error), { site: CHILD_FAILURE_SITE });
+  if (error.length === 0) { assertChildFailureCurrent(options); return 'error'; }
+  const authority = options?.signal === undefined && options?.assertCurrent === undefined
+    ? undefined : captureJudgmentPort(CHILD_FAILURE_SITE, options);
+  const port = authority?.port ?? judgmentPort(CHILD_FAILURE_SITE);
+  const state = childFailureView(error);
+  assertChildFailureCurrent(options);
+  const run = await childFailureReason.run(port, state, {
+    site: CHILD_FAILURE_SITE,
+    ...(authority ? { signal: authority.signal } : {}),
+  });
+  authority?.assertCurrent();
   const reading = run.readings.reason;
   const code: ChildFailureReasonCode = reading.outcome === 'act' ? reading.choice : 'error';
+  authority?.assertCurrent();
   run.recordAction(`reported ${code}`);
+  authority?.assertCurrent();
   return code;
 }
 
@@ -125,9 +154,9 @@ function summarizeTranscriptTail(
  */
 export async function buildChildFailureEnvelope(
   record: AgentRecord,
-  opts?: { readonly transcriptTail?: readonly ConversationMessageSnapshot[] | undefined },
+  opts?: ChildFailureReadingOptions & { readonly transcriptTail?: readonly ConversationMessageSnapshot[] | undefined },
 ): Promise<ChildFailureEnvelope> {
-  const reasonCode = await classifyChildFailureReason(record);
+  const reasonCode = await classifyChildFailureReason(record, opts);
   // A failed record whose fullOutput is the failure message itself would merely
   // echo reason.message; treat that as "no genuine output" so partialOutputs
   // stays honest rather than redundant.
@@ -139,7 +168,7 @@ export async function buildChildFailureEnvelope(
   const transcriptTail = summarizeTranscriptTail(opts?.transcriptTail);
   const turnsCompleted = record.usage?.turnCount;
   const producedNothing = !lastOutput && (!transcriptTail || transcriptTail.length === 0);
-  return {
+  const envelope: ChildFailureEnvelope = {
     agentId: record.id,
     phase: describeChildPhase(record),
     reason: {
@@ -153,4 +182,6 @@ export async function buildChildFailureEnvelope(
       ...(producedNothing ? { note: 'The child produced no committed output before terminating.' } : {}),
     },
   };
+  assertChildFailureCurrent(opts);
+  return envelope;
 }

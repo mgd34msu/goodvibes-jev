@@ -35,12 +35,16 @@ interface HousekeepingLog extends Record<string, unknown> {
 /** Keep the disclosure log itself bounded, it is persisted state too. */
 const MAX_DISCLOSURE_REPORTS = 20;
 
+export type DeviceRecoveryStage = 'grant-sweep' | 'capture-sweep' | 'disclosure-read' | 'disclosure-persist';
+
 export interface DeviceHousekeepingOptions {
   readonly grants: DeviceGrantStore;
   readonly artifacts: DeviceCaptureArtifactStore;
   /** Where the disclosure log is written. */
   readonly disclosurePath: string;
   readonly now?: (() => number) | undefined;
+  /** Optional fixed observations during recovery only; never awaited. */
+  readonly observeRecovery?: ((stage: DeviceRecoveryStage) => void) | undefined;
 }
 
 function summarize(grants: DeviceGrantSweepReport, artifacts: DeviceArtifactSweepReport): string {
@@ -73,6 +77,7 @@ export class DeviceHousekeeper {
   private readonly artifacts: DeviceCaptureArtifactStore;
   private readonly disclosure: PersistentStore<HousekeepingLog>;
   private readonly now: () => number;
+  private readonly observeRecovery: DeviceHousekeepingOptions['observeRecovery'];
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastReport: DeviceHousekeepingReport | null = null;
   /** Set while a timer runs; re-read after each sweep to follow a live setting. */
@@ -84,6 +89,7 @@ export class DeviceHousekeeper {
     this.artifacts = options.artifacts;
     this.disclosure = new PersistentStore<HousekeepingLog>(options.disclosurePath);
     this.now = options.now ?? (() => Date.now());
+    this.observeRecovery = options.observeRecovery;
   }
 
   /** The most recent report this process produced, or null before the first sweep. */
@@ -97,9 +103,16 @@ export class DeviceHousekeeper {
     return Array.isArray(log?.reports) ? log.reports : [];
   }
 
+  private observeRecoveryStage(trigger: DeviceHousekeepingReport['trigger'], stage: DeviceRecoveryStage): void {
+    if (trigger !== 'recovery' || !this.observeRecovery) return;
+    try { this.observeRecovery(stage); } catch { /* Observation never blocks recovery. */ }
+  }
+
   /** One full pass over both stores, with the result disclosed to disk. */
   async sweep(trigger: DeviceHousekeepingReport['trigger']): Promise<DeviceHousekeepingReport> {
+    this.observeRecoveryStage(trigger, 'grant-sweep');
     const grants = await this.grants.sweep();
+    this.observeRecoveryStage(trigger, 'capture-sweep');
     const artifacts = await this.artifacts.sweep();
     const report: DeviceHousekeepingReport = {
       sweptAt: this.now(),
@@ -109,7 +122,9 @@ export class DeviceHousekeeper {
       summary: summarize(grants, artifacts),
     };
     this.lastReport = report;
+    this.observeRecoveryStage(trigger, 'disclosure-read');
     const existing = await this.listDisclosures();
+    this.observeRecoveryStage(trigger, 'disclosure-persist');
     await this.disclosure.persist({
       version: 1,
       reports: [...existing, report].slice(-MAX_DISCLOSURE_REPORTS),

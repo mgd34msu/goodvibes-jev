@@ -28,6 +28,7 @@
  * reason to refuse to start.
  */
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { nativeDeviceRecoveryObserver } from './startup-observation.js';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { createDevicePostureRuntime, registerDevicePhoneTool } from '@goodvibes-jev/engine/sdk/platform/devices';
 import type {
@@ -78,6 +79,7 @@ export function createDevicePostureServices(options: DevicePostureCompositionOpt
     transport: options.distributedRuntime,
     approvals: options.approvals,
     config: options.configManager,
+    ...(nativeDeviceRecoveryObserver ? { observeRecovery: nativeDeviceRecoveryObserver } : {}),
     stateDirectory: options.stateDirectory,
     actor: DAEMON_DEVICE_ACTOR,
     autonomous: { port: options.judgmentPort, signal: options.signal,

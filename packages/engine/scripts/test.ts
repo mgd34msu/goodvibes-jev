@@ -117,12 +117,39 @@ export async function replayTestOwnerLogs(files: readonly TestOwnerLog[], deadli
   const opened: { readonly fd: number; readonly assertCurrent: () => void }[] = [];
   try {
     if (remaining <= 0 || abort.signal.aborted) return { outputTruncated: true, stopReason: 'The shared absolute deadline expired or replay was interrupted before owner-log replay' };
+    // Capture native data before the borrowed root callback can change it.
+    const originalFiles = files.map(source => {
+      const path: unknown = Object.getOwnPropertyDescriptor(source, 'path')?.value;
+      const dev: unknown = Object.getOwnPropertyDescriptor(source, 'dev')?.value;
+      const ino: unknown = Object.getOwnPropertyDescriptor(source, 'ino')?.value;
+      if (typeof path !== 'string' || typeof dev !== 'number' || typeof ino !== 'number') {
+        throw new Error('Test owner log capture must contain original data fields');
+      }
+      return Object.freeze({ source, path, dev, ino });
+    });
+    const assertOriginalFiles = () => {
+      if (Object.getOwnPropertyDescriptor(files, 'length')?.value !== originalFiles.length) {
+        throw new Error('Test owner log selection changed');
+      }
+      for (const [index, file] of originalFiles.entries()) {
+        if (Object.getOwnPropertyDescriptor(files, String(index))?.value !== file.source
+          || Object.getOwnPropertyDescriptor(file.source, 'path')?.value !== file.path
+          || Object.getOwnPropertyDescriptor(file.source, 'dev')?.value !== file.dev
+          || Object.getOwnPropertyDescriptor(file.source, 'ino')?.value !== file.ino) {
+          throw new Error('Test owner log capture changed');
+        }
+      }
+    };
     // Pin every original log before any asynchronous sink callback can replace a path.
-    for (const file of files) {
+    for (const file of originalFiles) {
+      assertOriginalFiles();
       assertEvidenceRoot();
+      assertOriginalFiles();
       const fd = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const assertCurrent = () => {
+        assertOriginalFiles();
         assertEvidenceRoot();
+        assertOriginalFiles();
         const current = fstatSync(fd), path = lstatSync(file.path);
         if (!current.isFile() || current.dev !== file.dev || current.ino !== file.ino || !path.isFile() || path.isSymbolicLink()
           || path.dev !== current.dev || path.ino !== current.ino || realpathSync(file.path) !== file.path) throw new Error('Test owner log ownership changed');

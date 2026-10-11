@@ -1807,8 +1807,8 @@ export const sdk = {
     // key so the daemon can verify later assertions. Both are REST-routed (see the
     // StepUpMintChallengeResult comment above) and resolve through invokeOperator.
     stepup: {
-      mintChallenge: (input?: { rendezvousId?: string; sessionId?: string; ttlMs?: number }) =>
-        invokeOperator<'stepup.challenge.mint', StepUpMintChallengeResult>('stepup.challenge.mint', input ?? {}),
+      mintChallenge: (input?: { rendezvousId?: string; sessionId?: string; ttlMs?: number }, signal?: AbortSignal) =>
+        invokeOperator<'stepup.challenge.mint', StepUpMintChallengeResult>('stepup.challenge.mint', input ?? {}, signal),
       registerCredential: (input: StepUpRegisterCredentialInput) =>
         invokeOperatorUncheckedInput<StepUpRegisterCredentialResult>(
           'stepup.credentials.register',

@@ -222,8 +222,8 @@ export function CalendarView({ tabs }: CalendarViewProps = {}) {
     mutationFn: () => {
       const input: CalendarEventCreateInput = {
         title: title.trim(),
-        start,
-        end,
+        start: new Date(start).toISOString(),
+        end: new Date(end).toISOString(),
         confirm: true,
         ...(location.trim() ? { location: location.trim() } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),

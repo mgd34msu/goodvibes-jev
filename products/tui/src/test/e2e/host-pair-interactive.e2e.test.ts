@@ -12,6 +12,7 @@ import { TuiConfigManager } from '../../config/host-settings.ts';
 import { beginTuiHostPairing, completeTuiHostPairing, tuiHostPairingStorePath, readTuiHostPairing } from '../../runtime/tui-host-credential-store.ts';
 import { seedProviderMetadataCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { isolatedEnv, makeHome, resolveBinary, startHomeDaemonServer, startStubModel, waitFor } from './harness.ts';
+import { startE2EJudgments } from './judgment-fixture.ts';
 
 const AUTH = '/api/control-plane/auth';
 const MIGRATE = '/api/control-plane/methods/pairing.tokens.migrate/invoke';
@@ -54,8 +55,23 @@ async function fixture(nativeCaptureFailure = false) {
   mkdirSync(dirname(models), { recursive: true });
   writeFileSync(models, JSON.stringify({ version: 1, fetchedAt: now, ttlMs: 86_400_000, models: [] }));
   const daemonRoot = join(home.root, 'pairing-host');
+  const judgments = startE2EJudgments({ ordinaryHomes: [home.home, join(daemonRoot, 'home')] });
+  const previousJudgmentKey = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'local-e2e-judgment-fixture-not-a-secret';
+  const restoreJudgments = () => {
+    if (previousJudgmentKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousJudgmentKey;
+    judgments.stop();
+  };
+  try {
+    configManager.set('judgment.endpoint', judgments.baseURL);
+  } catch (error) {
+    restoreJudgments(); model.stop(); rmSync(home.root, { recursive: true, force: true });
+    throw error;
+  }
   const daemon = await startDaemonFixture({ root: daemonRoot, token: 'synthetic-tui-interactive-pairing-bootstrap', hostSessions: false,
     configure(configManager) {
+      configManager.set('judgment.endpoint', judgments.baseURL);
       const homeDirectory = join(daemonRoot, 'home');
       seedProviderMetadataCacheFixture({ configManager, homeDirectory, workingDirectory: join(daemonRoot, 'workspace') });
       const models = getProviderModelsCachePath(configManager.getControlPlaneConfigDir(), 'openai');
@@ -68,7 +84,7 @@ async function fixture(nativeCaptureFailure = false) {
       }
     },
     inboxFactory: (context, _routing, options) => registerInboxSurface(context, { ...options, adapters: new Map() }),
-  }).catch(error => { model.stop(); rmSync(home.root, { recursive: true, force: true }); throw error; });
+  }).catch(error => { restoreJudgments(); model.stop(); rmSync(home.root, { recursive: true, force: true }); throw error; });
   let stopProxy: (() => Promise<void>) | undefined;
   try {
     const legacyPath = join(daemonHome, 'operator-tokens.json');
@@ -144,7 +160,8 @@ async function fixture(nativeCaptureFailure = false) {
         token: paired.token, tokenId: paired.id, name: paired.name, createdAt: paired.createdAt,
       })).status).toBe('paired');
     }
-    const env = isolatedEnv(home, { PATH: '/usr/bin:/bin', GOODVIBES_TEST_NETWORK_VIOLATIONS: networkViolations });
+    const env = isolatedEnv(home, { PATH: '/usr/bin:/bin', GOODVIBES_TEST_NETWORK_VIOLATIONS: networkViolations,
+      TYPESAFE_API_KEY: 'local-e2e-judgment-fixture-not-a-secret', TYPESAFE_BASE_URL: judgments.baseURL });
     const argv = [resolveBinary(), '--config', `controlPlane.publicBaseUrl=${host}`, '--config', 'daemon.enabled=true'];
     const sessions: Array<{ stop(): Promise<void>; assertOutput(): void }> = [];
     function spawn(cols = 180, rows = 50, paletteReplies = true) {
@@ -237,11 +254,12 @@ async function fixture(nativeCaptureFailure = false) {
           expect(unexpectedMutations).toEqual([]);
           expect(model.requests).toEqual([]);
           expect(existsSync(networkViolations) ? readFileSync(networkViolations, 'utf8') : '').toBe('');
-        } finally { model.stop(); rmSync(home.root, { recursive: true, force: true }); }
+          judgments.assertNoUnexpected();
+        } finally { restoreJudgments(); model.stop(); rmSync(home.root, { recursive: true, force: true }); }
       },
     };
   } catch (error) {
-    try { await stopProxy?.(); } finally { try { await daemon.stop(); } finally { model.stop(); rmSync(home.root, { recursive: true, force: true }); } }
+    try { await stopProxy?.(); } finally { try { await daemon.stop(); } finally { restoreJudgments(); model.stop(); rmSync(home.root, { recursive: true, force: true }); } }
     throw error;
   }
 }

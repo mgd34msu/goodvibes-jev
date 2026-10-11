@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -105,3 +105,49 @@ test('separate processes released from one barrier cannot both win an expected-n
     for (const reader of readers) reader.releaseLock();
   }
 }, 20000);
+
+for (const state of ['stale', 'absent'] as const) {
+  test(`an opaque generation with a card-shaped digit run remains a ${state} hold without writes`, async () => {
+    const f = await fixture();
+    const path = state === 'absent' ? `${f.path}.absent` : f.path;
+    const store = state === 'absent' ? new KnowledgeStore({ dbPath: path }) : f.first;
+    await store.init();
+    const service = state === 'absent' ? new ProjectPlanningService(store) : f.firstService;
+    const before = existsSync(path) ? readFileSync(path) : undefined;
+    const revision = { ...f.selected.revision!, generation: `${'a'.repeat(24)}4111111111111111${'b'.repeat(24)}` };
+    const result = await service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision }, action: { kind: 'approve' } });
+    expect(result).toMatchObject({ applied: false, reason: state === 'absent' ? 'no-state' : 'state-changed' });
+    expect(result.state?.executionApproved ?? false).toBe(false);
+    expect(existsSync(path)).toBe(before !== undefined);
+    if (before !== undefined) expect(readFileSync(path)).toEqual(before);
+  });
+
+  for (const material of ['answer', 'revision-extra'] as const) {
+    test(`a ${state} hold still refuses protected ${material} content outside its opaque generation`, async () => {
+      const f = await fixture();
+      const path = state === 'absent' ? `${f.path}.protected-absent` : f.path;
+      const store = state === 'absent' ? new KnowledgeStore({ dbPath: path }) : f.first;
+      await store.init();
+      const service = state === 'absent' ? new ProjectPlanningService(store) : f.firstService;
+      const before = existsSync(path) ? readFileSync(path) : undefined;
+      const revision = { ...f.selected.revision!, generation: 'a'.repeat(64),
+        ...(material === 'revision-extra' ? { password: 'synthetic-protected-password' } : {}) };
+      await expect(service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision },
+        action: { kind: 'answer', answer: material === 'answer' ? '4111111111111111' : 'Ordinary answer' },
+      })).rejects.toMatchObject({ problem: material === 'answer' ? 'card-material' : 'credential-material' });
+      expect(existsSync(path)).toBe(before !== undefined);
+      if (before !== undefined) expect(readFileSync(path)).toEqual(before);
+    });
+  }
+}
+
+test('malformed opaque generations remain invalid before a planning action', async () => {
+  const f = await fixture();
+  const before = readFileSync(f.path);
+  for (const generation of ['4111111111111111', 'password=synthetic-protected-password']) {
+    await expect(f.firstService.applyStateAction({ projectId: 'fixture',
+      expected: { kind: 'revision', revision: { ...f.selected.revision!, generation } }, action: { kind: 'approve' },
+    })).rejects.toBeInstanceOf(TypeError);
+    expect(readFileSync(f.path)).toEqual(before);
+  }
+});

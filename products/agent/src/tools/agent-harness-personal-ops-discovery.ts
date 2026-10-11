@@ -431,7 +431,8 @@ export async function connectorSignalsMatching(
     signals.push({ id: `mcp:${server.name}`, kind: 'mcp-server', label: server.name, status: ready ? 'ready' : 'attention',
       summary: `${server.connected ? 'connected' : 'disconnected'} ${server.trustMode} ${server.schemaFreshness}; ${tools.length} tool(s); ${capabilityTags.join(', ')}`,
       modelRoute: `agent_harness mode:"mcp_server" mcpServerId:"${server.name}"`, toolCount: tools.length, capabilityTags,
-      readTools: classified.filter(tool => tool.effect === 'read-only'), writeTools: classified.filter(tool => tool.effect === 'confirmed-effect'),
+      readTools: classified.filter(tool => tool.effect === 'read-only').sort((left, right) => left.name.localeCompare(right.name)),
+      writeTools: classified.filter(tool => tool.effect === 'confirmed-effect').sort((left, right) => left.name.localeCompare(right.name)),
     });
   }
   assertCurrent(); options.retainCurrent?.(assertSource, `personal-ops-connectors:${options.lane}`);
