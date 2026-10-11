@@ -29,11 +29,15 @@ let plansImpl: () => Promise<PlansResult> = () => Promise.resolve({ today: '2026
 let stateImpl: () => Promise<StateResultShape> = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
 let sweepImpl: () => Promise<OperatorMethodOutput<'occasions.sweep'>> = () => Promise.reject(new Error('not used'));
 let forgetImpl: (input: OperatorMethodInput<'profile.forget'>) => Promise<unknown> = () => Promise.reject(new Error('not used'));
+let interviewAnswerImpl: (input: OperatorMethodInput<'occasions.interview.answer'>) => Promise<OperatorMethodOutput<'occasions.interview.answer'>> = () => Promise.reject(new Error('not used'));
+let interviewRecordImpl: (input: OperatorMethodInput<'occasions.interview.record'>) => Promise<OperatorMethodOutput<'occasions.interview.record'>> = () => Promise.reject(new Error('not used'));
 
 const answerCalls: unknown[] = [];
 const giftsCalls: string[] = [];
 const removeCalls: OperatorMethodInput<'occasions.remove'>[] = [];
 const forgetCalls: OperatorMethodInput<'profile.forget'>[] = [];
+const interviewAnswerCalls: OperatorMethodInput<'occasions.interview.answer'>[] = [];
+const interviewRecordCalls: OperatorMethodInput<'occasions.interview.record'>[] = [];
 
 mock.module('../../lib/goodvibes', () => ({
   // src/lib/queries.ts (imported transitively via queryKeys) destructures these off
@@ -76,8 +80,14 @@ mock.module('../../lib/goodvibes', () => ({
         conflict: { resolve: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })) },
         interview: {
           get: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
-          answer: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
-          record: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
+          answer: (input: OperatorMethodInput<'occasions.interview.answer'>) => {
+            interviewAnswerCalls.push(input);
+            return interviewAnswerImpl(input);
+          },
+          record: (input: OperatorMethodInput<'occasions.interview.record'>) => {
+            interviewRecordCalls.push(input);
+            return interviewRecordImpl(input);
+          },
         },
       },
     },
@@ -144,10 +154,146 @@ afterEach(() => {
   stateImpl = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
   sweepImpl = () => Promise.reject(new Error('not used'));
   forgetImpl = () => Promise.reject(new Error('not used'));
+  interviewAnswerImpl = () => Promise.reject(new Error('not used'));
+  interviewRecordImpl = () => Promise.reject(new Error('not used'));
   answerCalls.length = 0;
   giftsCalls.length = 0;
   removeCalls.length = 0;
   forgetCalls.length = 0;
+  interviewAnswerCalls.length = 0;
+  interviewRecordCalls.length = 0;
+});
+
+describe('DatesView: native gift interview progress', () => {
+  const exhausted = {
+    interviewId: 'interview:anniversary@2027-05-01', occasionId: 'anniversary', occurrence: '2027-05-01',
+    steps: [
+      { id: 'direction', prompt: 'You\'ve mentioned: "Sarah, sister. She loves pottery.". Is that still a good direction, or has that moved on?', opensFrom: 'Sarah, sister. She loves pottery.' },
+      { id: 'contrast', prompt: 'Something to keep, or something to do together?', opensFrom: '' },
+      { id: 'budget', prompt: 'Roughly what are you looking to spend?', opensFrom: '' },
+    ],
+    nextStep: null, complete: false, landedOn: null,
+  } satisfies NonNullable<OperatorMethodOutput<'occasions.interview.get'>['interview']>;
+
+  function showInterview(progress: NonNullable<OperatorMethodOutput<'occasions.interview.get'>['interview']>): void {
+    pendingImpl = () => Promise.resolve({ today: '2026-10-11', nudge: null, conflicts: [], interviews: [progress] });
+  }
+
+  async function openInterview(el: HTMLElement): Promise<void> {
+    await waitFor(() => Boolean(el.querySelector('[data-testid="dates-interview-list"] .gv-row__main')));
+    const row = el.querySelector('[data-testid="dates-interview-list"] .gv-row__main');
+    if (!(row instanceof HTMLElement)) throw new Error('Missing native interview row');
+    flushSync(() => row.click());
+    await waitFor(() => buttonNamed(el, 'Close interview') !== undefined);
+  }
+
+  function fillInterview(el: HTMLElement, text: string): HTMLInputElement {
+    const input = el.querySelector('.dates-interview input');
+    if (!(input instanceof HTMLInputElement)) throw new Error('Missing native interview input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (setter === undefined) throw new Error('Missing native input setter');
+    flushSync(() => {
+      setter.call(input, text);
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    return input;
+  }
+
+  test('all answered native questions expose the outcome form and one successful record retires the pending interview', async () => {
+    showInterview(exhausted);
+    interviewRecordImpl = () => {
+      pendingImpl = () => Promise.resolve({ today: '2026-10-11', nudge: null, conflicts: [], interviews: [] });
+      return Promise.resolve({ present: true, interview: { ...exhausted, complete: true, landedOn: 'A scarf' } });
+    };
+    const { el, unmount } = render();
+    try {
+      await openInterview(el);
+      expect(el.textContent).toContain('What did you land on?');
+      expect(el.textContent).not.toContain('Waiting on the next step.');
+      const record = buttonNamed(el, 'Record');
+      if (record === undefined) throw new Error('No outcome Record after all native questions were answered');
+      expect(record.disabled).toBe(true);
+      fillInterview(el, 'A scarf');
+      expect(record.disabled).toBe(false);
+      flushSync(() => record.click());
+      await waitFor(() => el.textContent?.includes('Recorded what you landed on') === true);
+      expect(interviewRecordCalls).toEqual([{ interviewId: exhausted.interviewId, landedOn: 'A scarf' }]);
+      expect(interviewAnswerCalls).toEqual([]);
+      expect(el.querySelector('[data-testid="dates-interview-list"]')).toBeNull();
+    } finally { unmount(); }
+  });
+
+  test('a remaining native question keeps its answer form and sends only the offered step', async () => {
+    const remaining = { ...exhausted, nextStep: exhausted.steps[1]! };
+    showInterview(remaining);
+    interviewAnswerImpl = () => {
+      const next = { ...exhausted, nextStep: exhausted.steps[2]! };
+      showInterview(next);
+      return Promise.resolve({ present: true, interview: next });
+    };
+    const { el, unmount } = render();
+    try {
+      await openInterview(el);
+      expect(el.textContent).toContain(remaining.nextStep.prompt);
+      expect(buttonNamed(el, 'Record') === undefined).toBe(true);
+      fillInterview(el, 'Something to keep');
+      const answer = buttonNamed(el, 'Answer');
+      if (answer === undefined) throw new Error('Missing native question Answer');
+      flushSync(() => answer.click());
+      await waitFor(() => el.textContent?.includes(exhausted.steps[2]!.prompt) === true);
+      expect(interviewAnswerCalls).toEqual([{ interviewId: exhausted.interviewId, stepId: 'contrast', text: 'Something to keep' }]);
+      expect(interviewRecordCalls).toEqual([]);
+    } finally { unmount(); }
+  });
+
+  test('an actually completed interview cannot expose a second outcome record', async () => {
+    showInterview({ ...exhausted, complete: true, landedOn: 'A scarf' });
+    const { el, unmount } = render();
+    try {
+      await openInterview(el);
+      expect(buttonNamed(el, 'Record') === undefined).toBe(true);
+      expect(buttonNamed(el, 'Answer') === undefined).toBe(true);
+      expect(el.querySelector('.dates-interview input') === null).toBe(true);
+      expect(el.textContent).toContain('A scarf');
+      expect(interviewRecordCalls).toEqual([]);
+    } finally { unmount(); }
+  });
+
+  test('native missing-interview record reports absence without a success toast or gift history', async () => {
+    showInterview(exhausted);
+    interviewRecordImpl = () => Promise.resolve({ present: false, interview: null });
+    const { el, unmount } = render();
+    try {
+      await openInterview(el); fillInterview(el, 'A scarf');
+      const record = buttonNamed(el, 'Record');
+      if (record === undefined) throw new Error('Missing native outcome Record');
+      flushSync(() => record.click());
+      await waitFor(() => el.textContent?.includes('Not recorded') === true);
+      expect(el.textContent).toContain('This interview is no longer available.');
+      expect(el.textContent).not.toContain('Recorded what you landed on');
+      expect(interviewRecordCalls).toEqual([{ interviewId: exhausted.interviewId, landedOn: 'A scarf' }]);
+      expect(el.querySelector('[data-testid="dates-gift-peek-list"]')).toBeNull();
+    } finally { unmount(); }
+  });
+
+  test('an unsettled native reading keeps the outcome draft and surfaces the actual failure', async () => {
+    showInterview(exhausted);
+    const reason = 'The occasion reading is unavailable, unsettled or no longer current.';
+    interviewRecordImpl = () => Promise.reject(Object.assign(new Error(reason), { name: 'OccasionReadingHeldError' }));
+    const { el, unmount } = render();
+    try {
+      await openInterview(el); const input = fillInterview(el, 'A scarf');
+      const record = buttonNamed(el, 'Record');
+      if (record === undefined) throw new Error('Missing native outcome Record');
+      flushSync(() => record.click());
+      await waitFor(() => el.textContent?.includes('Failed to close the interview') === true);
+      expect(el.textContent).toContain(reason);
+      expect(input.value).toBe('A scarf');
+      expect(el.textContent).not.toContain('Recorded what you landed on');
+      expect(interviewRecordCalls).toEqual([{ interviewId: exhausted.interviewId, landedOn: 'A scarf' }]);
+      expect(buttonNamed(el, 'Close interview')).toBeDefined();
+    } finally { unmount(); }
+  });
 });
 
 describe('DatesView: manual sweep outcomes', () => {

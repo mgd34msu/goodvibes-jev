@@ -342,9 +342,11 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
     mutationFn: (input: OperatorMethodInput<'occasions.interview.record'>) => sdk.operator.occasions.interview.record(input),
     onSuccess: async (result) => {
       await invalidateAll();
-      if (result.interview) {
-        await queryClient.invalidateQueries({ queryKey: queryKeys.occasionsGifts(result.interview.occasionId) });
+      if (!result.present || result.interview === null) {
+        toast({ title: 'Not recorded', description: 'This interview is no longer available.', tone: 'danger' });
+        return;
       }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.occasionsGifts(result.interview.occasionId) });
       toast({ title: 'Recorded what you landed on', tone: 'success' });
     },
     onError: (error: unknown) => toast({ title: 'Failed to close the interview', description: formatError(error), tone: 'danger' }),
@@ -609,6 +611,8 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
           closeLabel="Close interview"
         >
           {interview.complete ? (
+            <p className="dates-interview__done">Already recorded{interview.landedOn ? `: ${interview.landedOn}` : '.'}</p>
+          ) : step === null ? (
             <form
               className="dates-interview"
               onSubmit={(event) => {
@@ -626,7 +630,7 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
                 <Button variant="primary" type="submit" disabled={recordInterview.isPending || !landedOn}>Record</Button>
               </div>
             </form>
-          ) : step ? (
+          ) : (
             <form
               className="dates-interview"
               onSubmit={(event) => {
@@ -651,8 +655,6 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
                 </Button>
               </div>
             </form>
-          ) : (
-            <p className="dates-interview__done">Waiting on the next step.</p>
           )}
         </DetailPane>
       );

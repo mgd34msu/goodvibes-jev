@@ -2857,13 +2857,12 @@ export async function installMockDaemon(page: Page, options: MockDaemonOptions =
       return json(route, { present: Boolean(found), interview: found ?? null });
     }
     if (method === 'POST' && path === '/api/occasions/interview/answer') {
-      // The seed interview has exactly one step, so answering it completes the
-      // interview, real behavior for a "genuinely short" interview (docs/occasions.md
-      // §4.10), never a second implementation of the daemon's own step sequencing.
+      // Answering the seed's final question leaves the owner outcome unrecorded.
+      // Native complete means completedAt exists, after interview.record.
       const interviewId = String(body.interviewId ?? '');
       let updated = occasionsPendingState.interviews.find((iv) => iv.interviewId === interviewId) ?? null;
       if (updated) {
-        updated = { ...updated, nextStep: null, complete: true };
+        updated = { ...updated, nextStep: null, complete: false };
         occasionsPendingState = {
           ...occasionsPendingState,
           interviews: occasionsPendingState.interviews.map((iv) => (iv.interviewId === interviewId ? updated! : iv)),
