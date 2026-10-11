@@ -357,7 +357,7 @@ test('a detached continuation after direct registration settles can close its se
   expect(closed).toBe(true);
 });
 
-describe('A-F1540 hosted delivery transience uses the actual failure', () => {
+describe('hosted delivery transience uses the actual failure', () => {
   function fixture(port = failureReadingsPort([['same wording', { category: 'authorization' }]]).port, error: unknown = new Error('same wording')) {
     const spine = buildSpine(new Map([['hosted-1', [{ id: 'input-1', body: 'original body', correlationId: 'original-correlation' }]]]));
     const deliveries: unknown[][] = [], alerts: string[] = [];

@@ -177,7 +177,7 @@ describe('paginateItems', () => {
     expect(result.nextCursor).toBeUndefined();
   });
 
-  test('deleted-cursor mid-walk: with createdAt falls to insertion point, no duplicates (m3/m4)', () => {
+  test('deleted-cursor mid-walk: with createdAt falls to insertion point, no duplicates', () => {
     // 8 items sorted by createdAt. Page 1: items 1-3 (cursor encodes id=item-3, createdAt=3000).
     // item-3 is then deleted from the list. Page 2 should start from item-4 (first createdAt > 3000).
     const items = makeItems(8);

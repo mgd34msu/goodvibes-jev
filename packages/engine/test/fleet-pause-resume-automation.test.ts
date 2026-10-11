@@ -61,7 +61,7 @@ async function flushMicrotasks(rounds = 8): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// d2, pause <-> resume
+// Pause <-> resume
 // ---------------------------------------------------------------------------
 
 describe('fleet registry: pause/resume (d2)', () => {
@@ -157,7 +157,7 @@ describe('fleet registry: pause/resume (d2)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// d4, /schedule automation jobs in the fleet tree
+// /schedule automation jobs in the fleet tree
 // ---------------------------------------------------------------------------
 
 describe('adaptAutomationJob', () => {
@@ -176,7 +176,7 @@ describe('adaptAutomationJob', () => {
   });
 });
 
-describe('fleet registry: automation jobs in the fleet tree (d4)', () => {
+describe('fleet registry: automation jobs in the fleet tree', () => {
   test('absent automationManager dep: zero automation-job nodes (graceful degrade)', () => {
     const registry = createProcessRegistry(makeDeps());
     expect(registry.query().nodes).toEqual([]);

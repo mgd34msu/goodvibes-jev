@@ -1,5 +1,5 @@
 /**
- * B3, HTTP integration test for POST /config runtime.workingDir.
+ * HTTP integration test for POST /config runtime.workingDir.
  *
  * Uses the real route handler (createDaemonSystemRouteHandlers) wired with a
  * real WorkspaceSwapManager backed by tmp directories. No full DaemonServer
@@ -112,7 +112,7 @@ function makeSystemContext(daemonHome: string, workingDir: string, swapManager: 
 }
 
 // ---------------------------------------------------------------------------
-// B3 tests
+// Runtime workspace swap tests
 // ---------------------------------------------------------------------------
 
 describe('POST /config runtime.workingDir: HTTP integration', () => {

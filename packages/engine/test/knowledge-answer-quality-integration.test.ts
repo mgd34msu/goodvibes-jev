@@ -13,6 +13,8 @@ import { reviewKnowledgeIssue } from '../sdk/src/platform/knowledge/review.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { answerKnowledgeQuery } from '../sdk/src/platform/knowledge/semantic/answer.js';
+import { synthesizeAnswer } from '../sdk/src/platform/knowledge/semantic/answer-llm.js';
+import { withAnswerVerificationBudget } from '../sdk/src/platform/knowledge/semantic/answer-verification/budget.js';
 import { KnowledgeAnswerQualityHeldError } from '../sdk/src/platform/knowledge/semantic/answer-verification/types.js';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import type { KnowledgeSemanticLlm } from '../sdk/src/platform/knowledge/semantic/types.js';
@@ -167,11 +169,36 @@ describe('end-to-end answer quality barrier', () => {
     await expect(answerKnowledgeQuery({ store, llm: llm(async () => { generations++; return 'Four ports.'; }) }, input)).rejects.toBeInstanceOf(JudgmentInputError);
     expect(generations).toBe(0); expect(fake.requests.some((request) => 'fidelity' in request.questions || 'enough' in request.questions)).toBe(false); expect(store.listIssues()).toEqual([]);
   });
-  test('ignored-signal generation cannot keep the deadline alive or write after release', async () => {
+  test('the 100 ms whole-operation budget forbids late answer-quality requests and issues', async () => {
     const { store, input } = await fixture(); const fake = readings(); const started = Promise.withResolvers<void>(), release = Promise.withResolvers<string>();
     const pending = answerKnowledgeQuery({ store, llm: llm(async () => { started.resolve(); return release.promise; }) }, { ...input, timeoutMs: 100 });
-    await started.promise; await held(pending, 'budget'); release.resolve('Four HDMI ports.'); await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    const observed = pending.then(() => undefined, () => undefined);
+    await Promise.race([started.promise, observed]);
+    try { await held(pending, 'budget'); }
+    finally { release.resolve('Four HDMI ports.'); }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
     expect(fake.requests.some((request) => 'fidelity' in request.questions)).toBe(false); expect(store.listIssues()).toEqual([]);
+  });
+  test('the canonical 100 ms budget retires an admitted generator that ignores its signal', async () => {
+    const fake = readings(); const started = Promise.withResolvers<void>(), release = Promise.withResolvers<string>();
+    let providerSignal: AbortSignal | undefined; let continuations = 0;
+    const pending = withAnswerVerificationBudget(async (signal, deadlineAt) => {
+      const generated = await synthesizeAnswer(llm(async (request) => {
+        providerSignal = request.signal;
+        started.resolve(); return release.promise;
+      }), 'How many HDMI ports does AC-7 have?', 'concise', [{ reference: 'evidence-1', title: 'AC-7 manual',
+        text: 'AC-7 has four HDMI ports.', facts: [], subjects: [] }], { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
+      continuations++;
+      if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
+      return generated;
+    }, 100);
+    const observed = pending.then(() => undefined, () => undefined);
+    const enteredGeneration = await Promise.race([started.promise.then(() => true), observed.then(() => false)]);
+    try { expect(enteredGeneration).toBe(true); await held(pending, 'budget'); }
+    finally { release.resolve('Four HDMI ports.'); }
+    expect(providerSignal?.aborted).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(continuations).toBe(1); expect(fake.requests).toEqual([]);
   });
   test('ignored-signal retrieval stops subsequent requests after the total deadline', async () => {
     const { store, input } = await fixture(); const fake = readings(); const release = Promise.withResolvers<void>(); let requests = 0;

@@ -78,7 +78,7 @@ function baseRequest(overrides: Partial<ChannelDeliveryRequest>): ChannelDeliver
   };
 }
 
-describe('ntfy delivery resolves the topic from the binding (item 1)', () => {
+describe('ntfy delivery resolves the topic from the binding', () => {
   let spy: Mock<typeof fetchWithTimeoutModule.fetchWithTimeout>;
 
   afterEach(() => {
@@ -171,7 +171,7 @@ describe('ntfy delivery resolves the topic from the binding (item 1)', () => {
   });
 });
 
-describe('slack delivery resolves the channel from the binding (item 2)', () => {
+describe('slack delivery resolves the channel from the binding', () => {
   let spy: Mock<typeof fetchWithTimeoutModule.fetchWithTimeout>;
 
   afterEach(() => {
@@ -238,7 +238,7 @@ describe('slack delivery resolves the channel from the binding (item 2)', () => 
   });
 });
 
-describe('discord delivery resolves the channel from the binding (item 3)', () => {
+describe('discord delivery resolves the channel from the binding', () => {
   let spy: Mock<typeof fetchWithTimeoutModule.instrumentedFetch>;
   const SNOWFLAKE = '123456789012345678';
 
@@ -298,7 +298,7 @@ describe('discord delivery resolves the channel from the binding (item 3)', () =
     expect(result.responseId).toBe(SNOWFLAKE);
   });
 
-  test('bot token stored as a goodvibes:// secret reference is resolved through resolveSecretInput, never sent literally (item 4)', async () => {
+  test('bot token stored as a goodvibes:// secret reference is resolved through resolveSecretInput, never sent literally', async () => {
     spy = spyOn(fetchWithTimeoutModule, 'instrumentedFetch').mockImplementation(
       async () => new Response(null, { status: 200 }),
     ) as Mock<typeof fetchWithTimeoutModule.instrumentedFetch>;

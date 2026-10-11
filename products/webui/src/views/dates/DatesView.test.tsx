@@ -13,6 +13,7 @@ import { flushSync } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../lib/toast';
 import { ToastViewport } from '../../components/toast/ToastViewport';
+import type { OperatorMethodOutput } from '../../lib/goodvibes';
 
 type ListResult = { today: string; timezone: string; occasions: unknown[]; unparsed: unknown[]; conflicts: unknown[] };
 type PendingResult = { today: string; nudge: unknown; conflicts: unknown[]; interviews: unknown[] };
@@ -26,6 +27,7 @@ let listImpl: () => Promise<ListResult> = () => Promise.resolve({ today: '2026-0
 let pendingImpl: () => Promise<PendingResult> = () => Promise.resolve({ today: '2026-07-29', nudge: null, conflicts: [], interviews: [] });
 let plansImpl: () => Promise<PlansResult> = () => Promise.resolve({ today: '2026-07-29', plans: [], unparsed: [], awayNow: null });
 let stateImpl: () => Promise<StateResultShape> = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
+let sweepImpl: () => Promise<OperatorMethodOutput<'occasions.sweep'>> = () => Promise.reject(new Error('not used'));
 
 const answerCalls: unknown[] = [];
 const giftsCalls: string[] = [];
@@ -58,7 +60,7 @@ mock.module('../../lib/goodvibes', () => ({
           giftsCalls.push(occasionId);
           return Promise.resolve({ occasionId, gifts: [] });
         },
-        sweep: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
+        sweep: () => sweepImpl(),
         conflict: { resolve: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })) },
         interview: {
           get: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
@@ -128,8 +130,114 @@ afterEach(() => {
   pendingImpl = () => Promise.resolve({ today: '2026-07-29', nudge: null, conflicts: [], interviews: [] });
   plansImpl = () => Promise.resolve({ today: '2026-07-29', plans: [], unparsed: [], awayNow: null });
   stateImpl = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
+  sweepImpl = () => Promise.reject(new Error('not used'));
   answerCalls.length = 0;
   giftsCalls.length = 0;
+});
+
+describe('DatesView: manual sweep outcomes', () => {
+  const complete = {
+    ranAt: 1,
+    today: '2026-07-29',
+    hold: null,
+    nudge: null,
+    conflictMessages: [],
+    resumedInterviews: [],
+    delivered: false,
+    deliveryChannel: 'telegram, agent',
+    deliveryId: null,
+    deliveries: [],
+    mirrored: 3,
+    housekeeping: {
+      sweptAt: 1, expiredAcknowledgements: 0, orphanedRecords: 0, expiredOpenItems: 0,
+      agedGiftRecords: 0, droppedInterviews: 0, staleMirrors: 0,
+    },
+  } satisfies OperatorMethodOutput<'occasions.sweep'>;
+  const nudge = {
+    id: 'occasions-1',
+    raisedAt: 1,
+    subjects: [{
+      occasionId: 'occ-1', title: 'Sarah’s birthday', person: 'Sarah', kind: 'gift-giving',
+      proximity: 'soon', subject: 'other', acknowledged: false,
+    }],
+    message: 'Sarah’s birthday is soon.',
+    answerable: true,
+  } satisfies NonNullable<Extract<OperatorMethodOutput<'occasions.sweep'>, { ranAt: number }>['nudge']>;
+  const cases: readonly {
+    name: string;
+    receipt: OperatorMethodOutput<'occasions.sweep'>;
+    message: string;
+  }[] = [
+    { name: 'no due nudge', receipt: complete, message: 'Ran with nothing to deliver. Mirrored 3 occasion(s).' },
+    {
+      name: 'quiet hours hold',
+      receipt: { ...complete, hold: 'quiet-hours', deliveryChannel: '' },
+      message: 'Held: quiet-hours. Mirrored 3 occasion(s).',
+    },
+    {
+      name: 'disabled hold',
+      receipt: { ...complete, hold: 'disabled', deliveryChannel: '' },
+      message: 'Held: disabled. Mirrored 3 occasion(s).',
+    },
+    {
+      name: 'ready nudge without a push delivery',
+      receipt: { ...complete, nudge },
+      message: 'Nudge is ready for the agent to pick up. Mirrored 3 occasion(s).',
+    },
+    {
+      name: 'failed nudge',
+      receipt: { ...complete, nudge, deliveries: [
+        { channel: 'telegram', delivered: false, deliveryId: null, failure: 'Token expired' },
+        { channel: 'agent', delivered: false, deliveryId: null, failure: 'Agent unavailable' },
+      ] },
+      message: 'Nudge was not delivered. Failed deliveries: telegram: Token expired; agent: Agent unavailable. Mirrored 3 occasion(s).',
+    },
+    {
+      name: 'one successful destination and one failure',
+      receipt: { ...complete, nudge, delivered: true, deliveryId: 'delivery-1', deliveries: [
+        { channel: 'telegram', delivered: false, deliveryId: null, failure: 'Token expired' },
+        { channel: 'agent', delivered: true, deliveryId: 'delivery-1', failure: null },
+      ] },
+      message: 'Delivered via agent. Failed deliveries: telegram: Token expired. Mirrored 3 occasion(s).',
+    },
+    {
+      name: 'request ended after an accepted delivery',
+      receipt: { complete: false, acceptedDeliveries: 1, stopped: 'request-retired-after-delivery' },
+      message: 'Accepted 1 delivery before the request ended after delivery. Sweep results are incomplete.',
+    },
+    {
+      name: 'delivery processing stopped after accepted deliveries',
+      receipt: { complete: false, acceptedDeliveries: 2, stopped: 'delivery-processing-stopped' },
+      message: 'Accepted 2 deliveries before delivery processing stopped. Sweep results are incomplete.',
+    },
+  ];
+
+  test.each([...cases])('$name appears after running the sweep', async ({ receipt, message }) => {
+    let sweeps = 0;
+    sweepImpl = () => {
+      sweeps += 1;
+      return Promise.resolve(receipt);
+    };
+    const { el, unmount } = render();
+    try {
+      await waitFor(() => buttonNamed(el, 'Run sweep now') !== undefined);
+      const disclosure = el.querySelector<HTMLDetailsElement>('details.dv-disclosure');
+      const summary = disclosure?.querySelector('summary');
+      if (!disclosure || !summary) throw new Error('Stored records disclosure is missing');
+      flushSync(() => summary.click());
+      expect(disclosure.open).toBe(true);
+      const run = buttonNamed(el, 'Run sweep now');
+      if (!run) throw new Error('Run sweep action is missing');
+      flushSync(() => run.click());
+      await waitFor(() => el.querySelector('[data-testid="dates-state"] [role="status"]') !== null);
+      const status = el.querySelector('[data-testid="dates-state"] [role="status"]');
+      expect(status?.textContent).toBe(message);
+      expect(sweeps).toBe(1);
+      if ('complete' in receipt) expect(status?.textContent).not.toContain('Mirrored');
+    } finally {
+      unmount();
+    }
+  });
 });
 
 describe('DatesView: not-available refusal', () => {

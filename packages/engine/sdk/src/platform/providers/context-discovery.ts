@@ -19,7 +19,7 @@
 
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
-import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,18 +55,22 @@ function extractOrigin(baseURL: string): string {
  */
 async function probe(
   url: string,
-  options: { apiKey?: string | undefined; method?: string; body?: string | undefined } = {},
+  options: { apiKey?: string | undefined; method?: string; body?: string | undefined; signal?: AbortSignal | undefined } = {},
 ): Promise<Response | null> {
+  options.signal?.throwIfAborted();
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (options.apiKey) headers['Authorization'] = `Bearer ${options.apiKey}`;
   if (options.body) headers['Content-Type'] = 'application/json';
 
   try {
-    const response = await fetchWithTimeout(url, {
+    const response = await instrumentedFetch(url, {
       method: options.method ?? 'GET',
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(PROBE_TIMEOUT_MS)])
+        : AbortSignal.timeout(PROBE_TIMEOUT_MS),
       headers,
       ...(options.body !== undefined ? { body: options.body } : {}),
-    } as RequestInit, PROBE_TIMEOUT_MS, instrumentedFetch);
+    });
 
     if (!response.ok) {
       logger.debug('[context-discovery] Non-OK probe response', { url, status: response.status });
@@ -121,9 +125,10 @@ interface LMStudioModelsResponse {
 async function probeLMStudio(
   origin: string,
   apiKey?: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Map<string, number> | null> {
   const url = `${origin}/api/v1/models`;
-  const response = await probe(url, { apiKey });
+  const response = await probe(url, { apiKey, signal });
   if (!response) return null;
 
   const json = await parseJSON<LMStudioModelsResponse>(response, url);
@@ -199,9 +204,10 @@ function extractOllamaContextLength(show: OllamaShowResponse): number | null {
 async function probeOllama(
   origin: string,
   apiKey?: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Map<string, number> | null> {
   const tagsUrl = `${origin}/api/tags`;
-  const tagsResponse = await probe(tagsUrl, { apiKey });
+  const tagsResponse = await probe(tagsUrl, { apiKey, signal });
   if (!tagsResponse) return null;
 
   const tagsJson = await parseJSON<OllamaTagsResponse>(tagsResponse, tagsUrl);
@@ -214,12 +220,14 @@ async function probeOllama(
   const names = tagsJson.models.filter((m) => typeof m.name === 'string').map((m) => m.name);
 
   for (let i = 0; i < names.length; i += SHOW_CONCURRENCY) {
+    signal?.throwIfAborted();
     const batch = names.slice(i, i + SHOW_CONCURRENCY);
     const batchResults = await Promise.allSettled(
       batch.map(async (name) => {
         const showUrl = `${origin}/api/show`;
         const showResponse = await probe(showUrl, {
           apiKey,
+          signal,
           method: 'POST',
           body: JSON.stringify({ name }),
         });
@@ -294,9 +302,10 @@ function extractOpenAIContextLength(model: OpenAICompatModel): number | null {
 async function probeOpenAICompat(
   baseURL: string,
   apiKey?: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Map<string, number> | null> {
   const url = baseURL.replace(/\/$/, '') + '/models';
-  const response = await probe(url, { apiKey });
+  const response = await probe(url, { apiKey, signal });
   if (!response) return null;
 
   const json = await parseJSON<OpenAICompatResponse>(response, url);
@@ -332,9 +341,10 @@ interface LlamaCppProps {
 async function probeLlamaCpp(
   origin: string,
   apiKey?: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Map<string, number> | null> {
   const url = `${origin}/props`;
-  const response = await probe(url, { apiKey });
+  const response = await probe(url, { apiKey, signal });
   if (!response) return null;
 
   const json = await parseJSON<LlamaCppProps>(response, url);
@@ -362,9 +372,10 @@ interface TGIInfo {
 async function probeTGI(
   origin: string,
   apiKey?: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Map<string, number> | null> {
   const url = `${origin}/info`;
-  const response = await probe(url, { apiKey });
+  const response = await probe(url, { apiKey, signal });
   if (!response) return null;
 
   const json = await parseJSON<TGIInfo>(response, url);
@@ -412,7 +423,9 @@ async function probeTGI(
 export async function discoverContextWindows(
   baseURL: string,
   apiKey?: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Map<string, number>> {
+  signal?.throwIfAborted();
   const origin = extractOrigin(baseURL);
   const result = new Map<string, number>();
 
@@ -434,20 +447,21 @@ export async function discoverContextWindows(
   // model IDs already present. Parallel probing would lose this precedence guarantee.
 
   // Probe 1: LM Studio (richest, has max_context_length per model)
-  merge(await probeLMStudio(origin, apiKey));
+  merge(await probeLMStudio(origin, apiKey, signal));
 
   // Probe 2: Ollama (per-model show with context_length / num_ctx)
-  merge(await probeOllama(origin, apiKey));
+  merge(await probeOllama(origin, apiKey, signal));
 
   // Probe 3: OpenAI compat (id + optional max_model_len/max_context_length)
-  merge(await probeOpenAICompat(baseURL, apiKey));
+  merge(await probeOpenAICompat(baseURL, apiKey, signal));
 
   // Probe 4: llama.cpp /props (server-level n_ctx)
-  merge(await probeLlamaCpp(origin, apiKey));
+  merge(await probeLlamaCpp(origin, apiKey, signal));
 
   // Probe 5: TGI /info (server-level max_total_tokens)
-  merge(await probeTGI(origin, apiKey));
+  merge(await probeTGI(origin, apiKey, signal));
 
+  signal?.throwIfAborted();
   logger.debug('[context-discovery] Discovery complete', {
     baseURL,
     totalModels: result.size,

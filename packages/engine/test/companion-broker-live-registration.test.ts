@@ -1,10 +1,10 @@
 /**
  * companion-broker-live-registration.test.ts
  *
- * R3: companion sessions register INTO the shared broker at WRITE time (not only
+ * Companion sessions register INTO the shared broker at WRITE time (not only
  * at the next boot fold). Creating a companion session must make it visible via
  * the broker's sessions list same-process (no restart), and closing it must flip
- * the shared record to closed live. Also proves the R2 injected-home path helper.
+ * the shared record to closed live. Also proves the injected-home path helper.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -38,7 +38,7 @@ function makeBroker(storePath: string): SharedSessionBroker {
   } as unknown as ConstructorParameters<typeof SharedSessionBroker>[0]));
 }
 
-describe('R3: companion registers into the broker live (same-process)', () => {
+describe('Companion registers into the broker live (same-process)', () => {
   test('createSession → broker.listSessions shows the companion session without restart', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'companion-live-'));
     try {
@@ -133,7 +133,7 @@ function makeRouteContext(chatManager: CompanionChatManager): CompanionChatRoute
 }
 
 // ---------------------------------------------------------------------------
-// F2, the companion HTTP routes actually flush the
+// The companion HTTP routes actually flush the
 // broker mirror before responding, matching CompanionBrokerSync's documented
 // contract ("the daemon's companion HTTP routes call this before responding
 // so /api/sessions reflects the change synchronously"). Previously nothing

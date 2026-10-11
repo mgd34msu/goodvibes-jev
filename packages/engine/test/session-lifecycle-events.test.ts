@@ -167,11 +167,11 @@ describe('S2c: the session-update channel is contract-declared', () => {
 });
 
 // ---------------------------------------------------------------------------
-// S2c re-point, session mutators reference the session_update descriptor
+// session mutators reference the session_update descriptor
 //
-// S2 deferred wiring the sessions.* methods' `events:[...]` to control.session_update
+// The earlier catalog deferred wiring the sessions.* methods' `events:[...]` to control.session_update
 // (the descriptor lives in method-catalog-events.ts, the sessions catalog in the
-// S1-owned method-catalog-control-core.ts). Post-merge that re-point is in place:
+// method-catalog-control-core.ts). That binding is in place:
 // every write:sessions method that drives a broker `session-update` broadcast now
 // advertises the channel it produces, and every advertised event id resolves.
 // ---------------------------------------------------------------------------

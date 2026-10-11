@@ -2,8 +2,7 @@
  * companion-chat-broker-sync.ts
  *
  * Owns the live mirror of companion sessions into the shared
- * `SharedSessionBroker` store (S1 item D: companion registers into the
- * broker at write time), chaining register/close/delete ops per session so
+ * `SharedSessionBroker` store, chaining register/close/delete ops per session so
  * they never race (order = call order), and exposing `flush()` so the
  * companion HTTP routes can await in-flight ops before responding
  * (deterministic for tests).

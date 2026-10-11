@@ -1,5 +1,5 @@
 /**
- * BIG-3 item 2, inter-item dependency gating end-to-end through the engine.
+ * Inter-item dependency gating end-to-end through the engine.
  *
  * A 3-item plan (B dependsOn A, C independent):
  *  - C and A run concurrently while B sits in 'blocked-dependency' with an

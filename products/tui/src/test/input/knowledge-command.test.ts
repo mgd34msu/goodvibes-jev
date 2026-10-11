@@ -13,14 +13,17 @@ import { withPublicKnowledgeReadings } from '../helpers/public-knowledge-reading
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { publicErrorTextAnswer } from '../helpers/user-error-reading.ts';
 
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl = '';
+let fetchedPages = 0;
 
 beforeAll(() => {
   server = Bun.serve({
     port: 0,
     fetch() {
+      fetchedPages++;
       return new Response('<html><head><title>Example Page</title></head><body><h1>Example</h1><p>Knowledge command test page.</p></body></html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
@@ -186,27 +189,66 @@ describe('knowledgeCommand', () => {
     await memoryStore.init();
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
 
+    const fetchedBefore = fetchedPages;
     const blockedError = 'Artifact URI blocked by SSRF policy: host "127.0.0.1" is a loopback address, needs the per-project localhost approval (fetch.allowLocalhost)';
-    const previous = installJudgmentPort(fakePort((name, question) => {
-      if (question.type === 'choice' && name === 'kind') return choiceAnswer(question, 'other', 0.99);
-      if (question.type !== 'noul') throw new Error('Unexpected blocked URL error redaction fixture');
-      return noulAnswer(name === 'identifying' ? 0.99 : 0.01);
-    }).port);
+    const blockedReading = fakePort((name, question, state) => {
+      const privacy = publicErrorTextAnswer([blockedError], name, question, state, {
+        ordinaryFields: ['policy'],
+        credentialProjections: [{ phase: 'source', target: 'span-1', parts: [
+          { kind: 'text', text: 'Artifact URI blocked by SSRF policy: ' },
+          { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'policy' },
+          { kind: 'text', text: ', needs the per-project localhost approval (fetch.allowLocalhost)' },
+        ] }],
+        residualProjections: [{ parts: [
+          { kind: 'text', text: 'Artifact URI blocked by SSRF policy: ' },
+          { kind: 'withheld', reference: 'span-1' },
+          { kind: 'text', text: ', needs the per-project localhost approval (fetch.allowLocalhost)' },
+        ] }],
+      });
+      if (privacy !== undefined) return privacy;
+      if (state === `Message: ${blockedError}`) {
+        if (question.type === 'choice' && name === 'category') return choiceAnswer(question, 'authorization', 0.99);
+        if (question.type === 'choice' && name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
+        if (question.type === 'noul') {
+          switch (name) {
+            case 'before_response': return noulAnswer(0.99);
+            case 'billing':
+            case 'rate_limited':
+            case 'context_exceeded':
+            case 'transient_network':
+            case 'provider_unusable': return noulAnswer(0.01);
+          }
+        }
+      }
+      throw new Error(`Unexpected blocked URL reading: ${name}`);
+    });
+    const previous = installJudgmentPort(blockedReading.port);
     try {
       // The synchronous error boundary may display only current canonical proof.
-      expect(await redactSensitiveDataAsync(blockedError)).toContain('SSRF policy');
+      expect(await redactSensitiveDataAsync(blockedError)).toBe(blockedError);
       await knowledgeCommand.handler(
         ['ingest-url', `${baseUrl}/docs`, '--tags', 'example,docs'],
         makeKnowledgeCommandContext(root, printed, knowledgeService, memoryRegistry),
       );
     } finally { installJudgmentPort(previous); }
 
+    const failureRequests = blockedReading.requests.filter(request => request.state === `Message: ${blockedError}`);
+    expect(failureRequests).toHaveLength(1);
+    expect(failureRequests.map(request => request.context)).toEqual([{
+      battery: 'engine.failure-reading', batteryVersion: 2, pattern: 'battery', site: 'engine.knowledge.ingest-failure',
+    }]);
+    expect(failureRequests.map(request => Object.keys(request.questions))).toEqual([[
+      'category', 'billing', 'rate_limited', 'context_exceeded', 'transient_network',
+      'provider_unusable', 'connection_failure', 'before_response',
+    ]]);
+
     expect(printed.join('\n')).toContain('Ingested');
+    expect(fetchedPages).toBe(fetchedBefore);
 
     const sources = knowledgeStore.listSources(10);
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({ status: 'failed', sourceUri: `${baseUrl}/docs`, tags: ['example', 'docs'] });
-    expect(sources[0]?.crawlError).toContain('SSRF policy');
+    expect(sources[0]?.crawlError).toBe(blockedError);
     expect(sources[0]?.title).toBeUndefined();
     expect(sources[0]?.summary).toBeUndefined();
     expect(knowledgeStore.getExtractionBySourceId(sources[0]!.id)).toBeNull();

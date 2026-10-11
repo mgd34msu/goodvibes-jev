@@ -1,9 +1,9 @@
 /**
  * Tests for UX-first enhancements:
- *  Task 1, Typed connection-state events (ConnectionState, ReconnectAttemptInfo)
- *  Task 2, Backpressure visibility (BackpressureInfo, onBackpressure callback)
- *  Task 3, WS error envelope parity (createWebSocketRemoteError)
- *  Task 4, Granular progress event contracts (BATCH_JOB_PROGRESS, EXPORT_PROGRESS, KNOWLEDGE_INGEST_PROGRESS)
+ *  Typed connection-state events (ConnectionState, ReconnectAttemptInfo)
+ *  Backpressure visibility (BackpressureInfo, onBackpressure callback)
+ *  WS error envelope parity (createWebSocketRemoteError)
+ *  Granular progress event contracts (BATCH_JOB_PROGRESS, EXPORT_PROGRESS, KNOWLEDGE_INGEST_PROGRESS)
  */
 import { describe, expect, test } from 'bun:test';
 import {
@@ -117,7 +117,7 @@ function stopOrThrow(stop: (() => void) | void): void {
 // ---------------------------------------------------------------------------
 // Task 1, Typed connection-state events
 // ---------------------------------------------------------------------------
-describe('Task 1: typed connection-state events', () => {
+describe('typed connection-state events', () => {
   test('ConnectionState type is exported and covers all expected literals', () => {
     // Type-level assertion: if any literal is missing this assignment would fail at compile time.
     const states: ConnectionState[] = [
@@ -273,7 +273,7 @@ describe('Task 1: typed connection-state events', () => {
 // ---------------------------------------------------------------------------
 // Task 2, Backpressure visibility
 // ---------------------------------------------------------------------------
-describe('Task 2: backpressure visibility', () => {
+describe('backpressure visibility', () => {
   test('BackpressureInfo type carries all required fields', () => {
     const info: BackpressureInfo = {
       droppedCount: 5,
@@ -561,7 +561,7 @@ describe('Task 4: granular progress event contracts', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 5, onTransportEvent: typed events dispatched by connector
+// onTransportEvent: typed events dispatched by connector
 // ---------------------------------------------------------------------------
 describe('Task 5: onTransportEvent typed event dispatch', () => {
   test('onTransportEvent receives TRANSPORT_CONNECTION_STATE on each state transition', async () => {

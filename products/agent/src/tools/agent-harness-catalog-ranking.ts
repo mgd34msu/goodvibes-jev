@@ -106,6 +106,50 @@ function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: 
   } };
 }
 
+type CatalogDescription = { readonly id: string; readonly description: string; readonly evidence?: unknown };
+interface PreparedCatalog {
+  readonly describe: object;
+  readonly catalog: readonly CatalogDescription[];
+  readonly parts: readonly string[];
+}
+const preparedCatalogs = new WeakMap<object, PreparedCatalog>();
+
+function catalogEntryDescriptors(entries: readonly unknown[]) {
+  if (!Array.isArray(entries) || nodeTypes.isProxy(entries) || Object.getPrototypeOf(entries) !== Array.prototype
+    || entries.length >= SOURCE_SCREENING_LIMITS.parts * SOURCE_SCREENING_LIMITS.sources) throw new ToolInputProjectionError('held');
+  const descriptors = Object.getOwnPropertyDescriptors(entries);
+  if (Object.getOwnPropertySymbols(entries).length || Object.keys(descriptors).some((key) => key !== 'length'
+    && (!/^(0|[1-9][0-9]*)$/.test(key) || !('value' in descriptors[key]!)))) throw new ToolInputProjectionError('invalid');
+  return descriptors;
+}
+function captureCatalogEntries<T>(entries: readonly T[], descriptors: ReturnType<typeof catalogEntryDescriptors>): T[] {
+  const capturedEntries: T[] = [];
+  const budget = { nodes: 0, characters: 0, slots: 0 };
+  for (let index = 0; index < entries.length; index++) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
+    capturedEntries.push(captureCatalogData(descriptor.value as T, budget));
+  }
+  return capturedEntries;
+}
+function captureCatalogDescription({ id, description, evidence }: CatalogDescription): CatalogDescription {
+  const captured = snapshotJudgmentInput({ id, description, ...(evidence === undefined ? {} : { evidence }) });
+  if (!captured || typeof captured !== 'object' || Array.isArray(captured) || !('id' in captured) || typeof captured.id !== 'string'
+    || !('description' in captured) || typeof captured.description !== 'string') throw new ToolInputProjectionError('held');
+  return Object.freeze({ id: captured.id, description: captured.description, ...('evidence' in captured ? { evidence: captured.evidence } : {}) });
+}
+function catalogParts(catalog: readonly CatalogDescription[]): readonly string[] {
+  return Object.freeze(catalog.map(({ id, description, evidence }) => JSON.stringify([id, description, evidence ?? null])));
+}
+
+/** Prepare only immutable local metadata; each reading still captures and screens its complete distinct query. */
+export function prepareHarnessCatalog<T>(entries: readonly T[], describe: (entry: T) => CatalogDescription): readonly T[] {
+  const captured = Object.freeze(captureCatalogEntries(entries, catalogEntryDescriptors(entries)));
+  const catalog = Object.freeze(captured.map(entry => captureCatalogDescription(describe(entry))));
+  preparedCatalogs.set(captured, Object.freeze({ describe, catalog, parts: catalogParts(catalog) }));
+  return captured;
+}
+
 /** Product data is locally screened in full before the canonical public engine reader. */
 export async function rankHarnessCatalog<T>(
   entries: readonly T[],
@@ -116,28 +160,17 @@ export async function rankHarnessCatalog<T>(
   decisionName = 'engine.tools.registry-rank',
 ): Promise<{ readonly matches: readonly { readonly entry: T; readonly judgment: Ranked }[]; readonly judgments: readonly Ranked[] }> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
-  if (!Array.isArray(entries) || nodeTypes.isProxy(entries) || Object.getPrototypeOf(entries) !== Array.prototype
-    || entries.length >= SOURCE_SCREENING_LIMITS.parts * SOURCE_SCREENING_LIMITS.sources) throw new ToolInputProjectionError('held');
-  const descriptors = Object.getOwnPropertyDescriptors(entries);
-  if (Object.getOwnPropertySymbols(entries).length || Object.keys(descriptors).some((key) => key !== 'length'
-    && (!/^(0|[1-9][0-9]*)$/.test(key) || !('value' in descriptors[key]!)))) throw new ToolInputProjectionError('invalid');
-  const capturedEntries: T[] = [];
-  const budget = { nodes: 0, characters: 0, slots: 0 };
-  for (let index = 0; index < entries.length; index++) {
-    const descriptor = descriptors[String(index)];
-    if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
-    capturedEntries.push(captureCatalogData(descriptor.value as T, budget));
-  }
-  const catalog = capturedEntries.map((entry) => ({ entry, ...describe(entry) }));
+  const descriptors = catalogEntryDescriptors(entries), found = preparedCatalogs.get(entries);
+  const prepared = found?.describe === describe ? found : undefined;
+  const capturedEntries = prepared ? entries : captureCatalogEntries(entries, descriptors);
+  const catalog = prepared?.catalog ?? capturedEntries.map((entry) => ({ entry, ...describe(entry) }));
   // Capture the COMPLETE transmitted source before projection or display limits.
   const source = {
     query: snapshotJudgmentInput(query) as string,
-    catalog: catalog.map(({ id, description, evidence }) => snapshotJudgmentInput({ id, description, ...(evidence === undefined ? {} : { evidence }) }) as {
-      readonly id: string; readonly description: string; readonly evidence?: unknown;
-    }),
+    catalog: prepared ? catalog : catalog.map(captureCatalogDescription),
   };
   if (entries.length === 0) return { matches: [], judgments: [] };
-  if (new Set(source.catalog.map(({ id }) => id)).size !== catalog.length) throw new ToolInputProjectionError('held');
+  if (new Set(source.catalog.map(({ id }) => id)).size !== capturedEntries.length) throw new ToolInputProjectionError('held');
   const owner = options.sourceOwner;
   if (!owner) throw new ToolInputProjectionError('held');
   const assertOwnerMethods = captureCatalogMethods(owner, ['capture', 'screen', 'project', 'release']);
@@ -146,7 +179,7 @@ export async function rankHarnessCatalog<T>(
   // A whole candidate is one protected part, so the complete operator catalog
   // fits the owner's bounded source count without a lexical shortlist. JSON
   // framing is parsed only after screening; damaged framing holds the reading.
-  const parts = [source.query, ...source.catalog.map(({ id, description, evidence }) => JSON.stringify([id, description, evidence ?? null]))];
+  const parts = [source.query, ...(prepared?.parts ?? catalogParts(source.catalog))];
   // Retain the original canonical whole-reading text budget across batches.
   if (parts.reduce((total, part) => total + part.length, 0) > 1_000_000) throw new ToolInputProjectionError('held');
   if (parts.some(part => part.length > SOURCE_SCREENING_LIMITS.characters)) {

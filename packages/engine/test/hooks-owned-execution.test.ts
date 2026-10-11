@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +18,11 @@ const event: HookEvent = { path: 'Pre:tool:read', phase: 'Pre', category: 'tool'
 const roots: string[] = [];
 const globals: string[] = [];
 const registry = globalThis as unknown as Record<string, unknown>;
+let previousJudgmentPort: ReturnType<typeof installJudgmentPort>;
+// The error marker assertions exercise diagnostics without an admitted privacy reading.
+beforeEach(() => { previousJudgmentPort = installJudgmentPort(undefined); });
 afterEach(() => {
+  installJudgmentPort(previousJudgmentPort);
   (globalThis.fetch as unknown as { mockRestore?: () => void }).mockRestore?.();
   (Bun.spawn as unknown as { mockRestore?: () => void }).mockRestore?.();
   for (const key of globals.splice(0)) delete registry[key];

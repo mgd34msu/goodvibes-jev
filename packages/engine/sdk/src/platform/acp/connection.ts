@@ -440,7 +440,7 @@ export class AcpConnection {
 
   private buildClientImpl(): Client {
     return {
-      /** A-F1072: same recorded autonomous owner and final wire fence as host ACP. */
+      /** same recorded autonomous owner and final wire fence as host ACP. */
       requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
         const cancelled: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
         let binding: ReturnType<AcpPermissionWire['binding']>;

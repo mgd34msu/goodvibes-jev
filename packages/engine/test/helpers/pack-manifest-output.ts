@@ -1,6 +1,6 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
-// Match release-shared.ts packStage and tar-inspection budgets (THE47).
+// Match release-shared.ts packStage and tar-inspection budgets.
 // A complete engine file listing exceeds the subprocess default 1 MiB.
 const PACK_MANIFEST_MAX_BUFFER = 32 * 1024 * 1024;
 

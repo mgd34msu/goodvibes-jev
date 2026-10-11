@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { createDaemonTelemetryRouteHandlers } from '../daemon-sdk/src/telemetry-routes.js';
 import type { AuthenticatedPrincipal } from '../daemon-sdk/src/http-policy.js';
 import { DaemonErrorCategory } from '../errors/src/daemon-error-contract.js';
@@ -8,6 +10,8 @@ import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.js';
 import { TelemetryApiService, TelemetryRawViewDisabledError } from '../sdk/src/platform/runtime/telemetry/api.js';
 import { sanitizeRecord, sanitizeSpan } from '../sdk/src/platform/runtime/telemetry/api-helpers.js';
 import { setTelemetryIncludeRawPrompts } from '../sdk/src/platform/runtime/telemetry/redaction-config.js';
+import { fieldKind, type FieldKind } from '../sdk/src/platform/utils/batteries/field-kind.js';
+import { isSensitiveTelemetryKey } from '../sdk/src/platform/utils/redaction.js';
 
 const prompt = 'PRIVATE_PROMPT_OPT_IN_SENTINEL';
 const failure = 'PRIVATE_FAILURE_OPT_IN_SENTINEL';
@@ -19,10 +23,48 @@ const principal = (scopes: readonly string[], admin = false): AuthenticatedPrinc
 });
 const sensitive = principal(['read:telemetry', 'read:telemetry-sensitive']);
 const admin = principal(['read:telemetry'], true);
+const fieldRoles: Readonly<Record<string, FieldKind>> = {
+  domain: 'other', eventType: 'other', source: 'other', traceId: 'other', sessionId: 'other',
+  type: 'other', turnId: 'other', stopReason: 'other',
+  prompt: 'content', error: 'content', message: 'content', summary: 'content', hint: 'content', name: 'content',
+};
+let previousPort: ReturnType<typeof installJudgmentPort>;
+let fieldRequests: ReturnType<typeof fakePort>['requests'] = [];
+
+beforeEach(async () => {
+  const fixture = fakePort((name, question, state) => {
+    const field = state !== null && typeof state === 'object' && 'field' in state ? state.field : undefined;
+    if (name !== 'kind' || typeof field !== 'string' || JSON.stringify(state) !== JSON.stringify({ field })) {
+      throw new Error('Unscripted telemetry field fixture');
+    }
+    const role = Object.hasOwn(fieldRoles, field) ? fieldRoles[field] : undefined;
+    if (role === undefined) throw new Error('Unscripted telemetry field fixture');
+    return choiceAnswer(question, role, 0.99);
+  });
+  fieldRequests = fixture.requests;
+  previousPort = installJudgmentPort({ model: fixture.port.model, ask(request) {
+    if (request.context?.battery !== fieldKind.name || request.model !== fieldKind.model
+      || JSON.stringify(request.questions) !== JSON.stringify({ kind: fieldKind.items.kind.question })) {
+      throw new Error('Unscripted telemetry privacy contract');
+    }
+    return fixture.port.ask(request);
+  } });
+  for (const field of Object.keys(fieldRoles)) isSensitiveTelemetryKey(field);
+  await flush();
+  for (const [field, role] of Object.entries(fieldRoles)) {
+    expect(isSensitiveTelemetryKey(field)).toBe(role !== 'other');
+  }
+});
 
 afterEach(() => {
-  for (const service of services.splice(0)) service.dispose();
-  setTelemetryIncludeRawPrompts(false);
+  try {
+    for (const service of services.splice(0)) service.dispose();
+    setTelemetryIncludeRawPrompts(false);
+  } finally { installJudgmentPort(previousPort); }
+  const wire = JSON.stringify(fieldRequests);
+  for (const privateText of [prompt, failure, spanName, 'synthetic-telemetry-secret', '4111 1111 1111 1111']) {
+    expect(wire).not.toContain(privateText);
+  }
 });
 
 function createFixture(enabled = false) {
@@ -158,7 +200,13 @@ describe('telemetry opt-in at the actual egress boundary', () => {
     expect(ready).toContain('"rawAccessible":false');
     fixture.submit();
     await flush();
-    expect(new TextDecoder().decode((await reader.read()).value)).not.toContain(prompt);
+    const event = new TextDecoder().decode((await reader.read()).value);
+    expect(event).not.toContain(prompt);
+    expect(event).toContain('"domain":"turn"');
+    expect(event).toContain('"type":"TURN_SUBMITTED"');
+    expect(event).toContain('"traceId":"0123456789abcdef0123456789abcdef"');
+    expect(event).toContain('"sessionId":"telemetry-session"');
+    expect(event).toContain('"prompt":"[REDACTED_TEXT]"');
     await reader.cancel();
   });
 
@@ -182,5 +230,45 @@ describe('telemetry opt-in at the actual egress boundary', () => {
     expect(JSON.stringify(safeSpan)).not.toContain(failure);
     expect(safeSpan.status.code).toBe(rawSpan.status.code);
     expect(sanitizeSpan(rawSpan, 'raw').status.message).toBe(failure);
+  });
+
+  test('unknown field roles and a replaced privacy port withhold complete private payloads', async () => {
+    const fixture = createFixture(true);
+    await populate(fixture);
+    const privateText = `${prompt} Authorization: Bearer synthetic-telemetry-secret card 4111 1111 1111 1111`;
+    const raw = { ...fixture.service.listEvents({ view: 'raw' })[0]!,
+      payload: { opaqueExtension: { nested: privateText } },
+      attributes: { opaqueExtension: privateText },
+    };
+    const held = sanitizeRecord(raw, 'safe');
+    expect(held.payload).toEqual({ opaqueExtension: '[REDACTED]' });
+    expect(held.attributes).toEqual({ opaqueExtension: '[REDACTED]' });
+    expect(held.type).toBe(raw.type);
+    expect(held.timestamp).toBe(raw.timestamp);
+    const ownedPort = installJudgmentPort(undefined);
+    try {
+      const replaced = sanitizeRecord({ ...raw, payload: { prompt: privateText }, attributes: { prompt: privateText } }, 'safe');
+      expect(replaced.payload).toEqual({ prompt: '[REDACTED]' });
+      expect(replaced.attributes).toEqual({ prompt: '[REDACTED]' });
+      expect(JSON.stringify(replaced)).not.toContain(prompt);
+      expect(JSON.stringify(replaced)).not.toContain('synthetic-telemetry-secret');
+      expect(JSON.stringify(replaced)).not.toContain('4111 1111 1111 1111');
+    } finally { installJudgmentPort(ownedPort); }
+  });
+
+  test('aborting the safe SSE request closes egress before later private events', async () => {
+    const fixture = createFixture();
+    const controller = new AbortController();
+    const response = fixture.service.createStream(new Request('http://localhost/api/v1/telemetry?view=safe', {
+      signal: controller.signal,
+    }));
+    const reader = response.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain('"view":"safe"');
+    controller.abort();
+    expect((await reader.read()).done).toBe(true);
+    fixture.submit('AFTER_ABORT_PRIVATE_PROMPT');
+    await flush();
+    expect((await reader.read()).done).toBe(true);
+    reader.releaseLock();
   });
 });

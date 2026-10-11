@@ -306,7 +306,7 @@ export class CodeIndexStore {
     return this.embeddingRegistry.getDefaultProviderId() !== HASHED_MEMORY_EMBEDDING_PROVIDER.id;
   }
 
-  /** Stated once, honest: why Stage-B auto-retrieval (a later wave) would be absent right now. Null when a real provider is active. */
+  /** Stated once, honest: why code auto-retrieval would be absent right now. Null when a real provider is active. */
   describeDegradation(): string | null {
     return this.hasSemanticProvider()
       ? null

@@ -77,7 +77,7 @@ function serializeWorkItem(item: WorkItem): SerializedWorkItem {
 }
 
 function deserializeWorkItem(raw: SerializedWorkItem): WorkItem {
-  // `dependsOn` (BIG-3 item 2) defaults to [] for snapshots written before the
+  // `dependsOn` defaults to [] for snapshots written before the
   // field existed, so an older snapshot deserializes as an un-gated item rather
   // than crashing the dependency pre-pass on an undefined array.
   return { ...raw, dependsOn: raw.dependsOn ?? [], visits: new Map(Object.entries(raw.visits)) };

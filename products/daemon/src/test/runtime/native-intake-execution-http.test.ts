@@ -1,4 +1,5 @@
 /** Real DaemonServer source2 admission -> native graph HTTP proof and unchanged browser replay captures. */
+import { operationJudgmentRequests } from '../helpers/field-name-privacy-requests.js';
 import { expect, spyOn, test } from 'bun:test';
 import * as ledger from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -53,7 +54,7 @@ async function admitted(f: Fixture, name: string) {
   const transition = { inputId: input.inputId, sourceRevision: captured.sourceRef.sourceRevision };
   const getCaptured = await f.wire('workLedger.intake.get', { inputId: input.inputId });
   expect(getCaptured.body).toBe(capture.body);
-  expect(f.requests).toHaveLength(0); expect(f.judgmentRequests).toHaveLength(0);
+  expect(f.requests).toHaveLength(0); expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(0);
   const admit = await f.wire('workLedger.intake.admit', transition);
   const result = intake(admit);
   if (result.kind !== 'work') throw new Error(`Expected admitted source2 work: ${admit.body}`);
@@ -63,12 +64,12 @@ async function admitted(f: Fixture, name: string) {
   expect(result.receipt.expectedRevision).toEqual({ work: 1, criteria: 1, attempt: 1 });
   const identity: NativeWorkExecutionRequest = { projectId: result.projectId, workId: result.receipt.workId,
     attemptId: result.receipt.attemptId, expectedRevision: result.receipt.expectedRevision };
-  const readings = f.judgmentRequests.length;
+  const readings = operationJudgmentRequests(f.judgmentRequests).length;
   const get = await f.wire('workLedger.intake.get', { inputId: input.inputId });
   expect(get.body).toBe(admit.body);
   const notStarted = await f.wire('workLedger.execution.status', identity);
   expect(notStarted.status).toBe(404); expect(notStarted.body).toContain('NATIVE_EXECUTION_NOT_FOUND');
-  expect(f.requests).toHaveLength(1); expect(f.judgmentRequests).toHaveLength(readings);
+  expect(f.requests).toHaveLength(1); expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings);
   expect(f.daemon.services.agentManager.list()).toHaveLength(0);
   expect(f.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
   return { input, auth, project, lookupBefore, capture, getCaptured, transition, admit, get, identity, notStarted };
@@ -114,7 +115,7 @@ test('generated criteria digest with a card-shaped digit span executes through t
     expect(plans[0]!.decision.outcome).toBe('act');
     expect(plans[0]!.decision.evidence).toContainEqual({ id: criteriaId.slice('criteria:'.length), revision: '1' });
     expect(plans[0]!.decision.judgmentDecisionIds.length).toBeGreaterThan(0);
-    expect(f.judgmentRequests.some(request => request.context?.site === 'contract.native.plan')).toBe(true);
+    expect(operationJudgmentRequests(f.judgmentRequests).some(request => request.context?.site === 'contract.native.plan')).toBe(true);
   } finally { try { await f?.stop(); } finally { generated.mockRestore(); } }
 }, 30_000);
 
@@ -144,7 +145,7 @@ test('source2 work executes once in the production native graph and reconciles l
     expect(f.contracts()[0]!.nativeSource).toMatchObject({ goal: TEXT, criteria: [TEXT],
       sourceId: admittedWork.sourceRef.sourceId,
       sourceRevision: base.transition.sourceRevision });
-    const nativeReadings = f.judgmentRequests.filter(request => request.context?.site === 'work-ledger.native-start');
+    const nativeReadings = operationJudgmentRequests(f.judgmentRequests).filter(request => request.context?.site === 'work-ledger.native-start');
     expect(nativeReadings).toHaveLength(1);
     expect(nativeReadings[0]!.state).toMatchObject({ input: { originalSource: { goal: TEXT, criteria: [TEXT] }, revisions: base.identity.expectedRevision } });
     expect(unitRequests(f)[0]!.messages.some(message => JSON.stringify(message).includes(JSON.stringify(TEXT).slice(1, -1)))).toBe(true);
@@ -160,11 +161,11 @@ test('source2 work executes once in the production native graph and reconciles l
     expect(settled).toMatchObject({ kind: 'execution', receipt: started.receipt, expectedRevision: base.identity.expectedRevision,
       progress: { status: 'passed', sessionMode: true, units: { total: 1, passed: 1, failed: 0 } }, settlement: { state: 'published' }, stale: true, currentAttempt: false });
     expect(settled.currentRevision).not.toEqual(base.identity.expectedRevision);
-    const readings = f.judgmentRequests.length, providers = f.requests.length;
+    const readings = operationJudgmentRequests(f.judgmentRequests).length, providers = f.requests.length;
     const resume = await f.wire('workLedger.execution.resume', base.identity);
     const afterResume = await f.wire('workLedger.execution.status', base.identity);
     expect(resume.body).toBe(terminal.body); expect(afterResume.body).toBe(terminal.body);
-    expect(f.judgmentRequests).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
+    expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
     expect(unitRequests(f)).toHaveLength(1);
     const wrongRevision = await f.wire('workLedger.execution.resume', { ...base.identity, expectedRevision: settled.currentRevision });
     expect(wrongRevision.status).toBe(409);
@@ -178,7 +179,7 @@ test('target-aware cancellation prevents a first start and never invents receipt
   const f = await createNativeIntakeExecutionHttpFixture();
   try {
     const base = await admitted(f, 'prevented');
-    const readings = f.judgmentRequests.length, providers = f.requests.length;
+    const readings = operationJudgmentRequests(f.judgmentRequests).length, providers = f.requests.length;
     const cancel = await f.wire('workLedger.execution.cancel', base.identity);
     expect(execution(cancel)).toMatchObject({ kind: 'prevented-before-admission', state: 'cancelled', recovery: 'cancelled' });
     const start = await f.wire('workLedger.execution.start', base.identity);
@@ -189,7 +190,7 @@ test('target-aware cancellation prevents a first start and never invents receipt
       expect(wire.body).toBe(cancel.body);
       const value = execution(wire); expect('receipt' in value).toBe(false); expect('progress' in value).toBe(false);
     }
-    expect(f.judgmentRequests).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
+    expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
     exportCapture('prevented', { ...base, cancel, start, status, resume, repeatCancel });
   } finally { await f.stop(); }
 }, 30_000);
@@ -239,23 +240,23 @@ for (const kind of ['required', 'refused'] as const) test(`${kind} execution int
     expect(start.status).toBe(kind === 'refused' ? 422 : 503);
     const status = await f.wire('workLedger.execution.status', base.identity);
     expect(execution(status)).toMatchObject({ kind: 'pending-intent', state: kind === 'refused' ? 'refused' : 'admitting', recovery: 'required' });
-    const readings = f.judgmentRequests.length, providers = f.requests.length;
+    const readings = operationJudgmentRequests(f.judgmentRequests).length, providers = f.requests.length;
     const repeatStart = await f.wire('workLedger.execution.start', base.identity);
     if (kind === 'refused') expect(repeatStart.status).toBe(422);
     else expect(repeatStart.body).toBe(status.body);
     const inspectAgain = await f.wire('workLedger.execution.status', base.identity);
     expect(inspectAgain.body).toBe(status.body);
     expect((await f.wire('workLedger.intake.get', { inputId: base.input.inputId })).body).toBe(base.admit.body);
-    expect(f.judgmentRequests).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
+    expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
     const staleResume = await f.wire('workLedger.execution.resume', { ...base.identity, expectedRevision: { ...base.identity.expectedRevision, criteria: 2 } });
-    expect(staleResume.status).toBe(409); expect(f.judgmentRequests).toHaveLength(readings);
+    expect(staleResume.status).toBe(409); expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings);
     f.controls.refuseExecution = false;
     const resume = await f.wire('workLedger.execution.resume', base.identity);
     expect(execution(resume).kind).toBe('execution');
     const afterResume = await waitStatus(f, base.identity, value => value.kind === 'execution' && value.settlement?.state === 'published');
     expect(execution(afterResume)).toMatchObject({ expectedRevision: base.identity.expectedRevision, progress: { status: 'passed' } });
     expect(unitRequests(f)).toHaveLength(1);
-    expect(f.judgmentRequests.filter(request => request.context?.site === 'work-ledger.native-start')).toHaveLength(2);
+    expect(operationJudgmentRequests(f.judgmentRequests).filter(request => request.context?.site === 'work-ledger.native-start')).toHaveLength(2);
     exportCapture(kind, { ...base, start, status, repeatStart, inspectAgain, staleResume, resume, afterResume });
   } finally { await f.stop(); }
 }, 30_000);
@@ -301,9 +302,9 @@ test('terminal settlement failure stays distinct and explicit resume verifies wi
     const failed = await waitStatus(f, base.identity, value => value.kind === 'execution' && value.progress?.status === 'passed' && value.settlement?.state === 'failed');
     expect(execution(failed)).toMatchObject({ kind: 'execution', expectedRevision: base.identity.expectedRevision, currentAttempt: true, stale: false,
       progress: { status: 'passed' }, settlement: { state: 'failed' } });
-    const providers = f.requests.length, readings = f.judgmentRequests.length;
+    const providers = f.requests.length, readings = operationJudgmentRequests(f.judgmentRequests).length;
     const inspectAgain = await f.wire('workLedger.execution.status', base.identity);
-    expect(inspectAgain.body).toBe(failed.body); expect(f.judgmentRequests).toHaveLength(readings);
+    expect(inspectAgain.body).toBe(failed.body); expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings);
     f.controls.failSettlement = false;
     const resume = await f.wire('workLedger.execution.resume', base.identity);
     expect(execution(resume)).toMatchObject({ kind: 'execution', progress: { status: 'passed' }, settlement: { state: 'published' }, expectedRevision: base.identity.expectedRevision, currentAttempt: false, stale: true });
@@ -321,7 +322,7 @@ test('all execution operations reject foreign, shared, revoked and missing-scope
     const base = await admitted(f, 'auth');
     const foreign = f.daemon.services.pairingTokens.mint({ name: 'Other owned synthetic principal' });
     const denied: NativeIntakeExecutionHttpWire[] = [];
-    const readings = f.judgmentRequests.length, providers = f.requests.length;
+    const readings = operationJudgmentRequests(f.judgmentRequests).length, providers = f.requests.length;
     for (const operation of ['start', 'status', 'cancel', 'resume'] as const) {
       expect(f.daemon.services.gatewayMethods.get(`workLedger.execution.${operation}`)?.scopes).toEqual(['read:work-ledger', 'write:fleet']);
       const shared = await f.wire(`workLedger.execution.${operation}`, base.identity, f.daemon.token);
@@ -357,7 +358,7 @@ test('all execution operations reject foreign, shared, revoked and missing-scope
       const wire = await f.wire(`workLedger.execution.${operation}`, base.identity);
       expect(wire.status).toBe(401); denied.push(wire);
     }
-    expect(f.judgmentRequests).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
+    expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(readings); expect(f.requests).toHaveLength(providers);
     expect(unitRequests(f)).toHaveLength(0);
     exportCapture('auth-denied', { ...base, prevented, denied });
   } finally { await f.stop(); }
@@ -386,12 +387,12 @@ test('cold daemon status exposes required settlement and explicit resume only pu
       settlement: { state: 'required' }, expectedRevision: base.identity.expectedRevision, currentAttempt: true, stale: false });
     const inspectAgain = await cold.wire('workLedger.execution.status', base.identity);
     expect(inspectAgain.body).toBe(status.body);
-    expect(cold.requests).toHaveLength(0); expect(cold.judgmentRequests).toHaveLength(0);
+    expect(cold.requests).toHaveLength(0); expect(operationJudgmentRequests(cold.judgmentRequests)).toHaveLength(0);
     const resume = await cold.wire('workLedger.execution.resume', base.identity);
     expect(execution(resume)).toMatchObject({ kind: 'execution', receipt: before.receipt, progress: { status: 'passed' },
       settlement: { state: 'published' }, expectedRevision: base.identity.expectedRevision, currentAttempt: false, stale: true });
     expect(cold.requests).toHaveLength(0);
-    expect(cold.judgmentRequests.map(request => request.context?.site).sort()).toEqual(['contract.check.unit-judge', 'contract.check.unit-quality']);
+    expect(operationJudgmentRequests(cold.judgmentRequests).map(request => request.context?.site).sort()).toEqual(['contract.check.unit-judge', 'contract.check.unit-quality']);
     // Lose resume's acknowledgment, reopen again, and reconcile the original
     // durable settlement without another check or foreground body.
     await cold.stop();
@@ -399,7 +400,7 @@ test('cold daemon status exposes required settlement and explicit resume only pu
     const afterResume = await cold.wire('workLedger.execution.status', base.identity);
     const repeatResume = await cold.wire('workLedger.execution.resume', base.identity);
     expect(afterResume.body).toBe(resume.body); expect(repeatResume.body).toBe(resume.body);
-    expect(cold.requests).toHaveLength(0); expect(cold.judgmentRequests).toHaveLength(0);
+    expect(cold.requests).toHaveLength(0); expect(operationJudgmentRequests(cold.judgmentRequests)).toHaveLength(0);
     exportCapture('settlement-required', { ...base, auth, project, get, start, failed, status, inspectAgain, resume, afterResume, repeatResume });
   } finally { if (cold) await cold.stop(); else await warm.stop(); }
 }, 30_000);
@@ -428,13 +429,13 @@ test('a real queued prepared attempt survives process exit and only explicit res
     const inspectAgain = await f.wire('workLedger.execution.status', base.identity);
     const get = await f.wire('workLedger.intake.get', { inputId: input.inputId });
     expect(inspectAgain.body).toBe(status.body); expect(get.body).toBe(base.admit.body);
-    expect(f.requests).toHaveLength(0); expect(f.judgmentRequests).toHaveLength(0);
+    expect(f.requests).toHaveLength(0); expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(0);
     const resume = await f.wire('workLedger.execution.resume', base.identity);
     expect(execution(resume)).toMatchObject({ kind: 'execution', receipt: started.receipt, expectedRevision: base.identity.expectedRevision });
     const afterResume = await waitStatus(f, base.identity, value => value.kind === 'execution' && value.settlement?.state === 'published');
     expect(execution(afterResume)).toMatchObject({ kind: 'execution', receipt: started.receipt, progress: { status: 'passed' } });
     expect(unitRequests(f)).toHaveLength(1);
-    expect(f.judgmentRequests.filter(request => request.context?.site === 'work-ledger.native-start')).toHaveLength(1);
+    expect(operationJudgmentRequests(f.judgmentRequests).filter(request => request.context?.site === 'work-ledger.native-start')).toHaveLength(1);
     exportCapture('prepared', { ...base, auth, project, get, status, inspectAgain, resume, afterResume });
   } finally { await f.stop(); }
 }, 40_000);

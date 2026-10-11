@@ -1,4 +1,4 @@
-/** Generic PR57 storage compatibility; intentionally no legacy planning actions. */
+/** Generic storage compatibility; intentionally no legacy planning actions. */
 import { KnowledgeStore, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { SQLiteStore } from '@goodvibes-jev/engine/sdk/platform/state';
 declare const store: KnowledgeStore;

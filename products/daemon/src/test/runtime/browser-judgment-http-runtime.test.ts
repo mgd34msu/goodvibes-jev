@@ -6,9 +6,12 @@ import { WEBUI_COMMAND_CATALOG_VERSION } from '@goodvibes-jev/engine/sdk/platfor
 import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
 import { startDaemonFixture } from '../../testing/daemon-fixture.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { operationJudgmentRequests } from '../helpers/field-name-privacy-requests.js';
 
 const PALETTE = 'webui.palette.command-rank';
 const ERROR = 'webui.errors.daemon-refusal';
+const FAILURE_MESSAGE = 'The synthetic conversation has finished and cannot accept this operation.';
+const FAILURE_SOURCE = { phase: 'source', parts: [{ kind: 'text', text: FAILURE_MESSAGE }], target: 'whole-line' };
 const barrier = () => Promise.withResolvers<void>();
 type WireRequest = { readonly state: unknown; readonly questions: Readonly<Record<string, unknown>> };
 async function fixture() {
@@ -19,6 +22,10 @@ async function fixture() {
     if (new URL(request.url).pathname !== '/v1/systemone') return new Response(null, { status: 404 });
     const input = await request.json() as WireRequest;
     calls.push(input); await beforeAnswer?.();
+    if (Object.hasOwn(input.questions, 'lineHasCredential') || Object.hasOwn(input.questions, 'spanIsCredential')) {
+      expect(Object.keys(input.questions).sort()).toEqual(['lineHasCredential', 'spanIsCredential']);
+      expect(input.state).toEqual(FAILURE_SOURCE);
+    }
     return Response.json({ model: 'jev-1.13.0', answers: Object.fromEntries(Object.keys(input.questions).map((name) =>
       [name, { type: 'noul', noul: name === 'match' ? probability : name === 'session_closed' ? 0.99 : 0.01 }])),
       usage: { input_tokens: 1, output_tokens: 1 } });
@@ -64,13 +71,13 @@ test('production composition ranks genuine host titles, records evidence, and is
     const response = await f.wire(f.palette());
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect(response.body).toMatchObject({ status: 'settled', evidence: [{ decisionId: expect.any(String) }, { decisionId: expect.any(String) }] });
-    expect(f.calls).toHaveLength(2);
-    expect(f.calls.map(call => call.state)).toMatchObject([{ candidate: { title: 'Go to Chat' } }, { candidate: { title: 'Synthetic café plans' } }]);
+    expect(operationJudgmentRequests(f.calls)).toHaveLength(2);
+    expect(operationJudgmentRequests(f.calls).map(call => call.state)).toMatchObject([{ candidate: { title: 'Go to Chat' } }, { candidate: { title: 'Synthetic café plans' } }]);
     expect(JSON.stringify(f.calls)).not.toContain(f.chat.sessionId);
     expect(f.daemon.services.judgment.decisionLog.query({ battery: PALETTE })).toHaveLength(2);
     f.daemon.services.gatewayMethods.register({ id: 'synthetic.browser.failure', title: 'Synthetic failure', description: 'Owned failure source',
       category: 'sessions', access: 'authenticated', source: 'builtin', transport: ['http'], scopes: ['read:sessions'],
-    }, async () => { throw new Error('The synthetic conversation has finished and cannot accept this operation.'); });
+    }, async () => { throw new Error(FAILURE_MESSAGE); });
     const failure = await f.daemon.fetch('/api/control-plane/methods/synthetic.browser.failure/invoke', { method: 'POST', body: '{"body":{}}' });
     const failed = await failure.json() as { errorRef?: string };
     expect(failure.status).toBe(500); expect(failed.errorRef).toBeString(); expect(failure.headers.get('cache-control')).toBe('no-store');
@@ -81,7 +88,11 @@ test('production composition ranks genuine host titles, records evidence, and is
     expect((await f.wire({ protocolVersion: 1, requestId: crypto.randomUUID(), battery: ERROR, batteryVersion: 1, input: { errorRef: failed.errorRef! } }, { token: paired.token })).status).toBe(422);
     const known = await f.daemon.fetch('/api/companion/chat/sessions/absent-synthetic-session');
     expect(await known.json()).toMatchObject({ code: 'SESSION_NOT_FOUND' });
-    expect(f.calls).toHaveLength(3);
+    const requests = operationJudgmentRequests(f.calls);
+    expect(requests).toHaveLength(4);
+    expect(requests[2]?.state).toEqual(FAILURE_SOURCE);
+    expect(Object.keys(requests[2]?.questions ?? {}).sort()).toEqual(['lineHasCredential', 'spanIsCredential']);
+    expect(requests[3]?.state).toMatchObject({ methodId: 'synthetic.browser.failure', message: '[REDACTED]', status: 500 });
   } finally { await f.stop(); }
 }, 30_000);
 
@@ -90,12 +101,12 @@ test('all candidates resolve before transmission; uncertain and missing-key call
   try {
     const input = f.palette();
     const missing = { ...input, input: { ...input.input, candidates: [...input.input.candidates, { kind: 'chat' as const, sessionId: 'absent-synthetic-chat' }] } };
-    expect((await f.wire(missing)).status).toBe(422); expect(f.calls).toHaveLength(0);
+    expect((await f.wire(missing)).status).toBe(422); expect(operationJudgmentRequests(f.calls)).toHaveLength(0);
     f.setProbability(0.5);
     const uncertain = await f.wire(input); expect(uncertain.body.status).toBe('held'); expect(uncertain.body).not.toHaveProperty('value');
-    const count = f.calls.length;
+    const count = operationJudgmentRequests(f.calls).length;
     f.setKey(async () => null);
-    const absent = await f.wire(f.palette()); expect(absent.status).toBe(503); expect(absent.body).not.toHaveProperty('value'); expect(f.calls).toHaveLength(count);
+    const absent = await f.wire(f.palette()); expect(absent.status).toBe(503); expect(absent.body).not.toHaveProperty('value'); expect(operationJudgmentRequests(f.calls)).toHaveLength(count);
   } finally { await f.stop(); }
 }, 30_000);
 
@@ -116,7 +127,7 @@ test.each(['settings', 'authentication', 'rename', 'shutdown'] as const)('actual
     release.resolve();
     const result = await pending;
     expect(result).not.toMatchObject({ status: 200 });
-    expect(f.calls).toHaveLength(0);
+    expect(operationJudgmentRequests(f.calls)).toHaveLength(0);
     expect(f.daemon.services.judgment.decisionLog.query({ battery: PALETTE })).toEqual([]);
   } finally { release.resolve(); await pending; await f.stop(); }
 }, 30_000);
@@ -132,6 +143,6 @@ test('revocation after provider dispatch prevents retained answers; a fresh requ
     expect((await pending).status).toBe(422);
     expect(f.daemon.services.judgment.decisionLog.query({ battery: PALETTE })).toEqual([]);
     expect((await f.wire(f.palette())).status).toBe(200);
-    expect(f.calls.at(-1)?.state).toMatchObject({ candidate: { title: 'Changed synthetic title' } });
+    expect(operationJudgmentRequests(f.calls).at(-1)?.state).toMatchObject({ candidate: { title: 'Changed synthetic title' } });
   } finally { release.resolve(); await pending.catch(() => {}); await f.stop(); }
 }, 30_000);

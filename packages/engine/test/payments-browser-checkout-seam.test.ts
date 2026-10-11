@@ -127,7 +127,7 @@ class ScriptedStaleElementError extends Error {
  * An engine with nothing behind it, but one that models the real engine's
  * snapshot lifecycle rather than hiding it.
  *
- * This is the fake that let BLOCKING 1 through the first time: it recorded
+ * This earlier fake concealed the ref-resolution failure: it recorded
  * every `fillSecret` call and never modelled that the real engine cleared ref
  * resolution afterward, so a driver that called it once per card field looked
  * fine here and died on the second field against a real browser. This version
@@ -340,7 +340,7 @@ describe('the driver over a browser engine', () => {
   });
 
   test('several card fields fill in one batch, and the submit ref still resolves afterward', async () => {
-    // This is BLOCKING 1: a real engine cleared ref resolution after every
+    // A real engine cleared ref resolution after every
     // single fillSecret call, so a driver that typed one field per call died
     // on the second field, and the place-order ref was dead too by the time
     // submit ran. The fix batches every field into one call and defers
@@ -651,7 +651,7 @@ describe('SF-5: a pre-click refusal never forwards the engine\'s own message tex
   });
 });
 
-// ── The composition-only approval path (BLOCKING 3) ─────────────────────────
+// ── The composition-only approval path ─────────────────────────
 
 describe('the seam carries a composition-only path to arm the submit approval', () => {
   test('armSubmitApproval reaches the real engine, and is not on the payments-facing surface', async () => {
@@ -988,7 +988,7 @@ describe('a daemon-style composition can now serve all seven payments verbs', ()
       { body: beginParams() } as never,
     ) as Record<string, unknown>;
 
-    // BLOCKING 2: this composition wired no describeSubmission, so the
+    // This composition wired no describeSubmission, so the
     // submission is honestly unverified rather than a claimed "purchased"
     // indistinguishable from a confirmed one. The money still moved (see the
     // dedicated describe block below for the record and the report).
@@ -1226,7 +1226,7 @@ describe('BLOCKING 1: the redactor stays armed on every exit where card digits m
   });
 });
 
-// ── BLOCKING 2: verified is evidence-based ──────────────────────────────────
+// ── verified is evidence-based ──────────────────────────────────
 //
 // `describeSubmission` being WIRED used to be enough on its own to mark a
 // submission `verified: true`, regardless of what it actually returned. A
@@ -1235,7 +1235,7 @@ describe('BLOCKING 1: the redactor stays armed on every exit where card digits m
 // "Bought it." report. `verified` now requires the description to carry
 // something the composition actually found: an order id, a challenge, or an
 // explicit `confirmed: true`.
-describe('BLOCKING 2: verified requires evidence, not merely a describeSubmission wired', () => {
+describe('verified requires evidence, not merely a describeSubmission wired', () => {
   test('describeSubmission wired but finding nothing still yields submitted-unverified', async () => {
     const harness = await sevenVerbComposition({
       async describeSubmission() {

@@ -1,5 +1,5 @@
 /**
- * γ2: ProcessManager.spawn timeout + SIGKILL deadline + error surfacing
+ * ProcessManager.spawn timeout + SIGKILL deadline + error surfacing
  *
  * Tests:
  * a) Hanging process: spawn with timeout_ms:100, verifies killDeadline is set

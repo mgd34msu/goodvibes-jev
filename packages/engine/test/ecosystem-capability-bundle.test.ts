@@ -2,8 +2,7 @@
  * ecosystem-capability-bundle.test.ts
  *
  * Covers the capability-bundle format, SHA-256-pinned distribution, quarantine-
- * on-install, and the governed marketplace index (deliverable 1 of the
- * open-platform round).
+ * on-install, and the governed marketplace index.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';

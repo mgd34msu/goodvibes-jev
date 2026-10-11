@@ -233,7 +233,7 @@ describe('RRULE expansion (honest subset)', () => {
   });
 });
 
-// --- cross-zone comparator (F4) ----------------------------------------------
+// --- cross-zone comparator ----------------------------------------------
 
 describe('compareEventDateTime / eventDateTimeEpochMs', () => {
   const utc = (value: string): EventDateTime => ({ value, kind: 'date-time', zone: 'utc' });

@@ -135,11 +135,17 @@ export class AppError extends GoodVibesSdkError {
 /** Thrown when configuration is invalid or cannot be loaded. Non-recoverable. */
 export class ConfigError extends AppError {
   declare readonly code: 'CONFIG_ERROR';
-  constructor(message: string) {
+  constructor(message: string, options: Pick<AppErrorOptions, 'cause'> = {}) {
     super(message, 'CONFIG_ERROR', false, {
       category: 'config',
       source: 'config',
+      cause: options.cause,
     });
+  }
+
+  override toJSON(): Record<string, unknown> {
+    return { name: this.name, message: this.message, kind: this.kind, code: this.code,
+      category: this.category, source: this.source, recoverable: this.recoverable };
   }
 }
 

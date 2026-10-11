@@ -4,7 +4,7 @@
  * Usage:
  *   bun scripts/print-test-coverage.ts
  *
- * This script globs all test/*.test.ts files, sorts them, numbers them T001+,
+ * This script globs all test/*.test.ts files, sorts them,
  * and prints a Markdown table to stdout. Redirect to COVERAGE.md to regenerate:
  *
  *   bun scripts/print-test-coverage.ts > COVERAGE.md
@@ -41,7 +41,7 @@ workersFiles.sort();
 
 const header = `# Test Coverage Map
 
-This file maps test file numbers to test files for navigation and review.
+This file lists test files for navigation and review.
 Generated from the sorted list of \`test/*.test.ts\` root-level files.
 Integration tests live under \`test/integration/\` and are listed separately.
 
@@ -49,31 +49,31 @@ Regenerate via \`bun scripts/print-test-coverage.ts > COVERAGE.md\`
 
 ## Root-level tests (\`test/*.test.ts\`)
 
-| # | File |
-|---|------|`;
+| File |
+|------|`;
 
 const rows = files
-  .map((file, i) => `| T${String(i + 1).padStart(3, '0')} | \`test/${file}\` |`)
+  .map(file => `| \`test/${file}\` |`)
   .join('\n');
 
 const integrationHeader = `
 ## Integration tests (\`test/integration/**/*.test.ts\`)
 
-| # | File |
-|---|------|`;
+| File |
+|------|`;
 
 const integrationRows = integrationFiles
-  .map((file, i) => `| I${String(i + 1).padStart(3, '0')} | \`test/${file}\` |`)
+  .map(file => `| \`test/${file}\` |`)
   .join('\n');
 
 const workersHeader = `
 ## Sub-runner tests (\`test/workers*/**/*.test.ts\`)
 
-| # | File |
-|---|------|`;
+| File |
+|------|`;
 
 const workersRows = workersFiles
-  .map((file, i) => `| W${String(i + 1).padStart(3, '0')} | \`test/${file}\` |`)
+  .map(file => `| \`test/${file}\` |`)
   .join('\n');
 
 console.log(`${header}\n${rows}\n`);

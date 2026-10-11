@@ -1,6 +1,6 @@
 /**
  * SessionManager.list counts messages from the parsed records, and search
- * logs the session it was reading. Both were found on the E.16 re-read:
+ * logs the session it was reading. The previous defects were:
  * list tested substrings of each line (a `"removed":true` written after the
  * first 60 characters was counted as live, and any record whose text held
  * `"type":"message"` was counted as a message), and search's warnings named

@@ -77,6 +77,12 @@ interface VerbFamily {
  */
 const VERB_FAMILIES: readonly VerbFamily[] = [
   {
+    family: 'automation.*',
+    reason: 'The actual service graph constructs the native automation manager and registers paired autonomous mutation handlers with its original host owner.',
+    methodIds: ['automation.jobs.create', 'automation.jobs.delete', 'automation.jobs.disable', 'automation.jobs.enable', 'automation.jobs.update',
+      'automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable', 'automation.schedules.enable'],
+  },
+  {
     family: 'contracts.*',
     reason: 'The actual service graph constructs createDaemonContractServices and threads its runner/operator into gateway registration.',
     methodIds: ['contracts.cancel', 'contracts.get', 'contracts.list', 'contracts.reply', 'contracts.start'],

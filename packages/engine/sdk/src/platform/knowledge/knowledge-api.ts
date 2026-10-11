@@ -122,7 +122,7 @@ export type MemoryApiRegistry = Pick<
 
 /**
  * memory-api-parallel query surface for the repo source-tree code index
- * (Stage A, see CHANGELOG 0.38.0). Deliberately NOT folded into MemoryApi:
+ * (see CHANGELOG 0.38.0). Deliberately NOT folded into MemoryApi:
  * CodeContextResult/CodeIndexStats are a different record shape than
  * MemoryRecord, and code-index retrieval carries no cls/reviewState/trustTier
  * provenance semantics, see createCodeIndexApi / createMemoryApi below.

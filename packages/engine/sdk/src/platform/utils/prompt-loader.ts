@@ -24,7 +24,7 @@ export function readPromptFile(
   const seen = visited ?? new Set<string>();
   const resolved = resolve(filePath);
 
-  // Fix #3: >= maxDepth so depths 0-4 are valid (5 levels of nesting)
+  // >= maxDepth so depths 0-4 are valid (5 levels of nesting)
   if (currentDepth >= maxDepth) {
     logger.debug('System prompt include skipped because max depth was reached', {
       path: resolved,

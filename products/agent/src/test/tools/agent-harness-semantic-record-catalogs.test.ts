@@ -158,10 +158,19 @@ describe('canonical semantic record catalogs', () => {
 
   for (const probability of [0.5, 0.575]) {
     test(`autonomy holds unsettled native membership ${probability} before publishing an empty capability lane`, async () => {
-      const fake = fakePort(name => { if (name !== 'match') throw new Error('Unsettled membership reached a later producer'); return noulAnswer(probability); });
+      const evidence = new Map(getOperatorContract().operator.methods.map(method => [method.id, JSON.stringify(captureModelReadingInput(method))]));
+      const fake = fakePort((name, question, raw) => {
+        if (name !== 'match' || question.type !== 'noul') throw new Error('Unsettled membership reached a later producer');
+        const request = nativeMembershipRequest(raw);
+        if (request.query !== 'approvals' || evidence.get(request.id) !== request.evidence)
+          throw new Error('Unsettled membership omitted its complete native source');
+        return noulAnswer(probability);
+      });
       installJudgmentPort(fake.port);
       await expect(autonomyQueueSummary(fixture().context, {}, options())).rejects.toBeInstanceOf(ToolInputProjectionError);
-      expect(fake.requests.length).toBeGreaterThan(0); expect(fake.requests.length).toBeLessThanOrEqual(16);
+      const membership = fake.requests.filter(request => request.context?.battery === 'agent.personal-ops.lane-member');
+      expect(membership.length).toBeGreaterThan(0); expect(membership.length).toBeLessThanOrEqual(16);
+      expect(membership.every(request => Object.keys(request.questions).join(',') === 'match')).toBe(true);
     });
   }
 

@@ -163,7 +163,7 @@ describe('S2a: control-plane-gateway defaults ON', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Stock-daemon streaming proof (the W1 repro)
+// Stock-daemon streaming proof
 // ---------------------------------------------------------------------------
 
 describe('S2a: stock daemon streams companion chat (no 503 dead end)', () => {
@@ -186,7 +186,7 @@ describe('S2a: stock daemon streams companion chat (no 503 dead end)', () => {
         { method: 'GET' },
       ));
       expect(eventsRes).not.toBeNull();
-      // The literal W1 assertion: a stock daemon streams (200), NOT the 503 flag-disabled dead end.
+      // The stock-daemon assertion: a stock daemon streams (200), NOT the 503 flag-disabled dead end.
       expect(eventsRes!.status).toBe(200);
       expect(eventsRes!.headers.get('content-type')).toContain('text/event-stream');
       await eventsRes!.body?.cancel();
@@ -296,7 +296,7 @@ describe('S2a: auth still gates every entry point when the flag is ON', () => {
     expect(res.status).toBe(401);
   });
 
-  // m7: the flag-ON streaming surface is AUTH-GATED, not open. The control SSE 401
+  // The flag-ON streaming surface is AUTH-GATED, not open. The control SSE 401
   // above is the shared entry gate; the companion-chat SSE stream sits behind the
   // same daemon auth layer. That companion path is proven to 401-without-auth
   // end-to-end (real daemon + real middleware) in boot-daemon-factory.test.ts

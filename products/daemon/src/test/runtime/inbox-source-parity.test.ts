@@ -60,7 +60,7 @@ test('canonical handler preserves query-string paging and refuses malformed curs
   });
 }, 30_000);
 
-test('registered aggregate preserves provider failure messages and numeric lastSyncAt', async () => {
+test('registered aggregate preserves provider error state and numeric lastSyncAt while withholding thrown private prose', async () => {
   await withInbox([
     adapter('slack', async () => ({ state: 'ready', configured: true, items: [row('slack', 'slack:1', Date.now())] })),
     adapter('email', async () => ({ state: 'unavailable', configured: true, items: [], error: 'IMAP LOGIN refused: AUTHENTICATIONFAILED' })),
@@ -73,7 +73,9 @@ test('registered aggregate preserves provider failure messages and numeric lastS
     expect(email).toMatchObject({ state: 'error', error: 'IMAP LOGIN refused: AUTHENTICATIONFAILED', configured: true, itemCount: 0 });
     expect(typeof email.lastSyncAt).toBe('number');
     const discord = out.providers.find(value => value.provider === 'discord')!;
-    expect(discord.state).toBe('error'); expect(discord.error).toContain('socket hang up');
+    expect(discord.state).toBe('error'); expect(discord.error).toBe('[REDACTED]');
+    expect(typeof discord.lastSyncAt).toBe('number');
+    expect(JSON.stringify(out)).not.toContain('socket hang up');
     expect(out.providers.find(value => value.provider === 'slack')?.state).toBe('ready');
   });
 }, 30_000);

@@ -1,4 +1,4 @@
-/** Deterministic close/drain ownership regressions for WebhookNotifier (THE-92). */
+/** Deterministic close/drain ownership regressions for WebhookNotifier. */
 import { afterEach, beforeEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { WebhookNotifier, type WebhookNotifierOptions } from '../sdk/src/platform/integrations/webhooks.ts';

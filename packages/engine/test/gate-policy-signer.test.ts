@@ -1,6 +1,6 @@
 // Ported from goodvibes-agent src/test/runtime/permissions/policy-signer.test.ts.
 /**
- * GC-PERM-011, Tests for policy signing and verification.
+ * Tests for policy signing and verification.
  *
  * Covers:
  *   - canonicalise(): deterministic serialisation

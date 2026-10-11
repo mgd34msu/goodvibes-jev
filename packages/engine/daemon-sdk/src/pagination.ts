@@ -97,7 +97,7 @@ export interface PaginateItemsOptions {
  * item's `id` (and optionally `createdAt`). Items after the cursor position
  * are returned.
  *
- * ### Deleted-cursor recovery (m3/m4)
+ * ### Deleted-cursor recovery
  * When the cursor's `id` is not found in the current page (i.e. the item was
  * deleted mid-walk), the implementation falls back to the `createdAt`
  * timestamp in the cursor to locate the insertion point.

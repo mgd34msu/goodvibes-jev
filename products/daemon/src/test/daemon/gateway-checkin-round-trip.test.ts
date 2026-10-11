@@ -21,6 +21,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { useGatewayFixture } from '../helpers/gateway-route-fixture.js';
+import { operationJudgmentRequests } from '../helpers/field-name-privacy-requests.js';
 const fixture = useGatewayFixture({ hostSessions: false });
 const readings = fakePort(() => noulAnswer(0.01));
 let log: SqliteDecisionLog;
@@ -89,7 +90,7 @@ describe('checkin gateway verb group (live on the composed daemon, not a 501 fac
 
     const runResult = await invoke<{ outcome: string; summary: string }>('checkin.run');
     expect(runResult.outcome).toBe('quiet');
-    expect(readings.requests).toHaveLength(1);
+    expect(operationJudgmentRequests(readings.requests)).toHaveLength(1);
     expect(typeof runResult.summary).toBe('string');
 
     const { receipts } = await invoke<{ receipts: CheckinReceipt[] }>('checkin.receipts.list');

@@ -128,4 +128,3 @@ test.each(['HomeGraph', 'rewind'] as const)('TUI close waits for %s last while c
     }
   }
 }, 30_000);
-

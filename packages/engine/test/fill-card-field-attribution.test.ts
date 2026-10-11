@@ -10,7 +10,7 @@ import { usePaymentsReadings } from './helpers/payments-readings.ts';
 usePaymentsReadings();
 
 /**
- * fill-card-field-attribution.test.ts (SF-6).
+ * fill-card-field-attribution.test.ts.
  *
  * `fillCard` used to read `filled`/`failedField` back off the driver's outcome
  * by ARRAY POSITION: `request.targets[filledCount]`. That is only correct when

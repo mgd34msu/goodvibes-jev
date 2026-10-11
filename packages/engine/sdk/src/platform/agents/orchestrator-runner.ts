@@ -487,7 +487,7 @@ export async function runAgentTask(
       conversation.addUserMessage(record.resumeSteer.steer);
       record.resumeSteer = undefined;
     }
-    // Conversation-snapshot bridge (Part C6): hand AgentManager a live accessor onto THIS
+    // Conversation-snapshot bridge: hand AgentManager a live accessor onto THIS
     // ConversationManager instance so a fleet tab can render a full-fidelity
     // transcript while the agent runs. `activeConversation` is a separate
     // const (rather than closing over the outer `let conversation`) so the
@@ -1115,7 +1115,7 @@ export async function runAgentTask(
   } catch (err) {
     await handleAgentRunFailure(context, record, conversation, session, preAgentProcessIds, terminal, err);
   } finally {
-    // Conversation-snapshot bridge (Part C6): release on EVERY exit path (normal completion,
+    // Conversation-snapshot bridge: release on EVERY exit path (normal completion,
     // the mid-loop cancellation/MAX_TURNS early returns above, and the catch
     // above) so the live source is never retained past the run and a final
     // snapshot always lands in AgentManager's retention ring. A no-op when

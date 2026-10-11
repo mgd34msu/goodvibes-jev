@@ -1,5 +1,5 @@
 /**
- * QA-07: scan-modes coverage, security, permissions, env audit, test find and
+ * scan-modes coverage, security, permissions, env audit, test find and
  * dead_code modes
  *
  * Tests:

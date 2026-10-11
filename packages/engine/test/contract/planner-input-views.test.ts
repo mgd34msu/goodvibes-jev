@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { buildAmendmentPrompt, buildFixPlannerPrompt } from '../../sdk/src/platform/contract/index.js';
+import { buildAmendmentPrompt, buildFixPlannerPrompt, type ContractInputSnapshot } from '../../sdk/src/platform/contract/index.js';
 import { contractInputPath } from '../../sdk/src/platform/contract/input-snapshot.js';
 import { makeHarness, oneUnitPlan, startContract, waitFor, type Harness } from './runner-support.js';
 import { plannerOutput } from './plan-support.js';
@@ -16,7 +16,7 @@ for (const mode of ['normal', 'stale', 'stale-check', 'cancel'] as const) {
   test(`planned-fix sees produced work in a frozen descendant view (${mode})`, async () => {
     const plan = oneUnitPlan(1);
     const scripted = stepPlanner(plan, { fix: () => plannerOutput(fixPlan([{ serves: ['u1.c1'], files: ['src/csv.ts'] }])) });
-    let view = ''; let originalId = ''; let fixCalls = 0;
+    let view = ''; let originalId = ''; let fixCalls = 0; let originalInput: ContractInputSnapshot | undefined;
     const h = harness = makeHarness({ plan, contract: { isolation: 'worktree', stallLimit: 2 },
       scripts: { u1: keepsFailing(3), 'u1.f1.u1': finishes('fixed the parser') },
       port: answers((context) => {
@@ -27,6 +27,7 @@ for (const mode of ['normal', 'stale', 'stale-check', 'cancel'] as const) {
         if (request.systemPrompt === buildFixPlannerPrompt()) {
           fixCalls++; view = request.workingDir;
           const contract = h.store.list()[0]!; originalId = contract.inputSnapshot!.id;
+          originalInput = structuredClone(contract.inputSnapshot!);
           expect(view).not.toBe(contract.worktreePath); expect(view).not.toBe(h.root);
           expect(readFileSync(join(view, 'src/csv.ts'), 'utf8')).toBe('attempt 2\n');
           expect(readFileSync(join(view, 'README.md'), 'utf8')).toBe('# demo\n');
@@ -44,7 +45,7 @@ for (const mode of ['normal', 'stale', 'stale-check', 'cancel'] as const) {
     const { contract } = startContract(h);
     await waitFor(() => terminal(h, contract.id), 'corrective planning result', 20_000);
     const done = h.store.get(contract.id)!;
-    expect(fixCalls).toBe(1); expect(done.inputSnapshot!.id).toBe(originalId); expect(existsSync(view)).toBe(true);
+    expect(fixCalls).toBe(1); expect(done.inputSnapshot!.id).toBe(originalId); expect(done.inputSnapshot).toEqual(originalInput); expect(existsSync(view)).toBe(true);
     expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe('later owner edit\n');
     const receiptDir = join(h.root, '.goodvibes/contracts/planner-input');
     const receipts = readdirSync(receiptDir); expect(receipts).toHaveLength(1);
@@ -54,7 +55,10 @@ for (const mode of ['normal', 'stale', 'stale-check', 'cancel'] as const) {
     else {
       expect(done.status).toBe(mode === 'cancel' ? 'cancelled' : 'failed'); expect(h.agentsOf('u1.f1.u1')).toEqual([]);
       if (mode === 'stale' || mode === 'stale-check') {
-        expect(done.error).toBe("unit u1's stall could not be routed: [REDACTED]");
+        // The nested source-error assignments are protected independently.
+        expect(done.error).toBe("unit u1's stall could not be routed: [REDACTED] [REDACTED]");
+        expect(done.failureKind).toBe('other');
+        expect(done.error).not.toContain(h.root); expect(done.error).not.toContain('src/csv.ts');
         expect(readFileSync(join(view, 'src/csv.ts'), 'utf8')).toBe('attempt 2\n');
         expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe(mode === 'stale'
           ? 'concurrent contract writer\n' : 'contract changed during plan checking\n');

@@ -1,10 +1,10 @@
 /**
  * routes/invocation-params.ts
  *
- * (see CHANGELOG 1.0.0, post-S1 alignment), one params view for the handler-registered
+ * (see CHANGELOG 1.0.0), one params view for the handler-registered
  * verbs (fleet.*, checkpoints.*, sessions.search).
  *
- * S1's invoke-layer input gate (invoke-input-validation.ts, wired in
+ * The invoke-layer input gate (invoke-input-validation.ts, wired in
  * daemon/control-plane.ts invokeGatewayMethodCall) validates the invoke BODY
  * against a handler verb's typed inputSchema, a method with no http binding
  * is body-carrying by that gate's definition. So the BODY is the canonical,
@@ -13,7 +13,7 @@
  *
  * The generic invoke envelope ({ query?, body }) still carries a `query`
  * record, so this helper folds it in as a FALLBACK (body keys win). Query-
- * supplied values bypass S1's schema gate, but every one of these handlers
+ * supplied values bypass the invoke schema gate, but every one of these handlers
  * performs its own full validation with honest 400s (GatewayVerbError), so
  * nothing unchecked reaches a manager either way.
  */

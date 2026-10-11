@@ -1,7 +1,7 @@
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
- * Repo code index (Stage A), CodeIndexStore unit suite: chunking
+ * Repo code index, CodeIndexStore unit suite: chunking
  * determinism, incremental reindex (unchanged/changed/deleted files), and
  * the "never silently drop a file" fallback contract.
  */

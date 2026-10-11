@@ -13,7 +13,7 @@ import type {
   RegisterSharedSessionInput,
 } from '../sdk/src/platform/control-plane/session-types.ts';
 
-// D2, IDLE-EMPTY REAPER must not close LIVE surface sessions, and a
+// IDLE-EMPTY REAPER must not close LIVE surface sessions, and a
 // system-reaped session must reopen honestly on the next heartbeat while a
 // user/surface close stays closed.
 

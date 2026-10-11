@@ -1,5 +1,5 @@
 /**
- * γ3: Orchestrator abort() clears animInterval
+ * Orchestrator abort() clears animInterval
  *
  * Tests:
  * - abort() immediately clears the thinking-animation interval

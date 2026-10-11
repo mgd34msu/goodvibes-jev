@@ -221,7 +221,7 @@ describe('governor pause + admission at fire time', () => {
   });
 });
 
-describe('fix-round 2: in-flight gap evidence and sweep backoff', () => {
+describe('in-flight gap evidence and sweep backoff', () => {
   test('gapIds arriving while a run is IN FLIGHT are re-queued by the completion, not wiped: and a zero-gap result does not park them', async () => {
     const { store } = createStores();
     let clock = 0;

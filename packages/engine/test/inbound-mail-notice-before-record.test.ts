@@ -196,7 +196,7 @@ describe('nothing after the send may throw, because a throw there re-announces',
 
     // The pass COMPLETED. If it had thrown, the sink would release the claim,
     // the cursor would stay put, and the next pass would announce the message
-    // a second time, the H1 defect reached through a different verb.
+    // a second time, the redelivery defect reached through a different verb.
     expect(rig.failures).toEqual([]);
     expect(rig.sent).toHaveLength(1);
     // What was given up is stated rather than hidden: the record is still at

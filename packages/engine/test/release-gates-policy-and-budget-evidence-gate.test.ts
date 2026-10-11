@@ -9,7 +9,7 @@ import type { ToolRuntimeContext } from './_helpers/runtime-seam.ts';
 import type { Tool, ToolCall } from '@goodvibes-jev/engine/sdk/platform/types';
 import { useFailureReadings } from './_helpers/failure-readings.ts';
 
-// Drain queued microtasks so bus.emit() listeners (OBS-14 async dispatch) run before assertions.
+// Drain queued microtasks so bus.emit() listeners (async dispatch) run before assertions.
 
 async function emitTurn(
   bus: RuntimeEventBus,

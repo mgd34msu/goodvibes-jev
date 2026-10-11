@@ -151,6 +151,10 @@ const KNOWN_PORTS = [
 const PROBE_TIMEOUT_MS = 200;
 const MAX_CONCURRENT_PROBES = 50;
 const METADATA_TIMEOUT_MS = 2000;
+function requestSignal(timeoutMs: number, owner?: AbortSignal): AbortSignal {
+  owner?.throwIfAborted();
+  return owner ? AbortSignal.any([owner, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+}
 
 interface ProbeResult {
   host: string;
@@ -168,14 +172,24 @@ async function asyncPool<T>(
   limit: number,
   items: T[],
   fn: (item: T) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const executing = new Set<Promise<void>>();
-  for (const item of items) {
-    const p: Promise<void> = fn(item).then(() => { executing.delete(p); });
-    executing.add(p);
-    if (executing.size >= limit) await Promise.race(executing);
+  let failure: { readonly error: unknown } | undefined;
+  try {
+    for (const item of items) {
+      signal?.throwIfAborted();
+      if (failure) throw failure.error;
+      const p = fn(item).catch((error: unknown) => { failure ??= { error }; }).finally(() => { executing.delete(p); });
+      executing.add(p);
+      if (executing.size >= limit) await Promise.race(executing);
+    }
+    await Promise.all(executing);
+    if (failure) throw failure.error;
+    signal?.throwIfAborted();
+  } finally {
+    await Promise.allSettled(executing);
   }
-  await Promise.all(executing);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,9 +235,10 @@ function getLocalSubnets(): string[] {
 async function probeHost(
   host: string,
   port: number,
+  signal?: AbortSignal,
 ): Promise<ProbeResult | null> {
   // Attempt 1: /v1/models (OpenAI-compatible)
-  const v1Result = await tryFetch(`http://${host}:${port}/v1/models`);
+  const v1Result = await tryFetch(`http://${host}:${port}/v1/models`, signal);
   if (v1Result !== null) {
     const models = extractV1Models(v1Result.body);
     if (models !== null) {
@@ -240,13 +255,15 @@ interface FetchResult {
   headers: Record<string, string>;
 }
 
-async function tryFetch(url: string): Promise<FetchResult | null> {
+async function tryFetch(url: string, signal?: AbortSignal): Promise<FetchResult | null> {
+  signal?.throwIfAborted();
   try {
     const res = await instrumentedFetch(url, {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      signal: requestSignal(PROBE_TIMEOUT_MS, signal),
     });
     if (!res.ok) return null;
     const body: unknown = await res.json();
+    signal?.throwIfAborted();
     const headers: Record<string, string> = {};
     res.headers.forEach((value, key) => { headers[key.toLowerCase()] = value.toLowerCase(); });
     return { body, headers };
@@ -289,7 +306,9 @@ async function identifyServer(
   port: number,
   headers: Record<string, string>,
   responseBody: unknown,
+  signal?: AbortSignal,
 ): Promise<ServerType> {
+  signal?.throwIfAborted();
   if (port === WELL_KNOWN_LOCAL_PORTS.ollama) return 'ollama';
   if (port === WELL_KNOWN_LOCAL_PORTS.jan) return 'jan';
   if (port === WELL_KNOWN_LOCAL_PORTS.gpt4all) return 'gpt4all';
@@ -297,7 +316,7 @@ async function identifyServer(
   if (port === WELL_KNOWN_LOCAL_PORTS.aphrodite) return 'aphrodite';
   if (port === WELL_KNOWN_LOCAL_PORTS.lmStudio) return 'lm-studio';
   const modelIds = extractV1Models(responseBody) ?? [];
-  return readLocalServerIdentity({ port, headers, modelIds }, 'discovery.scanner.server-identity');
+  return readLocalServerIdentity({ port, headers, modelIds }, 'discovery.scanner.server-identity', { signal });
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +333,9 @@ export async function fetchModelContextWindows(
   port: number,
   serverType: ServerType,
   models: string[],
+  signal?: AbortSignal,
 ): Promise<Record<string, number>> {
+  signal?.throwIfAborted();
   const result: Record<string, number> = {};
 
   switch (serverType) {
@@ -327,7 +348,7 @@ export async function fetchModelContextWindows(
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: model }),
-              signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+              signal: requestSignal(METADATA_TIMEOUT_MS, signal),
             });
             if (!res.ok) return;
             const data = await res.json() as Record<string, unknown>;
@@ -368,7 +389,7 @@ export async function fetchModelContextWindows(
         models.map(async (model) => {
           try {
             const res = await instrumentedFetch(`http://${host}:${port}/v1/models/${encodeURIComponent(model)}`, {
-              signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+              signal: requestSignal(METADATA_TIMEOUT_MS, signal),
             });
             if (!res.ok) return;
             const data = await res.json() as Record<string, unknown>;
@@ -388,7 +409,7 @@ export async function fetchModelContextWindows(
       // llama.cpp: GET /props returns default_generation_settings.n_ctx (server-wide)
       try {
         const res = await instrumentedFetch(`http://${host}:${port}/props`, {
-          signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+          signal: requestSignal(METADATA_TIMEOUT_MS, signal),
         });
         if (res.ok) {
           const data = await res.json() as Record<string, unknown>;
@@ -412,7 +433,7 @@ export async function fetchModelContextWindows(
       // LM Studio: use discoverContextWindows which probes /api/v1/models first (rich endpoint
       // with max_context_length per model), falling back through the verbose-first probe chain.
       const baseURL = `http://${host}:${port}/v1`;
-      const discovered = await discoverContextWindows(baseURL);
+      const discovered = await discoverContextWindows(baseURL, undefined, signal);
       for (const [modelId, ctx] of discovered) {
         if (models.includes(modelId) || models.length === 0) {
           result[modelId] = ctx;
@@ -436,7 +457,7 @@ export async function fetchModelContextWindows(
         models.map(async (model) => {
           try {
             const res = await instrumentedFetch(`http://${host}:${port}/v1/models/${encodeURIComponent(model)}`, {
-              signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+              signal: requestSignal(METADATA_TIMEOUT_MS, signal),
             });
             if (!res.ok) return;
             const data = await res.json() as Record<string, unknown>;
@@ -461,7 +482,7 @@ export async function fetchModelContextWindows(
       if (Object.keys(result).length === 0 && models.length > 0) {
         try {
           const res = await instrumentedFetch(`http://${host}:${port}/props`, {
-            signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+            signal: requestSignal(METADATA_TIMEOUT_MS, signal),
           });
           if (res.ok) {
             const data = await res.json() as Record<string, unknown>;
@@ -483,6 +504,7 @@ export async function fetchModelContextWindows(
     }
   }
 
+  signal?.throwIfAborted();
   return result;
 }
 
@@ -500,7 +522,9 @@ async function fetchModelOutputLimits(
   port: number,
   serverType: ServerType,
   models: string[],
+  signal?: AbortSignal,
 ): Promise<Record<string, number>> {
+  signal?.throwIfAborted();
   const result: Record<string, number> = {};
 
   switch (serverType) {
@@ -513,7 +537,7 @@ async function fetchModelOutputLimits(
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ name: model }),
-              signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+              signal: requestSignal(METADATA_TIMEOUT_MS, signal),
             });
             if (!res.ok) return;
             const data = await res.json() as Record<string, unknown>;
@@ -553,7 +577,7 @@ async function fetchModelOutputLimits(
         models.map(async (model) => {
           try {
             const res = await instrumentedFetch(`http://${host}:${port}/v1/models/${encodeURIComponent(model)}`, {
-              signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+              signal: requestSignal(METADATA_TIMEOUT_MS, signal),
             });
             if (!res.ok) return;
             const data = await res.json() as Record<string, unknown>;
@@ -573,7 +597,7 @@ async function fetchModelOutputLimits(
       // llama.cpp: GET /props, look for default_generation_settings.n_predict
       try {
         const res = await instrumentedFetch(`http://${host}:${port}/props`, {
-          signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+          signal: requestSignal(METADATA_TIMEOUT_MS, signal),
         });
         if (res.ok) {
           const data = await res.json() as Record<string, unknown>;
@@ -606,7 +630,7 @@ async function fetchModelOutputLimits(
         models.map(async (model) => {
           try {
             const res = await instrumentedFetch(`http://${host}:${port}/v1/models/${encodeURIComponent(model)}`, {
-              signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+              signal: requestSignal(METADATA_TIMEOUT_MS, signal),
             });
             if (!res.ok) return;
             const data = await res.json() as Record<string, unknown>;
@@ -629,7 +653,7 @@ async function fetchModelOutputLimits(
       if (Object.keys(result).length === 0 && models.length > 0) {
         try {
           const res = await instrumentedFetch(`http://${host}:${port}/props`, {
-            signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+            signal: requestSignal(METADATA_TIMEOUT_MS, signal),
           });
           if (res.ok) {
             const data = await res.json() as Record<string, unknown>;
@@ -650,6 +674,7 @@ async function fetchModelOutputLimits(
     }
   }
 
+  signal?.throwIfAborted();
   return result;
 }
 
@@ -694,7 +719,9 @@ function buildServerName(serverType: ServerType, host: string, port: number): st
 export async function scanHosts(
   hosts: string[],
   onProgress?: (completed: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<DiscoveredServer[]> {
+  signal?.throwIfAborted();
   type Probe = { host: string; port: number };
   const probes: Probe[] = [];
   for (const host of hosts) {
@@ -708,24 +735,29 @@ export async function scanHosts(
   const servers: DiscoveredServer[] = [];
 
   await asyncPool(MAX_CONCURRENT_PROBES, probes, async ({ host, port }) => {
-    const result = await probeHost(host, port);
+    const result = await probeHost(host, port, signal);
+    signal?.throwIfAborted();
     completed++;
     onProgress?.(completed, total);
 
     if (result === null) return;
 
-    const serverType = await identifyServer(port, result.headers, result.responseBody);
+    const serverType = await identifyServer(port, result.headers, result.responseBody, signal);
     const name = buildServerName(serverType, host, port);
     const baseURL = `http://${host}:${port}/v1`;
     // Fetch context windows and output limits in parallel (independent queries to the same server)
-    const [modelContextWindows, modelOutputLimits] = await Promise.all([
-      fetchModelContextWindows(host, port, serverType, result.models),
-      fetchModelOutputLimits(host, port, serverType, result.models),
+    const [context, output] = await Promise.allSettled([
+      fetchModelContextWindows(host, port, serverType, result.models, signal),
+      fetchModelOutputLimits(host, port, serverType, result.models, signal),
     ]);
+    if (context.status === 'rejected') throw context.reason;
+    if (output.status === 'rejected') throw output.reason;
+    const modelContextWindows = context.value, modelOutputLimits = output.value;
 
+    signal?.throwIfAborted();
     servers.push({ name, host, port, baseURL, models: result.models, serverType, modelContextWindows, modelOutputLimits });
     logger.info(`[Scan] Found ${name} at ${host}:${port} (${result.models.length} models)`);
-  });
+  }, signal);
 
   return servers;
 }
@@ -737,9 +769,9 @@ export async function scanHosts(
 /**
  * Scans only localhost (fast, ~100ms).
  */
-export async function scanLocalhost(): Promise<ScanResult> {
+export async function scanLocalhost(signal?: AbortSignal): Promise<ScanResult> {
   const start = Date.now();
-  const servers = await scanHosts(['127.0.0.1']);
+  const servers = await scanHosts(['127.0.0.1'], undefined, signal);
   return {
     servers,
     scannedHosts: 1,
@@ -754,16 +786,17 @@ export async function scanLocalhost(): Promise<ScanResult> {
  */
 export async function scan(
   onProgress?: (completed: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<ScanResult> {
   const start = Date.now();
   // Scan localhost first
-  const localhostServers = await scanHosts(['127.0.0.1']);
+  const localhostServers = await scanHosts(['127.0.0.1'], undefined, signal);
 
   // Collect subnet IPs, excluding loopback
   const subnetIPs = getLocalSubnets().filter((ip) => ip !== '127.0.0.1');
 
   const subnetServers = subnetIPs.length > 0
-    ? await scanHosts(subnetIPs, onProgress)
+    ? await scanHosts(subnetIPs, onProgress, signal)
     : [];
 
   // Merge and deduplicate by host:port

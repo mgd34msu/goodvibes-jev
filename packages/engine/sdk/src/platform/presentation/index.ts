@@ -15,7 +15,7 @@
  * The TUI is the reference for every value here; dark stays byte-identical to
  * today's TUI. See docs/decisions/2026-07-05-presentation-contract-sdk-extraction.md
  * for the full decision record, including the GLYPHS status-group reconciliation
- * ruling and the consumption plan (the agent picks this up via R4; the TUI swap is
+ * ruling and the consumption plan (the agent picks this up; the TUI swap is
  * deferred to a future coherence pass).
  *
  * PURE, no fs, no terminal I/O, no process globals. Painting stays

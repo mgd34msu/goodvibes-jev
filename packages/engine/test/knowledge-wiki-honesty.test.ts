@@ -132,7 +132,7 @@ describe('knowledge wiki honesty: revision history (Defect 1)', () => {
     expect(store.listNodeRevisions(node.id).length).toBe(1);
   });
 
-  test('a slug-only identity change records a revision listing slug: the prior slug is not lost (Finding 3)', async () => {
+  test('a slug-only identity change records a revision listing slug: the prior slug is not lost', async () => {
     const store = createStore();
     // Everything identical except the slug: an id-based upsert that renames the slug.
     const created = await store.upsertNode({ kind: 'topic', slug: 'old-slug', title: 'Widget', summary: 'S', confidence: 90 });
@@ -149,7 +149,7 @@ describe('knowledge wiki honesty: revision history (Defect 1)', () => {
     expect(revisions.some((rev) => rev.slug === 'old-slug')).toBe(true);
   });
 
-  test('a kind-only identity change records a revision listing kind (Finding 3)', async () => {
+  test('a kind-only identity change records a revision listing kind', async () => {
     const store = createStore();
     const created = await store.upsertNode({ kind: 'topic', slug: 'k', title: 'K', confidence: 90 });
     await store.upsertNode({ id: created.id, kind: 'knowledge_entity', slug: 'k', title: 'K', confidence: 90 });

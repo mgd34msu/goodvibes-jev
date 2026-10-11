@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { fetchModelContextWindows } from '@goodvibes-jev/engine/sdk/platform/discovery';
+import { scanHosts } from '../sdk/src/platform/discovery/scanner.js';
 
 // ---------------------------------------------------------------------------
 // fetch mock helpers
@@ -25,6 +26,92 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe('native discovery cancellation', () => {
+  test.each(['vllm', 'lm-studio'] as const)('%s metadata cancellation drains the real HTTP body and prevents fallback probes', async (serverType) => {
+    const entered = Promise.withResolvers<void>();
+    const headersReceived = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    let requests = 0;
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
+      requests++;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(stream) { stream.enqueue(new TextEncoder().encode('{')); entered.resolve(); },
+        cancel() { cancelled.resolve(); },
+      }), { headers: { 'content-type': 'application/json' } });
+    } });
+    const port = server.port;
+    if (port === undefined) { await server.stop(true); throw new Error('Native discovery fixture did not bind'); }
+    const nativeFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const response = await nativeFetch(input, init);
+      headersReceived.resolve();
+      return response;
+    }, { preconnect: nativeFetch.preconnect });
+    const lifetime = new AbortController();
+    const reason = new DOMException('synthetic discovery cancellation', 'AbortError');
+    const pending = fetchModelContextWindows('127.0.0.1', port, serverType, ['fixture-model'], lifetime.signal);
+    void pending.catch(() => {});
+    try {
+      await entered.promise; await headersReceived.promise;
+      const stoppingAt = performance.now(); lifetime.abort(reason);
+      await expect(pending).rejects.toBe(reason); await cancelled.promise;
+      expect(performance.now() - stoppingAt).toBeLessThan(1_000);
+      expect(requests).toBe(1);
+    } finally { lifetime.abort(reason); await Promise.allSettled([pending]); globalThis.fetch = nativeFetch; await server.stop(true); }
+  }, 5_000);
+
+  test('a live parent preserves the five-second native metadata body deadline and complete fallback chain', async () => {
+    const cancelled = Promise.withResolvers<void>();
+    const paths: string[] = [];
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+      paths.push(new URL(request.url).pathname);
+      if (paths.length > 1) return new Response('fixture endpoint absent', { status: 404 });
+      return new Response(new ReadableStream<Uint8Array>({
+        start(stream) { stream.enqueue(new TextEncoder().encode('{')); },
+        cancel() { cancelled.resolve(); },
+      }), { headers: { 'content-type': 'application/json' } });
+    } });
+    const port = server.port;
+    if (port === undefined) { await server.stop(true); throw new Error('Native discovery fixture did not bind'); }
+    const lifetime = new AbortController();
+    const startedAt = performance.now();
+    const pending = fetchModelContextWindows('127.0.0.1', port, 'lm-studio', ['fixture-model'], lifetime.signal);
+    try {
+      expect(await pending).toEqual({}); await cancelled.promise;
+      expect(lifetime.signal.aborted).toBe(false);
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(4_000);
+      expect(performance.now() - startedAt).toBeLessThan(6_500);
+      expect(paths).toEqual(['/api/v1/models', '/api/tags', '/v1/models', '/props', '/info', '/v1/models/fixture-model', '/props']);
+    } finally { lifetime.abort(); await Promise.allSettled([pending]); await server.stop(true); }
+  }, 10_000);
+
+  test('a scan abort stops queued probes and drains every admitted native HTTP body', async () => {
+    const entered = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    let admitted = 0, served = 0, cancellations = 0;
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
+      served++;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(stream) { stream.enqueue(new TextEncoder().encode('{')); if (served === 50) entered.resolve(); },
+        cancel() { cancellations++; if (cancellations === 50) cancelled.resolve(); },
+      }), { headers: { 'content-type': 'application/json' } });
+    } });
+    const nativeFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      admitted++;
+      return nativeFetch(new URL('/v1/models', server.url), init);
+    }, { preconnect: nativeFetch.preconnect });
+    const lifetime = new AbortController();
+    const reason = new DOMException('synthetic discovery cancellation', 'AbortError');
+    const pending = scanHosts(Array.from({ length: 10 }, () => '127.0.0.1'), undefined, lifetime.signal);
+    void pending.catch(() => {});
+    try {
+      await entered.promise; lifetime.abort(reason); await expect(pending).rejects.toBe(reason); await cancelled.promise;
+      expect(admitted).toBe(50); expect(served).toBe(50); expect(cancellations).toBe(50);
+    } finally { lifetime.abort(reason); await Promise.allSettled([pending]); globalThis.fetch = nativeFetch; await server.stop(true); }
+  }, 5_000);
 });
 
 // ---------------------------------------------------------------------------

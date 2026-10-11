@@ -32,10 +32,9 @@ describe('exec tool: cooperative cancellation via opts.signal', () => {
     const controller = new AbortController();
 
     const start = Date.now();
-    // timeout_ms must stay under PROGRESS_AUTO_THRESHOLD_MS (30s) so this
-    // takes the default foreground path, the only one wired for opts.signal
-    // today (runCommandWithProgress/runUntil are explicitly deferred, see
-    // the WO report).
+    // timeout_ms stays under PROGRESS_AUTO_THRESHOLD_MS (30s) so this
+    // exercises foreground cancellation. Progress-streamed and until-pattern
+    // execution also forward opts.signal through their own paths.
     const resultPromise = tool.execute(
       { working_dir: root, commands: [{ cmd: 'sleep 30', timeout_ms: 20_000 }] },
       { signal: controller.signal },

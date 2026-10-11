@@ -143,7 +143,7 @@ describe('session-journals store: a user session whose NAME collides with a jour
     return filePath;
   }
 
-  test('R3: an explicitly user-saved session named "release_workmap" survives the sweep', () => {
+  test('an explicitly user-saved session named "release_workmap" survives the sweep', () => {
     const workingDirectory = tempDir();
     const filePath = saveUserSession(workingDirectory, 'release_workmap');
     ageFile(filePath, 90);

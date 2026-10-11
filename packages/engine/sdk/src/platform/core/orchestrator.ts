@@ -1063,7 +1063,7 @@ export class Orchestrator {
     turnId: string,
     configManager: ReturnType<typeof requireConfigManager>,
   ): void {
-    // ── GC-ORCH-015: Terminal-state tool-call reconciliation ───────────────────
+    // ── Terminal-state tool-call reconciliation ───────────────────
     // If the turn threw an exception between addAssistantMessage (which sets
     // _pendingToolCalls) and addToolResults (which clears it), there are
     // unresolved tool-call blocks in the conversation. Reconcile them now

@@ -1,7 +1,7 @@
 import { assertPersonalOpsDataCurrent, capturePersonalOpsData } from './agent-harness-personal-ops-source.ts';
 import { captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import { types as nodeTypes } from 'node:util';
-import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogData, captureCatalogMethods, prepareHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { personalOpsLaneMembers, readPersonalOpsSampleField, readPersonalOpsTool, type DiscoveryLane, type PersonalOpsToolContract } from './agent-harness-personal-ops-readings.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
@@ -110,21 +110,24 @@ async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options:
     batch.push(method); characters += size;
   }
   if (batch.length) batches.push(batch);
+  const describe = (method: OperatorContractMethod) => ({
+    id: method.id, description: method.description ?? method.title ?? '', evidence: method,
+  });
+  const preparedBatches = batches.map(methods => ({ methods, entries: prepareHarnessCatalog(methods.map(method => method.value), describe) }));
   const retained = new Map<string | (() => void), () => void>();
   const results: ReturnType<typeof partitionInvokableMethods>[] = [];
   for (const lane of lanes) {
     const selected: OperatorContractMethod[] = [];
-    for (const batch of batches) {
+    for (const { methods, entries } of preparedBatches) {
       assertCurrent();
-      const assertIndices = captureCatalogMethods(original, batch.map(method => String(method.index)));
+      const assertIndices = captureCatalogMethods(original, methods.map(method => String(method.index)));
       const assertBatch = () => {
         callerCurrent?.(); assertRoot(); assertIndices();
-        for (const method of batch) method.assertCurrent();
+        for (const method of methods) method.assertCurrent();
         for (const guard of retained.values()) guard();
       };
-      const matches = await personalOpsLaneMembers(batch.map(method => method.value), lane, method => ({
-        id: method.id, description: method.description ?? method.title ?? '', evidence: method,
-      }), { ...options, assertCurrent: assertBatch, retainCurrent(guard, key) { if (!retained.has(key ?? guard)) retained.set(key ?? guard, guard); } });
+      const matches = await personalOpsLaneMembers(entries, lane, describe,
+        { ...options, assertCurrent: assertBatch, retainCurrent(guard, key) { if (!retained.has(key ?? guard)) retained.set(key ?? guard, guard); } });
       assertCurrent(); selected.push(...matches);
     }
     results.push(partitionInvokableMethods(selected));

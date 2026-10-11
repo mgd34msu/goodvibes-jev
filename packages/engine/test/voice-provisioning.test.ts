@@ -1,5 +1,5 @@
 /**
- * voice-provisioning.test.ts (item 8)
+ * voice-provisioning.test.ts
  *
  * Managed local-voice provisioning: atomic + checksum-verified downloads (pass,
  * checksum-fail keeps nothing, size-mismatch, resumable skip on re-run), managed
@@ -661,7 +661,7 @@ describe('managed STT (goodvibes-built whisper.cpp)', () => {
     });
   }
 
-  test('finding 9: a stale archive that fails the NEW pin is never extracted; old binary + version stamp are preserved (no false new-version stamp)', async () => {
+  test('a stale archive that fails the NEW pin is never extracted; old binary + version stamp are preserved (no false new-version stamp)', async () => {
     const dir = scratch();
     const { provisionLocalVoiceRuntime: provision, readVoiceInstallStamp } = await import('../sdk/src/platform/voice/provisioning/index.ts');
     const paths = resolveManagedVoicePaths(dir, 'linux-x64');
@@ -696,7 +696,7 @@ describe('managed STT (goodvibes-built whisper.cpp)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('finding 11: a failed STT re-install preserves the version stamp, so a later correct sideload of the new bundle applies (frozen-update fixed)', async () => {
+  test('a failed STT re-install preserves the version stamp, so a later correct sideload of the new bundle applies (frozen-update fixed)', async () => {
     const dir = scratch();
     const { provisionLocalVoiceRuntime: provision, readVoiceInstallStamp } = await import('../sdk/src/platform/voice/provisioning/index.ts');
     const paths = resolveManagedVoicePaths(dir, 'linux-x64');

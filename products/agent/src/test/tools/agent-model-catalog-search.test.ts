@@ -311,16 +311,34 @@ describe('model catalog protected source and caller boundaries', () => {
   test.each(['models', 'agent_harness'] as const)('%s cancellation and source-owner lifetime signals both hold an awaited rank', async name => {
     for (const signal of ['caller', 'owner'] as const) {
       const screening = researchScreeningFixture(); const f = fixture(screening.owner); const wait = suspended(); const controller = new AbortController();
-      const fake = readings({ [`model:${winner}`]: 0.99 }); const seen: unknown[] = [];
+      const fake = readings({ [`model:${winner}`]: 0.99 }); const seen: AbortSignal[] = [];
       installJudgmentPort({ ...fake.port, ask: async request => {
-        if (request.context?.battery === battery) { seen.push(request.signal); wait.start(); await wait.gate; }
+        if (request.context?.battery === battery) {
+          expect(request.signal).toBeInstanceOf(AbortSignal);
+          if (!(request.signal instanceof AbortSignal)) throw new Error('Missing original scoped rank signal');
+          expect(request.signal.aborted).toBe(false);
+          seen.push(request.signal); wait.start(); await wait.gate;
+        }
         return fake.port.ask(request);
       } });
       let delivered = 0; const surface = { name, registered: false };
       const pending = f.invoke(surface, detailArgs(surface), { signal: controller.signal }).then(result => { delivered++; return result; });
-      await wait.started; if (signal === 'caller') controller.abort(); else screening.lifetime.abort();
-      wait.release(); await expect(pending).rejects.toThrow();
-      expect(seen.length).toBeGreaterThan(0); expect(seen.every(value => value === controller.signal)).toBe(true);
+      await wait.started;
+      const reason = new Error(`Synthetic original ${signal} rank cancellation`);
+      try {
+        if (signal === 'caller') {
+          controller.abort(reason);
+          expect(seen.every(value => value.aborted && value.reason === reason)).toBe(true);
+          // The original caller interrupts even a reader that ignores its signal.
+          await expect(pending).rejects.toThrow();
+        } else {
+          screening.lifetime.abort(reason);
+          expect(screening.lifetime.signal.aborted).toBe(true);
+          expect(screening.lifetime.signal.reason).toBe(reason);
+        }
+      } finally { wait.release(); }
+      await expect(pending).rejects.toThrow();
+      expect(seen.length).toBeGreaterThan(0);
       expect(delivered).toBe(0); expect(f.effects).toEqual([]);
     }
   });

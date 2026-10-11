@@ -7,14 +7,16 @@ import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import {
-  createSlackInboxOwner, registerInboxSurface, createOwnedInboxSource,
-  type SlackInboxAccount, type SlackInboxOwner, type InboxSurfaceRegistration,
+  createSlackInboxOwner, registerInboxSurface, createOwnedInboxSource, createOwnedTriagedInboxSource,
+  type SlackInboxAccount, type SlackInboxOwner, type InboxSurfaceRegistration, type InboxTriageAuthority,
 } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { ProtectedSourceOwnerOptions } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { DaemonInboxSourceFactory } from './multiowner-inbox-composition.js';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
 export interface SlackDaemonInboxOptions {
+  /** Separately established semantic destination/account grant, never inferred from screening. */
+  readonly triageAuthority?: InboxTriageAuthority;
   readonly triageTagging?: DaemonTriageTaggingActivation;
   /** Explicit expected Slack workspace AND user/bot identity; not token-derived. */
   readonly account: SlackInboxAccount;
@@ -40,7 +42,14 @@ export function createSlackDaemonInboxSourceFactory(
   options: SlackDaemonInboxOptions,
   factories: SlackDaemonInboxSourceFactories = {},
 ): DaemonInboxSourceFactory {
-  return createSlackAccountFactory(options, factories, factories.createSource ?? createOwnedInboxSource, true);
+  const authority = options.triageAuthority;
+  return createSlackAccountFactory(options, factories, factories.createSource ?? ((context, source, owner) =>
+    createOwnedTriagedInboxSource(context, { ...source, providerId: 'slack', accountScopeId: owner.scopeId,
+      acquireReadLease: () => {
+        if (!owner.acquireReadLease) throw new Error('Slack triage requires the native account read lease');
+        return owner.acquireReadLease();
+      }, ...(authority ? { authority } : {}),
+    })), true);
 }
 
 /** Compatible single-source composition, including the injected registrar seam. */
@@ -48,8 +57,8 @@ export function createSlackDaemonInboxFactory(
   options: SlackDaemonInboxOptions,
   factories: SlackDaemonInboxFactories = {},
 ): DaemonInboxFactory {
-  if (options.triageTagging) {
-    if (factories.registerSurface) throw new Error('Triage tagging requires an owned source, not a legacy registrar');
+  if (!factories.registerSurface || options.triageTagging || options.triageAuthority) {
+    if (factories.registerSurface) throw new Error('Triage requires an owned source, not a legacy registrar');
     return createMultiOwnerDaemonInboxFactory([createSlackDaemonInboxSourceFactory(options, factories)]);
   }
   return createSlackAccountFactory(options, factories, factories.registerSurface ?? registerInboxSurface, false);
@@ -58,7 +67,7 @@ export function createSlackDaemonInboxFactory(
 function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
   options: SlackDaemonInboxOptions,
   factories: Pick<SlackDaemonInboxFactories, 'createOwner' | 'eligibilityClock'>,
-  register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1]) => T,
+  register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1], owner: SlackInboxOwner) => T | Promise<T>,
   requireFinalProof: boolean,
 ): (...args: Parameters<DaemonInboxFactory>) => Promise<T> {
   const triageTagging = options.triageTagging ? Object.freeze({ onReady: options.triageTagging.onReady }) : undefined;
@@ -107,7 +116,7 @@ function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
         strictOwnership: true, totalTimeoutMs: 100,
       });
       current();
-      surface = register({ ...context, workingDirectory }, {
+      surface = await register({ ...context, workingDirectory }, {
         adapters: new Map([['slack', owner.adapter]]), storeFileName, ...(clustered ? { awaitInitialPoll: false } : {}),
         ...(requireFinalProof
           ? { acquireReadLease: () => owner.acquireReadLease!() }
@@ -121,7 +130,7 @@ function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
           });
           return () => eligibility!.close();
         },
-      });
+      }, owner);
     } catch {
       try { await Promise.all([Promise.resolve().then(() => unsubscribe?.()), owner.close(), eligibility?.close()]); } finally { release?.(); }
       throw new Error('Slack inbox composition could not acquire its owned storage');

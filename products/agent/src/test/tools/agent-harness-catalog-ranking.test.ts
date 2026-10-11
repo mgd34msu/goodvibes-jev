@@ -3,6 +3,7 @@ import { judgmentPort, installJudgmentPort, JudgmentPortMissingError } from '@go
 import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { DEFAULT_CONFIG, type GoodVibesConfig } from '@goodvibes-jev/engine/sdk/platform/config';
+import { ActivityLogger, fieldKind } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
@@ -13,19 +14,51 @@ import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/ag
 import { createAgentHostTool, registerAgentHostTool } from '../../tools/agent-host-tool.ts';
 import { createAgentWorkspaceTool, registerAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { searchHarnessModelTools } from '../../tools/agent-harness-model-tool-catalog.ts';
-import { rankHarnessCatalog } from '../../tools/agent-harness-catalog-ranking.ts';
+import { prepareHarnessCatalog, rankHarnessCatalog } from '../../tools/agent-harness-catalog-ranking.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard } from '../../tools/agent-harness-model-reading-source.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
 
 afterAll(cleanupResearchScreeningFixtures);
 let previous: ReturnType<typeof installJudgmentPort>;
+const metadataLoggers: ActivityLogger[] = [];
 beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+afterEach(() => {
+  for (const logger of metadataLoggers.splice(0)) logger.dispose();
+  installJudgmentPort(previous);
+});
+
+function nativeMetadataReading() {
+  const logger = new ActivityLogger();
+  metadataLoggers.push(logger);
+  logger.debug('Synthetic catalog metadata', { battery: 'Synthetic catalog operation' });
+}
+
+type ObservedRequest = ReturnType<typeof fakePort>['requests'][number];
+
+/** Only the native reader's complete public field-name request is ancillary. */
+function isMetadataPrivacyRequest(request: ObservedRequest): boolean {
+  if (request.context?.battery !== fieldKind.name) return false;
+  expect(request.model).toBe(fieldKind.model);
+  expect(request.context).toEqual({ battery: fieldKind.name, batteryVersion: fieldKind.version,
+    pattern: 'battery', site: fieldKind.name });
+  expect(request.questions).toEqual({ kind: fieldKind.items.kind.question });
+  expect(request.state).toEqual({ field: 'battery' });
+  return true;
+}
+
+function operationRequests(requests: readonly ObservedRequest[]): ObservedRequest[] {
+  return requests.filter(request => !isMetadataPrivacyRequest(request));
+}
 
 function readings(fits: Readonly<Record<string, number>>) {
   return fakePort((name, question, state) => {
     if (name === 'match') return noulAnswer(fits[(state as unknown as { candidate: { name: string } }).candidate.name] ?? 0.01);
+    if (question === fieldKind.items.kind.question) {
+      expect(state).toEqual({ field: 'battery' });
+      return choiceAnswer(question, 'other', 0.999);
+    }
     if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'hazard' ? 'none' : 'generic', 0.999);
     return noulAnswer(0.001);
   });
@@ -78,6 +111,22 @@ function suspended() {
   const gate = new Promise<void>(resolve => { release = resolve; });
   return { start, release, started, gate };
 }
+
+test('native metadata attribution retains unexpected questions and complete private payloads', async () => {
+  const fake = readings({}), wait = suspended();
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    const result = await fake.port.ask(request); wait.start(); return result;
+  } });
+  nativeMetadataReading(); await wait.started;
+  const request = fake.requests[0];
+  if (!request) throw new Error('The actual logger did not request field-name privacy.');
+  expect(fake.requests).toHaveLength(1);
+  expect(operationRequests(fake.requests)).toHaveLength(0);
+  expect(() => operationRequests([{ ...request, state: { field: 'battery', unusedPrivatePayload: 'synthetic-private-payload' } }])).toThrow();
+  expect(() => operationRequests([{ ...request, questions: { kind: { ...fieldKind.items.kind.question, instructions: 'Unrelated native question' } } }])).toThrow();
+  expect(() => operationRequests([{ ...request, state: { field: 'unusedPrivateContext' } }])).toThrow();
+  expect(operationRequests([{ ...request, context: { ...request.context, battery: 'unrelated-native-reader' } }])).toHaveLength(1);
+});
 
 test.each(['private-extra', 'accessor-extra', 'hidden-extra'] as const)('canonical catalog response admission refuses %s before publishing a match', async kind => {
   let touched = 0, published = 0;
@@ -175,13 +224,15 @@ describe('P11 actual catalog consumers', () => {
     const privateText = 'synthetic-private-comms-payload';
     const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateText]) });
     const f = fixture(screening.owner); const fake = readings({}); installJudgmentPort(fake.port);
+    nativeMetadataReading();
     registerAgentHarnessTool(f.registry, f.commands, f.context);
     await expect(f.registry.prepareCall(`private-comms-${mode}`, 'agent_harness', {
       mode, draftId: 'isolated-draft', channelProfile: 'isolated-profile', routeKey: 'isolated-route',
       body: 'Public draft', unusedPrivateContext: privateText, confirm: true, explicitUserRequest: 'Caller annotation',
     })).rejects.toThrow();
     expect(JSON.stringify(screening.calls)).toContain(privateText);
-    expect(fake.requests).toHaveLength(0); expect(f.executed).toEqual([]);
+    expect(operationRequests(fake.requests)).toHaveLength(0);
+    expect(JSON.stringify(fake.requests)).not.toContain(privateText); expect(f.executed).toEqual([]);
   });
 
   test('complete protected description and evidence reach the canonical catalog reader', async () => {
@@ -360,8 +411,9 @@ test.each(['commands', 'tools'] as const)('actual %s detail rejects replaced cat
   if (mode === 'commands') Object.defineProperty(f.commands.get('opaque_operation')!, 'name', { get() { accessed++; return 'opaque_operation'; } });
   else Object.defineProperty(f.registry.list()[0]!, 'definition', { get() { accessed++; return {}; } });
   const fake = readings({ opaque_operation: 0.99 }); installJudgmentPort(fake.port);
+  nativeMetadataReading();
   await expect(f.harness.execute({ mode: mode === 'commands' ? 'command' : 'tool', query: 'search inbox' })).rejects.toThrow();
-  expect(accessed).toBe(0); expect(fake.requests).toHaveLength(0);
+  expect(accessed).toBe(0); expect(operationRequests(fake.requests)).toHaveLength(0);
 });
 
 test.each(['default', 'enum'] as const)('full declared credential schema %s is refused before local projection and hosted ranking', async field => {
@@ -386,16 +438,24 @@ test('real large host catalog keeps canonical eight-request backpressure and can
   let active = 0, maxActive = 0, dispatched = 0;
   const fake = readings({ 'services.status': 0.99 });
   installJudgmentPort({ ...fake.port, ask: async request => {
+    if (isMetadataPrivacyRequest(request)) return fake.port.ask(request);
+    expect(request.context?.battery).toBe('engine.tools.registry-rank');
+    expect(request.context?.site).toBe('agent.harness.operator-methods');
     active++; dispatched++; maxActive = Math.max(maxActive, active);
     if (dispatched === 8) wait.start();
     try { await wait.gate; return await fake.port.ask(request); } finally { active--; }
   } });
+  nativeMetadataReading();
   const pending = f.host.execute({ action: 'methods', query: 'search inbox', limit: 1 }, { signal: controller.signal });
-  await wait.started;
-  expect(dispatched).toBe(8); expect(maxActive).toBe(8); expect(maxScreeningActive).toBe(1);
-  expect(screening.calls.filter(call => call.path === '/v1/chat/completions').length).toBeGreaterThanOrEqual(59);
-  controller.abort(); wait.release(); await expect(pending).rejects.toThrow();
-  expect(dispatched).toBe(8); expect(active).toBe(0);
+  try {
+    await Promise.race([wait.started, pending.then(() => { throw new Error('The real catalog completed before eight rank requests'); })]);
+    expect(dispatched).toBe(8); expect(maxActive).toBe(8); expect(maxScreeningActive).toBe(1);
+    expect(screening.calls.filter(call => call.path === '/v1/chat/completions').length).toBeGreaterThanOrEqual(59);
+    controller.abort(); wait.release(); await expect(pending).rejects.toThrow();
+    expect(dispatched).toBe(8); expect(active).toBe(0);
+  } finally {
+    controller.abort(); wait.release(); await Promise.allSettled([pending]);
+  }
 });
 
 test('aggregate structural capture is bounded across many individually small private DTOs', async () => {
@@ -488,4 +548,118 @@ test('structural framing does not split an oversized semantic string or enlarge 
     sourceOwner: screening.owner, requirePreservedSource: true,
   })).rejects.toThrow();
   expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+});
+
+function preparedReadings(query: string, entry: { readonly id: string; readonly description: string; readonly evidence?: unknown }, probability = 0.99) {
+  return fakePort((name, question, state) => {
+    if (name !== 'match' || question.type !== 'noul') throw new Error('Unexpected prepared catalog question');
+    expect(state).toEqual({ query, candidate: { type: 'tool', name: entry.id, description: entry.description,
+      evidenceJson: JSON.stringify(entry.evidence ?? null) } });
+    return noulAnswer(probability);
+  });
+}
+
+test('prepared catalog preserves complete aliases and tails while every distinct query is screened and read', async () => {
+  const alias = { text: `${'Complete ordinary evidence. '.repeat(80)} Complete alias tail` };
+  const entry = { id: 'prepared-native', description: `${'Complete ordinary description. '.repeat(40)} Complete description tail`, evidence: { left: alias, right: alias } };
+  let described = 0;
+  const describeEntry = (value: typeof entry) => { described++; return value; };
+  const prepared = prepareHarnessCatalog([entry], describeEntry), screening = researchScreeningFixture();
+  expect(Object.isFrozen(prepared)).toBe(true); expect(Object.isFrozen(prepared[0]?.evidence.left)).toBe(true);
+  for (const query of ['First complete native lane', 'Second complete native lane']) {
+    const fake = preparedReadings(query, entry); installJudgmentPort(fake.port);
+    const result = await rankHarnessCatalog(prepared, query, describeEntry, 'agent.test.prepared-complete', {
+      sourceOwner: screening.owner, requirePreservedSource: true,
+    });
+    expect(result.matches[0]?.entry).toEqual(entry); expect(fake.requests).toHaveLength(1);
+  }
+  expect(described).toBe(1);
+  const proposals = screening.calls.filter(call => call.path === '/v1/chat/completions');
+  expect(proposals).toHaveLength(2);
+  expect(JSON.stringify(proposals[0])).toContain('First complete native lane');
+  expect(JSON.stringify(proposals[1])).toContain('Second complete native lane');
+  expect(proposals.every(call => JSON.stringify(call).includes('Complete alias tail') && JSON.stringify(call).includes('Complete description tail'))).toBe(true);
+});
+
+test('foreign catalog arrays and describers cannot borrow prepared metadata', async () => {
+  const entry = { id: 'prepared-native', description: 'Original complete native description' };
+  let described = 0;
+  const describeEntry = (value: typeof entry) => { described++; return value; };
+  const prepared = prepareHarnessCatalog([entry], describeEntry), screening = researchScreeningFixture();
+  const fake = preparedReadings('Native foreign-array query', entry); installJudgmentPort(fake.port);
+  await rankHarnessCatalog([...prepared], 'Native foreign-array query', describeEntry, 'agent.test.prepared-foreign', { sourceOwner: screening.owner });
+  expect(described).toBe(2); expect(fake.requests).toHaveLength(1);
+  const before = screening.calls.length;
+  await expect(rankHarnessCatalog(prepared, 'Native foreign-callback query', value => ({ ...value, description: 'Authorization: Bearer synthetic-foreign-credential' }),
+    'agent.test.prepared-foreign', { sourceOwner: screening.owner })).rejects.toThrow();
+  expect(screening.calls).toHaveLength(before); expect(fake.requests).toHaveLength(1);
+});
+
+test.each(['array-proxy', 'entry-proxy', 'entry-accessor'] as const)('prepared %s is refused without invoking hostile slots or contacting either reader', async kind => {
+  const entry = { id: 'prepared-native', description: 'Ordinary complete description' }, screening = researchScreeningFixture();
+  const fake = preparedReadings('Native proxy query', entry); installJudgmentPort(fake.port); let touched = 0;
+  const describeEntry = (value: typeof entry) => value;
+  const prepared = prepareHarnessCatalog([entry], describeEntry);
+  if (kind === 'array-proxy') {
+    const borrowed = new Proxy(prepared, { get() { touched++; return undefined; }, ownKeys() { touched++; return []; }, getPrototypeOf() { touched++; return null; } });
+    await expect(rankHarnessCatalog(borrowed, 'Native proxy query', describeEntry, 'agent.test.prepared-proxy', { sourceOwner: screening.owner })).rejects.toThrow();
+  } else {
+    const source = kind === 'entry-proxy' ? new Proxy(entry, { ownKeys() { touched++; return []; } }) : entry;
+    if (kind === 'entry-accessor') Object.defineProperty(source, 'description', { get() { touched++; return 'Ordinary complete description'; } });
+    expect(() => prepareHarnessCatalog([source], describeEntry)).toThrow();
+  }
+  expect(touched).toBe(0); expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+});
+
+test('prepared complete private tail is screened anew and cannot reach the canonical reader', async () => {
+  const privateTail = 'Synthetic private prepared schema tail';
+  const entry = { id: 'prepared-native', description: 'Complete native method', evidence: { note: `${'Ordinary full evidence. '.repeat(100)} ${privateTail}` } };
+  const describeEntry = (value: typeof entry) => value, prepared = prepareHarnessCatalog([entry], describeEntry);
+  const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateTail]) }), fake = preparedReadings('Native privacy query', entry);
+  installJudgmentPort(fake.port);
+  await expect(rankHarnessCatalog(prepared, 'Native privacy query', describeEntry, 'agent.test.prepared-private', {
+    sourceOwner: screening.owner, requirePreservedSource: true,
+  })).rejects.toThrow();
+  expect(JSON.stringify(screening.calls)).toContain(privateTail); expect(fake.requests).toHaveLength(0);
+});
+
+test('prepared metadata grants no exemption from the complete original query floor', async () => {
+  const entry = { id: 'prepared-native', description: 'Complete native method' }, describeEntry = (value: typeof entry) => value;
+  const prepared = prepareHarnessCatalog([entry], describeEntry), screening = researchScreeningFixture(), fake = preparedReadings('Ordinary query', entry);
+  installJudgmentPort(fake.port);
+  await expect(rankHarnessCatalog(prepared, `Ordinary query ${'x'.repeat(1500)} Authorization: Bearer synthetic-query-credential`, describeEntry,
+    'agent.test.prepared-query', { sourceOwner: screening.owner })).rejects.toThrow();
+  expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+});
+
+test.each(['source', 'cancel'] as const)('prepared %s loss during actual local screening holds before canonical publication', async change => {
+  const entry = { id: 'prepared-native', description: 'Complete native method', evidence: { note: 'Complete original source note' } };
+  const original = [entry], assertOriginal = captureModelReadingSnapshotGuard(captureModelReadingInput(original));
+  const describeEntry = (value: typeof entry) => value, prepared = prepareHarnessCatalog(original, describeEntry);
+  const wait = suspended(), controller = new AbortController();
+  const screening = researchScreeningFixture({ beforeProposal: async () => { wait.start(); await wait.gate; } });
+  const fake = preparedReadings('Native pending query', entry); installJudgmentPort(fake.port);
+  const pending = rankHarnessCatalog(prepared, 'Native pending query', describeEntry, 'agent.test.prepared-pending', {
+    sourceOwner: screening.owner, signal: controller.signal, requirePreservedSource: true, assertCurrent() { assertOriginal(original); },
+  });
+  await wait.started;
+  if (change === 'source') entry.evidence.note += ' Authorization: Bearer synthetic-late-source-credential';
+  else controller.abort();
+  wait.release(); await expect(pending).rejects.toThrow();
+  expect(fake.requests).toHaveLength(0); expect(prepared[0]?.evidence.note).toBe('Complete original source note');
+  expect(JSON.stringify(screening.calls)).not.toContain('synthetic-late-source-credential');
+});
+
+test('prepared metadata never reuses a prior positive reading for uncertain or negative evidence', async () => {
+  const entry = { id: 'prepared-native', description: 'Complete native method' }, describeEntry = (value: typeof entry) => value;
+  const prepared = prepareHarnessCatalog([entry], describeEntry);
+  for (const probability of [0.99, 0.5, 0.01]) {
+    const fake = preparedReadings('Same complete query', entry, probability); installJudgmentPort(fake.port);
+    const result = await rankHarnessCatalog(prepared, 'Same complete query', describeEntry, 'agent.test.prepared-reading', {
+      sourceOwner: ordinaryResearchOwner(), requirePreservedSource: true,
+    });
+    expect(fake.requests).toHaveLength(1);
+    expect(result.judgments[0]?.reading.verdict).toBe(probability === 0.99 ? 'yes' : probability === 0.5 ? 'uncertain' : 'no');
+    expect(result.matches).toHaveLength(probability === 0.01 ? 0 : 1);
+  }
 });

@@ -60,7 +60,7 @@ const MAIL = {
   body: 'Thanks for your order. Order number BBY01-806512334: thing x1, total $1.00.',
 };
 
-describe('correlatePurchaseMail includes submitted-unverified records (BLOCKING 3)', () => {
+describe('correlatePurchaseMail includes submitted-unverified records', () => {
   test('a purchased record still matches, exactly as before', async () => {
     const result = await correlatePurchaseMail(MAIL, [BASE]);
     expect(result.kind).toBe('matched');

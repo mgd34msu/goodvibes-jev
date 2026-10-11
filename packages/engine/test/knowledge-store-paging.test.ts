@@ -1,7 +1,7 @@
 /**
  * knowledge-store-paging.test.ts
  *
- * Item 3 guard: the store exposes bounded, offset-paged reads so a single
+ * Guard: the store exposes bounded, offset-paged reads so a single
  * self-improvement run's distinct-space discovery never materializes the whole
  * store at once. Pins that each page is capped to its limit and that an ascending
  * offset loop still visits every record (so behavior is unchanged).

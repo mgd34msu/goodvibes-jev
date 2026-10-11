@@ -410,7 +410,7 @@ function gmailMessage(
     messageId: '<abc@service.test>',
     // Receiver-written delivery evidence, and the ONLY field
     // `matchCandidate` gates on. Present on a metadata-only message because it
-    // is a header, which is precisely why item 4 needs asserting.
+    // is a header, which is precisely why receiver-written evidence needs asserting.
     deliveredTo: [ALIAS],
     unverifiedToHeaderClaim: 'owner@example.test',
     resourceId: '18f0a2b3c4d5e6f7',

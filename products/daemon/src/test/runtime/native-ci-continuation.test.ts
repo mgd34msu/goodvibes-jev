@@ -238,7 +238,8 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
       const consume = f.tokens.consumeNativeContinuation.bind(f.tokens);
       consumptionFault = spyOn(f.tokens, 'consumeNativeContinuation').mockImplementation((...args) => { consume(...args); throw new Error('Synthetic response loss after private consumption'); });
       const partial = await ci.checkWatch(watches[0]!.id);
-      expect(partial.fixSessionTriggered).toBe(false); expect(partial.fixSessionError).toContain('Synthetic response loss');
+      expect(partial.fixSessionTriggered).toBe(false); expect(partial.fixSessionError).toBe('[REDACTED]');
+      expect(JSON.stringify(partial)).not.toContain('Synthetic response loss');
       expect(f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'))).toHaveLength(2);
       consumptionFault.mockRestore(); consumptionFault = undefined;
     }
@@ -321,7 +322,8 @@ for (const mode of ['direct', 'restart', 'concurrent', 'partial-claim-restart', 
     const jobs = mode === 'concurrent' ? [polling.checkWatch(watches[0]!.id), polling.checkWatch(watches[0]!.id)] : [polling.checkWatch(watches[0]!.id)];
     const [repaired] = await Promise.all(jobs);
     if (mode === 'launched-restart') {
-      expect(repaired!.fixSessionTriggered).toBe(false); expect(repaired!.fixSessionError).toContain('requires native reconciliation');
+      expect(repaired!.fixSessionTriggered).toBe(false); expect(repaired!.fixSessionError).toBe('[REDACTED]');
+      expect(JSON.stringify(repaired)).not.toContain('requires native reconciliation');
       expect(f.requests.filter(request => request.systemPrompt?.includes('Execute this existing native work unit yourself'))).toHaveLength(3); return;
     }
     if (['policy-aba-restart', 'catalog-aba-restart', 'ledger-aba', 'token-revoke', 'scope-aba'].includes(mode)) {

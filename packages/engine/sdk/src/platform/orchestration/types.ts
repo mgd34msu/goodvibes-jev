@@ -89,7 +89,7 @@ export type WorkItemState =
   /**
    * Recoverable, not terminal, the item cannot be claimed yet because at
    * least one of its `dependsOn` items has not reached 'passed'. This is a
-   * REFUSE-not-kill gate (BIG-3 item 2): the item sits here, out of the
+   * REFUSE-not-kill gate: the item sits here, out of the
    * claimable waiting set (computeClaims excludes it), until the engine's
    * per-tick dependency pre-pass (applyDependencyGates, engine.ts) finds every
    * dependency passed and flips it back to 'pending'. `blockedReason` is
@@ -232,7 +232,7 @@ export interface WorkItem extends WorkItemContractFields {
   /** The agent's task. Mutable only through `engine.requeueItem`, which may hand the next agent a revised brief. */
   task: string;
   /**
-   * IDs of the sibling work items this item depends on (BIG-3 item 2). The
+   * IDs of the sibling work items this item depends on. The
    * item is not claimable until EVERY id here refers to an item that has
    * reached 'passed'; until then it sits in 'blocked-dependency' with an
    * honest `blockedReason`. Empty (the common case) ⇒ no dependency gate, the
@@ -371,8 +371,7 @@ export interface WorkItemSpec extends WorkItemContractFields {
   readonly title: string;
   readonly task: string;
   /**
-   * IDs of other items in the SAME workstream this item depends on (BIG-3
-   * item 2). Omitted/empty ⇒ no dependency gate. Every id must match another
+   * IDs of other items in the SAME workstream this item depends on. Omitted/empty ⇒ no dependency gate. Every id must match another
    * item's id in the same CreateWorkstreamInput (draftFromProposal asserts
    * this and acyclicity for a plan proposal), and the engine gates the claim
    * path on it (see the 'blocked-dependency' state doc).
@@ -472,7 +471,7 @@ export interface BudgetCeiling {
 }
 
 /**
- * Workstream-level provenance (BIG-3 item 1), honest, machine-readable record
+ * Workstream-level provenance, honest, machine-readable record
  * of where a workstream's items came from when they were drafted from a
  * multi-item PlanProposal (workstream-services.ts buildSpec). Absent on a
  * single-item draft or a workstream authored directly.
@@ -514,7 +513,7 @@ export interface Workstream {
    */
   readonly isolation?: WorkstreamIsolation | undefined;
   /**
-   * Where this workstream's items came from (BIG-3 item 1). Set only when the
+   * Where this workstream's items came from. Set only when the
    * items were drafted from a multi-item PlanProposal; absent for a
    * single-item draft or a hand-authored workstream. Persisted and surfaced for honest origin reporting.
    */
@@ -714,7 +713,7 @@ export type OrchestrationEvent =
   | { readonly type: 'item-passed'; readonly workstreamId: string; readonly itemId: string; readonly warnings?: readonly string[] | undefined }
   | { readonly type: 'item-failed'; readonly workstreamId: string; readonly itemId: string; readonly reason: string }
   /**
-   * Dependency-gating lifecycle (BIG-3 item 2). `item-blocked-dependency`
+   * Dependency-gating lifecycle. `item-blocked-dependency`
    * fires once per NEW block (not every idle tick), naming the unmet
    * dependencies by id in `deps` and carrying the current human-readable
    * `reason` ('waiting on: …' or 'dependency failed: …'). `item-dependency-cleared`

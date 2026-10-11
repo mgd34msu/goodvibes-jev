@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +26,11 @@ function fixture() {
 }
 function task(id: string, queuedAt = 4001): RuntimeTask {
   return { id, kind: 'exec', title: `Synthetic task ${id}`, status: 'queued', owner: 'native-test', cancellable: true, childTaskIds: [], queuedAt };
+}
+async function createReceipt(store: ArtifactStore, createdAt: number) {
+  const clock = spyOn(Date, 'now').mockReturnValue(createdAt);
+  try { return await store.create({ kind: 'data', text: 'Native receipt artifact', metadata: { purpose: 'watcher-run-receipt', status: 'The selected watcher finished successfully.', operation: 'watcher-run' } }); }
+  finally { clock.mockRestore(); }
 }
 function privacyFixture(before?: () => void) {
   let invoked = false;
@@ -163,15 +168,41 @@ describe('Autonomy complete native live-source boundary', () => {
     const root = mkdtempSync(join(tmpdir(), 'autonomy-receipt-'));
     try {
       const store = new ArtifactStore({ rootDir: root });
-      const artifact = await store.create({ kind: 'data', text: 'Native receipt artifact', metadata: { purpose: 'watcher-run-receipt', status: 'The selected watcher finished successfully.', operation: 'watcher-run' } });
+      const artifact = await createReceipt(store, 1_900_000_000_001);
       const context = { platform: { artifactStore: store } } as unknown as CommandContext;
-      const fake = privacyFixture(); installJudgmentPort(fake.port);
+      const fake = privacyFixture(), receipt = fakePort((name, question, state) => {
+        if (name !== 'status' || question.type !== 'choice' || !Object.hasOwn(question.criteria, 'succeeded')
+          || JSON.stringify(state) !== JSON.stringify(artifact)) throw new Error('Unexpected complete native receipt reading');
+        return choiceAnswer(question, 'succeeded', 0.999);
+      });
+      installJudgmentPort({ model: fake.port.model, ask: request => request.context?.battery === 'agent.personal-ops.receipt-status'
+        ? receipt.port.ask(request) : fake.port.ask(request) });
       const result = await captureAutonomyLiveRecords(context, { sourceOwner: ordinaryResearchOwner() });
       expect(result.watcherReceipts[0]?.id).toBe(`watcher-receipt:${artifact.id}`);
       expect(result.watcherReceipts[0]?.status).toBe('succeeded');
       expect(result.watcherReceipts[0]?.controls?.every(control => control.effect === 'read-only')).toBe(true);
-      expect(fake.requests.some(request => request.context?.battery === 'agent.personal-ops.receipt-status')).toBe(true);
+      expect(receipt.requests).toHaveLength(1);
+      expect(receipt.requests[0]?.context?.battery).toBe('agent.personal-ops.receipt-status');
+      expect(artifact.createdAt).toBe(1_900_000_000_001);
+      expect(store.get(artifact.id)).toEqual(artifact);
       expect(store.get(artifact.id)?.metadata.status).toBe('The selected watcher finished successfully.');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a native card-shaped artifact epoch holds before the receipt reading and leaves the original artifact intact', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'autonomy-receipt-'));
+    try {
+      const store = new ArtifactStore({ rootDir: root });
+      const artifact = await createReceipt(store, 1_900_000_000_000);
+      const context = { platform: { artifactStore: store } } as unknown as CommandContext;
+      const fake = privacyFixture(); installJudgmentPort(fake.port);
+      let published = 0;
+      await expect(captureAutonomyLiveRecords(context, { sourceOwner: ordinaryResearchOwner() })
+        .then(result => { published++; return result; })).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+      expect(published).toBe(0);
+      expect(fake.requests.filter(request => request.context?.battery === 'agent.personal-ops.receipt-status')).toHaveLength(0);
+      expect(JSON.stringify(fake.requests)).not.toContain(String(artifact.createdAt));
+      expect(artifact.createdAt).toBe(1_900_000_000_000);
+      expect(store.get(artifact.id)).toEqual(artifact);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
   test('cancellation during an outstanding canonical reply cannot publish records', async () => {

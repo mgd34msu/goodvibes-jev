@@ -291,7 +291,7 @@ describe('transport.use(): appends to chain', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MAJOR 3: sdk.use() facade on the full SDK instance
+// sdk.use() facade on the full SDK instance
 // ---------------------------------------------------------------------------
 
 describe('sdk.use(): full SDK facade integration', () => {

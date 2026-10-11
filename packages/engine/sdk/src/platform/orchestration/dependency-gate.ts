@@ -1,7 +1,7 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * dependency-gate.ts, the per-tick dependency pre-pass (BIG-3 item 2),
+ * dependency-gate.ts, the per-tick dependency pre-pass,
  * extracted from engine.ts so the engine stays under its line cap. Pure but for
  * the item-state mutations and the events it emits through the injected `emit`.
  */

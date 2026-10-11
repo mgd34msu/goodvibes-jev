@@ -8,13 +8,15 @@ import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createSurfaceEmailInboxConfigReader } from '@goodvibes-jev/engine/sdk/platform/email';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
-import { createEmailInboxOwner, registerInboxSurface, createOwnedInboxSource,
-  type EmailInboxAccount, type EmailInboxOwner, type InboxSurfaceRegistration } from '@goodvibes-jev/engine/sdk/platform/intake';
+import { createEmailInboxOwner, registerInboxSurface, createOwnedInboxSource, createOwnedTriagedInboxSource,
+  type EmailInboxAccount, type EmailInboxOwner, type InboxSurfaceRegistration, type InboxTriageAuthority } from '@goodvibes-jev/engine/sdk/platform/intake';
 import type { ProtectedSourceOwnerOptions } from '@goodvibes-jev/engine/sdk/platform/security';
 import type { DaemonInboxSourceFactory } from './multiowner-inbox-composition.js';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
 export interface EmailDaemonInboxOptions {
+  /** Separately established semantic destination/account grant, never inferred from screening. */
+  readonly triageAuthority?: InboxTriageAuthority;
   readonly triageTagging?: DaemonTriageTaggingActivation;
   /** Expected TLS endpoint/account/mailbox established by the trusted host. */
   readonly account: EmailInboxAccount;
@@ -34,13 +36,17 @@ export interface EmailDaemonInboxSourceFactories extends Omit<EmailDaemonInboxFa
 
 export function createEmailDaemonInboxSourceFactory(options: EmailDaemonInboxOptions,
   factories: EmailDaemonInboxSourceFactories = {}): DaemonInboxSourceFactory {
-  return createEmailAccountFactory(options, factories, factories.createSource ?? createOwnedInboxSource);
+  const authority = options.triageAuthority;
+  return createEmailAccountFactory(options, factories, factories.createSource ?? ((context, source, owner) =>
+    createOwnedTriagedInboxSource(context, { ...source, providerId: 'email', accountScopeId: owner.scopeId,
+      acquireReadLease: () => owner.acquireReadLease(), ...(authority ? { authority } : {}),
+    })));
 }
 
 export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
   factories: EmailDaemonInboxFactories = {}): DaemonInboxFactory {
-  if (options.triageTagging) {
-    if (factories.registerSurface) throw new Error('Triage tagging requires an owned source, not a legacy registrar');
+  if (!factories.registerSurface || options.triageTagging || options.triageAuthority) {
+    if (factories.registerSurface) throw new Error('Triage requires an owned source, not a legacy registrar');
     return createMultiOwnerDaemonInboxFactory([createEmailDaemonInboxSourceFactory(options, factories)]);
   }
   return createEmailAccountFactory(options, factories, factories.registerSurface ?? registerInboxSurface);
@@ -48,7 +54,7 @@ export function createEmailDaemonInboxFactory(options: EmailDaemonInboxOptions,
 
 function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: EmailDaemonInboxOptions,
   factories: Pick<EmailDaemonInboxFactories, 'createOwner' | 'eligibilityClock'>,
-  register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1]) => T,
+  register: (context: Parameters<DaemonInboxFactory>[0], options: Parameters<typeof registerInboxSurface>[1], owner: EmailInboxOwner) => T | Promise<T>,
 ): (...args: Parameters<DaemonInboxFactory>) => Promise<T> {
   const triageTagging = options.triageTagging ? Object.freeze({ onReady: options.triageTagging.onReady }) : undefined;
   if (triageTagging && typeof triageTagging.onReady !== 'function') throw new Error('Triage tagging requires an explicit owner callback');
@@ -91,7 +97,7 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
         { strictOwnership: true, totalTimeoutMs: 100 });
       current();
       const selectedOwner = owner;
-      surface = register({ ...context, workingDirectory }, {
+      surface = await register({ ...context, workingDirectory }, {
         adapters: new Map([['email', selectedOwner.adapter]]), storeFileName, ...(clustered ? { awaitInitialPoll: false } : {}),
         acquireReadLease: () => selectedOwner.acquireReadLease(),
         gatePolling: (_provider, control) => {
@@ -102,7 +108,7 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
           });
           return () => eligibility!.close();
         },
-      });
+      }, selectedOwner);
     } catch {
       try { await Promise.all([owner?.close(), eligibility?.close()]); } finally { try { mail.close(); } finally { release?.(); } }
       throw new Error('Email inbox composition could not acquire its owned account and storage');

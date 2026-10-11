@@ -12,6 +12,7 @@ import { SecretsManager } from '../../config/secrets.js';
 import { createDaemonTriageTaggingFactory } from '../../runtime/tagged-inbox-composition.js';
 import { gateReadingsPort } from '../helpers/synthetic-gate-readings.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { operationJudgmentRequests } from '../helpers/field-name-privacy-requests.js';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const sharedKey = daemonSecretKeyFor('surfaces.email.password');
@@ -28,10 +29,11 @@ async function fixture(provider: 'slack' | 'email' = 'slack') {
   let meaning = 'normal';
   let outcome = 'act', hook: (() => void | Promise<void>) | undefined, humans = 0;
   const readings: unknown[] = [];
+  const judgmentRequests: Array<Parameters<JudgmentPort['ask']>[0]> = [];
   const semantic = fakePort((_name, question) => choiceAnswer(question, _name === 'meaning' ? meaning : outcome, 0.99));
   const gate = gateReadingsPort();
   const port: JudgmentPort = withDecisionLog({ model: gate.port.model, async ask(request) {
-    readings.push(request.state); request.beforeAttempt?.(); await hook?.(); request.beforeAttempt?.();
+    readings.push(request.state); judgmentRequests.push(request); request.beforeAttempt?.(); await hook?.(); request.beforeAttempt?.();
     return 'meaning' in request.questions || 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
   } }, log);
   const previous = installJudgmentPort(port); cleanups.push(() => { installJudgmentPort(previous); });
@@ -57,7 +59,7 @@ async function fixture(provider: 'slack' | 'email' = 'slack') {
   const owner = create({ source, provider, accountScopeId: 'account', assertCurrent() {}, ...(provider === 'email' ? { imap: { host: 'mail.invalid', port: 993, user: 'synthetic', mailbox: 'INBOX' } } : {}) });
   cleanups.push(() => owner.close());
   const operation = { sourceOf: () => ({ goal: 'Apply a priority triage tag to the selected message', criteria: ['Only the selected current message'] }), assertCurrent() {} };
-  return { secrets, config, port, source, writes, readings, owner, operation, id: row.id, lifetime,
+  return { secrets, config, port, source, writes, readings, judgmentRequests, owner, operation, id: row.id, lifetime,
     setHook(value: typeof hook) { hook = value; }, setOutcome(value: string) { outcome = value; }, setMeaning(value: string) { meaning = value; }, mutate() { row = { ...row, bodyPreview: 'replacement' }; }, get humans() { return humans; }, get released() { return released; },
   };
 }
@@ -128,7 +130,8 @@ test('config ABA during judgment revokes the exact operation', async () => {
 test('missing managed credential refuses before judgment and provider mutation', async () => {
   const f = await fixture(); await f.secrets.delete(slackKey);
   await expect(f.owner.applyTags(f.id, ['GoodVibes/Priority'], f.operation)).rejects.toThrow();
-  expect(f.writes).toHaveLength(0); expect(f.readings).toHaveLength(0); expect(f.humans).toBe(0);
+  expect(f.writes).toHaveLength(0); expect(operationJudgmentRequests(f.judgmentRequests)).toHaveLength(0); expect(f.humans).toBe(0);
+  expect(JSON.stringify(f.readings)).not.toContain('synthetic-one'); expect(JSON.stringify(f.readings)).not.toContain('PRIVATE_PREVIEW');
 });
 
 

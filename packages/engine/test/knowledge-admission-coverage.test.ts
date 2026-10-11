@@ -1,5 +1,5 @@
 /**
- * knowledge-admission-coverage.test.ts (fix-round 2)
+ * knowledge-admission-coverage.test.ts
  *
  * The critical-tier admission gate covers EVERY knowledge-shaped HTTP surface,
  * not just the primary knowledgeService: the agent-alias KnowledgeService and

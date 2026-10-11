@@ -39,6 +39,14 @@ const tools = Array.from({ length: toolCount }, (_, i) => ({
     properties: { value: { type: 'string', description: 'v'.repeat(400) } },
   },
 }));
+if (mode === 'modern-mrtr') tools.push({
+  name: 'needs-input',
+  description: 'Tool requiring the declared user-name elicitation form',
+  inputSchema: {
+    type: 'object',
+    properties: { value: { type: 'string', description: 'Original tool input' } },
+  },
+});
 
 function handle(msg: Record<string, unknown>): void {
   const method = String(msg.method ?? '');
@@ -233,7 +241,8 @@ describe('MCP stdio protocol negotiation', () => {
 
   test('resolves a Multi Round-Trip Request through the elicitation resolver and retries with inputResponses', async () => {
     const elicited: unknown[] = [];
-    const client = makeClient('modern-mrtr', {}, {
+    const logPath = join(scratch, 'mrtr-resolved-log.txt');
+    const client = makeClient('modern-mrtr', { MCP_MOCK_LOG: logPath }, {
       timeout: 10_000,
       onElicitation: async (input) => {
         elicited.push(input.params);
@@ -241,18 +250,22 @@ describe('MCP stdio protocol negotiation', () => {
       },
     });
     await client.connect();
+    expect(await client.getToolSchema('needs-input')).toMatchObject({ name: 'needs-input', inputSchema: { type: 'object' } });
 
     const result = await client.callTool('needs-input', { value: 'x' }) as Record<string, unknown>;
     const echo = result.echo as Record<string, unknown>;
     expect(echo.inputResponses).toEqual({ user_name: { action: 'accept', content: { name: 'octocat' } } });
     expect(echo.requestState).toBe('opaque-state-1');
     expect(elicited).toHaveLength(1);
+    expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['server/discover', 'tools/list', 'tools/call', 'tools/call']);
   });
 
   test('an input_required result without a wired resolver fails honestly instead of looping', async () => {
-    const client = makeClient('modern-mrtr');
+    const logPath = join(scratch, 'mrtr-unanswered-log.txt');
+    const client = makeClient('modern-mrtr', { MCP_MOCK_LOG: logPath });
     await client.connect();
     await expect(client.callTool('needs-input', {})).rejects.toThrow(/requested 'elicitation\/create' input this client cannot provide/);
+    expect(readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['server/discover', 'tools/list', 'tools/call']);
   });
 });
 

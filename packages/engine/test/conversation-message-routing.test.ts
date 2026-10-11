@@ -1,12 +1,12 @@
 /**
  * conversation-message-routing.test.ts
  *
- * Tests for Problem-2 companion message routing:
+ * Tests for companion message routing:
  *   - kind='message' (default) skips bindAgent, publishes conversation.followup.companion
  *   - kind='task' preserves explicit bindAgent behavior
  *   - envelope shape is valid ConversationMessageEnvelope
  *   - unknown kind returns 400
- *   - envelope shape consistency between chat-mode and Problem-2
+ *   - envelope shape consistency between chat-mode and companion routing
  */
 
 import { describe, expect, test, beforeEach } from 'bun:test';
@@ -583,7 +583,7 @@ describe('gateway scoping: only TUI clients receive followup events', () => {
 
 describe('body size handling', () => {
   /**
-   * Minor 2: Oversized body test.
+   * Oversized body test.
    * The route currently has no explicit size limit, it accepts any body size
    * that the HTTP server allows. We document this behavior explicitly:
    * large bodies are accepted by the route handler (no 413 at this layer).
@@ -668,7 +668,7 @@ describe('envelope shape consistency: chat-mode vs Problem-2', () => {
 
   test('Problem-2 follow-up envelope is structurally identical to chat-mode envelope', () => {
     // Both must satisfy ConversationMessageEnvelope, confirmed by TypeScript.
-    // At runtime: verify that a Problem-2 envelope and a chat-mode envelope
+    // At runtime: verify that a companion-message envelope and a chat-mode envelope
     // have exactly the same required keys.
     const chatEnvelope: ConversationMessageEnvelope = {
       sessionId: 'sess-1',

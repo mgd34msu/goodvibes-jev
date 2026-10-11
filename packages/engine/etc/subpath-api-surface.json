@@ -16689,9 +16689,10 @@
       "kind": "class",
       "publicMembers": [
         "code",
-        "constructor"
+        "constructor",
+        "toJSON"
       ],
-      "text": "export declare class ConfigError extends AppError { readonly code: 'CONFIG_ERROR'; constructor(message: string); }"
+      "text": "export declare class ConfigError extends AppError { readonly code: 'CONFIG_ERROR'; constructor(message: string, options?: Pick<AppErrorOptions, 'cause'>); toJSON(): Record<string, unknown>; } ;; via AppErrorOptions = export interface AppErrorOptions { readonly statusCode?: number | undefined; readonly category?: PlatformErrorCategory | undefined; readonly guidance?: string | undefined; readonly detail?: string | undefined; readonly source?: PlatformErrorSource | undefined; readonly provider?: string | undefined; readonly operation?: string | undefined; readonly phase?: string | undefined; readonly requestId?: string | undefined; readonly providerCode?: string | undefined; readonly providerType?: string | undefined; readonly retryAfterMs?: number | undefined; readonly rawMessage?: string | undefined; readonly cause?: unknown | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "ConfigKey",
@@ -27083,7 +27084,7 @@
     {
       "name": "fetchModelContextWindows",
       "kind": "function",
-      "text": "export declare function fetchModelContextWindows(host: string, port: number, serverType: ServerType, models: string[]): Promise<Record<string, number>>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function fetchModelContextWindows(host: string, port: number, serverType: ServerType, models: string[], signal?: AbortSignal): Promise<Record<string, number>>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "loadPersistedProviders",
@@ -27103,12 +27104,12 @@
     {
       "name": "scan",
       "kind": "function",
-      "text": "export declare function scan(onProgress?: (completed: number, total: number) => void): Promise<ScanResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function scan(onProgress?: (completed: number, total: number) => void, signal?: AbortSignal): Promise<ScanResult>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "scanLocalhost",
       "kind": "function",
-      "text": "export declare function scanLocalhost(): Promise<ScanResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function scanLocalhost(signal?: AbortSignal): Promise<ScanResult>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "scanMcpServers",
@@ -33411,7 +33412,7 @@
         "acquireReadLease",
         "providerId"
       ],
-      "text": "export interface OwnedTriagedInboxOptions extends Omit<RegisterInboxSurfaceOptions, 'storeFileName' | 'enrichTriage' | 'acquireReadLease'> { readonly providerId: string; readonly accountScopeId: string; readonly acquireReadLease: NonNullable<RegisterInboxSurfaceOptions['acquireReadLease']>; readonly authority?: InboxTriageAuthority; } ;; via NonNullable = type NonNullable<T> = T & {};"
+      "text": "export interface OwnedTriagedInboxOptions extends Omit<RegisterInboxSurfaceOptions, 'storeFileName' | 'enrichTriage' | 'acquireReadLease'> { readonly storeFileName?: string; readonly providerId: string; readonly accountScopeId: string; readonly acquireReadLease: NonNullable<RegisterInboxSurfaceOptions['acquireReadLease']>; readonly authority?: InboxTriageAuthority; } ;; via NonNullable = type NonNullable<T> = T & {};"
     },
     {
       "name": "OwnedTriagedInboxSource",
@@ -47460,7 +47461,7 @@
     {
       "name": "discoverContextWindows",
       "kind": "function",
-      "text": "export declare function discoverContextWindows(baseURL: string, apiKey?: string | undefined): Promise<Map<string, number>>; ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function discoverContextWindows(baseURL: string, apiKey?: string | undefined, signal?: AbortSignal): Promise<Map<string, number>>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "ensureConfiguredModelIsRoutable",
@@ -49488,7 +49489,7 @@
     {
       "name": "readLocalServerIdentity",
       "kind": "function",
-      "text": "export declare function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string): Promise<LocalServerSoftware>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string, options?: JudgmentReadingOptions): Promise<LocalServerSoftware>; ;; via JudgmentReadingOptions = export interface JudgmentReadingOptions { readonly prepareResultCapture?: ((questions: Questions) => { readonly questions: Questions; readonly capture: <T extends Awaited<ReturnType<JudgmentPort['ask']>>>(result: T) => T; readonly assertCurrent: () => void; }) | undefined; readonly captureResult?: (<T extends Awaited<ReturnType<JudgmentPort['ask']>>>(result: T) => T) | undefined; readonly assertResult?: ((result: unknown) => void) | undefined; readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "readReasoningFamily",
@@ -74140,9 +74141,10 @@
       "kind": "class",
       "publicMembers": [
         "code",
-        "constructor"
+        "constructor",
+        "toJSON"
       ],
-      "text": "export declare class ConfigError extends AppError { readonly code: 'CONFIG_ERROR'; constructor(message: string); }"
+      "text": "export declare class ConfigError extends AppError { readonly code: 'CONFIG_ERROR'; constructor(message: string, options?: Pick<AppErrorOptions, 'cause'>); toJSON(): Record<string, unknown>; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "ContractHttpDefinition",

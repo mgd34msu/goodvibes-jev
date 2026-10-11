@@ -9,7 +9,7 @@ import { KNOWLEDGE_EXTRACTOR_VERSION } from './extraction-policy.js';
 /** Pure normalization shared by ordinary upserts and staged imports. */
 export function prepareKnowledgeSourceRecord(input: KnowledgeSourceUpsertInput, existing: KnowledgeSourceRecord | null | undefined): KnowledgeSourceRecord {
     const now = nowMs();
-    // n1: `opt` is a local helper that collapses the 18 conditional spread expressions
+    // `opt` is a local helper that collapses the 18 conditional spread expressions
     // in the record below. Returns `{ [key]: newVal }` when newVal is non-null,
     // falls back to `{ [key]: existingVal }` to preserve existing value on partial
     // update, or `{}` when neither is present.
@@ -104,7 +104,7 @@ export function prepareKnowledgeExtractionRecord(input: KnowledgeExtractionUpser
       // A freshly written extraction is produced by the current extractor
       // generation, so it carries the current version (an explicit input version
       // wins, e.g. import re-materialization). An advancing version then
-      // re-extracts only genuinely older stored captures (Defect 8) without
+      // re-extracts only genuinely older stored captures without
       // looping on the extractions it just rewrote.
       extractorVersion: typeof input.metadata?.extractorVersion === 'number'
         ? input.metadata.extractorVersion

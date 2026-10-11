@@ -1,6 +1,6 @@
 // Ported from goodvibes-agent src/test/runtime/permissions/policy-loader.test.ts.
 /**
- * GC-PERM-011, Tests for the policy loader with signature validation.
+ * Tests for the policy loader with signature validation.
  *
  * Covers:
  *   - loadPolicyBundle(): unsigned/invalid/valid signature cases

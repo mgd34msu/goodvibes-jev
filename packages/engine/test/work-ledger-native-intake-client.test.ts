@@ -8,8 +8,8 @@ import {
   type NativeConversationIntakeCaptureRequest, type NativeConversationIntakeWorkReceipt, type NativeConversationIntakeResult,
 } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake-client';
 import { createOperatorRemoteClient, type OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
+import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
-import { buildOperatorContract } from '../sdk/src/platform/control-plane/operator-contract.js';
 import { createHttpTransport, firstJsonSchemaFailure } from '../transport-http/src/index.js';
 const projectId = 'conversation-project';
 const sourceRef = { version: 1 as const, inputId: 'input-1', sourceId: 'source-1', sourceRevision: 'revision-1', sessionId: 'session-1' };
@@ -92,7 +92,16 @@ describe('native conversation intake operator client', () => {
     const transport = createHttpTransport({ baseUrl: 'http://127.0.0.1:9', authToken: 'synthetic-existing-token', fetch: async (url, init) => {
       requests.push(new Request(url, init)); return Response.json(captured());
     } });
-    const remote = createOperatorRemoteClient(transport, buildOperatorContract(new GatewayMethodCatalog()));
+    const contract = getOperatorContract();
+    const catalog = new GatewayMethodCatalog();
+    for (const operation of operations) {
+      const methodId = `workLedger.intake.${operation}`;
+      const published = contract.operator.methods.find(method => method.id === methodId)!;
+      const native = catalog.get(methodId)!;
+      expect(published.inputSchema).toEqual(await Response.json(native.inputSchema).json());
+      expect(published.outputSchema).toEqual(await Response.json(native.outputSchema).json());
+    }
+    const remote = createOperatorRemoteClient(transport, contract);
     const client = createOperatorNativeConversationIntakeClient(remote, projectId);
     await client.capture(capture()); await client.get({ inputId: sourceRef.inputId }); await client.admit(transition()); await client.resume(transition()); await client.cancel(transition());
     expect(requests.map(request => new URL(request.url).pathname)).toEqual(operations.map(operation => `/api/work-ledger/intake/${operation}`));

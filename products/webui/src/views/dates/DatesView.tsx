@@ -106,6 +106,31 @@ function isNotAvailable(error: unknown): boolean {
   return isMethodUnavailableError(error) || isMethodNotInvokableError(error);
 }
 
+function sweepSummary(result: OperatorMethodOutput<'occasions.sweep'>): string {
+  if ('complete' in result) {
+    const reason = result.stopped === 'request-retired-after-delivery'
+      ? 'the request ended after delivery'
+      : 'delivery processing stopped';
+    return `Accepted ${result.acceptedDeliveries} ${result.acceptedDeliveries === 1 ? 'delivery' : 'deliveries'} before ${reason}. Sweep results are incomplete.`;
+  }
+
+  const delivered = result.deliveries.filter((entry) => entry.delivered);
+  const failed = result.deliveries.filter((entry) => !entry.delivered);
+  const status = result.hold !== null
+    ? `Held: ${result.hold}.`
+    : result.delivered
+      ? `Delivered via ${delivered.map((entry) => entry.channel).join(', ')}.`
+      : result.nudge !== null
+        ? result.deliveries.length === 0
+          ? 'Nudge is ready for the agent to pick up.'
+          : 'Nudge was not delivered.'
+        : 'Ran with nothing to deliver.';
+  const failures = failed.length === 0
+    ? ''
+    : ` Failed deliveries: ${failed.map((entry) => `${entry.channel}${entry.failure === null ? '' : `: ${entry.failure}`}`).join('; ')}.`;
+  return `${status}${failures} Mirrored ${result.mirrored} occasion(s).`;
+}
+
 function kindLabel(kind: OccasionKind): string {
   if (kind === 'gift-giving') return 'Gift-giving';
   if (kind === 'remember-only') return 'Remember only';
@@ -789,8 +814,7 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
               </div>
               {sweepResult ? (
                 <p className="dates-state__text" role="status">
-                  {sweepResult.hold ? `Held: ${sweepResult.hold}.` : sweepResult.delivered ? `Delivered via ${sweepResult.deliveryChannel}.` : 'Ran with nothing to deliver.'}
-                  {' '}Mirrored {sweepResult.mirrored} occasion(s).
+                  {sweepSummary(sweepResult)}
                 </p>
               ) : null}
             </div>

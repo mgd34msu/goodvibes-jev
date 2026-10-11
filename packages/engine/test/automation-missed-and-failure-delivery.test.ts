@@ -100,7 +100,7 @@ function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
 
 const target = (routeId: string): AutomationDeliveryTarget => ({ kind: 'surface', routeId });
 
-describe('failure-notice target resolution (item 1)', () => {
+describe('failure-notice target resolution', () => {
   test('per-job failure override wins over the delivery targets', () => {
     const job = makeJob({
       delivery: { mode: 'surface', targets: [target('normal')], fallbackTargets: [target('fb')], includeSummary: false, includeTranscript: false, includeLinks: false },
@@ -171,7 +171,7 @@ describe('failure-notice target resolution (item 1)', () => {
   });
 });
 
-describe('missed-run records (item 2)', () => {
+describe('missed-run records', () => {
   test('records a missed run, delivers it, and dedupes the same occurrence', () => {
     const runs = new Map<string, AutomationRun>();
     const delivered: AutomationRun[] = [];
@@ -205,7 +205,7 @@ describe('missed-run records (item 2)', () => {
   });
 });
 
-describe('runs source filters by "since" (item 3)', () => {
+describe('runs source filters by "since"', () => {
   function handlersForRuns(runs: readonly { id: string; jobId: string; status: string; queuedAt: number; endedAt?: number }[]) {
     const context = { automationManager: { listRuns: () => runs } } as never;
     return createDaemonRuntimeAutomationRouteHandlers(context);

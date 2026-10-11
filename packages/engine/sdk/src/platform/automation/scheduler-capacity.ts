@@ -3,7 +3,7 @@
  *
  * Standalone capacity-reporting logic for the AutomationManager.
  * Extracted so the report can be computed and tested independently
- * of the full manager class (QA-05).
+ * of the full manager class.
  *
  * Wire format uses camelCase at the API boundary per SDK convention.
  */

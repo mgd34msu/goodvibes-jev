@@ -154,7 +154,7 @@ describe('Workers harness: auth flow', () => {
 // ─── Transport HTTP ───────────────────────────────────────────────────────────
 
 describe('Workers harness: transport-http round-trip', () => {
-  // M-1 (success path): mock returns real-shape JSON for GET /api/sessions.
+  // Success path: mock returns real-shape JSON for GET /api/sessions.
   // Asserts that result is non-null and contains expected fields, proving the
   // transport completed the full HTTP round-trip successfully, not just that
   // it didn't crash.

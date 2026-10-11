@@ -405,7 +405,7 @@ describe('ProviderRegistry model catalog cache', () => {
 // getCurrentModel(), fresh-home fallback for the well-known configured default
 // ---------------------------------------------------------------------------
 //
-// Root cause (D7b): buildModelRegistry() only draws from custom/runtime/
+// Root cause: buildModelRegistry() only draws from custom/runtime/
 // synthetic/catalog/discovered models. The catalog is populated exclusively
 // by an async models.dev fetch (initProviderCatalog/refreshProviderCatalog),
 // which is never awaited at construction time, so on a fresh daemon home

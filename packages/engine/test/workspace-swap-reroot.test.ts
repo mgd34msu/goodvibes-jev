@@ -1,5 +1,5 @@
 /**
- * B1, Workspace swap re-root integration test.
+ * Workspace swap re-root integration test.
  *
  * Verifies that WorkspaceSwapManager.requestSwap() calls the rerootStores callback
  * with the new path and that session writes after the swap go to the new workspace.

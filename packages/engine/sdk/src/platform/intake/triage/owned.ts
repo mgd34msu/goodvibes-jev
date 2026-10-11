@@ -31,6 +31,8 @@ export interface InboxTriageAuthority {
   assertCurrent(): void;
 }
 export interface OwnedTriagedInboxOptions extends Omit<RegisterInboxSurfaceOptions, 'storeFileName' | 'enrichTriage' | 'acquireReadLease'> {
+  /** Preserve a native account mirror already protected by its host owner lock. */
+  readonly storeFileName?: string;
   readonly providerId: string;
   readonly accountScopeId: string;
   readonly acquireReadLease: NonNullable<RegisterInboxSurfaceOptions['acquireReadLease']>;
@@ -77,6 +79,11 @@ async function createTriagedSource(
   ctx = Object.freeze({ ...ctx });
   options = Object.freeze({ ...options, adapters: new Map(options.adapters) });
   const { providerId, accountScopeId } = options;
+  if (options.storeFileName !== undefined && (typeof options.storeFileName !== 'string'
+    || options.storeFileName.length > 200 || options.storeFileName.includes('/') || options.storeFileName.includes('\\')
+    || options.storeFileName.startsWith('.') || !options.storeFileName.endsWith('.sqlite'))) {
+    throw new TypeError('Triaged inbox mirror requires a local SQLite filename');
+  }
   if (!providerId || providerId.includes(':') || !accountScopeId || accountScopeId.length > 500
     || options.adapters.size !== 1 || !options.adapters.has(providerId) || typeof options.acquireReadLease !== 'function') {
     throw new TypeError('Triaged inbox requires one explicitly scoped account and read lease');
@@ -109,7 +116,7 @@ async function createTriagedSource(
   const getStore = (): SqliteTriageStore => store ??= new SqliteTriageStore(ctx.workingDirectory, fileName);
   let source: OwnedInboxSource;
   try {
-    source = createOwnedInboxSource(ctx, { ...options, adapters: new Map(options.adapters), storeFileName: `inbox-owned-${scope}.sqlite`,
+    source = createOwnedInboxSource(ctx, { ...options, adapters: new Map(options.adapters), storeFileName: options.storeFileName ?? `inbox-owned-${scope}.sqlite`,
       ...(gatePolling ? { gatePolling: (provider: string, control: Parameters<NonNullable<RegisterInboxSurfaceOptions['gatePolling']>>[1]) => {
         const retire = gatePolling(provider, control);
         if (typeof retire !== 'function') return;

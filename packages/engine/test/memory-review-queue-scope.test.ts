@@ -10,7 +10,7 @@ import { useMemoryReadings } from './_helpers/memory-readings.ts';
 useMemoryReadings();
 
 /**
- * Item 7, reviewQueue scope filter
+ * reviewQueue scope filter
  *
  * Verifies that:
  * 1. MemoryStore.reviewQueue(limit) still works with no scope (backward compat).
@@ -37,7 +37,7 @@ function makeStore(root: string) {
   return store;
 }
 
-describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
+describe('MemoryStore.reviewQueue scope filter', () => {
   test('no-scope call returns all scopes (backward compatible)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'gv-rq-scope-compat-'));
     tmpRoots.push(root);
@@ -123,7 +123,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
   });
 });
 
-describe('MemoryRegistry.reviewQueue scope filter (Item 7)', () => {
+describe('MemoryRegistry.reviewQueue scope filter', () => {
   test('backward compatible: no scope returns all scopes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'gv-reg-rq-compat-'));
     tmpRoots.push(root);

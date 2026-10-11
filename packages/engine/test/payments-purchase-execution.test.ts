@@ -1152,7 +1152,7 @@ describe('when the merchant interrupts or the process dies', () => {
     // order may still complete once he answers.
     expect(harness.recorded.length).toBe(0);
     expect(harness.ledger.state().reservations.length).toBe(1);
-    // BLOCKING 1 regression: the redactor stays ARMED, not disarmed, while a
+    // Regression: the redactor stays ARMED, not disarmed, while a
     // challenge is pending. He is about to be sent back to this very page to
     // finish 3-D Secure, and the typed card digits are still sitting in its
     // DOM (no click ever reached the merchant to clear them). Disarming here,

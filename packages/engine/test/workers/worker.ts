@@ -102,7 +102,7 @@ async function handleTransportSuccess(): Promise<Response> {
     sessions: [{
       id: 'session-001',
       kind: 'tui',
-      // S1 spine: project-as-data, required on the wire since the identity
+      // project-as-data, required on the wire since the identity
       // spine landed; a mock missing it fails output-schema validation.
       project: '/tmp/mock-project',
       title: 'Test Session',

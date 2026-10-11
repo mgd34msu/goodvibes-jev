@@ -1,5 +1,5 @@
 /**
- * session-update-scope-enforcement.test.ts  (m1)
+ * session-update-scope-enforcement.test.ts
  *
  * The `control.session_update` channel declares `scopes: ['read:sessions']`.
  * The gateway must ENFORCE that on the per-client SSE fan-out: a principal-scoped

@@ -622,7 +622,7 @@ export function registerBuiltinProviders(
   }));
 
   // Synthetic failover provider, must be after all backends.
-  // Stage 3: catalog-driven SyntheticProvider manages its own backend lists.
+  // catalog-driven SyntheticProvider manages its own backend lists.
   registry.register(new SyntheticProvider({
     resolveProvider: options.resolveProvider,
     getCatalogModels: options.getCatalogModels,

@@ -138,7 +138,7 @@ export interface EvaluationStep {
  * When the evaluator was configured from a signed policy bundle, the
  * provenance fields `policyBundleId`, `signatureStatus`, and
  * `provenanceSource` are populated from `BundleProvenance` for audit
- * trail and UI display (GC-PERM-011).
+ * trail and UI display.
  */
 export interface PermissionDecision {
   /** Whether the tool call is permitted. */
@@ -157,7 +157,7 @@ export interface PermissionDecision {
   timestamp: number;
   /** Full ordered trace of evaluation steps that led to this decision. */
   evaluationTrace: EvaluationStep[];
-  // ── GC-PERM-011: Policy provenance ──────────────────────────────────────
+  // ── Policy provenance ──────────────────────────────────────
   /**
    * Opaque identifier of the policy bundle that provided the rules used
    * for this evaluation. Undefined when no bundle was loaded.

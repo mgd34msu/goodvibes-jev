@@ -5,14 +5,16 @@ import { join } from 'node:path';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import { createInboxRouteResolver } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { ClusterClock } from '@goodvibes-jev/engine/sdk/platform/cluster';
-import { createDiscordInboxOwner, createOwnedInboxSource,
-  type DiscordInboxOwnerOptions, type VerifiedDiscordInboxOwner, type OwnedInboxSource,
+import { createDiscordInboxOwner, createOwnedTriagedInboxSource,
+  type DiscordInboxOwnerOptions, type VerifiedDiscordInboxOwner, type OwnedInboxSource, type InboxTriageAuthority,
 } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { createMultiOwnerDaemonInboxFactory, type DaemonInboxSourceFactory } from './multiowner-inbox-composition.js';
 import { attachDaemonInboxTagging, type DaemonTriageTaggingActivation } from './tagged-inbox-composition.js';
 import { ownInboxEligibility } from './inbox-eligibility.js';
 
 export interface DiscordDaemonInboxOptions extends Pick<DiscordInboxOwnerOptions, 'account' | 'channels' | 'screening' | 'timeoutMs'> {
+  /** Separately established semantic destination/account grant, never inferred from screening. */
+  readonly triageAuthority?: InboxTriageAuthority;
   readonly triageTagging?: DaemonTriageTaggingActivation & {
     /** Exact constructor-owned custom label to forum-tag mapping. */
     readonly forumTagIds?: Readonly<Record<string, string>>;
@@ -87,6 +89,7 @@ export function createConfiguredDiscordDaemonInboxSourceFactory(
 export function createDiscordDaemonInboxSourceFactory(options: DiscordDaemonInboxOptions,
   factories: DiscordDaemonInboxSourceFactories = {}): DaemonInboxSourceFactory {
   const createOwner = factories.createOwner ?? createDiscordInboxOwner;
+  const authority = options.triageAuthority;
   const triageTagging = options.triageTagging ? Object.freeze({ onReady: options.triageTagging.onReady,
     ...(options.triageTagging.forumTagIds ? { forumTagIds: Object.freeze({ ...options.triageTagging.forumTagIds }) } : {}),
   }) : undefined;
@@ -133,7 +136,8 @@ export function createDiscordDaemonInboxSourceFactory(options: DiscordDaemonInbo
         strictOwnership: true, totalTimeoutMs: 100,
       });
       startupCurrent();
-      surface = createOwnedInboxSource({ ...context, workingDirectory }, {
+      surface = await createOwnedTriagedInboxSource({ ...context, workingDirectory }, {
+        providerId: 'discord', accountScopeId: owner.scopeId, ...(authority ? { authority } : {}),
         adapters: new Map([['discord', owner.adapter]]), storeFileName,
         ...(clustered ? { awaitInitialPoll: false } : {}), acquireReadLease: () => owner!.acquireReadLease(),
         gatePolling(_provider, control) {

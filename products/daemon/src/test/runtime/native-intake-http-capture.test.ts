@@ -1,4 +1,5 @@
 /** Real route captures for browser replay. Only proposer/Jev readings are synthetic. */
+import { operationJudgmentRequests } from '../helpers/field-name-privacy-requests.js';
 import { expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,7 +43,7 @@ async function begin(f: Awaited<ReturnType<typeof createNativeIntakeHttpFixture>
   const transition = { inputId: input.inputId, sourceRevision: captured.sourceRef.sourceRevision };
   const getCaptured = await f.wire('workLedger.intake.get', { inputId: input.inputId });
   expect(getCaptured.body).toBe(capture.body);
-  expect(f.requests).toHaveLength(0); expect(f.fake.requests).toHaveLength(0);
+  expect(f.requests).toHaveLength(0); expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(0);
   return { input, auth, project, lookupBefore, capture, getCaptured, transition };
 }
 
@@ -59,7 +60,7 @@ test('a new workspace scope can stale an original while allowing fresh capture b
     const fresh = await f.wire('workLedger.intake.capture', source('after-scope-change'));
     expect(result(fresh).kind).toBe('captured');
     expect(f.requests).toHaveLength(0);
-    expect(f.fake.requests).toHaveLength(0);
+    expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(0);
   } finally { await f.stop(); }
 }, 30_000);
 
@@ -100,7 +101,7 @@ test('native HTTP auth requires current paired ownership and both declared ledge
       const wire = await f.wire('workLedger.intake.capture', { ...input, [field]: 'injected' });
       expect(wire.status).toBe(400); denied.push(wire);
     }
-    expect(f.requests).toHaveLength(0); expect(f.fake.requests).toHaveLength(0);
+    expect(f.requests).toHaveLength(0); expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(0);
     exportCapture('auth-denied', { denied });
   } finally { await f.stop(); }
 }, 30_000);
@@ -117,13 +118,13 @@ for (const name of ['work', 'turn', 'blocked', 'refused'] as const) {
         expect(admitted.receipt.source.version).toBe(2);
       }
       if (admitted.kind === 'turn') expect(admitted.text).toBe(TEXT);
-      const readings = f.fake.requests.length, proposals = f.requests.length;
+      const readings = operationJudgmentRequests(f.fake.requests).length, proposals = f.requests.length;
       const get = await f.wire('workLedger.intake.get', { inputId: base.input.inputId });
       const resume = await f.wire('workLedger.intake.resume', base.transition);
       expect(get.body).toBe(admit.body); expect(resume.body).toBe(admit.body);
       const replay = await f.wire('workLedger.intake.capture', base.input);
       expect(replay.body).toBe(admit.body);
-      expect(f.fake.requests).toHaveLength(readings); expect(f.requests).toHaveLength(proposals);
+      expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(readings); expect(f.requests).toHaveLength(proposals);
       const cancel = await f.wire('workLedger.intake.cancel', base.transition);
       const cancelled = result(cancel);
       expect(cancelled.kind).toBe(name === 'work' || name === 'turn' ? name : 'cancelled');
@@ -172,10 +173,10 @@ test('capture interrupted admission requiring explicit resume, never get or repe
     expect(admit.status).toBeGreaterThanOrEqual(400);
     const get = await f.wire('workLedger.intake.get', { inputId: base.input.inputId });
     expect(result(get)).toMatchObject({ kind: 'processing', recovery: 'required' });
-    const proposals = f.requests.length, readings = f.fake.requests.length;
+    const proposals = f.requests.length, readings = operationJudgmentRequests(f.fake.requests).length;
     const repeatAdmit = await f.wire('workLedger.intake.admit', base.transition);
     expect(repeatAdmit.body).toBe(get.body);
-    expect(f.requests).toHaveLength(proposals); expect(f.fake.requests).toHaveLength(readings);
+    expect(f.requests).toHaveLength(proposals); expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(readings);
     const resume = await f.wire('workLedger.intake.resume', base.transition);
     expect(result(resume).kind).toBe('work'); expect(f.requests).toHaveLength(2);
     const afterResume = await f.wire('workLedger.intake.get', { inputId: base.input.inputId });

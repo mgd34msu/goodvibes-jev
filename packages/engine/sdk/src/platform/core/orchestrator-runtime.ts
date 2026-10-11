@@ -51,7 +51,7 @@ export type OrchestratorCoreServices = {
    */
   memoryRegistry?: TurnKnowledgeRegistrySource | undefined;
   /**
-   * Stage B code-index injection seam for the MAIN interactive session. Optional/
+   * Code-index injection seam for the MAIN interactive session. Optional/
    * undefined is a hard no-op (memory-only injection, base prompt byte-identical). Whether code
    * hits are actually injected is additionally gated by the `agent-passive-code-injection`
    * gate (off by default via agents.passiveInjection.code) and `isCodeInjectionSettingEnabled` below, both must hold.
@@ -64,7 +64,7 @@ export type OrchestratorCoreServices = {
    */
   isCodeInjectionSettingEnabled?: (() => boolean) | undefined;
   /**
-   * Stage B tool-site reindex scheduler. Optional/undefined is a hard no-op. When wired,
+   * Tool-site reindex scheduler. Optional/undefined is a hard no-op. When wired,
    * a successful write/edit tool call schedules a debounced incremental reindex of the touched
    * path(s) (never blocking the tool result).
    */

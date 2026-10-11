@@ -33,7 +33,7 @@ async function fixture(
   }) => Promise<void>,
   mutable = false,
 ) {
-  const root = mkdtempSync(join(tmpdir(), 'pr56-independent-'));
+  const root = mkdtempSync(join(tmpdir(), 'contract-authority-independent-'));
   try {
     git(root, 'init', '-q');
     git(root, 'config', 'user.name', 'Fixture');

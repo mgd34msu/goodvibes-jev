@@ -143,5 +143,5 @@ export function toConfigLoadFailure(
     announceIngestionNotice(entry);
     sink.record(entry);
   }
-  return new ConfigError(`${label} config load failed for ${file}${refusedKey ? ` at ${refusedKey}` : ''}: ${summarizeError(err)}`);
+  return new ConfigError(`${label} config load failed for ${file}${refusedKey ? ` at ${refusedKey}` : ''}: ${summarizeError(err)}`, { cause: err });
 }

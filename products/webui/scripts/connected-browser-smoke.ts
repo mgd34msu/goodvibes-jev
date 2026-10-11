@@ -143,6 +143,28 @@ try {
       createdId = undefined;
       await expect(page.locator('.dv-list .gv-row', { hasText: title })).toHaveCount(0);
       receipts.push({ viewport: viewport.name, stage: 'confirmed deletion and authoritative list reconciliation' });
+
+      const navigation = page.getByRole('button', { name: /^Open navigation/ });
+      if (await navigation.isVisible()) {
+        await navigation.click();
+        await expect(page.getByRole('dialog', { name: 'Navigation', exact: true })).toBeVisible();
+      }
+      const avatar = page.locator('.shell-avatar').first();
+      await expect(avatar).toHaveAttribute('data-tone', 'ok');
+      await context.setOffline(true);
+      try {
+        assert.equal(await page.evaluate(() => navigator.onLine), false, 'Chromium must actually be offline');
+        assert.equal(await page.evaluate(async () => {
+          try { await fetch('/api/local-auth'); return false; } catch { return true; }
+        }), true, 'The real liveness request must fail offline');
+        await expect(avatar).toHaveAttribute('data-tone', 'bad');
+      } finally {
+        await context.setOffline(false);
+      }
+      await expect(avatar).toHaveAttribute('data-tone', 'ok');
+      await invoke(page, 'control.status');
+      await expect(page).toHaveURL(/view=work.*tab=sessions/);
+      receipts.push({ viewport: viewport.name, stage: 'real browser offline refusal and authoritative reconnect' });
     } catch (error: unknown) {
       await page.screenshot({ path: resolve(output, `${viewport.name}-failure.png`), fullPage: true });
       writeFileSync(resolve(output, `${viewport.name}-failure.txt`), await page.locator('body').innerText());

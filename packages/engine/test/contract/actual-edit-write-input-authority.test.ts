@@ -362,7 +362,7 @@ for (const scenario of ['deliver', 'deny-original', 'deny-copy'] as const) {
           expect(memberCalls, JSON.stringify({ status: result.status, error: result.error, results: [...results] })).toBe(2);
           expect(result.status).toBe('failed');
           expect(checkedBeforeDelivery).toBe(false);
-          expect(result.error).toBe('unit u1 failed with a failure that is not transient: [REDACTED]');
+          expect(result.error).toBe('unit u1 failed with a failure that is not transient: captured input path is [REDACTED]');
           expect(result.commit).toBeUndefined();
           expect(checkedDeniedMutation).toBe(true);
           expect(requests.every((request) => !request.includes('NOTEBOOK_APPLIED'))).toBe(true);

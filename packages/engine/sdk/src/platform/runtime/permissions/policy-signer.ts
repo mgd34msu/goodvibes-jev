@@ -1,7 +1,7 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * GC-PERM-011, Policy signing and provenance for the permissions runtime.
+ * Policy signing and provenance for the permissions runtime.
  *
  * Provides HMAC-SHA256-based signature creation and verification for policy
  * bundles. Used by the policy loader to validate bundle integrity before

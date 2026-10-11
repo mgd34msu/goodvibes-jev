@@ -1,7 +1,7 @@
 /**
  * oauth-types.ts, the shared type surface for the calendar OAuth + API connector
- * layer (see CHANGELOG 1.0.0, A10). Sits alongside A9's .ics reader/subscription
- * store in the same module: A9 owns file/feed reading; this half owns authenticated
+ * layer (see CHANGELOG 1.0.0). Sits alongside the .ics reader/subscription
+ * store in the same module: The reader owns file/feed reading; this half owns authenticated
  * provider connectivity (Google Calendar API v3, Microsoft Graph) over OAuth 2.0.
  *
  * Pure data shapes only, no fs, no network, no process globals. The network is an
@@ -23,7 +23,7 @@
 
 import type { CalendarEvent, EventDateTime } from './types.js';
 
-// A9's calendar module already defines the injected Clock (() => number); reuse it
+// The calendar module already defines the injected Clock (() => number); reuse it
 // so the merged module has one clock type and the index barrel has no name clash.
 export type { Clock } from './types.js';
 
@@ -288,7 +288,7 @@ export type ApiDegradedState =
 // ---------------------------------------------------------------------------
 
 /**
- * The one merged event model every source normalizes into. It is A9's CalendarEvent
+ * The one merged event model every source normalizes into. It is CalendarEvent
  * plus provenance: a source label and the provider ids needed to write back or
  * de-duplicate. ICS/local events set source and omit the api-only ids.
  */

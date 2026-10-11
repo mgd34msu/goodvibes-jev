@@ -336,7 +336,7 @@ describe('DaemonHttpRouter: OTLP metrics ingest → observable on GET /events', 
 });
 
 // ---------------------------------------------------------------------------
-// B5, Sentinel gating: empty payloads must NOT produce observability events
+// Sentinel gating: empty payloads must NOT produce observability events
 // ---------------------------------------------------------------------------
 
 describe('Sentinel gating: empty payloads do not emit events', () => {

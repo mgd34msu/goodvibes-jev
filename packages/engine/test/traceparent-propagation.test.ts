@@ -220,7 +220,7 @@ describe('HTTP transport: traceparent not present when OTel absent', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MINOR 1: Positive OTel path, injection seam
+// Positive OTel path, injection seam
 // ---------------------------------------------------------------------------
 
 describe('injectTraceparent(): OTel present via test state', () => {

@@ -237,7 +237,7 @@ describe('restore is one command', () => {
 // twin so a stalled disk cannot block the event loop (which would defeat the
 // governor's 10s shutdown ceiling). These pin that the async path produces the
 // same snapshot the sync path does, including WAL/SHM sidecars.
-describe('tripwire-path async snapshots (slice 4c)', () => {
+describe('tripwire-path async snapshots', () => {
   test('snapshotStoreFileAsync writes the store plus its -wal/-shm sidecars, mtime-stamped', async () => withScratch(async (dir) => {
     const dbPath = join(dir, 'store.sqlite');
     writeFileSync(dbPath, 'live-state');

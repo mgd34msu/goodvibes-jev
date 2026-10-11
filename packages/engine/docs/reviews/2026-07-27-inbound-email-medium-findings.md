@@ -34,12 +34,12 @@ producer, and a `\n` in `itemTitle` forges the amount line. Falsified gate #40.
 `value` is spans, `label` was not. Not live (labels are hardcoded), no compile
 error, no test. **Fixed**, line-neutralised rather than markup-escaped.
 
-## M3: bare-domain URLs defanged nowhere, LIVE, FIXED
+## bare-domain URLs defanged nowhere, LIVE, FIXED
 `defangUrlForms` matched only `\w+://` and `\bwww\.`, so `evil.example/verify`
 in an attacker-written subject reached Telegram and Slack unmodified. The one
 medium that was exploitable as written. **Fixed.**
 
-## M4: `capability-degraded.missingCapability` rendered `literal`, FIXED, evidence corrected
+## `capability-degraded.missingCapability` rendered `literal`, FIXED, evidence corrected
 The cited evidence was **wrong**: `capability.ts:261` is `REASON_FOR_NOTICE`, a
 hardcoded map, and `missingCapability` has **zero producers** anywhere. So the
 existing test asserting it "daemon-generated, never attacker text" was true by
@@ -85,7 +85,7 @@ this round's to fix.
   `gmailPollSecondsIdle`, were declared, validated, UI-rendered and **read by
   nothing**. A `flags-are-features` violation.
 
-## M8: persistence hygiene, FIXED
+## persistence hygiene, FIXED
 The item this file exists because of. All four parts closed; each verified by a
 mutation reverting it in the harmful direction, in
 `test/inbound-mail-persistence-hygiene.test.ts`.

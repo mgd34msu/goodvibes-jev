@@ -58,7 +58,7 @@ import { runAgentTask, type AgentOrchestratorRunContext } from './orchestrator-r
 export { summarizeToolArgs } from './orchestrator-utils.js';
 
 /**
- * Conversation-snapshot bridge (Part C6): where AgentOrchestrator forwards a running agent's
+ * Conversation-snapshot bridge: where AgentOrchestrator forwards a running agent's
  * live conversation-snapshot accessor. In production this is AgentManager's
  * registerConversationSource/releaseConversationSource, wired post-
  * construction in runtime/services.ts (AgentOrchestrator is constructed

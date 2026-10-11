@@ -137,7 +137,7 @@ test('the product injects its recorded port and aborts/drains accepted browser c
       expect(judgment.port.recorder).toBeDefined();
       const record = judgment.decisionLog.record.bind(judgment.decisionLog);
       const recordSpy = spyOn(judgment.decisionLog, 'record').mockImplementation((entry) => {
-        const id = record(entry); events.push('failure recorded'); return id;
+        const id = record(entry); if (entry.context?.battery === BATTERY) events.push('failure recorded'); return id;
       });
       const dispose = judgment.decisionLog[Symbol.dispose].bind(judgment.decisionLog);
       const disposeSpy = spyOn(judgment.decisionLog, Symbol.dispose).mockImplementation(() => {
@@ -272,7 +272,8 @@ test.each(['browser', 'inbox'] as const)('failed %s factory acquisition releases
     rebuilt = await createRuntimeServices({ ...input, createBrowserJudgment: (judgment) => browserCapability(judgment).service });
     expect(rebuilt.browserJudgment).toBeDefined();
     expect(rebuilt.judgment.port).not.toBe(received!.port);
-    expect(rebuilt.judgment.decisionLog.query()).toEqual([]);
+    expect(rebuilt.judgment.decisionLog.query({ battery: BATTERY })).toEqual([]);
+    expect(JSON.stringify(rebuilt.judgment.decisionLog.query())).not.toContain(MARKER);
     expect(live.size).toBeGreaterThan(0);
     await rebuilt.close();
     expect(live.size).toBe(0);
@@ -343,9 +344,9 @@ test.each(['webui.config.credential-key', 'webui.settings.card-material-key'] as
 
 test('daemon composition explicitly authorizes canonical chat speech seams on the configured judgment route', async () => {
   using log = new SqliteDecisionLog(':memory:');
-  const content = 'Dr. Rivera paused. Next came silence.'; const calls: unknown[] = [];
+  const content = 'Dr. Rivera paused. Next came silence.'; const calls: Array<Parameters<JudgmentPort['ask']>[0]> = [];
   const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
-    calls.push(input.state);
+    calls.push(input);
     return { requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', requestId: undefined, usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
       answers: Object.fromEntries(Object.keys(input.questions).map(name => [name, { type: 'noul', noul: 0.999 }])) as never };
   } };
@@ -363,8 +364,14 @@ test('daemon composition explicitly authorizes canonical chat speech seams on th
     const contentDigest = [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
     const result = await service.execute({ protocolVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.voice.speech-seams', batteryVersion: 1,
       input: { sessionId: session.id, messageId: message.id, start: 0, end: content.length, cursor: 0, contentDigest } }, principal, new AbortController().signal, () => principal);
-    expect(result).toMatchObject({ status: 'settled', battery: 'webui.voice.speech-seams' }); expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ paragraph: content });
+    expect(result).toMatchObject({ status: 'settled', battery: 'webui.voice.speech-seams' });
+    const boundaries = [3, 10, 18, 23, 28, content.length];
+    expect(calls).toHaveLength(boundaries.length);
+    for (const [index, call] of calls.entries()) {
+      expect(call.context?.battery).toBe('webui.voice.speech-seams');
+      expect(Object.keys(call.questions)).toEqual([`seam_${index}`]);
+      expect(call.state).toMatchObject({ paragraph: content, candidates: boundaries, boundary: { offset: boundaries[index] } });
+    }
   } finally { release(); for (const dispose of cleanup.reverse()) await dispose(); }
 });
 

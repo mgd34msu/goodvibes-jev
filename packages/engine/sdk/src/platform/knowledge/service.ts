@@ -329,7 +329,7 @@ export class KnowledgeService {
     return (await this.queryNodes({ limit }, options)).items;
   }
 
-  /** The append-only revision history of a node, oldest first. (Defect 1.) */
+  /** The append-only revision history of a node, oldest first. */
   listNodeRevisions(nodeId: string): KnowledgeNodeRevisionRecord[] {
     return this.store.listNodeRevisions(nodeId);
   }

@@ -10,9 +10,9 @@
  * automation-jobs/runs and knowledge listings).
  *
  * DELIBERATELY a standalone read-only helper, NOT a `SharedSessionBroker`
- * method: the brief's file_ownership marks session-broker.ts read-only for
- * S2 ("add a search method only if unavoidable, prefer a read-only query
- * helper; coordinate with S3 which also reads the broker"). Everything here
+ * method: session-broker.ts remains read-only here
+ * ("add a search method only if unavoidable, prefer a read-only query
+ * helper"). Everything here
  * is built from the broker's existing public `listSessions()`, no new
  * broker state, no new broker method.
  *

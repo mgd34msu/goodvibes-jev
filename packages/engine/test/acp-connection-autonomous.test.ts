@@ -57,7 +57,7 @@ function acp(withHost = true) {
 }
 const selectedResult = (optionId: string) => ({ jsonrpc: '2.0', id: 17, result: { outcome: { outcome: 'selected', optionId } } });
 const cancelledResult = { jsonrpc: '2.0', id: 17, result: { outcome: { outcome: 'cancelled' } } };
-test('A-F1072 legacy ACP connection uses canonical autonomous admission and exact original option', async () => {
+test('legacy ACP connection uses canonical autonomous admission and exact original option', async () => {
   const a = acp(); expect(await a.ask()).toEqual(selectedResult('allow')); expect(humans).toBe(0); a.wire.close();
 });
 test('contrary tool prose cannot override autonomous rejection', async () => {

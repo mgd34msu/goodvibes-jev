@@ -2,7 +2,7 @@
  * download-verified.ts, atomic, checksum-verified download of one managed
  * voice-runtime component (engine archive or model file).
  *
- * Extends the item-5 atomic pattern (temp file in the same directory, then
+ * Extends the atomic pattern (temp file in the same directory, then
  * rename) with a pinned size + sha256 gate: a byte-count or checksum mismatch
  * refuses the write and keeps NOTHING at the final path, so a corrupted or
  * tampered download can never be handed to the speech engine. Resumable by

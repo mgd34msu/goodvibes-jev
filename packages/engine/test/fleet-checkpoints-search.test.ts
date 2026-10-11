@@ -4,7 +4,7 @@
  * bootDaemon parity proof for fleet.snapshot / fleet.list / checkpoints.* /
  * sessions.search, each proven over a REAL live daemon (bootDaemon, port 0,
  * isolated home) via the generic gateway-method invoke endpoint
- * `POST /api/control-plane/methods/{methodId}/invoke`, mirrors the R1
+ * `POST /api/control-plane/methods/{methodId}/invoke`, mirrors the
  * pattern in test/boot-daemon-factory.test.ts (real HTTP, honest
  * failure/validation shape, no mocked daemon internals).
  *
@@ -148,7 +148,7 @@ interface InvokeResult<T extends WireError = WireError> {
  * Call a gateway method through the generic invoke endpoint (real HTTP).
  *
  * Params ride in the envelope's `body`, for a handler verb (no http
- * binding) that is the channel S1's invoke-layer input gate
+ * binding) that is the channel the invoke-layer input gate
  * (invoke-input-validation.ts) validates against the typed inputSchema, so
  * these calls exercise both the gate and the handler. The `query` channel
  * is a fallback the handlers also merge in (body wins); one fleet.list test
@@ -208,7 +208,7 @@ describe('fleet/checkpoints/search: fleet.snapshot / fleet.list', () => {
   test('fleet.list over an empty fleet returns a well-shaped empty page (params via the query fallback channel)', async () => {
     // Deliberately uses the envelope's `query` channel (body {}): handlers
     // merge query in as a fallback (body wins), so optional filters may ride
-    // either channel. body {} passes S1's typed-schema gate because
+    // either channel. body {} passes the typed-schema gate because
     // FLEET_LIST_INPUT_SCHEMA has no required fields.
     const { status, json } = await invokeVerb<FleetListResponse>('fleet.list', { query: { limit: 10 } });
     expect(status).toBe(200);
@@ -582,7 +582,7 @@ describe('fleet/checkpoints/search: event-emission honesty (verified-not-applica
   // the handlers call the managers and return; ProcessRegistry.subscribe() is
   // an in-registry callback (explicitly not a runtime-bus event contract) and
   // WorkspaceCheckpointManager only SUBSCRIBES to bus events for automatic
-  // snapshots. So there is nothing for S1's EVENT_DOMAIN map to tag. This test
+  // snapshots. So there is nothing for the EVENT_DOMAIN map to tag. This test
   // pins that: if a later wave adds a broadcast event to one of these verbs
   // (e.g. the deferred fleet-update alongside fleet mutators), its descriptor
   // grows an `events` declaration, this test fails, and the author is forced

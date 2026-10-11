@@ -155,7 +155,7 @@ describe('publishEvent: domain-scoped delivery', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Replay parity (Finding 1), a reconnecting client must receive the same
+// Replay parity, a reconnecting client must receive the same
 // approval-update it would have received live. Before the fix, both replay
 // callers (WS + SSE) handed replayRecentTraffic the already-normalized
 // `selectedDomains` (which falls back to DEFAULT_DOMAINS, excluding
@@ -209,7 +209,7 @@ async function readSseFrames(
   }
 }
 
-describe('replay parity: reconnect must mirror live delivery (Finding 1)', () => {
+describe('replay parity: reconnect must mirror live delivery', () => {
   test('(WS) a default consumer that reconnects during a pending approval receives the replayed approval-update', () => {
     const gateway = makeGateway();
     // Connect + disconnect first so the event is recorded to the shared ring

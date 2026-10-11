@@ -3,7 +3,7 @@
  *
  * The narrow, structural view of the SharedSessionBroker that CompanionChatManager
  * uses to register companion sessions INTO the one shared session store at write
- * time (S1 item D: companion registers into the broker). Defined structurally so
+ * time. Defined structurally so
  * the companion package does not take a hard dependency on the control-plane
  * broker's full surface, the real SharedSessionBroker satisfies this shape.
  *

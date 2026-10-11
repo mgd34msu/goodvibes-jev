@@ -90,7 +90,7 @@ describe('foundation-io coverage ratchet: live source', () => {
     expect(evaluateRatchet(untyped.length, FOUNDATION_IO_COVERAGE_BASELINE).ok).toBe(true);
   });
 
-  test('the covered restore verbs are among the fully-typed set (Item 1 regression net)', () => {
+  test('the covered restore verbs are among the fully-typed set', () => {
     const idsText = readFileSync(resolve(ROOT, 'contracts/src/generated/operator-method-ids.ts'), 'utf8');
     const typesText = readFileSync(resolve(ROOT, 'contracts/src/generated/foundation-client-types.ts'), 'utf8');
     const ids = parseMethodIds(idsText);

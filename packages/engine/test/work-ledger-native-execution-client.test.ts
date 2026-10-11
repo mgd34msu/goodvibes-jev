@@ -13,10 +13,10 @@ import {
   type NativeWorkExecutionExecutionSnapshot,
 } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { createOperatorRemoteClient, type OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
+import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
 import { CONTRACT_STATUSES } from '../sdk/src/events/contract.js';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
 import { createHttpTransport, firstJsonSchemaFailure } from '../transport-http/src/index.js';
-import { buildOperatorContract } from '../sdk/src/platform/control-plane/operator-contract.js';
 
 const projectId = 'native-client-project';
 const operations = ['start', 'status', 'cancel', 'resume'] as const;
@@ -110,7 +110,15 @@ describe('native execution operator client', () => {
         return Response.json(new URL(request.url).pathname.endsWith('/project') ? { projectId } : snapshot());
       },
     });
-    const remote = createOperatorRemoteClient(transport, buildOperatorContract(new GatewayMethodCatalog()));
+    const contract = getOperatorContract();
+    const catalog = new GatewayMethodCatalog();
+    for (const methodId of ['workLedger.project', ...operations.map(operation => `workLedger.execution.${operation}`)]) {
+      const published = contract.operator.methods.find(method => method.id === methodId)!;
+      const native = catalog.get(methodId)!;
+      expect(published.inputSchema).toEqual(await Response.json(native.inputSchema).json());
+      expect(published.outputSchema).toEqual(await Response.json(native.outputSchema).json());
+    }
+    const remote = createOperatorRemoteClient(transport, contract);
     expect(await getOperatorWorkLedgerProject(remote)).toBe(projectId);
     const client = createOperatorNativeWorkExecutionClient(remote, projectId);
     for (const operation of operations) expect(await client[operation](identity())).toEqual(snapshot());

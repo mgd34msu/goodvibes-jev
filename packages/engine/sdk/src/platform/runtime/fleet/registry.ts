@@ -120,7 +120,7 @@ export interface ProcessRegistryDeps {
   /** Optional: populates ProcessNode.sessionRef.sessionId (tab attach point). */
   readonly sessionBroker?: Pick<SharedSessionBroker, 'listSessions'> | undefined;
   /**
-   * Optional: the repo source-tree code index (Stage A).
+   * Optional: the repo source-tree code index.
    * When present, its build/idle state surfaces as a single 'code-index'
    * ProcessNode. Without this dep the fleet degrades to exactly today's
    * behavior, zero code-index nodes, no new capability.

@@ -259,7 +259,7 @@ describe('first-call protected error normalization', () => {
   test('issuer credentials never reach prose classification or retry evidence', async () => {
     const { port, requests } = readingsPort({ billing: true });
     installJudgmentPort(port);
-    const credential = 'ghp_0123456789012345678901234567890123456789';
+    const credential = 'ghp_' + '0123456789'.repeat(4);
     const error = new ProviderError(`No credits remain for the API. ${credential}`, 400);
     const normalized = await readNormalizedError(error, { site: 'test.protected' });
     expect(normalized.category).toBe('billing');

@@ -16,12 +16,14 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
 import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
+import { artifactKind } from '../sdk/src/platform/artifacts/batteries/artifact-kind.ts';
 import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
 
 // beforeEach runs after bootDaemon's beforeAll composition installed its live
@@ -81,18 +83,23 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
     expect(created.artifact.sizeBytes).toBe(bytes.byteLength);
     expect(created.artifact.mimeType).toBe('application/octet-stream');
     expect(created.artifact.filename).toBe('fixture.bin');
-    expect(readings.requests).toHaveLength(1);
-    expect(readings.requests[0]?.context?.battery).toBe('engine.artifacts.kind');
-    expect(readings.requests[0]?.state).toEqual({ mimeType: 'application/octet-stream', filename: 'fixture.bin' });
+    const kindRequests = readings.requests.filter((request) => request.context?.battery === artifactKind.name);
+    expect(kindRequests).toHaveLength(1);
+    expect(kindRequests[0]?.questions).toEqual({ kind: artifactKind.items.kind.question });
+    expect(kindRequests[0]?.state).toEqual({ mimeType: 'application/octet-stream', filename: 'fixture.bin' });
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    expect(created).toMatchObject({ artifact: { sha256: digest } });
 
     const contentRes = await fetch(`${daemon.url}/api/artifacts/${created.artifact.id}/content`, {
       headers: authHeaders(),
     });
     expect(contentRes.status).toBe(200);
     expect(contentRes.headers.get('content-type')).toBe('application/octet-stream');
+    expect(contentRes.headers.get('content-length')).toBe(String(bytes.byteLength));
     const roundTripped = new Uint8Array(await contentRes.arrayBuffer());
     expect(roundTripped.byteLength).toBe(bytes.byteLength);
     expect(Buffer.from(roundTripped).equals(Buffer.from(bytes))).toBe(true);
+    expect(createHash('sha256').update(roundTripped).digest('hex')).toBe(digest);
   });
 
   test('a multipart/form-data upload round-trips byte-identical with content-type intact', async () => {
@@ -110,14 +117,19 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
     expect(created.artifact.sizeBytes).toBe(bytes.byteLength);
     expect(created.artifact.mimeType).toBe('image/png');
     expect(created.artifact.filename).toBe('photo.png');
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    expect(created).toMatchObject({ artifact: { sha256: digest } });
 
     const contentRes = await fetch(`${daemon.url}/api/artifacts/${created.artifact.id}/content`, {
       headers: authHeaders(),
     });
     expect(contentRes.status).toBe(200);
     expect(contentRes.headers.get('content-type')).toBe('image/png');
+    expect(contentRes.headers.get('content-length')).toBe(String(bytes.byteLength));
     const roundTripped = new Uint8Array(await contentRes.arrayBuffer());
+    expect(roundTripped.byteLength).toBe(bytes.byteLength);
     expect(Buffer.from(roundTripped).equals(Buffer.from(bytes))).toBe(true);
+    expect(createHash('sha256').update(roundTripped).digest('hex')).toBe(digest);
   });
 
   test('ordinary small JSON artifact-create bodies are unaffected by the upload hardening', async () => {
@@ -129,6 +141,31 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
     expect(res.status).toBe(201);
     const body = await res.json() as { artifact: { id: string; mimeType: string } };
     expect(body.artifact.mimeType).toBe('text/plain');
+  });
+
+  test.each(['raw', 'multipart'] as const)('an already aborted %s upload admits no artifact and preserves existing content', async (mode) => {
+    const beforeResponse = await fetch(`${daemon.url}/api/artifacts`, { headers: authHeaders() });
+    expect(beforeResponse.status).toBe(200);
+    const before: unknown = await beforeResponse.json();
+    const bytes = binaryFixture(2 * 1024 * 1024);
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: 'application/octet-stream' }), 'aborted.bin');
+    const controller = new AbortController();
+    const reason = new DOMException('synthetic upload cancellation', 'AbortError');
+    controller.abort(reason);
+
+    await expect(fetch(`${daemon.url}/api/artifacts?filename=aborted.bin`, {
+      method: 'POST',
+      headers: authHeaders(mode === 'raw' ? { 'content-type': 'application/octet-stream' } : {}),
+      body: mode === 'raw' ? bytes : form,
+      signal: controller.signal,
+    })).rejects.toBe(reason);
+
+    const afterResponse = await fetch(`${daemon.url}/api/artifacts`, { headers: authHeaders() });
+    expect(afterResponse.status).toBe(200);
+    const after: unknown = await afterResponse.json();
+    expect(after).toEqual(before);
+    expect(readings.requests.filter((request) => request.context?.battery === artifactKind.name)).toHaveLength(0);
   });
 });
 

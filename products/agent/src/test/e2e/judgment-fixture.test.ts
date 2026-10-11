@@ -26,7 +26,7 @@ function diagnosticBody(contract: typeof diagnostics.contracts[number], state: u
     .split('<owned-fixture-root>').join(ownedRoot));
 }
 
-test('135 exact safe CI and native diagnostics retain canonical questions and original answer distributions', async () => {
+test('165 exact safe CI and native diagnostics retain canonical questions and original answer distributions', async () => {
   const ownedRoot = mkdtempSync(join(tmpdir(), 'agent-diagnostics-peer-'));
   const server = startE2EJudgments({ ownedRoot });
   try {
@@ -61,14 +61,14 @@ test('135 exact safe CI and native diagnostics retain canonical questions and or
         count++;
       }
     }
-    expect(count).toBe(135);
-    expect(server.acceptedDiagnostics).toHaveLength(135);
-    expect(server.allRequests).toHaveLength(135);
+    expect(count).toBe(165);
+    expect(server.acceptedDiagnostics).toHaveLength(165);
+    expect(server.allRequests).toHaveLength(165);
     expect(server.accepted).toHaveLength(0);
     expect(server.rejected).toHaveLength(0);
     expect(server.unexpected).toHaveLength(0);
     server.assertNoUnexpected();
-    const uncertainFields = ['refs', 'userMessages', 'assistantMessages', 'toolMessages', 'imageParts', 'reasoningSummary'];
+    const uncertainFields = ['refs', 'userMessages', 'assistantMessages', 'toolMessages', 'imageParts', 'reasoningSummary', 'dispatch'];
     let uncertainCount = 0;
     for (const contract of diagnostics.contracts) for (const reading of contract.readings) {
       if ('field' in reading.state && uncertainFields.includes(reading.state.field)) {
@@ -77,7 +77,46 @@ test('135 exact safe CI and native diagnostics retain canonical questions and or
         uncertainCount++;
       }
     }
-    expect(uncertainCount).toBe(6);
+    expect(uncertainCount).toBe(7);
+    const fields = diagnostics.contracts.find(contract => contract.kind === 'diagnostic-field-kind');
+    const credential = diagnostics.contracts.find(contract => contract.kind === 'diagnostic-credential');
+    if (!fields || !credential) throw new Error('Missing recorded diagnostic contracts');
+    const token = fields.readings.find(reading => 'field' in reading.state && reading.state.field === 'token');
+    expect(token?.answers).toEqual({ kind: {
+      type: 'choice', choice: 'secret', confidence: 0.99,
+      probabilities: { secret: 0.99, owner_profile: 0.003, content: 0.004, other: 0.003 },
+    } });
+    let tokenLines = 0;
+    let memoryLines = 0;
+    let setupLines = 0;
+    let scalarSetupLines = 0;
+    for (const reading of credential.readings) {
+      if (!('parts' in reading.state) || !('lineHasCredential' in reading.answers) || !('spanIsCredential' in reading.answers)) continue;
+      const parts = reading.state.parts;
+      if (parts.some(part => 'field' in part && part.field === 'token')) {
+        // A separate method/error span cannot make the declared token ordinary.
+        expect(reading.answers.lineHasCredential.noul).toBe(0.99);
+        expect(reading.answers.spanIsCredential.noul).toBe(0.5);
+        tokenLines++;
+      }
+      if (parts.some(part => 'field' in part && part.field === 'spine')) {
+        expect(reading.answers.lineHasCredential.noul).toBe(0.5);
+        expect(reading.answers.spanIsCredential.noul).toBe(0.5);
+        memoryLines++;
+      }
+      if (parts.some(part => 'field' in part && part.field === 'explicitUserRequest')) {
+        expect(reading.answers.lineHasCredential.noul).toBe(0.5);
+        expect(reading.answers.spanIsCredential.noul).toBe(0.01);
+        setupLines++;
+      }
+      if (parts.some(part => 'field' in part && part.field === 'setupItemId')
+        && !parts.some(part => 'field' in part && part.field === 'explicitUserRequest')) {
+        expect(reading.answers.lineHasCredential.noul).toBe(0.01);
+        expect(reading.answers.spanIsCredential.noul).toBe(0.01);
+        scalarSetupLines++;
+      }
+    }
+    expect({ tokenLines, memoryLines, setupLines, scalarSetupLines }).toEqual({ tokenLines: 2, memoryLines: 1, setupLines: 3, scalarSetupLines: 3 });
   } finally { server.stop(); rmSync(ownedRoot, { recursive: true, force: true }); }
 });
 

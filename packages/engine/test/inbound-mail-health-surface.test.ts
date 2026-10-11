@@ -1,5 +1,5 @@
 /**
- * M6, inbound mail reaches the health surface the owner actually reads.
+ * Inbound mail reaches the health surface the owner actually reads.
  *
  * `inboundMailStatus()` and `inboundMailHealth()` had exactly one reference
  * each repo-wide: their own definition. `InboundMailHealthEntry` declares

@@ -4,7 +4,7 @@ import { RuntimeEventBus } from './_helpers/runtime-seam.ts';
 import { createEventEnvelope } from './_helpers/runtime-seam.ts';
 
 
-// Drain queued microtasks so bus.emit() listeners (OBS-14 async dispatch) run before assertions.
+// Drain queued microtasks so bus.emit() listeners (async dispatch) run before assertions.
 const flushMicrotasks = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 describe('EventReplayQueue', () => {
   let runtimeBus: RuntimeEventBus;

@@ -1,5 +1,5 @@
 /**
- * GC-PERM-011, Policy loader with signature validation.
+ * Policy loader with signature validation.
  *
  * Wraps the raw policy bundle loading path with a signature validation
  * step. In managed mode, bundles with invalid or missing signatures are

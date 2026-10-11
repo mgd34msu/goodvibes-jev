@@ -2,7 +2,7 @@ import { PostalAddressHeldError } from '../sdk/src/platform/config/postal-addres
 /**
  * owner-profile-consumers.test.ts, docs/owner-profile.md §13.
  *
- * Covers test-plan item 20 (consumer fallback direction) and the three
+ * Covers consumer fallback direction and the three
  * properties the design attaches to it that are easy to get backwards:
  *
  *  - the fallback fills an UNSET key and never overrides a configured one;

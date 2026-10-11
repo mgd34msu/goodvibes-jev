@@ -1,12 +1,12 @@
 /**
  * recall-snapshot-note-and-floor.test.ts
  *
- * Stage-5 cohesion/contract fixes:
- *  - Fix 3: the recall-snapshot note matches the TUI's freshness vocabulary
+ * Recall contract regressions:
+ *  - the recall-snapshot note matches the TUI's freshness vocabulary
  *    (lowercase, hedged "may be stale", humanized seconds, never raw ms), and
  *    labels its count honestly against the capture's recall flag (an unfiltered
  *    browse capture is NEVER called "recall-eligible").
- *  - Fix 4: the honest search result carries the store's configured recall floor
+ *  - the honest search result carries the store's configured recall floor
  *    so a surface can state it without hardcoding 60.
  */
 

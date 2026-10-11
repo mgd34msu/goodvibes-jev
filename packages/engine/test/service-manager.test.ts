@@ -256,7 +256,7 @@ describe('launchd start/stop/restart dispatch (injected actionRunner: never a re
   }
 
   // Every start()/stop()/restart() call returns `{ ...this.status(), ... }`, and
-  // status() now live-queries `launchctl list` (Finding 2) through this SAME
+  // status() now live-queries `launchctl list` through this SAME
   // injected runner, so each dispatch below ends with one extra `list` call
   // beyond the load/unload verb(s) themselves.
 
@@ -357,7 +357,7 @@ describe('launchd start/stop/restart dispatch (injected actionRunner: never a re
     manager.restart();
 
     // Each dispatch's own verb(s) plus one trailing `launchctl list` status
-    // query (Finding 2): start=load+list=2, stop=unload+list=2,
+    // query: start=load+list=2, stop=unload+list=2,
     // restart=unload+load+list=3, 7 dispatches total, all launchctl.
     expect(calls.length).toBe(7);
     expect(calls.every(([command]) => command === 'launchctl')).toBe(true);
@@ -395,7 +395,7 @@ describe('service-management feature gate (launchd)', () => {
   }));
 });
 
-describe('status() running detection: systemd/launchd query through the injected actionRunner (Finding 2)', () => {
+describe('status() running detection: systemd/launchd query through the injected actionRunner', () => {
   function makeQueryManager(
     dir: string,
     platform: 'systemd' | 'launchd',
@@ -490,7 +490,7 @@ describe('status() running detection: systemd/launchd query through the injected
     expect(status.running).toBe(false);
   }));
 
-  test('manual: status() never invokes the actionRunner at all: pid-file semantics are unchanged by Finding 2', () => withTempDir((dir) => {
+  test('manual: status() never invokes the actionRunner at all: pid-file semantics are unchanged', () => withTempDir((dir) => {
     let called = false;
     const configManager = testConfigManager(join(dir, 'config'));
     configManager.set('service.platform', 'manual');

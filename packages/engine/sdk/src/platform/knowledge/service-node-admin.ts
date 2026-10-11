@@ -36,7 +36,7 @@ export function queryKnowledgeNodes(
   // Honest default: forgotten/superseded ('stale') nodes are not served unless a
   // caller explicitly asks (status filter or includeStale), closes the GraphQL
   // serve-surface drift where `forget` hid a node from search but GraphQL still
-  // returned it. (Defect 6.)
+  // returned it.
   const includeStale = input.includeStale === true || input.status !== undefined;
   const items = selection.nodes.filter((node) => {
     if (!selection.node(node)) return false;
@@ -80,7 +80,7 @@ export interface KnowledgeNodeReviewDecisionInput {
 /**
  * The decide step that governs node activation: accept a pending 'draft' node
  * (activates it with honest 'reviewed' provenance) or reject it (marks it
- * 'stale'). (Defect 2.)
+ * 'stale').
  */
 export async function reviewKnowledgeNodeRecord(
   store: KnowledgeStore,

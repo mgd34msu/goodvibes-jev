@@ -356,7 +356,7 @@ describe('WorkspaceSwapManager: path traversal', () => {
 });
 
 // ---------------------------------------------------------------------------
-// W-8 additional test cases
+// Additional test cases
 // ---------------------------------------------------------------------------
 
 describe('ensureDaemonHome: workspace-scoped token files are ignored', () => {

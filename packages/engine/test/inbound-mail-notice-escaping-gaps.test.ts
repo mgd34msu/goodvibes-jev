@@ -61,7 +61,7 @@ function everyRendering(notice: StructuredNotice): { name: string; text: string 
 }
 
 // ---------------------------------------------------------------------------
-// M1, a newline in untrusted text forges a labelled line
+// A newline in untrusted text forges a labelled line
 // ---------------------------------------------------------------------------
 
 describe('an untrusted span cannot forge a line on ANY path', () => {
@@ -103,7 +103,7 @@ describe('an untrusted span cannot forge a line on ANY path', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M2, the label is the one part that reaches the wire unescaped
+// The label is the one part that reaches the wire unescaped
 // ---------------------------------------------------------------------------
 
 describe('a field label cannot forge a line either', () => {
@@ -118,7 +118,7 @@ describe('a field label cannot forge a line either', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M3, LIVE: a bare-domain URL is tappable on every channel
+// LIVE: a bare-domain URL is tappable on every channel
 // ---------------------------------------------------------------------------
 
 describe('a bare-domain URL is defanged, not only a schemed one', () => {
@@ -155,7 +155,7 @@ describe('a bare-domain URL is defanged, not only a schemed one', () => {
 });
 
 // ---------------------------------------------------------------------------
-// M4, the server's own wording is not ours
+// The server's own wording is not ours
 // ---------------------------------------------------------------------------
 
 describe('a capability reason quoting the server is escaped like any untrusted text', () => {

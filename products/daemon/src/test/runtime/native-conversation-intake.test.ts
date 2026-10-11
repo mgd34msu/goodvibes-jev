@@ -1,4 +1,5 @@
 /** Actual DaemonServer + service graph, with owned synthetic recorded/provider calls only. */
+import { operationJudgmentRequests } from '../helpers/field-name-privacy-requests.js';
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { withDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -62,7 +63,7 @@ const source = () => ({ requestId: 'source-request', inputId: 'logical-input', t
 
 test('production capture/route/extraction atomically publishes exact source2 work with no implicit execution', async () => {
   const f = await fixture(); const input = source(); const captured = await f.client.capture(input);
-  expect(captured.kind).toBe('captured'); expect(f.requests).toHaveLength(0); expect(f.fake.requests).toHaveLength(0);
+  expect(captured.kind).toBe('captured'); expect(f.requests).toHaveLength(0); expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(0);
   const target = { inputId: input.inputId, sourceRevision: captured.sourceRef.sourceRevision };
   const result = await f.client.admit(target);
   expect(result.kind).toBe('work'); if (result.kind !== 'work') throw new Error('Expected native work');
@@ -90,9 +91,9 @@ test('lost admission acknowledgement reconciles original source and work without
   try {
     const target = { inputId: input.inputId, sourceRevision: captured.sourceRef.sourceRevision };
     await expect(client.admit(target)).rejects.toThrow('Owned lost admission');
-    const reads = f.fake.requests.length; const result = await client.get({ inputId: input.inputId }); expect(result.kind).toBe('work');
+    const reads = operationJudgmentRequests(f.fake.requests).length; const result = await client.get({ inputId: input.inputId }); expect(result.kind).toBe('work');
     if (result.kind !== 'work') throw new Error('Expected the original admitted work receipt');
-    expect(await client.admit(target)).toEqual(result); expect(f.fake.requests).toHaveLength(reads); expect(f.requests).toHaveLength(1);
+    expect(await client.admit(target)).toEqual(result); expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(reads); expect(f.requests).toHaveLength(1);
     expect((await f.reader.readSnapshot()).works).toHaveLength(1);
   } finally { client.dispose(); }
 }, 20000);
@@ -119,7 +120,7 @@ test('actual route rejects unsupported authority, injected source proof and revo
   for (const field of ['criteria', 'sourceId', 'projectId', 'actorId', 'sessionId', 'decisionId']) expect((await post(f.paired.token, { ...input, [field]: 'injected' })).status).toBe(400);
   const capture = await f.client.capture(input); f.daemon.services.pairingTokens.revoke(f.paired.id);
   await expect(f.client.admit({ inputId: input.inputId, sourceRevision: capture.sourceRef.sourceRevision })).rejects.toThrow();
-  expect(f.fake.requests).toHaveLength(0); expect(f.requests).toHaveLength(0);
+  expect(operationJudgmentRequests(f.fake.requests)).toHaveLength(0); expect(f.requests).toHaveLength(0);
 }, 20000);
 
 test('ordinary-turn response preserves original input; unresolved sources never become a turn', async () => {

@@ -1,12 +1,12 @@
 /**
  * boot-daemon-factory.test.ts
  *
- * R4: the public one-call daemon boot factory. Proves an embedder/test can stand
+ * The public one-call daemon boot factory. Proves an embedder/test can stand
  * up a real daemon (isolated home, ephemeral port, token auth) without hand-
  * mirroring cli.ts's construction graph, and take it down cleanly. Also folds in
- * the HTTP-level assertions for R1 (unknown-kind 400 + honest closed-register
- * conflict), R2 (isolated home, nothing under the real home is touched), R3
- * (companion session visible via /api/sessions same-process), and m7 (companion
+ * the HTTP-level assertions for (unknown-kind 400 + honest closed-register
+ * conflict), (isolated home, nothing under the real home is touched),
+ * (companion session visible via /api/sessions same-process), and (companion
  * SSE 401 without auth).
  */
 
@@ -150,7 +150,7 @@ describe('Operator provider/account snapshots serve JSON, never 500 HTML', () =>
   }
 });
 
-describe('D7b: provider usage snapshot resolves the configured default on a fresh home', () => {
+describe('provider usage snapshot resolves the configured default on a fresh home', () => {
   // Regression: GET /api/providers/:id/usage independently re-resolves the
   // current model (getProviderUsageSnapshot's own getCurrentModel() call,
   // separate from the one buildSnapshotForProvider already tolerates). Before

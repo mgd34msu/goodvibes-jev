@@ -35,7 +35,7 @@ export async function resetHomeGraphSpace(
 function collectKnowledgeSpaceArtifactIds(store: KnowledgeStore, artifactStore: ArtifactStore, spaceId: string): string[] {
   const normalized = normalizeKnowledgeSpaceId(spaceId);
   const ids = new Set<string>();
-  // Scope-checked deletion (HAZARD H1): the ArtifactStore is shared across the
+  // Scope-checked deletion: the ArtifactStore is shared across the
   // wiki / home-graph / agent families. A blob that a *different* family owns,
   // identifiable by its own explicit knowledge-space stamp, must never be deleted
   // by a home-graph reset, even if a home-graph source references it, because that

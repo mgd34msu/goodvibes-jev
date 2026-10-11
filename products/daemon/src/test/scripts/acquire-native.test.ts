@@ -8,13 +8,15 @@ import { DAEMON_CI_PAYLOADS, recordDaemonCiArtifact } from '../../../scripts/ci-
 import { acquireDaemonNative, DAEMON_CI_REPOSITORY, stageDaemonCiArchive, type RunGitHub } from '../../../scripts/acquire-native.ts';
 import { readDaemonInstallOwner, type DaemonInstallOwner } from '../../../scripts/install-native.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.ts';
+import { nativeRuntimeProvenance } from '../helpers/native-runtime-provenance.ts';
 
 const nativeTest = process.platform === 'linux' && process.arch === 'x64' ? test : test.skip;
 const owner: DaemonInstallOwner = { target: 'linux-x64', sourceCommit: 'a'.repeat(40), sourceTree: 'b'.repeat(40), headCommit: 'c'.repeat(40), version: '1.2.3' };
 async function fixture() {
   const root = makeOwnedTempDir('daemon-ci-acquisition'); const source = join(root, 'products/daemon');
   for (const [index, path] of DAEMON_CI_PAYLOADS.entries()) {
-    const full = join(source, 'native', path); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, `synthetic-${index}`); chmodSync(full, index < 2 ? 0o755 : 0o644);
+    const full = join(source, 'native', path); mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, index === 3 ? nativeRuntimeProvenance('synthetic-1') : `synthetic-${index}`); chmodSync(full, index < 2 ? 0o755 : 0o644);
   }
   await recordDaemonCiArtifact(source, owner);
   const archive = join(root, 'native.tgz');

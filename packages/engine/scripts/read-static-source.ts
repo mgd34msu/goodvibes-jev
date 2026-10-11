@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 /** Explicit genuine source preparation; ordinary validation never contacts a provider. */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createSystemOnePort, judgmentConfigFromEnv, SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { collectInternalIdentifierCandidates, INTERNAL_ID_ROOT, scanTargetsFromEnvironment } from './check-internal-identifiers.ts';
 import { isInternalIdentifierExempt } from './internal-identifier-rule.ts';
 import { collectDeferredSourceCandidates, TODO_ROOT } from './no-todo-markers.ts';
 import { sourceMarkerAnchors } from './no-todo-marker-rules.ts';
-import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_READINGS_PATH, STATIC_SOURCE_READING_PLAN_VERSION, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, type StaticSourceInput, type StaticSourceReadings, type StaticSourceReceipt } from './static-source-readings.ts';
+import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, projectCurrentStaticSourceReadings, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_READINGS_PATH, STATIC_SOURCE_READING_PLAN_VERSION, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, type StaticSourceInput, type StaticSourceReadings, type StaticSourceReceipt } from './static-source-readings.ts';
 
 export function collectStaticInputs(): StaticSourceInput[] {
   const internal = collectInternalIdentifierCandidates(INTERNAL_ID_ROOT, scanTargetsFromEnvironment(process.env.INTERNAL_ID_DIRS_JSON))
@@ -17,6 +17,31 @@ export function collectStaticInputs(): StaticSourceInput[] {
   const deferred = collectDeferredSourceCandidates(TODO_ROOT, scanTargetsFromEnvironment(process.env.TODO_DIRS_JSON))
     .flatMap(candidate => captureStaticInputs('deferred-work', candidate.relPath, candidate.text, sourceMarkerAnchors(candidate.relPath, candidate.text)));
   return [...internal, ...deferred].sort((a, b) => a.kind.localeCompare(b.kind) || a.path.localeCompare(b.path) || a.firstLine - b.firstLine);
+}
+
+/** Canonical publication must never replace its private evidence stores. */
+export function assertStaticCapturePathsDistinct(paths: Readonly<Record<string, string>>): void {
+  const destination = (path: string): string => {
+    let parent = resolve(path);
+    const missing: string[] = [];
+    while (!lstatSync(parent, { throwIfNoEntry: false })) {
+      missing.unshift(basename(parent));
+      const next = dirname(parent);
+      if (next === parent) break;
+      parent = next;
+    }
+    return join(realpathSync(parent), ...missing);
+  };
+  const resolved = Object.entries(paths).map(([name, path]) => ({ name, path: destination(path),
+    stat: existsSync(path) ? statSync(path) : undefined }));
+  for (const [index, entry] of resolved.entries()) {
+    for (const prior of resolved.slice(0, index)) {
+      if (entry.path === prior.path || (entry.stat?.isFile() && prior.stat?.isFile()
+        && entry.stat.dev === prior.stat.dev && entry.stat.ino === prior.stat.ino)) {
+        throw new Error(`${entry.name} and ${prior.name} must point to distinct files`);
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -29,6 +54,12 @@ async function main(): Promise<void> {
   if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 32) throw new Error('--concurrency must be an integer from 1 to 32');
   const path = resolve(values.out ?? STATIC_READINGS_PATH);
   const checkpointPath = values.checkpoint ? resolve(values.checkpoint) : `${path}.checkpoint`;
+  const journalPath = `${checkpointPath}.journal`;
+  const logPath = values.log ? resolve(values.log) : undefined;
+  assertStaticCapturePathsDistinct({ output: path, outputStage: `${path}.next`, checkpoint: checkpointPath,
+    checkpointStage: `${checkpointPath}.next`, journal: journalPath,
+    ...(logPath ? { log: logPath, logWal: `${logPath}-wal`, logShm: `${logPath}-shm` } : {}),
+    ...(values.inputs ? { inputs: resolve(values.inputs) } : {}) });
   const inputs = collectStaticInputs();
   const decisionSourceHash = staticDecisionSourceHash();
   const snapshot = sha256(JSON.stringify(inputs.map(input => staticInputKey(input))));
@@ -41,7 +72,6 @@ async function main(): Promise<void> {
   if (values['inventory-only']) return;
   if (!values.log) throw new Error('--log is required to retain genuine provider evidence');
   mkdirSync(dirname(resolve(values.log)), { recursive: true });
-  const journalPath = `${checkpointPath}.journal`;
   const previous = loadStaticSourceJournal(journalPath, loadStaticSourceReadings(checkpointPath) ?? loadStaticSourceReadings(path));
   const captureSources = { ...previous?.captureSources, [decisionSourceHash]: staticDecisionSourceManifest() };
   const captureBatterySources = { ...previous?.captureBatterySources,
@@ -112,7 +142,7 @@ async function main(): Promise<void> {
     if (staticDecisionSourceHash() !== decisionSourceHash || sha256(JSON.stringify(after.map(input => staticInputKey(input)))) !== snapshot) {
       throw new Error(`Source changed during preparation; reusable genuine observations retained in ${checkpointPath}, canonical artifact was not published`);
     }
-    const result: StaticSourceReadings = current;
+    const result: StaticSourceReadings = projectCurrentStaticSourceReadings(inputs, current);
     saveStaticSourceReadings(result, path);
     const held = inputs.filter(input => staticInputStanding(input, result).kind === 'held');
     const violations = inputs.filter(input => staticInputStanding(input, result).kind === 'violation');

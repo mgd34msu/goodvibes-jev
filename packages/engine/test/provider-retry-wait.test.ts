@@ -21,6 +21,7 @@ import { forgetRetryWaitReadings, numberSpans, type RetryWaitUnit } from '../sdk
 import { readFormattedError } from '../sdk/src/platform/utils/error-display.ts';
 import { SyntheticProvider, type CanonicalModel } from '../sdk/src/platform/providers/synthetic.ts';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.ts';
+import { authoredPrivacyAnswer, errorSpan, errorText } from './_helpers/authored-error-readings.ts';
 
 /** A year in a date: a number the old regex took as a wait, which is not one. */
 const DATE_MESSAGE = 'Plan limit reached; retry after 2025-06-01 when your plan renews.';
@@ -31,6 +32,10 @@ const MINUTES_MESSAGE = 'Too many requests: retry after 5 minutes.';
 type WaitAnswer = { readonly number: string; readonly unit: RetryWaitUnit; readonly confidence?: number } | 'none';
 
 function waitPort(waits: ReadonlyArray<readonly [wording: string, answer: WaitAnswer]>) {
+  const privacy = authoredPrivacyAnswer({ fields: { requests: 'other' }, parts: [
+    [errorText(DATE_MESSAGE)],
+    [errorText('Too many requests: '), errorSpan('requests'), errorText('')],
+  ] });
   const answerFor = (state: EntryType): WaitAnswer => {
     const message = (state as { message?: string }).message ?? '';
     return waits.find(([wording]) => message.includes(wording))?.[1] ?? 'none';
@@ -40,6 +45,8 @@ function waitPort(waits: ReadonlyArray<readonly [wording: string, answer: WaitAn
     return Object.entries(numbers).find(([, entry]) => entry.number === text)![0];
   };
   const { port: inner, requests } = fakePort((name: string, question: Question, state: EntryType) => {
+    const protectedAnswer = privacy(name, question, state);
+    if (protectedAnswer !== undefined) return protectedAnswer;
     const answer = answerFor(state);
     if (name === 'pick') return answer === 'none' ? choiceAnswer(question, 'none', 0.95) : choiceAnswer(question, idOf(state, answer.number), answer.confidence ?? 0.95);
     if (name === 'unit') return choiceAnswer(question, answer === 'none' ? 's' : answer.unit, 0.95);
@@ -58,7 +65,7 @@ function waitPort(waits: ReadonlyArray<readonly [wording: string, answer: WaitAn
     recorder: {
       recordReadings: () => undefined,
       recordAction: (_decisionId: string, action: string) => void actions.push(action),
-    } as unknown as NonNullable<JudgmentPort['recorder']>,
+    },
   };
   const waitRequests = () => requests.filter((request) => 'pick' in request.questions && 'unit' in request.questions);
   return { port, waitRequests, actions };
@@ -103,19 +110,30 @@ describe('a number that is not a wait', () => {
     const err = new ProviderError(DATE_MESSAGE, 429);
     expect(await readRetryWait(err, 'test.retry-wait')).toBeUndefined();
     expect(await readFormattedError(err, { site: 'test.retry-wait' })).not.toContain('Retry in');
-    expect(waitRequests()).toHaveLength(1);
+    // Formatting captures its own protected error observation instead of
+    // adopting the separate direct reader's memoized result.
+    expect(waitRequests()).toHaveLength(2);
+    for (const request of waitRequests()) {
+      expect(request.context?.battery).toBe('engine.provider.retry-wait');
+      expect(request.state).toMatchObject({ message: DATE_MESSAGE, status: 429 });
+    }
     expect(actions).toContain('took no retry wait from the message: no number reads as the wait');
   });
 });
 
 describe('a wait in minutes', () => {
   test('is read as minutes and converted by code to milliseconds', async () => {
-    const { port, actions } = waitPort([[MINUTES_MESSAGE, { number: '5', unit: 'min' }]]);
+    const { port, waitRequests, actions } = waitPort([[MINUTES_MESSAGE, { number: '5', unit: 'min' }]]);
     installJudgmentPort(port);
     const err = new ProviderError(MINUTES_MESSAGE, 429);
     expect(err.retryAfterMs).toBeUndefined();
     expect(await readRetryWait(err, 'test.retry-wait')).toBe(300_000);
     expect(await readFormattedError(err, { site: 'test.retry-wait' })).toContain('Retry in 300s');
+    expect(waitRequests()).toHaveLength(2);
+    for (const request of waitRequests()) {
+      expect(request.context?.battery).toBe('engine.provider.retry-wait');
+      expect(request.state).toMatchObject({ message: MINUTES_MESSAGE, status: 429 });
+    }
     expect(actions).toContain('took a retry wait of 300000ms from the message (5 min)');
   });
 
@@ -126,7 +144,7 @@ describe('a wait in minutes', () => {
       name: 'backend-a',
       models: ['m1'],
       chat: async () => { throw new ProviderError(MINUTES_MESSAGE, 429); },
-    } as unknown as LLMProvider;
+    };
     const catalog: CanonicalModel[] = [{
       id: 'model-x',
       tier: 'paid',

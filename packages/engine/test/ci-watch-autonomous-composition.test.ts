@@ -1,7 +1,7 @@
 import { WorkspaceTrustManager } from '../sdk/src/platform/runtime/workspace-trust.ts';
 /** Reconstructed against recovered source; all external responses are offline fixtures. */
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withDecisionLog, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
@@ -48,9 +48,9 @@ function harness() {
   const host: ExternalPermissionHost = { port: services.judgment.port, permissionManager: services.permissionManager, config, signal: lifetime.signal };
   const catalog = new GatewayMethodCatalog(); let humanAsks = 0; let starts = 0; let created = 0;
   let observer: ((tool: string, args: Record<string, unknown>, success: boolean) => void) | undefined;
-  let ownerCurrent = true; let goal = 'Repair CI for the authorized fixture/project branch.';
+  let ownerCurrent = true; let rejectedOwnerChecks = 0; let goal = 'Repair CI for the authorized fixture/project branch.';
   const operation = { sourceOf: () => ({ goal, criteria: ['Only fix the existing project scope'] }), signal: lifetime.signal,
-    assertCurrent() { lifetime.signal.throwIfAborted(); if (!ownerCurrent) throw new Error('Original operation ended'); } };
+    assertCurrent() { lifetime.signal.throwIfAborted(); if (!ownerCurrent) { rejectedOwnerChecks++; throw new Error('Original operation ended'); } } };
   const deps: CiWatchCompositionDeps = {
     shellPaths: createShellPathService({ workingDirectory: root, homeDirectory: root }), surfaceRoot: 'tui', configManager: config,
     ciAutonomousHost: () => host, workingDirectory: root, onCiAutoWatch: value => { observer = value; },
@@ -80,6 +80,7 @@ function harness() {
     endSource() { ownerCurrent = false; }, recompose() { composeCiWatchGatewayVerbs(catalog, deps); },
     create: (owned = true, triggerFixSession = false) => owned ? withExternalOperationSource(operation, () => invoke('ci.watches.create', { repo: 'fixture/project', ref: 'main', deliveryChannel: 'web', triggerFixSession })) : invoke('ci.watches.create', { repo: 'fixture/project', ref: 'main', deliveryChannel: 'web', triggerFixSession }),
     counts: () => ({ humanAsks, starts, created }), duringCreate(value: () => void) { beforeCreate = value; },
+    rejectedOwnerChecks: () => rejectedOwnerChecks,
     reject() { disposition = 'reject'; }, hook(value: typeof beforeDecision) { beforeDecision = value; }, changeSource() { goal = 'A different scope'; },
   };
 }
@@ -122,9 +123,13 @@ test('restart cannot restore authority from saved watch', async () => {
 });
 test('changed exact CI head/run/jobs cannot claim old repair', async () => {
   const h = harness(); const { watch } = await h.create() as { watch: { id: string } };
-  h.hook(() => { writeFileSync(join(h.root, 'gh'), `#!/bin/sh\necho '[{"name":"build","status":"completed","conclusion":"failure","head_sha":"different","html_url":"https://github.com/fixture/project/actions/runs/52/job/62"}]'\n`); });
-  expect(await h.invoke('ci.watches.run', { watchId: watch.id })).toMatchObject({ fixSessionError: 'CI commit, run, or jobs changed during admission' });
-  expect(h.counts().starts).toBe(0);
+  h.hook(() => { writeFileSync(join(h.root, 'gh'), `#!/bin/sh\nprintf refreshed > "$0.refreshed"\necho '[{"name":"build","status":"completed","conclusion":"failure","head_sha":"different","html_url":"https://github.com/fixture/project/actions/runs/52/job/62"}]'\n`); });
+  // Unsettled synchronous diagnostic text is masked. Prove the actual fresh
+  // source read and refusal independently of that display compatibility path.
+  expect(await h.invoke('ci.watches.run', { watchId: watch.id })).toMatchObject({ fixSessionTriggered: false, fixSessionError: '[REDACTED]',
+    report: { jobs: [{ headSha: 'aabbcc', runId: '51', jobId: '61' }] } });
+  expect(readFileSync(join(h.root, 'gh.refreshed'), 'utf8')).toBe('refreshed');
+  expect(h.counts()).toEqual({ humanAsks: 0, starts: 0, created: 0 });
 });
 test('explicit policy denial survives an act-capable Jev', async () => {
   const h = harness(); h.config.set('permissions.mode', 'custom'); h.config.set('permissions.tools.agent', 'deny');
@@ -136,8 +141,22 @@ test('self-minted source remains usable after triggering tool scope closes', asy
   await h.invoke('ci.watches.run', { watchId }); expect(h.counts()).toEqual({ humanAsks: 0, starts: 1, created: 1 });
 });
 test('completed native-style source owner cannot be revived from copied goal', async () => {
-  const h = harness(); const watchId = await h.push(); h.endSource();
-  expect(await h.invoke('ci.watches.run', { watchId })).toMatchObject({ fixSessionTriggered: false, fixSessionError: 'Original operation ended' }); expect(h.counts().starts).toBe(0);
+  const h = harness(); const watchId = await h.push(); const goal = h.operation.sourceOf().goal;
+  const reads = h.requests.length; h.endSource();
+  expect(await h.invoke('ci.watches.run', { watchId })).toMatchObject({ fixSessionTriggered: false, fixSessionError: '[REDACTED]' });
+  expect(h.operation.sourceOf().goal).toBe(goal);
+  expect(h.rejectedOwnerChecks()).toBeGreaterThan(0);
+  // Cold diagnostic protection may read the error after the owner rejects.
+  // It must never ask for a new execution disposition from the copied goal.
+  for (const request of h.requests.slice(reads)) {
+    const battery = request.context?.battery;
+    if (battery === undefined) throw new Error('Late diagnostic reading has no named contract');
+    expect([
+      { battery: 'engine.redaction.field-kind', questions: ['kind'] },
+      { battery: 'engine.redaction.credential', questions: ['lineHasCredential', 'spanIsCredential'] },
+    ]).toContainEqual({ battery, questions: Object.keys(request.questions) });
+  }
+  expect(h.counts()).toEqual({ humanAsks: 0, starts: 0, created: 0 });
 });
 test('policy change while creating disabled job prevents runNow', async () => {
   const h = harness(); const { watch } = await h.create() as { watch: { id: string } };

@@ -74,7 +74,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
 
     expect(result.scanned).toBe(1);
     // Enrichment bookkeeping lives in its own derived record now, not on the
-    // append-only source row. (Defect 10.)
+    // append-only source row.
     expect(store.getSource(generated.id)?.metadata.semanticEnrichment).toBeUndefined();
     expect(store.getSemanticEnrichmentState(generated.id)).toBeNull();
     expect(store.getSemanticEnrichmentState(source.id)).not.toBeNull();

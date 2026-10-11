@@ -9,6 +9,109 @@ export interface LexicalSourceAnchor extends SourceAnchor {
   })[];
 }
 
+export interface MarkdownSourceRange {
+  readonly firstLine: number;
+  readonly lastLine: number;
+}
+
+/** Complete authored data declarations and actual module imports, without interpreting their meaning. */
+export function structuredSourceContext(path: string, text: string): {
+  readonly declarations: readonly MarkdownSourceRange[];
+  readonly module: readonly MarkdownSourceRange[];
+} {
+  if (!/\.[cm]?[jt]sx?$/i.test(path)) return { declarations: [], module: [] };
+  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true,
+    path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const range = (node: ts.Node): MarkdownSourceRange => ({
+    firstLine: file.getLineAndCharacterOfPosition(ts.getLeadingCommentRanges(text, node.getFullStart())?.[0]?.pos ?? node.getStart(file)).line + 1,
+    lastLine: file.getLineAndCharacterOfPosition(node.end).line + 1,
+  });
+  const structured = (node: ts.Node): boolean => {
+    if (ts.isArrayLiteralExpression(node) || ts.isObjectLiteralExpression(node)) return true;
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+    return node.getChildren(file).some(structured);
+  };
+  const declarations: MarkdownSourceRange[] = [];
+  const visit = (node: ts.Node): void => {
+    if ((ts.isVariableStatement(node) || ts.isExportAssignment(node) || ts.isExpressionStatement(node)) && structured(node)) {
+      declarations.push(range(node));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  const module: MarkdownSourceRange[] = [];
+  const first = file.statements[0];
+  if (first) {
+    const preambleEnd = file.getLineAndCharacterOfPosition(first.getStart(file)).line;
+    if (preambleEnd > 0) module.push({ firstLine: 1, lastLine: preambleEnd });
+  }
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) module.push(range(statement));
+  }
+  return { declarations, module };
+}
+
+/** Actual structural declarations remain source evidence, never local authority. */
+export function markdownSourceContext(text: string, anchors: readonly SourceAnchor[]): readonly MarkdownSourceRange[] {
+  const lines = text.split('\n');
+  const offered = new Set(anchors.map(anchor => anchor.line));
+  const wanted = new Set<{ firstLine: number; lastLine: number }>();
+  const preamble = { firstLine: 1, lastLine: lines.length };
+  wanted.add(preamble);
+  let preambleOpen = true;
+  let firstContent = true;
+  const headings: { level: number; range: { firstLine: number; lastLine: number }; open: boolean }[] = [];
+  let fence: { marker: string; length: number; opening: { firstLine: number; lastLine: number }; closing: { firstLine: number; lastLine: number } } | undefined;
+  let table: { firstLine: number; lastLine: number } | undefined;
+  const delimiter = (line: string): boolean => {
+    const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|');
+    return cells.length > 0 && cells.every(cell => /^\s*:?-{3,}:?\s*$/.test(cell));
+  };
+  const stopIntro = (beforeLine: number): void => {
+    if (preambleOpen) { preamble.lastLine = beforeLine; preambleOpen = false; }
+    const current = headings.at(-1);
+    if (current?.open) { current.range.lastLine = beforeLine; current.open = false; }
+  };
+  for (const [index, line] of lines.entries()) {
+    const number = index + 1;
+    const fenceLine = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (offered.has(number)) { wanted.add(fence.opening); wanted.add(fence.closing); for (const heading of headings) wanted.add(heading.range); }
+      const marker = fenceLine?.[1];
+      if (marker && marker.startsWith(fence.marker) && marker.length >= fence.length && !fenceLine?.[2]?.trim()) {
+        fence.closing.firstLine = number; fence.closing.lastLine = number; fence = undefined;
+      }
+      continue;
+    }
+    const heading = /^\s{0,3}(#{1,6})[\t ]+/.exec(line);
+    const title = firstContent && heading?.[1]?.length === 1;
+    const row = /^\s*\|/.test(line);
+    const list = /^\s*(?:[-+*]\s|\d+[.)]\s)/.test(line);
+    if ((heading && !title) || row || list || fenceLine) stopIntro(number - 1);
+    if (heading?.[1]) {
+      const level = heading[1].length;
+      while (headings.at(-1) && headings.at(-1)!.level >= level) headings.pop();
+      headings.push({ level, range: { firstLine: number, lastLine: lines.length }, open: true });
+      table = undefined;
+    }
+    if (row) {
+      if (!table && lines[index + 1] !== undefined && delimiter(lines[index + 1]!)) table = { firstLine: number, lastLine: number + 1 };
+    } else table = undefined;
+    if (offered.has(number)) {
+      for (const current of headings) wanted.add(current.range);
+      if (table) wanted.add(table);
+    }
+    if (fenceLine?.[1]) {
+      fence = { marker: fenceLine[1].startsWith('`') ? '`' : '~', length: fenceLine[1].length,
+        opening: { firstLine: number, lastLine: number }, closing: { firstLine: 0, lastLine: 0 } };
+      table = undefined;
+    }
+    if (line.trim()) firstContent = false;
+  }
+  return [...wanted].filter(range => range.firstLine > 0 && range.lastLine >= range.firstLine)
+    .sort((a, b) => a.firstLine - b.firstLine || a.lastLine - b.lastLine);
+}
+
 /** Deferred-work policy can survive an identifier-only revision in the shared definition file. */
 export function deferredBatteryPolicyStatements(source: string): readonly string[] | null {
   const file = ts.createSourceFile('static-source.ts', source, ts.ScriptTarget.Latest, true);

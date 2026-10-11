@@ -1,6 +1,6 @@
 # Test Coverage Map
 
-This file maps test file numbers to test files for navigation and review.
+This file lists test files for navigation and review.
 Generated from the sorted list of `test/*.test.ts` root-level files.
 Integration tests live under `test/integration/` and are listed separately.
 
@@ -8,1113 +8,1739 @@ Regenerate via `bun scripts/print-test-coverage.ts > COVERAGE.md`
 
 ## Root-level tests (`test/*.test.ts`)
 
-| # | File |
-|---|------|
-| T001 | `test/acp-agent-adapter.test.ts` |
-| T002 | `test/acp-connection-usage-mapping.test.ts` |
-| T003 | `test/acp-host.test.ts` |
-| T004 | `test/acp-permission-outcome.test.ts` |
-| T005 | `test/activity-logger-dispose-lifetime.test.ts` |
-| T006 | `test/activity-logger-durability.test.ts` |
-| T007 | `test/activity-logger-rotation.test.ts` |
-| T008 | `test/adapters-bot-mention.test.ts` |
-| T009 | `test/adapters-helpers.test.ts` |
-| T010 | `test/adapters-matrix.test.ts` |
-| T011 | `test/adapters-signal.test.ts` |
-| T012 | `test/adapters-swept-credential-auth.test.ts` |
-| T013 | `test/adapters-telegram.test.ts` |
-| T014 | `test/adapters-webhook.test.ts` |
-| T015 | `test/adapters-whatsapp.test.ts` |
-| T016 | `test/adaptive-planner.test.ts` |
-| T017 | `test/agent-budget-usage.test.ts` |
-| T018 | `test/agent-manager-cancel-abort.test.ts` |
-| T019 | `test/agent-manager-conversation-snapshot.test.ts` |
-| T020 | `test/agent-manager-usage-readpath.test.ts` |
-| T021 | `test/agent-orchestrator-project-index-ownership.test.ts` |
-| T022 | `test/agent-steer-wake.test.ts` |
-| T023 | `test/agent-tool-contracts.test.ts` |
-| T024 | `test/agent-worktree.test.ts` |
-| T025 | `test/alert-gating.test.ts` |
-| T026 | `test/analyze-semantic-diff.test.ts` |
-| T027 | `test/android-keystore-token-store.test.ts` |
-| T028 | `test/ansi-sanitize.test.ts` |
-| T029 | `test/anthropic-sdk-provider-rate-limit.test.ts` |
-| T030 | `test/append-only-retention-registry.test.ts` |
-| T031 | `test/approval-broker-persist-ordering.test.ts` |
-| T032 | `test/approval-broker-restart-rearm.test.ts` |
-| T033 | `test/approval-decision-fields-wire.test.ts` |
-| T034 | `test/approval-decisions-persist.test.ts` |
-| T035 | `test/approval-update-stream.test.ts` |
-| T036 | `test/approvals-raise-verb.test.ts` |
-| T037 | `test/arbitraries.unit.test.ts` |
-| T038 | `test/arch03-error-hierarchy.test.ts` |
-| T039 | `test/artifact-upload-http-wire.test.ts` |
-| T040 | `test/artifact-upload-ingest.test.ts` |
-| T041 | `test/artifacts-kind-and-host.test.ts` |
-| T042 | `test/async-event-bus.test.ts` |
-| T043 | `test/at-rest-redaction.test.ts` |
-| T044 | `test/atomic-json-store.test.ts` |
-| T045 | `test/atomic-write-concurrency.test.ts` |
-| T046 | `test/atomic-write.test.ts` |
-| T047 | `test/auth-auto-refresh-transport-integration.test.ts` |
-| T048 | `test/auth-auto-refresh.test.ts` |
-| T049 | `test/auth-coverage.test.ts` |
-| T050 | `test/auth-events.test.ts` |
-| T051 | `test/auth-facade.test.ts` |
-| T052 | `test/auth-hardening.test.ts` |
-| T053 | `test/auth-normalize.test.ts` |
-| T054 | `test/auth-oauth-client.test.ts` |
-| T055 | `test/auth-permission-resolver.test.ts` |
-| T056 | `test/auth-session-manager.test.ts` |
-| T057 | `test/auth-token-store.test.ts` |
-| T058 | `test/auto-refresh-clock-seam.test.ts` |
-| T059 | `test/auto-refresh-error-release.test.ts` |
-| T060 | `test/automation-missed-and-failure-delivery.test.ts` |
-| T061 | `test/automation-schedules.test.ts` |
-| T062 | `test/automation-service.test.ts` |
-| T063 | `test/automation-stores.test.ts` |
-| T064 | `test/background-agent-permissions.test.ts` |
-| T065 | `test/bare-model-id-resolution-remaining-sites.test.ts` |
-| T066 | `test/bearer-redaction.test.ts` |
-| T067 | `test/bedrock-vertex-copilot-live-model-discovery.test.ts` |
-| T068 | `test/best-of-n-attempts.test.ts` |
-| T069 | `test/best-of-n-non-leaf.test.ts` |
-| T070 | `test/bookmark-modal.test.ts` |
-| T071 | `test/bookmarks-manager.test.ts` |
-| T072 | `test/boot-daemon-factory.test.ts` |
-| T073 | `test/bootstrap-services.test.ts` |
-| T074 | `test/browser-driver-resolution.test.ts` |
-| T075 | `test/browser-driver-shipping.test.ts` |
-| T076 | `test/browser-engine-credential-guard.test.ts` |
-| T077 | `test/browser-outward-effects.test.ts` |
-| T078 | `test/browser-provisioning.test.ts` |
-| T079 | `test/browser-scoped-entrypoints.test.ts` |
-| T080 | `test/browser-sessions.test.ts` |
-| T081 | `test/browser-snapshot.test.ts` |
-| T082 | `test/budget-overdraw.test.ts` |
-| T083 | `test/bun-pin-agreement.test.ts` |
-| T084 | `test/cache-invariants.test.ts` |
-| T085 | `test/capability-route-reconcile.test.ts` |
-| T086 | `test/card-redaction-separators.test.ts` |
-| T087 | `test/card-shapes.test.ts` |
-| T088 | `test/channel-builtin-plugins.test.ts` |
-| T089 | `test/channel-delivery-binding-fallback.test.ts` |
-| T090 | `test/channel-delivery-google-chat-binding.test.ts` |
-| T091 | `test/channel-directory-binding-fallback.test.ts` |
-| T092 | `test/channel-health-runtime.test.ts` |
-| T093 | `test/channel-inbox-list-verb.test.ts` |
-| T094 | `test/channel-ingress-failure-alarm.test.ts` |
-| T095 | `test/channel-internal-diagnostics-never-delivered.test.ts` |
-| T096 | `test/channel-owner-gate.test.ts` |
-| T097 | `test/channel-policy-patch.test.ts` |
-| T098 | `test/channel-profiles.test.ts` |
-| T099 | `test/channel-reply-pipeline-concurrency.test.ts` |
-| T100 | `test/channel-reply-pipeline-delta.test.ts` |
-| T101 | `test/channel-reply-pipeline.test.ts` |
-| T102 | `test/channel-rollover-surface-agnostic.test.ts` |
-| T103 | `test/channel-session-classification.test.ts` |
-| T104 | `test/channel-sync-verbs.test.ts` |
-| T105 | `test/channel-workstream-labels.test.ts` |
-| T106 | `test/channels-plugin-registry.test.ts` |
-| T107 | `test/channels-test-send.test.ts` |
-| T108 | `test/chaos-mcp-reconnect.test.ts` |
-| T109 | `test/chaos-provider-failures.test.ts` |
-| T111 | `test/checkin.test.ts` |
-| T112 | `test/checkpoint-cross-process-lock.test.ts` |
-| T113 | `test/checkpoint-restore-tokens.test.ts` |
-| T114 | `test/child-failure-envelope.test.ts` |
-| T115 | `test/ci-fix-session-real-id.test.ts` |
-| T116 | `test/ci-fix-session-stamp.test.ts` |
-| T117 | `test/ci-watch-auto-mint.test.ts` |
-| T118 | `test/ci-watch-gh-logs.test.ts` |
-| T119 | `test/ci-watch-polling.test.ts` |
-| T120 | `test/ci-watch.test.ts` |
-| T121 | `test/cli-config-overrides.test.ts` |
-| T122 | `test/cli-endpoints.test.ts` |
-| T123 | `test/cli-network-posture.test.ts` |
-| T124 | `test/cli-parser-engine.test.ts` |
-| T125 | `test/cli-parser.test.ts` |
-| T126 | `test/cli-redaction.test.ts` |
-| T127 | `test/click-target-one-mode-one-host.test.ts` |
-| T128 | `test/client-floor-options.test.ts` |
-| T129 | `test/client-runtime-services.test.ts` |
-| T130 | `test/client-seam-approvals-config-credentials.test.ts` |
-| T131 | `test/client-seam-conversation-rewind-host.test.ts` |
-| T132 | `test/client-seam-fleet-and-autostart.test.ts` |
-| T133 | `test/client-seam-phone-tool.test.ts` |
-| T134 | `test/client-seam-session-dispatch.test.ts` |
-| T135 | `test/client-seam-spine-adoption.test.ts` |
-| T136 | `test/client-seam-tasks-client.test.ts` |
-| T137 | `test/clipboard-reader-hint.test.ts` |
-| T138 | `test/cloudflare-control-plane.test.ts` |
-| T139 | `test/cloudflare-worker-batch.test.ts` |
-| T140 | `test/cloudflare-worker-settings.test.ts` |
-| T141 | `test/cluster-commands.test.ts` |
-| T142 | `test/cluster-config-replication.test.ts` |
-| T143 | `test/cluster-election.test.ts` |
-| T144 | `test/cluster-group-membership.test.ts` |
-| T145 | `test/cluster-group-rotation.test.ts` |
-| T146 | `test/cluster-group-wire.test.ts` |
-| T147 | `test/cluster-handoff.test.ts` |
-| T148 | `test/cluster-render.test.ts` |
-| T149 | `test/cluster-socket-surfaces.test.ts` |
-| T150 | `test/cluster-spread.test.ts` |
-| T151 | `test/code-index-bounds.test.ts` |
-| T152 | `test/code-index-degradation.test.ts` |
-| T153 | `test/code-index-fleet-adapter.test.ts` |
-| T154 | `test/code-index-lexical-rerank.test.ts` |
-| T155 | `test/code-index-lifecycle-honesty.test.ts` |
-| T156 | `test/code-index-reindex.test.ts` |
-| T157 | `test/code-index-services.test.ts` |
-| T158 | `test/code-index-store.test.ts` |
-| T159 | `test/compaction-collapse.test.ts` |
-| T160 | `test/compaction-completed-agent-work.test.ts` |
-| T161 | `test/compaction-default-on-receipts.test.ts` |
-| T162 | `test/compaction-distiller-strategy.test.ts` |
-| T163 | `test/compaction-instruction-reinjection.test.ts` |
-| T164 | `test/compaction-quality-score.test.ts` |
-| T165 | `test/companion-adapter-model-resolution.test.ts` |
-| T166 | `test/companion-broker-live-registration.test.ts` |
-| T167 | `test/companion-chat-branching.test.ts` |
-| T168 | `test/companion-chat-daemon-wire.test.ts` |
-| T169 | `test/companion-chat-lifecycle.test.ts` |
-| T170 | `test/companion-chat-messages-get.test.ts` |
-| T171 | `test/companion-chat-persistence.test.ts` |
-| T172 | `test/companion-chat-queue-steer.test.ts` |
-| T173 | `test/companion-chat-rate-limit.test.ts` |
-| T174 | `test/companion-chat-rate-limiter-lru.test.ts` |
-| T175 | `test/companion-chat-routes.test.ts` |
-| T176 | `test/companion-chat-session-create-provider-resolution.test.ts` |
-| T177 | `test/companion-chat-session-isolation.test.ts` |
-| T178 | `test/companion-chat-tool-registry.test.ts` |
-| T179 | `test/companion-chat-turn-boundary.test.ts` |
-| T180 | `test/companion-chat-turn-cancel.test.ts` |
-| T181 | `test/companion-chat-verbs-daemon-wire.test.ts` |
-| T182 | `test/companion-followup-persistence.test.ts` |
-| T183 | `test/companion-pairing-redaction.test.ts` |
-| T184 | `test/companion-rate-limiter-env.test.ts` |
-| T185 | `test/companion-token-rotation.test.ts` |
-| T186 | `test/compat-provider-live-model-discovery.test.ts` |
-| T187 | `test/completion-answer.test.ts` |
-| T188 | `test/completion-report.test.ts` |
-| T189 | `test/config-audit.test.ts` |
-| T190 | `test/config-change-events.test.ts` |
-| T191 | `test/config-credentials-share.test.ts` |
-| T192 | `test/config-daemon-tier-app-sections.test.ts` |
-| T193 | `test/config-from-a-closed-surface-reaches-the-daemon.test.ts` |
-| T194 | `test/config-key-union-completeness.test.ts` |
-| T195 | `test/config-live-file-watch.test.ts` |
-| T196 | `test/config-manager-path-accessors.test.ts` |
-| T197 | `test/config-manager-persistence.test.ts` |
-| T198 | `test/config-migrations.test.ts` |
-| T199 | `test/config-persists-user-keys-only.test.ts` |
-| T200 | `test/config-shared-voice-tier.test.ts` |
-| T201 | `test/connector-config-schema.test.ts` |
-| T202 | `test/consolidation-receipt.test.ts` |
-| T203 | `test/context-accounting-tool.test.ts` |
-| T204 | `test/context-compaction-threshold.test.ts` |
-| T205 | `test/context-window-fallback-current-generation.test.ts` |
-| T206 | `test/context-window-override-and-model-warning.test.ts` |
-| T207 | `test/contract-agent-seams.test.ts` |
-| T208 | `test/contract-fleet-adapters.test.ts` |
-| T209 | `test/contract-widths.test.ts` |
-| T210 | `test/contracts-event-envelope.test.ts` |
-| T211 | `test/contracts-portability.test.ts` |
-| T212 | `test/contracts-sync.test.ts` |
-| T213 | `test/contracts-testing-kit.test.ts` |
-| T214 | `test/control-plane-base-url-removal.test.ts` |
-| T215 | `test/control-plane-gateway-stream.test.ts` |
-| T216 | `test/control-plane-store-paths.test.ts` |
-| T217 | `test/conversation-chain-authority.test.ts` |
-| T218 | `test/conversation-fold-policy.test.ts` |
-| T219 | `test/conversation-gate-surface-ingress.test.ts` |
-| T220 | `test/conversation-gate.test.ts` |
-| T221 | `test/conversation-message-routing.test.ts` |
-| T222 | `test/conversation-redelivered-assistant-message.test.ts` |
-| T223 | `test/conversation-tool-result-content.test.ts` |
-| T224 | `test/conversational-diagnosis-contract.test.ts` |
-| T225 | `test/conversational-empty-reply-recovery.test.ts` |
-| T226 | `test/conversational-reply-style.test.ts` |
-| T227 | `test/core-circuit-breaker.test.ts` |
-| T228 | `test/core-event-replay.test.ts` |
-| T229 | `test/core-qol-f456.test.ts` |
-| T230 | `test/core-verb-rename-daemon-wire.test.ts` |
-| T231 | `test/core-verbs-conformance.test.ts` |
-| T232 | `test/correlation-ids.test.ts` |
-| T233 | `test/cost-attribution-actuals.test.ts` |
-| T234 | `test/cost-attribution-origin.test.ts` |
-| T235 | `test/cost-attribution.test.ts` |
-| T236 | `test/cost-provenance-wire.test.ts` |
-| T237 | `test/crash-capture.test.ts` |
-| T238 | `test/credential-availability.test.ts` |
-| T239 | `test/credential-read-defaults.test.ts` |
-| T240 | `test/credential-resolver-live.test.ts` |
-| T241 | `test/credential-scope-gate.test.ts` |
-| T242 | `test/credentials-write-verbs.test.ts` |
-| T243 | `test/crypto-adapter.test.ts` |
-| T244 | `test/daemon-adoption-policy.test.ts` |
-| T245 | `test/daemon-agent-knowledge-routes.test.ts` |
-| T246 | `test/daemon-auto-updater.test.ts` |
-| T247 | `test/daemon-batch-manager.test.ts` |
-| T248 | `test/daemon-build-floor-handshake.test.ts` |
-| T249 | `test/daemon-config-migration.test.ts` |
-| T250 | `test/daemon-config-write-receipt.test.ts` |
-| T251 | `test/daemon-connected-host-split.test.ts` |
-| T252 | `test/daemon-crash-loop-rollback.test.ts` |
-| T253 | `test/daemon-credential-scope-and-migration.test.ts` |
-| T254 | `test/daemon-embed-in-process-removal.test.ts` |
-| T255 | `test/daemon-enabled-resolution.test.ts` |
-| T256 | `test/daemon-exec-invocation.test.ts` |
-| T257 | `test/daemon-handover.test.ts` |
-| T258 | `test/daemon-home-setting-perms.test.ts` |
-| T259 | `test/daemon-home.test.ts` |
-| T260 | `test/daemon-isolation-guards.test.ts` |
-| T261 | `test/daemon-owned-config-read.test.ts` |
-| T262 | `test/daemon-owned-config-scope.test.ts` |
-| T263 | `test/daemon-safe-serve.test.ts` |
-| T264 | `test/daemon-sdk-auth-boundary.test.ts` |
-| T265 | `test/daemon-sdk-helpers.test.ts` |
-| T266 | `test/daemon-sdk.test.ts` |
-| T267 | `test/daemon-shutdown-timer-teardown.test.ts` |
-| T268 | `test/daemon-state-reconciliation.test.ts` |
-| T269 | `test/daemon-stop-watchers-disabled.test.ts` |
-| T270 | `test/daemon-survival-contract.test.ts` |
-| T271 | `test/daemon-tier-app-layer-sections.test.ts` |
-| T272 | `test/daemon-tier-migration-ownership.test.ts` |
-| T273 | `test/daemon-unbound-teardown.test.ts` |
-| T274 | `test/daemon-update-artifact.test.ts` |
-| T275 | `test/daemon-update-handover.test.ts` |
-| T276 | `test/daemon-version-compat.test.ts` |
-| T277 | `test/decision-log-otlp.test.ts` |
-| T278 | `test/default-config-runtime.test.ts` |
-| T279 | `test/delete-key-policy.test.ts` |
-| T280 | `test/delete-means-delete-daemon-wire.test.ts` |
-| T281 | `test/delivery-secret-resolver-required.test.ts` |
-| T282 | `test/delivery-transience.test.ts` |
-| T283 | `test/detach-perhunk-daemon-wire.test.ts` |
-| T284 | `test/detach-perhunk.test.ts` |
-| T285 | `test/device-capabilities.test.ts` |
-| T286 | `test/diagnostics-panel-degradation.test.ts` |
-| T287 | `test/discovery-persistence-observability.test.ts` |
-| T288 | `test/discovery-scanner-context.test.ts` |
-| T289 | `test/dist-freshness.test.ts` |
-| T290 | `test/dist-tag-alignment.test.ts` |
-| T291 | `test/domain-events-listener-containment.test.ts` |
-| T292 | `test/durability-housekeeping.test.ts` |
-| T293 | `test/ecosystem-capability-bundle.test.ts` |
-| T294 | `test/ecosystem-catalog-paths.test.ts` |
-| T295 | `test/ecosystem-catalog-readings.test.ts` |
-| T296 | `test/ecosystem-recommendations.test.ts` |
-| T297 | `test/edit-match-fallback-observability.test.ts` |
-| T298 | `test/embed-session.test.ts` |
-| T299 | `test/error-cause-chain.test.ts` |
-| T300 | `test/error-code.test.ts` |
-| T301 | `test/error-display-redaction-tokens.test.ts` |
-| T302 | `test/error-hint-provenance.test.ts` |
-| T303 | `test/error-kind.test.ts` |
-| T304 | `test/error-normalization-isolation.test.ts` |
-| T305 | `test/eval-gate-floors.test.ts` |
-| T306 | `test/eval-standing-gate.test.ts` |
-| T307 | `test/eval-task-suite-adapter.test.ts` |
-| T308 | `test/exec-credential-env-scrub.test.ts` |
-| T309 | `test/exec-denial-reason-verbosity.test.ts` |
-| T310 | `test/exec-guard-permission-authority.test.ts` |
-| T311 | `test/exec-interactive.test.ts` |
-| T312 | `test/exec-output-truncation-marker.test.ts` |
-| T313 | `test/exec-phase-timeout.test.ts` |
-| T314 | `test/exec-retry.test.ts` |
-| T315 | `test/exec-sandbox-context-note.test.ts` |
-| T316 | `test/exec-sandbox.test.ts` |
-| T317 | `test/exec-tool-result-shape.test.ts` |
-| T318 | `test/exec-working-dir-default.test.ts` |
-| T319 | `test/execution-plan-dismiss.test.ts` |
-| T320 | `test/explicit-user-request-transport.test.ts` |
-| T321 | `test/expo-secure-token-store.test.ts` |
-| T322 | `test/export-map-subpaths.test.ts` |
-| T323 | `test/export-session-export.test.ts` |
-| T324 | `test/failure-reading.test.ts` |
-| T325 | `test/feature-announcements.test.ts` |
-| T326 | `test/feature-flag-config-apply.test.ts` |
-| T327 | `test/feature-flag-config-bridge-services.test.ts` |
-| T328 | `test/feature-flag-gates.test.ts` |
-| T329 | `test/feature-flags-exports.test.ts` |
-| T330 | `test/feature-flags-graduation.test.ts` |
-| T331 | `test/feature-gate-membership.test.ts` |
-| T332 | `test/fetch-localhost-approval.test.ts` |
-| T333 | `test/fetch-sniff-content-type.test.ts` |
-| T334 | `test/field-normalization.test.ts` |
-| T335 | `test/fill-card-field-attribution.test.ts` |
-| T336 | `test/find-search-observability.test.ts` |
-| T337 | `test/find-symbols-fallback-observability.test.ts` |
-| T338 | `test/flag-config-map.test.ts` |
-| T339 | `test/fleet-archive.test.ts` |
-| T340 | `test/fleet-checkpoints-search.test.ts` |
-| T341 | `test/fleet-emit-bridge.test.ts` |
-| T342 | `test/fleet-headlines.test.ts` |
-| T343 | `test/fleet-list-pagination.test.ts` |
-| T344 | `test/fleet-live-managers.test.ts` |
-| T345 | `test/fleet-owner-cost-honesty.test.ts` |
-| T346 | `test/fleet-pause-resume-automation.test.ts` |
-| T347 | `test/fleet-pick-conflict-lifecycle-verbs.test.ts` |
-| T348 | `test/fleet-registry.test.ts` |
-| T349 | `test/focus-tracker.test.ts` |
-| T350 | `test/forensics-classifier.test.ts` |
-| T351 | `test/forensics-slow-phases.test.ts` |
-| T352 | `test/foundation-io-coverage-ratchet.test.ts` |
-| T353 | `test/gate-divergence-dashboard.test.ts` |
-| T354 | `test/gate-divergence-panel.test.ts` |
-| T355 | `test/gate-exec-posture.test.ts` |
-| T356 | `test/gate-exec-prompt-wiring.test.ts` |
-| T357 | `test/gate-execution-ledger.test.ts` |
-| T358 | `test/gate-mcp-permissions-coherence.test.ts` |
-| T359 | `test/gate-mcp-schema-quarantine.test.ts` |
-| T360 | `test/gate-operator-policy.test.ts` |
-| T361 | `test/gate-permissions-command.test.ts` |
-| T362 | `test/gate-permissions-provenance.test.ts` |
-| T363 | `test/gate-policy-command.test.ts` |
-| T364 | `test/gate-policy-diagnostics-panel.test.ts` |
-| T365 | `test/gate-policy-lint.test.ts` |
-| T366 | `test/gate-policy-loader.test.ts` |
-| T367 | `test/gate-policy-preflight.test.ts` |
-| T368 | `test/gate-policy-registry.test.ts` |
-| T369 | `test/gate-policy-signer.test.ts` |
-| T370 | `test/gate-policy-simulation-scenarios.test.ts` |
-| T371 | `test/gate-presets-mode.test.ts` |
-| T372 | `test/gate-settings-write-policy.test.ts` |
-| T373 | `test/gate-shell-ast-parser.test.ts` |
-| T374 | `test/gate-shell-tokenizer-fuzz.test.ts` |
-| T375 | `test/gate-shell-verdict.test.ts` |
-| T376 | `test/gate-surface-authority.test.ts` |
-| T377 | `test/gate-tool-permission-safety.test.ts` |
-| T378 | `test/gate-tool-policy-guard-reads.test.ts` |
-| T379 | `test/gate-tool-policy-guard.test.ts` |
-| T380 | `test/gate-turn-surface.test.ts` |
-| T381 | `test/gate.test.ts` |
-| T382 | `test/gateway-default-streaming.test.ts` |
-| T383 | `test/gateway-domain-scope.test.ts` |
-| T384 | `test/gateway-method-not-found.test.ts` |
-| T385 | `test/gateway-method-not-invokable.test.ts` |
-| T386 | `test/gateway-response-contract-conformance.test.ts` |
-| T387 | `test/gateway-rest-parity.test.ts` |
-| T388 | `test/gateway-ring-buffer.test.ts` |
-| T389 | `test/gateway-self-dispatch-loop.test.ts` |
-| T390 | `test/gateway-verb-groups-config-binding.test.ts` |
-| T391 | `test/gateway-verb-refusal-envelope.test.ts` |
-| T392 | `test/gateway-verb-required-conformance.test.ts` |
-| T393 | `test/gateway.test.ts` |
-| T394 | `test/generated-consumer-transports.test.ts` |
-| T395 | `test/git-structured-diff.test.ts` |
-| T396 | `test/glob-to-regex.test.ts` |
-| T397 | `test/goodvibes-home-resolution.test.ts` |
-| T398 | `test/goodvibes-runtime-tools.test.ts` |
-| T399 | `test/goodvibes-settings-tool-routing.test.ts` |
-| T400 | `test/google-adoption-reaches-the-daemon.test.ts` |
-| T401 | `test/google-calendar-dead-grant.test.ts` |
-| T402 | `test/google-calendar-store-credential-write.test.ts` |
-| T403 | `test/helper-tool-llm-config.test.ts` |
-| T404 | `test/home-single-writer.test.ts` |
-| T405 | `test/homeassistant-grounding.test.ts` |
-| T406 | `test/homeassistant-state-provenance.test.ts` |
-| T407 | `test/homeassistant-stream-deltas.test.ts` |
-| T408 | `test/homeassistant-surface.test.ts` |
-| T409 | `test/homegraph-ask-reindex.test.ts` |
-| T410 | `test/homegraph-ask-space-selection.test.ts` |
-| T411 | `test/homegraph-extension.test.ts` |
-| T412 | `test/homegraph-map-routes.test.ts` |
-| T413 | `test/homegraph-object-search.test.ts` |
-| T414 | `test/homegraph-page-quality.test.ts` |
-| T415 | `test/homegraph-repair-pages.test.ts` |
-| T416 | `test/homegraph-routes.test.ts` |
-| T417 | `test/homegraph-self-improvement-abort.test.ts` |
-| T418 | `test/homegraph-sync-pages.test.ts` |
-| T419 | `test/homegraph-triage.test.ts` |
-| T420 | `test/hook-bridge-agent-lifecycle.test.ts` |
-| T421 | `test/hooks-activity.test.ts` |
-| T422 | `test/hooks-contract-search.test.ts` |
-| T423 | `test/hooks-dispatcher-missing-file.test.ts` |
-| T424 | `test/hooks-dispatcher.test.ts` |
-| T425 | `test/hooks-matcher.test.ts` |
-| T426 | `test/hooks-runner-typescript-root.test.ts` |
-| T427 | `test/hooks-runners-prompt.test.ts` |
-| T428 | `test/hooks-safe-evaluate.test.ts` |
-| T429 | `test/host-binding-resolver.test.ts` |
-| T430 | `test/hosted-exec-containment.test.ts` |
-| T431 | `test/hosted-session-exec-posture.test.ts` |
-| T432 | `test/hosted-session-intake-heartbeat-starvation.test.ts` |
-| T433 | `test/hosted-session-manager.test.ts` |
-| T434 | `test/hosted-session-model-route.test.ts` |
-| T435 | `test/hosted-session-render-grade-events.test.ts` |
-| T436 | `test/hosted-session-routes.test.ts` |
-| T437 | `test/hosted-session-spine-intake.test.ts` |
-| T438 | `test/hosted-session-store.test.ts` |
-| T439 | `test/hosted-session-surface-identity.test.ts` |
-| T440 | `test/hosted-session-turn.test.ts` |
-| T441 | `test/hosted-session-workspace-floor.test.ts` |
-| T442 | `test/hostmode-restart.test.ts` |
-| T443 | `test/http-access-log.test.ts` |
-| T444 | `test/http-body-size-cap.test.ts` |
-| T445 | `test/http-listener-trust-cloudflare-config.test.ts` |
-| T446 | `test/http-rate-limiter-lru.test.ts` |
-| T447 | `test/hunk-revert.test.ts` |
-| T448 | `test/idempotency-keys.test.ts` |
-| T449 | `test/in-process-bundling-guard.test.ts` |
-| T450 | `test/inbound-dedup.test.ts` |
-| T451 | `test/inbound-email-config-schema.test.ts` |
-| T452 | `test/inbound-intake-wiring.test.ts` |
-| T453 | `test/inbound-mail-attribution-attack.test.ts` |
-| T454 | `test/inbound-mail-body-redaction-window.test.ts` |
-| T455 | `test/inbound-mail-card-redaction.test.ts` |
-| T456 | `test/inbound-mail-cluster-gate.test.ts` |
-| T457 | `test/inbound-mail-cursor-store.test.ts` |
-| T458 | `test/inbound-mail-cursor-uid-bounds.test.ts` |
-| T459 | `test/inbound-mail-dedup-redelivery.test.ts` |
-| T460 | `test/inbound-mail-dedup-restart-honesty.test.ts` |
-| T461 | `test/inbound-mail-expectation-consume-durability.test.ts` |
-| T462 | `test/inbound-mail-expectation-hardening.test.ts` |
-| T463 | `test/inbound-mail-expectation-id-bounds.test.ts` |
-| T464 | `test/inbound-mail-expectation-probe-is-a-read.test.ts` |
-| T465 | `test/inbound-mail-expectation-registry.test.ts` |
-| T466 | `test/inbound-mail-expectation-roundtrip.test.ts` |
-| T467 | `test/inbound-mail-expectation-store.test.ts` |
-| T468 | `test/inbound-mail-expectation-sweep-schedule.test.ts` |
-| T469 | `test/inbound-mail-expectation-verbs.test.ts` |
-| T470 | `test/inbound-mail-gmail-metadata-notice.test.ts` |
-| T471 | `test/inbound-mail-gmail-reachability.test.ts` |
-| T472 | `test/inbound-mail-health-surface.test.ts` |
-| T473 | `test/inbound-mail-housekeeping.test.ts` |
-| T474 | `test/inbound-mail-intake.test.ts` |
-| T475 | `test/inbound-mail-lifecycle-failures.test.ts` |
-| T476 | `test/inbound-mail-message-id-collision.test.ts` |
-| T477 | `test/inbound-mail-notice-before-record.test.ts` |
-| T478 | `test/inbound-mail-notice-delivery.test.ts` |
-| T479 | `test/inbound-mail-notice-escaping-gaps.test.ts` |
-| T480 | `test/inbound-mail-notice-refusal-surfaced.test.ts` |
-| T481 | `test/inbound-mail-notice.test.ts` |
-| T482 | `test/inbound-mail-persistence-hygiene.test.ts` |
-| T483 | `test/inbound-mail-record-source-union.test.ts` |
-| T484 | `test/inbound-mail-record-store.test.ts` |
-| T485 | `test/inbound-mail-sender-field-redaction.test.ts` |
-| T486 | `test/inbound-mail-settings-take-effect.test.ts` |
-| T487 | `test/inbound-mail-store-guards.test.ts` |
-| T488 | `test/inbound-mail-supervisor.test.ts` |
-| T489 | `test/inbound-mail-unreadable-fetch.test.ts` |
-| T490 | `test/inbound-mail-wake-race-probe.test.ts` |
-| T491 | `test/inline-reasoning-extraction.test.ts` |
-| T492 | `test/input-sanitization.test.ts` |
-| T493 | `test/input-tokenizer-terminal-consumer.test.ts` |
-| T494 | `test/input-tokenizer.test.ts` |
-| T495 | `test/inspect-readings.test.ts` |
-| T496 | `test/instrumented-fetch.test.ts` |
-| T497 | `test/integration-config-reset.test.ts` |
-| T498 | `test/integration-helpers-surface-scope.test.ts` |
-| T499 | `test/intent-classifier.test.ts` |
-| T500 | `test/internal-identifier-check.test.ts` |
-| T501 | `test/interval-unref.test.ts` |
-| T502 | `test/invoke-input-validation.test.ts` |
-| T503 | `test/ios-keychain-token-store.test.ts` |
-| T504 | `test/judgment-composition.test.ts` |
-| T505 | `test/judgment-lint.test.ts` |
-| T506 | `test/keyless-default.test.ts` |
-| T507 | `test/knowledge-admission-coverage.test.ts` |
-| T508 | `test/knowledge-browser-history.test.ts` |
-| T509 | `test/knowledge-extraction-policy.test.ts` |
-| T510 | `test/knowledge-graphql-get-mutation.test.ts` |
-| T511 | `test/knowledge-ingest-compile.test.ts` |
-| T512 | `test/knowledge-injection-scored.test.ts` |
-| T513 | `test/knowledge-instance-isolation.test.ts` |
-| T514 | `test/knowledge-jobruns-retention.test.ts` |
-| T515 | `test/knowledge-memory-sync.test.ts` |
-| T516 | `test/knowledge-projections-map.test.ts` |
-| T517 | `test/knowledge-refresh-window.test.ts` |
-| T518 | `test/knowledge-repair-profile.test.ts` |
-| T519 | `test/knowledge-review.test.ts` |
-| T520 | `test/knowledge-routes-not-found-guard.test.ts` |
-| T521 | `test/knowledge-schedule-dispose-race.test.ts` |
-| T522 | `test/knowledge-self-improve-scheduling.test.ts` |
-| T523 | `test/knowledge-semantic-answer.test.ts` |
-| T524 | `test/knowledge-semantic-repair.test.ts` |
-| T525 | `test/knowledge-semantic-runtime.test.ts` |
-| T526 | `test/knowledge-semantic-self-improvement.test.ts` |
-| T527 | `test/knowledge-store-paging.test.ts` |
-| T528 | `test/knowledge-wiki-honesty.test.ts` |
-| T529 | `test/kv-state-session-retention.test.ts` |
-| T530 | `test/lan-http-posture.test.ts` |
-| T531 | `test/launch-tolerant-provider-registry.test.ts` |
-| T532 | `test/layout-engine.test.ts` |
-| T533 | `test/lazy-native-imports.test.ts` |
-| T535 | `test/listener-errors.test.ts` |
-| T536 | `test/live-model-discovery.test.ts` |
-| T537 | `test/live-roundtrip.test.ts` |
-| T538 | `test/llm-instrumentation.test.ts` |
-| T539 | `test/login-ratelimit.test.ts` |
-| T540 | `test/lsp-bash-bundled.test.ts` |
-| T541 | `test/lsp-client-framing.test.ts` |
-| T542 | `test/lsp-client-notifications.test.ts` |
-| T543 | `test/malformed-secret-ref-refused.test.ts` |
-| T544 | `test/mcp-client-protocol-observability.test.ts` |
-| T545 | `test/mcp-config-role-trust.test.ts` |
-| T546 | `test/mcp-elicitation-approval.test.ts` |
-| T547 | `test/mcp-env-reveal.test.ts` |
-| T548 | `test/mcp-http-transport.test.ts` |
-| T549 | `test/mcp-operator-server.test.ts` |
-| T550 | `test/mcp-permissions-config-refresh.test.ts` |
-| T551 | `test/mcp-protocol-negotiation.test.ts` |
-| T552 | `test/mcp-registry-prehook.test.ts` |
-| T553 | `test/mcp-runtime-config.test.ts` |
-| T554 | `test/mcp-runtime-reload.test.ts` |
-| T555 | `test/media-builtin-image-understanding.test.ts` |
-| T556 | `test/media-generation-providers.test.ts` |
-| T557 | `test/media-provider-registry.test.ts` |
-| T558 | `test/memory-canonical-cross-surface.test.ts` |
-| T559 | `test/memory-consolidation-scheduler.test.ts` |
-| T560 | `test/memory-consolidation.test.ts` |
-| T561 | `test/memory-embeddings.test.ts` |
-| T562 | `test/memory-file-projection.test.ts` |
-| T563 | `test/memory-governor.test.ts` |
-| T564 | `test/memory-honest-search.test.ts` |
-| T565 | `test/memory-projection-git-ownership.test.ts` |
-| T566 | `test/memory-projections-wire.test.ts` |
-| T567 | `test/memory-recall-contract.test.ts` |
-| T568 | `test/memory-records-daemon-wire.test.ts` |
-| T569 | `test/memory-review-queue-scope.test.ts` |
-| T570 | `test/memory-search-rerank.test.ts` |
-| T571 | `test/memory-spine-client.test.ts` |
-| T572 | `test/memory-spine-rest-transport.test.ts` |
-| T573 | `test/memory-status.test.ts` |
-| T574 | `test/memory-temporal-validity.test.ts` |
-| T575 | `test/memory-usage-detection.test.ts` |
-| T576 | `test/memory-usage-stats.test.ts` |
-| T577 | `test/memory-vector-platform-limit.test.ts` |
-| T578 | `test/memory-wire-verb-availability.test.ts` |
-| T579 | `test/model-picker-family.test.ts` |
-| T580 | `test/model-picker-provider-filter.test.ts` |
-| T581 | `test/model-pricing-resolver.test.ts` |
-| T582 | `test/model-routes-secrets-skipped.test.ts` |
-| T583 | `test/model-routes.test.ts` |
-| T584 | `test/model-source-contract.test.ts` |
-| T585 | `test/models-effort-surface.test.ts` |
-| T586 | `test/narrowed-constraints.test.ts` |
-| T587 | `test/notification-burst-panel-routing.test.ts` |
-| T588 | `test/notification-dedup-and-deltas.test.ts` |
-| T589 | `test/notify-guard.test.ts` |
-| T590 | `test/npm-pack-json-shapes.test.ts` |
-| T591 | `test/ntfy-header-safe-title.test.ts` |
-| T592 | `test/ntfy-integration-stream.test.ts` |
-| T593 | `test/observe-analytics.test.ts` |
-| T594 | `test/observe-hoists.test.ts` |
-| T595 | `test/observed-external-agents.test.ts` |
-| T596 | `test/observer-coverage.test.ts` |
-| T597 | `test/observer-otel.test.ts` |
-| T598 | `test/occasions-dates.test.ts` |
-| T599 | `test/occasions-final-stretch-removal.test.ts` |
-| T600 | `test/occasions-nudge-cadence.test.ts` |
-| T601 | `test/occasions-service.test.ts` |
-| T602 | `test/occasions-state-store.test.ts` |
-| T603 | `test/occasions-sweep.test.ts` |
-| T604 | `test/occasions-ticker.test.ts` |
-| T605 | `test/occasions-verbs.test.ts` |
-| T606 | `test/openai-codex-refresh-on-401.test.ts` |
-| T607 | `test/openai-compat-inline-reasoning.test.ts` |
-| T608 | `test/openai-compat-provider.test.ts` |
-| T609 | `test/openai-compatible-routes.test.ts` |
-| T610 | `test/openapi-operator-contract.test.ts` |
-| T611 | `test/operator-contract-catalog.test.ts` |
-| T612 | `test/operator-sdk-coverage.test.ts` |
-| T613 | `test/operator-sdk-schema-registry.test.ts` |
-| T614 | `test/operator-sdk.test.ts` |
-| T615 | `test/operator-token-cleanup.test.ts` |
-| T616 | `test/operator-token-global.test.ts` |
-| T617 | `test/ops-control-plane.test.ts` |
-| T618 | `test/ops-playbook-search.test.ts` |
-| T619 | `test/optional-dependency-boot.test.ts` |
-| T620 | `test/orchestration-agent-cwd.test.ts` |
-| T621 | `test/orchestration-cancellation-signal-propagation.test.ts` |
-| T622 | `test/orchestration-dependencies.test.ts` |
-| T623 | `test/orchestration-dirty-residue-guard.test.ts` |
-| T624 | `test/orchestration-engine.test.ts` |
-| T625 | `test/orchestration-graph-round.test.ts` |
-| T626 | `test/orchestration-proposal-mapping.test.ts` |
-| T627 | `test/orchestration-resume.test.ts` |
-| T628 | `test/orchestration-store-housekeeping.test.ts` |
-| T629 | `test/orchestration-task-graph.test.ts` |
-| T630 | `test/orchestration-worktree-gates.test.ts` |
-| T631 | `test/orchestration-worktree-isolation.test.ts` |
-| T632 | `test/orchestrator-abort.test.ts` |
-| T633 | `test/orchestrator-active-agent-cycle.test.ts` |
-| T634 | `test/orchestrator-agent-continuation.test.ts` |
-| T635 | `test/orchestrator-conversation-snapshot-bridge.test.ts` |
-| T636 | `test/orchestrator-runner-retry-cancel.test.ts` |
-| T637 | `test/orchestrator-runner-steer-drain.test.ts` |
-| T638 | `test/orchestrator-runner-turn-knowledge-injection.test.ts` |
-| T639 | `test/orchestrator-turn-boundary-wiring.test.ts` |
-| T640 | `test/orchestrator-turn-injections-accessor.test.ts` |
-| T641 | `test/orchestrator-turn-loop-passive-knowledge-injection.test.ts` |
-| T642 | `test/order-correlation.test.ts` |
-| T643 | `test/origin-defaults.test.ts` |
-| T644 | `test/otlp-ingest-e2e.test.ts` |
-| T645 | `test/otlp-ingest-routes.test.ts` |
-| T646 | `test/otlp-logger.test.ts` |
-| T647 | `test/output-policy.test.ts` |
-| T648 | `test/overflow-tail-preservation.test.ts` |
-| T649 | `test/overlay-viewport.test.ts` |
-| T650 | `test/owner-profile-composition-home.test.ts` |
-| T651 | `test/owner-profile-composition-readiness.test.ts` |
-| T652 | `test/owner-profile-consumers.test.ts` |
-| T653 | `test/owner-profile-containment.test.ts` |
-| T654 | `test/owner-profile-defects.test.ts` |
-| T655 | `test/owner-profile-document.test.ts` |
-| T656 | `test/owner-profile-forget-by-content.test.ts` |
-| T657 | `test/owner-profile-read-latency.test.ts` |
-| T658 | `test/owner-profile-trust.test.ts` |
-| T659 | `test/owner-profile-turn-boundary.test.ts` |
-| T660 | `test/owner-profile-verbs.test.ts` |
-| T661 | `test/owner-profile-writer.test.ts` |
-| T662 | `test/pagination-cursor.test.ts` |
-| T663 | `test/pairing-device-lines.test.ts` |
-| T664 | `test/pairing-handoff-mint.test.ts` |
-| T665 | `test/pairing-handoff.test.ts` |
-| T666 | `test/pairing-node-cap.test.ts` |
-| T667 | `test/pairing-token-daemon-wire.test.ts` |
-| T668 | `test/pairing-token-manager.test.ts` |
-| T669 | `test/pairing-web-origin.test.ts` |
-| T670 | `test/path-shadow.test.ts` |
-| T671 | `test/payments-adversarial.test.ts` |
-| T672 | `test/payments-browser-checkout-seam.test.ts` |
-| T673 | `test/payments-card-entry-surface.test.ts` |
-| T674 | `test/payments-checkout-address.test.ts` |
-| T675 | `test/payments-checkout-gate-snapshot.test.ts` |
-| T676 | `test/payments-cvv-containment.test.ts` |
-| T677 | `test/payments-daemon-wiring.test.ts` |
-| T678 | `test/payments-merchant-recourse.test.ts` |
-| T679 | `test/payments-money-amounts.test.ts` |
-| T680 | `test/payments-notice-delivery.test.ts` |
-| T681 | `test/payments-notice-injection.test.ts` |
-| T682 | `test/payments-owner-chain-acceptance.test.ts` |
-| T683 | `test/payments-purchase-execution.test.ts` |
-| T684 | `test/payments-routes.test.ts` |
-| T685 | `test/peer-sdk-coverage.test.ts` |
-| T686 | `test/peer-sdk.test.ts` |
-| T687 | `test/permission-guard-benign-diagnostics.test.ts` |
-| T688 | `test/permission-heredoc-denial-explanation.test.ts` |
-| T689 | `test/permission-hunk-approval-broker-e2e.test.ts` |
-| T690 | `test/permission-hunk-modified-args.test.ts` |
-| T691 | `test/permission-normalization.test.ts` |
-| T692 | `test/persisted-store-housekeeping.test.ts` |
-| T693 | `test/personal-information-capture.test.ts` |
-| T694 | `test/phased-tool-phase-warnings.test.ts` |
-| T695 | `test/plaintext-credential-sweep.test.ts` |
-| T696 | `test/plan-decomposition.test.ts` |
-| T697 | `test/plan-integration.test.ts` |
-| T698 | `test/plan-proposal.test.ts` |
-| T699 | `test/planner-decomposition-runner.test.ts` |
-| T700 | `test/planner-template-tool-policy.test.ts` |
-| T701 | `test/platform-adapter-contract.test.ts` |
-| T702 | `test/platform-bookmarks-smoke.test.ts` |
-| T703 | `test/platform-browser-daemon-verbs.test.ts` |
-| T704 | `test/platform-caldav-gateway.test.ts` |
-| T705 | `test/platform-calendar-oauth.test.ts` |
-| T706 | `test/platform-calendar.test.ts` |
-| T707 | `test/platform-daemon-mailbox-schema.test.ts` |
-| T708 | `test/platform-discovery-smoke.test.ts` |
-| T709 | `test/platform-email-imap-delivery-recipient.test.ts` |
-| T710 | `test/platform-email-imap-fetch.test.ts` |
-| T711 | `test/platform-email-imap-uid.test.ts` |
-| T712 | `test/platform-email-imap-wire-shapes.test.ts` |
-| T713 | `test/platform-email-imap.test.ts` |
-| T714 | `test/platform-email-inbound-backoff.test.ts` |
-| T715 | `test/platform-email-inbound-gmail-source.test.ts` |
-| T716 | `test/platform-email-inbound-watcher.test.ts` |
-| T717 | `test/platform-email-no-authority-drift.test.ts` |
-| T718 | `test/platform-email-sender-claim-end-to-end.test.ts` |
-| T719 | `test/platform-email-service-inbox.test.ts` |
-| T720 | `test/platform-email-service.test.ts` |
-| T721 | `test/platform-email-smtp.test.ts` |
-| T722 | `test/platform-email-style-reply.test.ts` |
-| T723 | `test/platform-email-surface-config.test.ts` |
-| T724 | `test/platform-email-unreadable-answers.test.ts` |
-| T725 | `test/platform-eval-smoke.test.ts` |
-| T726 | `test/platform-export-smoke.test.ts` |
-| T727 | `test/platform-forensics-smoke.test.ts` |
-| T728 | `test/platform-git-smoke.test.ts` |
-| T729 | `test/platform-google-account-registry.test.ts` |
-| T730 | `test/platform-google-browser-flows.test.ts` |
-| T731 | `test/platform-google-caldav.test.ts` |
-| T732 | `test/platform-google-connection-flow.test.ts` |
-| T733 | `test/platform-google-consent-session.test.ts` |
-| T734 | `test/platform-google-credentials.test.ts` |
-| T735 | `test/platform-google-daemon-ownership.test.ts` |
-| T736 | `test/platform-google-delivery-evidence.test.ts` |
-| T737 | `test/platform-google-gcloud.test.ts` |
-| T738 | `test/platform-google-history-delta.test.ts` |
-| T739 | `test/platform-google-oauth-loopback.test.ts` |
-| T740 | `test/platform-google-setup-flow.test.ts` |
-| T741 | `test/platform-google-unconfigured-machine.test.ts` |
-| T742 | `test/platform-google-verification-expectations.test.ts` |
-| T743 | `test/platform-http-context-inheritance.test.ts` |
-| T744 | `test/platform-multimodal-smoke.test.ts` |
-| T745 | `test/platform-network-smoke.test.ts` |
-| T746 | `test/platform-orchestration-smoke.test.ts` |
-| T747 | `test/platform-plugins-smoke.test.ts` |
-| T748 | `test/platform-presentation.test.ts` |
-| T749 | `test/platform-profiles-smoke.test.ts` |
-| T750 | `test/platform-route-manager-emissions.test.ts` |
-| T751 | `test/platform-secret-daemon-routing.test.ts` |
-| T752 | `test/platform-session-manager-persistence-errors.test.ts` |
-| T753 | `test/platform-state-inspector-smoke.test.ts` |
-| T754 | `test/platform-stop-reason-mappers.test.ts` |
-| T755 | `test/platform-store-domains-smoke.test.ts` |
-| T756 | `test/platform-templates-smoke.test.ts` |
-| T757 | `test/platform-trigger-executor-shell-split.test.ts` |
-| T758 | `test/platform-workflow-smoke.test.ts` |
-| T759 | `test/plugin-error-validator.test.ts` |
-| T760 | `test/plugin-trust-signature.test.ts` |
-| T761 | `test/plugins-hooks-permissions-observability.test.ts` |
-| T762 | `test/plugins-quarantine-restart.test.ts` |
-| T763 | `test/post-edit-diagnostics.test.ts` |
-| T764 | `test/power-keep-awake-remote.test.ts` |
-| T765 | `test/power-sleep-ownership.test.ts` |
-| T766 | `test/power-work-signals-envelope.test.ts` |
-| T767 | `test/pre-split-control-plane-sweep.test.ts` |
-| T768 | `test/prepublish-registry-state.test.ts` |
-| T769 | `test/principals-gateway-verbs.test.ts` |
-| T770 | `test/probe-roundtrip-count.test.ts` |
-| T771 | `test/process-manager-kill-on-timeout.test.ts` |
-| T772 | `test/process-manager-timeout.test.ts` |
-| T773 | `test/profiles-manager.test.ts` |
-| T774 | `test/project-planning-answer.test.ts` |
-| T775 | `test/project-planning-routes.test.ts` |
-| T776 | `test/project-planning-service.test.ts` |
-| T777 | `test/prompt-content-width.test.ts` |
-| T778 | `test/prompt-file-utils.test.ts` |
-| T779 | `test/prompt-loader-agents-md.test.ts` |
-| T780 | `test/prompt-redaction.test.ts` |
-| T781 | `test/provider-auth-aggregate.test.ts` |
-| T782 | `test/provider-billing-vs-rate-limit.test.ts` |
-| T783 | `test/provider-cache-observability.test.ts` |
-| T784 | `test/provider-capability-context-regression.test.ts` |
-| T785 | `test/provider-configured-ids.test.ts` |
-| T786 | `test/provider-fallback-model.test.ts` |
-| T787 | `test/provider-health-fallback-chain.test.ts` |
-| T788 | `test/provider-live-model-discovery.test.ts` |
-| T789 | `test/provider-model-live-config-change.test.ts` |
-| T790 | `test/provider-model-parsing.test.ts` |
-| T791 | `test/provider-prompt-cache-config.test.ts` |
-| T792 | `test/provider-registry-canonical-api.test.ts` |
-| T793 | `test/provider-registry-live-model-discovery.test.ts` |
-| T794 | `test/provider-sse-integration.test.ts` |
-| T795 | `test/provider-stream-retry.test.ts` |
-| T796 | `test/provider-tool-args-parser.test.ts` |
-| T797 | `test/providers-context-window-routing.test.ts` |
-| T798 | `test/providers-discovered-factory.test.ts` |
-| T799 | `test/providers-favorites.test.ts` |
-| T800 | `test/providers-llama-cpp.test.ts` |
-| T801 | `test/providers-local-context-ingestion.test.ts` |
-| T802 | `test/providers-ollama.test.ts` |
-| T803 | `test/providers-openai-stream-delta.test.ts` |
-| T804 | `test/providers-reasoning-effort.test.ts` |
-| T805 | `test/providers-tier-prompts.test.ts` |
-| T806 | `test/push-blocked-escalation.test.ts` |
-| T807 | `test/push-completion-source.test.ts` |
-| T808 | `test/push-needs-input-source.test.ts` |
-| T809 | `test/push-subscription-housekeeping.test.ts` |
-| T810 | `test/race-deadline-timer-teardown.test.ts` |
-| T811 | `test/rate-limit-headers-quota.test.ts` |
-| T812 | `test/reachability-check.test.ts` |
-| T813 | `test/read-versioned-quarantine-reap.test.ts` |
-| T814 | `test/read-versioned.test.ts` |
-| T815 | `test/reasoning-effort-per-model.test.ts` |
-| T816 | `test/recall-snapshot-note-and-floor.test.ts` |
-| T817 | `test/recovery-snapshot-apply.test.ts` |
-| T818 | `test/registry-tool-rank.test.ts` |
-| T819 | `test/relay-daemon-client-integration.test.ts` |
-| T820 | `test/relay-e2e-channel.test.ts` |
-| T821 | `test/relay-event-streaming.test.ts` |
-| T822 | `test/relay-key-extractability.test.ts` |
-| T823 | `test/relay-reachability.test.ts` |
-| T824 | `test/relay-registration-context-cap.test.ts` |
-| T825 | `test/relay-security.test.ts` |
-| T826 | `test/relay-server-hub.test.ts` |
-| T827 | `test/relay-server-integration.test.ts` |
-| T828 | `test/relay-step-up-integration.test.ts` |
-| T829 | `test/relay-step-up-webauthn.test.ts` |
-| T830 | `test/relay-verbs.test.ts` |
-| T831 | `test/release-error-decisions.test.ts` |
-| T832 | `test/release-gates-policy-and-budget-evidence-gate.test.ts` |
-| T833 | `test/release-gates-session-route-execution-intents-gate.test.ts` |
-| T834 | `test/remote-reconnect-terminal.test.ts` |
-| T835 | `test/repl-tool.test.ts` |
-| T836 | `test/repo-map-tool.test.ts` |
-| T837 | `test/retention-user-saved-exemption.test.ts` |
-| T838 | `test/retry-events.test.ts` |
-| T839 | `test/retry.test.ts` |
-| T840 | `test/rewind-service.test.ts` |
-| T841 | `test/rewind-turn-anchors.test.ts` |
-| T842 | `test/rn-bundle-node-imports.test.ts` |
-| T843 | `test/router-e2e-automation.test.ts` |
-| T844 | `test/router-e2e-control.test.ts` |
-| T845 | `test/router-e2e-remote.test.ts` |
-| T846 | `test/router-e2e-session.test.ts` |
-| T847 | `test/router-e2e-tasks.test.ts` |
-| T848 | `test/router-e2e-telemetry.test.ts` |
-| T849 | `test/runtime-bootstrap-helpers.test.ts` |
-| T850 | `test/runtime-eval-runner.test.ts` |
-| T851 | `test/runtime-event-bus-dispatch-contract.test.ts` |
-| T852 | `test/runtime-event-bus-max-listeners.test.ts` |
-| T853 | `test/runtime-event-discriminated-union.test.ts` |
-| T854 | `test/runtime-health-gc-health-003-playbook-map.test.ts` |
-| T855 | `test/runtime-http-json-transport.test.ts` |
-| T856 | `test/runtime-idempotency-store.test.ts` |
-| T857 | `test/runtime-integration-helper-accounts.test.ts` |
-| T858 | `test/runtime-message-readings.test.ts` |
-| T859 | `test/runtime-meter.test.ts` |
-| T860 | `test/runtime-metrics-gateway-verb.test.ts` |
-| T861 | `test/runtime-network-shared.test.ts` |
-| T862 | `test/runtime-notifications-burst-routing.test.ts` |
-| T863 | `test/runtime-poller-owners-satisfiable.test.ts` |
-| T864 | `test/runtime-remote-snapshot-contract.test.ts` |
-| T865 | `test/runtime-session-input-cancel.test.ts` |
-| T866 | `test/runtime-shutdown-lifecycle.test.ts` |
-| T867 | `test/runtime-sse-stream.test.ts` |
-| T868 | `test/runtime-state-inspector-hotspot-sampler.test.ts` |
-| T869 | `test/runtime-state-inspector-timeline.test.ts` |
-| T870 | `test/runtime-store-seams.test.ts` |
-| T871 | `test/runtime-task-retry-ownership.test.ts` |
-| T872 | `test/sandbox-boundary.test.ts` |
-| T873 | `test/sandbox-escalation-judgment.test.ts` |
-| T874 | `test/sandbox-policy-exports.test.ts` |
-| T875 | `test/sandbox-qemu-migration.test.ts` |
-| T876 | `test/scan-modes.test.ts` |
-| T877 | `test/scheduler-capacity.test.ts` |
-| T878 | `test/scheduler-history.test.ts` |
-| T879 | `test/sdk-auth.test.ts` |
-| T880 | `test/sdk-dev-tool.test.ts` |
-| T881 | `test/sdk-observer.test.ts` |
-| T882 | `test/sdk-platforms.test.ts` |
-| T883 | `test/sdk-root-barrel-uniqueness.test.ts` |
-| T884 | `test/sdk-runtime-boundaries.test.ts` |
-| T885 | `test/sdk-transport-http.test.ts` |
-| T886 | `test/search-tools-read-deny-enforcement.test.ts` |
-| T887 | `test/secret-refs.test.ts` |
-| T888 | `test/secrets-key-mismatch-guards.test.ts` |
-| T889 | `test/secrets-keyfile-store.test.ts` |
-| T890 | `test/security-calendar-trust.test.ts` |
-| T891 | `test/security-content-taint.test.ts` |
-| T892 | `test/security-email-trust.test.ts` |
-| T893 | `test/security-http-auth.test.ts` |
-| T894 | `test/security-link-validation.test.ts` |
-| T895 | `test/security-outward-effect-wiring.test.ts` |
-| T896 | `test/security-owner-exemption.test.ts` |
-| T897 | `test/security-path-traversal.test.ts` |
-| T898 | `test/self-update-policy.test.ts` |
-| T899 | `test/service-manager.test.ts` |
-| T900 | `test/session-broker-channel-rollover.test.ts` |
-| T901 | `test/session-broker-state-migration.test.ts` |
-| T902 | `test/session-broker.test.ts` |
-| T903 | `test/session-concurrent-matrix.test.ts` |
-| T904 | `test/session-cookie-auth-roundtrip.test.ts` |
-| T905 | `test/session-cost-budget-breach.test.ts` |
-| T906 | `test/session-followup-closed-guard-routes.test.ts` |
-| T907 | `test/session-followup-submit-closed-guard.test.ts` |
-| T908 | `test/session-history-inversion-guard.test.ts` |
-| T909 | `test/session-idle-reaper-honesty.test.ts` |
-| T910 | `test/session-lifecycle-events.test.ts` |
-| T911 | `test/session-lineage-original-task.test.ts` |
-| T912 | `test/session-liveness-marker-reap.test.ts` |
-| T913 | `test/session-liveness-marker.test.ts` |
-| T914 | `test/session-migration.test.ts` |
-| T915 | `test/session-modes.test.ts` |
-| T916 | `test/session-persistence-surface.test.ts` |
-| T917 | `test/session-reaper-hosted-turn-liveness.test.ts` |
-| T918 | `test/session-recovery-per-session.test.ts` |
-| T919 | `test/session-recovery-supersession.test.ts` |
-| T920 | `test/session-runtime-verbs.test.ts` |
-| T921 | `test/session-schema-version.test.ts` |
-| T922 | `test/session-spine-client.test.ts` |
-| T923 | `test/session-spine-daemon-integration.test.ts` |
-| T924 | `test/session-spine-identity.test.ts` |
-| T925 | `test/session-spine-legacy-fold-marker.test.ts` |
-| T926 | `test/session-spine-rest-transport.test.ts` |
-| T927 | `test/session-steer-closed-guard.test.ts` |
-| T928 | `test/session-steer-surface-routing.test.ts` |
-| T929 | `test/session-store-importer.test.ts` |
-| T930 | `test/session-surface.test.ts` |
-| T931 | `test/session-union-cache-daemon-integration.test.ts` |
-| T932 | `test/session-union-cache.test.ts` |
-| T933 | `test/session-update-scope-enforcement.test.ts` |
-| T934 | `test/session-wire-open-kind-enum.test.ts` |
-| T935 | `test/settings-bundle-risk.test.ts` |
-| T936 | `test/settings-migration-legacy-toggles.test.ts` |
-| T937 | `test/skills-gateway-verbs.test.ts` |
-| T938 | `test/skills-service.test.ts` |
-| T939 | `test/slack-surface-credentials.test.ts` |
-| T940 | `test/smoke.test.ts` |
-| T941 | `test/spawn-policy-bound-cap.test.ts` |
-| T942 | `test/sqlite-vec-resolver.test.ts` |
-| T943 | `test/sse-connector-resumes-across-streams.test.ts` |
-| T944 | `test/sse-heartbeat-idle-timeout.test.ts` |
-| T945 | `test/sse-lifecycle.test.ts` |
-| T946 | `test/sse-replay-poisons-next-turn.test.ts` |
-| T947 | `test/ssrf-filter.test.ts` |
-| T948 | `test/stable-host.test.ts` |
-| T949 | `test/stale-daemon-record-and-voice-setup.test.ts` |
-| T950 | `test/state-json-file-store.test.ts` |
-| T951 | `test/state-knowledge-injection.test.ts` |
-| T952 | `test/state-memory-embeddings.test.ts` |
-| T953 | `test/state-memory-ingest.test.ts` |
-| T954 | `test/state-persistence.test.ts` |
-| T955 | `test/state-tool-memory-promotes-to-memory-store.test.ts` |
-| T956 | `test/state-tool-workspace-keys.test.ts` |
-| T957 | `test/store-data-safety.test.ts` |
-| T958 | `test/store-write-ordering-extras.test.ts` |
-| T959 | `test/store-write-ordering-registries.test.ts` |
-| T960 | `test/store-write-ordering.test.ts` |
-| T961 | `test/stream-status-label-stability.test.ts` |
-| T962 | `test/subpath-api-surface-gate.test.ts` |
-| T963 | `test/subpath-declared.test.ts` |
-| T964 | `test/subpath-export-coverage.test.ts` |
-| T965 | `test/subscriptions-shared-tier.test.ts` |
-| T966 | `test/surface-card-gate.test.ts` |
-| T967 | `test/surface-layout.test.ts` |
-| T968 | `test/surface-notice-delivery.test.ts` |
-| T969 | `test/surface-reply-duplicate-append.test.ts` |
-| T970 | `test/tailscale-auto-wire.test.ts` |
-| T971 | `test/task-tool-session-binding.test.ts` |
-| T972 | `test/telegram-bot-identity.test.ts` |
-| T973 | `test/telegram-conflict-policy.test.ts` |
-| T974 | `test/telegram-ingress-closed-session-recovery.test.ts` |
-| T975 | `test/telegram-ingress.test.ts` |
-| T976 | `test/telemetry-event-severity.test.ts` |
-| T977 | `test/telemetry-exporters.test.ts` |
-| T978 | `test/telemetry-label-allowlist.test.ts` |
-| T979 | `test/templates-manager.test.ts` |
-| T980 | `test/term-caps.test.ts` |
-| T981 | `test/terminal-output-guard-counter.test.ts` |
-| T982 | `test/terminal-output-guard-double-install.test.ts` |
-| T983 | `test/terminal-output-guard-notify.test.ts` |
-| T984 | `test/terminal-output-guard.test.ts` |
-| T985 | `test/terminal-shell-bottom-bar.test.ts` |
-| T986 | `test/terminal-shell-conformance.test.ts` |
-| T987 | `test/terminal-shell-text-selection-copy.test.ts` |
-| T988 | `test/test-helper-teardown-guard.test.ts` |
-| T989 | `test/test-runner-ceilings.test.ts` |
-| T990 | `test/test-tmp-containment.test.ts` |
-| T991 | `test/text-layout.test.ts` |
-| T992 | `test/tool-call-cancel-and-queued-messages.test.ts` |
-| T993 | `test/tool-cancellation-signal.test.ts` |
-| T994 | `test/tool-contract-verifier.test.ts` |
-| T995 | `test/tool-denial-structured.test.ts` |
-| T996 | `test/tool-format-telemetry.test.ts` |
-| T997 | `test/tool-result-summary.test.ts` |
-| T998 | `test/tool-schema-wire-compat.test.ts` |
-| T999 | `test/tool-side-effect-observability.test.ts` |
-| T1000 | `test/tools-auto-repair.test.ts` |
-| T1001 | `test/tools-channel-agent-tools.test.ts` |
-| T1002 | `test/tools-channel-tool.test.ts` |
-| T1003 | `test/tools-edit-notebook.test.ts` |
-| T1004 | `test/tools-edit.test.ts` |
-| T1005 | `test/tools-find-ranked.test.ts` |
-| T1006 | `test/tools-registry.test.ts` |
-| T1007 | `test/tools-shared-auto-heal.test.ts` |
-| T1008 | `test/traceparent-propagation.test.ts` |
-| T1009 | `test/transcript-journal-reap.test.ts` |
-| T1010 | `test/transcript-journal-replay.test.ts` |
-| T1011 | `test/transcript-journal.test.ts` |
-| T1012 | `test/transport-direct.test.ts` |
-| T1013 | `test/transport-failure-classification.test.ts` |
-| T1014 | `test/transport-http.test.ts` |
-| T1015 | `test/transport-middleware.test.ts` |
-| T1016 | `test/transport-observer.test.ts` |
-| T1017 | `test/transport-parity.test.ts` |
-| T1018 | `test/transport-realtime.test.ts` |
-| T1019 | `test/trigger-condition-manager.test.ts` |
-| T1020 | `test/trigger-dsl-rules.test.ts` |
-| T1021 | `test/trigger-on-exit-lifecycle.test.ts` |
-| T1022 | `test/trigger-supervision-store.test.ts` |
-| T1023 | `test/tts-speed-config.test.ts` |
-| T1024 | `test/turn-budget.test.ts` |
-| T1025 | `test/turn-knowledge-injection-code.test.ts` |
-| T1026 | `test/turn-knowledge-injection.test.ts` |
-| T1027 | `test/turn-memory-provenance.test.ts` |
-| T1028 | `test/typecheck-gate.test.ts` |
-| T1029 | `test/user-auth-file-perms.test.ts` |
-| T1030 | `test/utils-glob-to-regex.test.ts` |
-| T1031 | `test/utils-markdown-disclosure.test.ts` |
-| T1032 | `test/utils-notify.test.ts` |
-| T1033 | `test/utils-path-safety.test.ts` |
-| T1034 | `test/utils-url-safety.test.ts` |
-| T1035 | `test/ux-enhancements.test.ts` |
-| T1036 | `test/version-consistency.test.ts` |
-| T1037 | `test/version-sync.test.ts` |
-| T1038 | `test/vibe-projection.test.ts` |
-| T1039 | `test/voice-audio-sink-contract.test.ts` |
-| T1040 | `test/voice-capture.test.ts` |
-| T1041 | `test/voice-default-provider-selection.test.ts` |
-| T1042 | `test/voice-download-and-breaker.test.ts` |
-| T1043 | `test/voice-local-engines.test.ts` |
-| T1044 | `test/voice-noise-suppression.test.ts` |
-| T1045 | `test/voice-provider-registry.test.ts` |
-| T1046 | `test/voice-provisioning.test.ts` |
-| T1047 | `test/voice-setup-progress.test.ts` |
-| T1048 | `test/voice-setup-verb.test.ts` |
-| T1049 | `test/voice-spoken-turn-controller.test.ts` |
-| T1050 | `test/voice-stt-realtime-smoke.test.ts` |
-| T1051 | `test/voice-tts-stream.test.ts` |
-| T1052 | `test/voice-tts-text-chunker.test.ts` |
-| T1053 | `test/voice-vad-gate.test.ts` |
-| T1054 | `test/waiting-on-human-classification.test.ts` |
-| T1055 | `test/wake-input-device-hint.test.ts` |
-| T1056 | `test/wake-word-config-and-supervisor.test.ts` |
-| T1057 | `test/wake-word-detection.test.ts` |
-| T1058 | `test/wake-word-front-end-parity.test.ts` |
-| T1059 | `test/wake-word-listener.test.ts` |
-| T1060 | `test/wake-word-provisioning.test.ts` |
-| T1061 | `test/watcher-failure-retryable.test.ts` |
-| T1062 | `test/watcher-persist-containment.test.ts` |
-| T1063 | `test/watcher-recovery-window.test.ts` |
-| T1064 | `test/watcher-store.test.ts` |
-| T1065 | `test/web-push-daemon-wire.test.ts` |
-| T1066 | `test/web-push-vapid-chain.test.ts` |
-| T1067 | `test/web-search-providers-smoke.test.ts` |
-| T1068 | `test/webhook-notify-guard.test.ts` |
-| T1069 | `test/webui-cross-origin-serving-daemon-wire.test.ts` |
-| T1070 | `test/webui-facade-verb-union.test.ts` |
-| T1071 | `test/work-plan-store.test.ts` |
-| T1072 | `test/work-proposal-reply.test.ts` |
-| T1073 | `test/work-proposal-store.test.ts` |
-| T1074 | `test/workflow-shape.test.ts` |
-| T1075 | `test/workspace-checkpoint-events.test.ts` |
-| T1076 | `test/workspace-checkpoint-manager.test.ts` |
-| T1077 | `test/workspace-checkpoint-manifest-recovery.test.ts` |
-| T1078 | `test/workspace-checkpoint-retention.test.ts` |
-| T1079 | `test/workspace-checkpoint-root-guard.test.ts` |
-| T1080 | `test/workspace-checkpoint-topgitignore.test.ts` |
-| T1081 | `test/workspace-registration-manager.test.ts` |
-| T1082 | `test/workspace-registration.test.ts` |
-| T1083 | `test/workspace-swap-failed.test.ts` |
-| T1084 | `test/workspace-swap-http.test.ts` |
-| T1085 | `test/workspace-swap-reroot.test.ts` |
-| T1086 | `test/workspace-trust.test.ts` |
-| T1087 | `test/workstream-draft-edits.test.ts` |
-| T1088 | `test/workstream-draft-store.test.ts` |
-| T1089 | `test/workstream-services.test.ts` |
-| T1090 | `test/worktree-setup-derivation.test.ts` |
-| T1091 | `test/worktree-setup.test.ts` |
-| T1092 | `test/ws-call-context-retention.test.ts` |
-| T1093 | `test/zod-validation.test.ts` |
+| File |
+|------|
+| `test/acp-agent-adapter.test.ts` |
+| `test/acp-connection-autonomous.test.ts` |
+| `test/acp-connection-usage-mapping.test.ts` |
+| `test/acp-host-owned-drainage.test.ts` |
+| `test/acp-host.test.ts` |
+| `test/acp-permission-outcome.test.ts` |
+| `test/activity-logger-dispose-lifetime.test.ts` |
+| `test/activity-logger-durability.test.ts` |
+| `test/activity-logger-field-readings.test.ts` |
+| `test/activity-logger-rotation.test.ts` |
+| `test/adapters-bot-mention.test.ts` |
+| `test/adapters-helpers.test.ts` |
+| `test/adapters-matrix.test.ts` |
+| `test/adapters-signal.test.ts` |
+| `test/adapters-swept-credential-auth.test.ts` |
+| `test/adapters-telegram.test.ts` |
+| `test/adapters-webhook.test.ts` |
+| `test/adapters-whatsapp.test.ts` |
+| `test/adaptive-planner.test.ts` |
+| `test/agent-budget-usage.test.ts` |
+| `test/agent-execution-settlement.test.ts` |
+| `test/agent-graph-composition.test.ts` |
+| `test/agent-manager-cancel-abort.test.ts` |
+| `test/agent-manager-conversation-snapshot.test.ts` |
+| `test/agent-manager-usage-readpath.test.ts` |
+| `test/agent-orchestrator-project-index-ownership.test.ts` |
+| `test/agent-owned-handle.test.ts` |
+| `test/agent-permission-cancellation.test.ts` |
+| `test/agent-shared-fleet-admission.test.ts` |
+| `test/agent-steer-wake.test.ts` |
+| `test/agent-test-partitions.test.ts` |
+| `test/agent-tool-contracts.test.ts` |
+| `test/agent-worktree-literal-paths.test.ts` |
+| `test/agent-worktree.test.ts` |
+| `test/alert-gating.test.ts` |
+| `test/analyze-breaking.test.ts` |
+| `test/analyze-semantic-diff.test.ts` |
+| `test/android-keystore-token-store.test.ts` |
+| `test/ansi-sanitize.test.ts` |
+| `test/anthropic-sdk-provider-rate-limit.test.ts` |
+| `test/append-only-retention-registry.test.ts` |
+| `test/approval-broker-exact-owner.test.ts` |
+| `test/approval-broker-persist-ordering.test.ts` |
+| `test/approval-broker-restart-rearm.test.ts` |
+| `test/approval-decision-fields-wire.test.ts` |
+| `test/approval-decisions-persist.test.ts` |
+| `test/approval-disposition-producers.test.ts` |
+| `test/approval-disposition-wire.test.ts` |
+| `test/approval-disposition.test.ts` |
+| `test/approval-update-stream.test.ts` |
+| `test/approvals-raise-verb.test.ts` |
+| `test/arbitraries.unit.test.ts` |
+| `test/arch03-error-hierarchy.test.ts` |
+| `test/artifact-upload-http-wire.test.ts` |
+| `test/artifact-upload-ingest.test.ts` |
+| `test/artifacts-kind-and-host.test.ts` |
+| `test/async-account-registry-fifo.test.ts` |
+| `test/async-account-registry.test.ts` |
+| `test/async-event-bus.test.ts` |
+| `test/async-runtime-disposal.test.ts` |
+| `test/at-rest-credential-admission.test.ts` |
+| `test/at-rest-redaction.test.ts` |
+| `test/atomic-json-durability.test.ts` |
+| `test/atomic-json-store.test.ts` |
+| `test/atomic-write-concurrency.test.ts` |
+| `test/atomic-write.test.ts` |
+| `test/auth-auto-refresh-transport-integration.test.ts` |
+| `test/auth-auto-refresh.test.ts` |
+| `test/auth-coverage.test.ts` |
+| `test/auth-events.test.ts` |
+| `test/auth-facade.test.ts` |
+| `test/auth-hardening.test.ts` |
+| `test/auth-normalize.test.ts` |
+| `test/auth-oauth-client.test.ts` |
+| `test/auth-permission-resolver.test.ts` |
+| `test/auth-session-manager.test.ts` |
+| `test/auth-token-store.test.ts` |
+| `test/authentic-tool-execution.test.ts` |
+| `test/auto-refresh-clock-seam.test.ts` |
+| `test/auto-refresh-error-release.test.ts` |
+| `test/automation-job-mutations.test.ts` |
+| `test/automation-missed-and-failure-delivery.test.ts` |
+| `test/automation-schedule-reading.test.ts` |
+| `test/automation-schedule-registration.test.ts` |
+| `test/automation-schedule-timezone.test.ts` |
+| `test/automation-schedules.test.ts` |
+| `test/automation-service.test.ts` |
+| `test/automation-stores.test.ts` |
+| `test/autonomous-authority-freshness.test.ts` |
+| `test/autonomous-choice-input-projection.test.ts` |
+| `test/autonomous-decision-evaluator.test.ts` |
+| `test/autonomous-judgment-registration.test.ts` |
+| `test/autonomous-tool-admission.test.ts` |
+| `test/background-agent-permissions.test.ts` |
+| `test/bare-model-id-resolution-remaining-sites.test.ts` |
+| `test/bash-vendor-packaging.test.ts` |
+| `test/bearer-redaction.test.ts` |
+| `test/bedrock-vertex-copilot-live-model-discovery.test.ts` |
+| `test/best-of-n-attempts.test.ts` |
+| `test/best-of-n-non-leaf.test.ts` |
+| `test/bookmark-modal.test.ts` |
+| `test/bookmarks-manager.test.ts` |
+| `test/boot-daemon-factory.test.ts` |
+| `test/bootstrap-services.test.ts` |
+| `test/browser-ci-partitions.test.ts` |
+| `test/browser-control-identity.test.ts` |
+| `test/browser-driver-resolution.test.ts` |
+| `test/browser-driver-shipping.test.ts` |
+| `test/browser-engine-credential-guard.test.ts` |
+| `test/browser-judgment-adapter-projection.test.ts` |
+| `test/browser-judgment-admission.test.ts` |
+| `test/browser-judgment-bundle.test.ts` |
+| `test/browser-judgment-code-language.test.ts` |
+| `test/browser-judgment-config-key.test.ts` |
+| `test/browser-judgment-credential-provider.test.ts` |
+| `test/browser-judgment-error-producer.test.ts` |
+| `test/browser-judgment-error-reference-wire.test.ts` |
+| `test/browser-judgment-http.test.ts` |
+| `test/browser-judgment-mail-subject.test.ts` |
+| `test/browser-judgment-platform.test.ts` |
+| `test/browser-judgment-projection.test.ts` |
+| `test/browser-judgment-provider-card.test.ts` |
+| `test/browser-judgment-reference-expiry.test.ts` |
+| `test/browser-judgment-request-lifetime.test.ts` |
+| `test/browser-judgment-result-integrity.test.ts` |
+| `test/browser-judgment-service.test.ts` |
+| `test/browser-judgment-speech-seams.test.ts` |
+| `test/browser-judgment-webui-runtime.test.ts` |
+| `test/browser-outward-effects.test.ts` |
+| `test/browser-provision-semantics.test.ts` |
+| `test/browser-provisioning.test.ts` |
+| `test/browser-scoped-entrypoints.test.ts` |
+| `test/browser-sessions.test.ts` |
+| `test/browser-snapshot.test.ts` |
+| `test/budget-overdraw.test.ts` |
+| `test/bun-pin-agreement.test.ts` |
+| `test/cache-invariants.test.ts` |
+| `test/capability-route-reconcile.test.ts` |
+| `test/captured-analysis.test.ts` |
+| `test/captured-auto-heal-backend-isolation.test.ts` |
+| `test/captured-auto-heal-candidate.test.ts` |
+| `test/captured-auto-heal-real-tools.test.ts` |
+| `test/captured-auto-heal-revision.test.ts` |
+| `test/captured-auto-heal-rollback.test.ts` |
+| `test/captured-auto-heal.test.ts` |
+| `test/captured-bun-runtime-input.test.ts` |
+| `test/captured-code-context.test.ts` |
+| `test/captured-direct-exec-compiled.test.ts` |
+| `test/captured-edit-exception-history.test.ts` |
+| `test/captured-edit-write.test.ts` |
+| `test/captured-embedding-admission.test.ts` |
+| `test/captured-exec-bun-admission.test.ts` |
+| `test/captured-exec-file-ops.test.ts` |
+| `test/captured-exec-modes.test.ts` |
+| `test/captured-exec-runtime-input.test.ts` |
+| `test/captured-exec.test.ts` |
+| `test/captured-passive-context-pipeline.test.ts` |
+| `test/captured-registry-source.test.ts` |
+| `test/captured-repl-compiled.test.ts` |
+| `test/captured-repl.test.ts` |
+| `test/captured-write-backup.test.ts` |
+| `test/captured-write-failed-repair-history.test.ts` |
+| `test/card-redaction-separators.test.ts` |
+| `test/card-shapes.test.ts` |
+| `test/channel-approval-judgment.test.ts` |
+| `test/channel-builtin-plugins.test.ts` |
+| `test/channel-core-credential-selection.test.ts` |
+| `test/channel-delivery-binding-fallback.test.ts` |
+| `test/channel-delivery-diagnostic-boundary.test.ts` |
+| `test/channel-delivery-google-chat-binding.test.ts` |
+| `test/channel-delivery-lifetime.test.ts` |
+| `test/channel-delivery-provider-secret-refs.test.ts` |
+| `test/channel-directory-binding-fallback.test.ts` |
+| `test/channel-health-runtime.test.ts` |
+| `test/channel-inbox-list-verb.test.ts` |
+| `test/channel-ingress-failure-alarm.test.ts` |
+| `test/channel-internal-diagnostics-never-delivered.test.ts` |
+| `test/channel-owner-gate.test.ts` |
+| `test/channel-policy-patch.test.ts` |
+| `test/channel-profiles.test.ts` |
+| `test/channel-reply-pipeline-concurrency.test.ts` |
+| `test/channel-reply-pipeline-delta.test.ts` |
+| `test/channel-reply-pipeline.test.ts` |
+| `test/channel-rollover-surface-agnostic.test.ts` |
+| `test/channel-send-acknowledgement.test.ts` |
+| `test/channel-session-classification.test.ts` |
+| `test/channel-sync-verbs.test.ts` |
+| `test/channel-turn-authority.test.ts` |
+| `test/channel-workspace-trust-disposition.test.ts` |
+| `test/channel-workstream-labels.test.ts` |
+| `test/channels-plugin-registry.test.ts` |
+| `test/channels-test-send.test.ts` |
+| `test/chaos-mcp-reconnect.test.ts` |
+| `test/chaos-provider-failures.test.ts` |
+| `test/checkin-composed.test.ts` |
+| `test/checkin-delivery-receipt.test.ts` |
+| `test/checkin-job-lifetime.test.ts` |
+| `test/checkin-judgment.test.ts` |
+| `test/checkin.test.ts` |
+| `test/checkpoint-cross-process-lock.test.ts` |
+| `test/checkpoint-restore-tokens.test.ts` |
+| `test/child-failure-envelope.test.ts` |
+| `test/ci-agent-exec-posture.test.ts` |
+| `test/ci-fix-session-real-id.test.ts` |
+| `test/ci-fix-session-stamp.test.ts` |
+| `test/ci-prerequisites.test.ts` |
+| `test/ci-repair-source-custody.test.ts` |
+| `test/ci-watch-auto-mint.test.ts` |
+| `test/ci-watch-autonomous-composition.test.ts` |
+| `test/ci-watch-default-producer.test.ts` |
+| `test/ci-watch-gh-logs.test.ts` |
+| `test/ci-watch-polling.test.ts` |
+| `test/ci-watch.test.ts` |
+| `test/cli-config-overrides.test.ts` |
+| `test/cli-endpoints.test.ts` |
+| `test/cli-network-posture.test.ts` |
+| `test/cli-parser-engine.test.ts` |
+| `test/cli-parser.test.ts` |
+| `test/cli-redaction-lifetime.test.ts` |
+| `test/cli-redaction.test.ts` |
+| `test/click-target-one-mode-one-host.test.ts` |
+| `test/client-floor-options.test.ts` |
+| `test/client-runtime-services.test.ts` |
+| `test/client-seam-approvals-config-credentials.test.ts` |
+| `test/client-seam-conversation-rewind-host.test.ts` |
+| `test/client-seam-fleet-and-autostart.test.ts` |
+| `test/client-seam-phone-tool.test.ts` |
+| `test/client-seam-session-dispatch.test.ts` |
+| `test/client-seam-spine-adoption.test.ts` |
+| `test/client-seam-tasks-client.test.ts` |
+| `test/clipboard-image-signature.test.ts` |
+| `test/clipboard-reader-hint.test.ts` |
+| `test/cloudflare-control-plane.test.ts` |
+| `test/cloudflare-worker-batch.test.ts` |
+| `test/cloudflare-worker-settings.test.ts` |
+| `test/cluster-admission-lifecycle.test.ts` |
+| `test/cluster-commands.test.ts` |
+| `test/cluster-config-replication.test.ts` |
+| `test/cluster-election.test.ts` |
+| `test/cluster-group-lifecycle.test.ts` |
+| `test/cluster-group-membership.test.ts` |
+| `test/cluster-group-rotation.test.ts` |
+| `test/cluster-group-wire.test.ts` |
+| `test/cluster-handoff.test.ts` |
+| `test/cluster-owned-lifecycle.test.ts` |
+| `test/cluster-owned-withdrawal.test.ts` |
+| `test/cluster-render.test.ts` |
+| `test/cluster-socket-surfaces.test.ts` |
+| `test/cluster-spread.test.ts` |
+| `test/cluster-wire-lifecycle.test.ts` |
+| `test/code-index-authorized.test.ts` |
+| `test/code-index-bounds.test.ts` |
+| `test/code-index-degradation.test.ts` |
+| `test/code-index-fleet-adapter.test.ts` |
+| `test/code-index-lexical-rerank.test.ts` |
+| `test/code-index-lifecycle-honesty.test.ts` |
+| `test/code-index-reindex.test.ts` |
+| `test/code-index-services.test.ts` |
+| `test/code-index-store.test.ts` |
+| `test/compaction-collapse.test.ts` |
+| `test/compaction-completed-agent-work.test.ts` |
+| `test/compaction-default-on-receipts.test.ts` |
+| `test/compaction-distiller-strategy.test.ts` |
+| `test/compaction-instruction-reinjection.test.ts` |
+| `test/compaction-manager-session-bootstrap.test.ts` |
+| `test/compaction-quality-score.test.ts` |
+| `test/compaction-section-evidence.test.ts` |
+| `test/compaction-section-readings.test.ts` |
+| `test/companion-adapter-model-resolution.test.ts` |
+| `test/companion-broker-live-registration.test.ts` |
+| `test/companion-chat-branching.test.ts` |
+| `test/companion-chat-daemon-wire.test.ts` |
+| `test/companion-chat-lifecycle.test.ts` |
+| `test/companion-chat-messages-get.test.ts` |
+| `test/companion-chat-persistence.test.ts` |
+| `test/companion-chat-queue-steer.test.ts` |
+| `test/companion-chat-rate-limit.test.ts` |
+| `test/companion-chat-rate-limiter-lru.test.ts` |
+| `test/companion-chat-routes.test.ts` |
+| `test/companion-chat-session-create-provider-resolution.test.ts` |
+| `test/companion-chat-session-isolation.test.ts` |
+| `test/companion-chat-tool-registry.test.ts` |
+| `test/companion-chat-turn-boundary.test.ts` |
+| `test/companion-chat-turn-cancel.test.ts` |
+| `test/companion-chat-verbs-daemon-wire.test.ts` |
+| `test/companion-followup-persistence.test.ts` |
+| `test/companion-pairing-redaction.test.ts` |
+| `test/companion-rate-limiter-env.test.ts` |
+| `test/companion-token-atomic.test.ts` |
+| `test/companion-token-prune.test.ts` |
+| `test/companion-token-rotation.test.ts` |
+| `test/compat-provider-live-model-discovery.test.ts` |
+| `test/completion-answer.test.ts` |
+| `test/completion-report.test.ts` |
+| `test/config-audit.test.ts` |
+| `test/config-bulk-save-provenance.test.ts` |
+| `test/config-change-events.test.ts` |
+| `test/config-credentials-share.test.ts` |
+| `test/config-daemon-batch.test.ts` |
+| `test/config-daemon-tier-app-sections.test.ts` |
+| `test/config-durable-policy-adversarial.test.ts` |
+| `test/config-dynamic-preflight.test.ts` |
+| `test/config-from-a-closed-surface-reaches-the-daemon.test.ts` |
+| `test/config-hook-attachment.test.ts` |
+| `test/config-host-settings-handle.test.ts` |
+| `test/config-host-settings.test.ts` |
+| `test/config-key-union-completeness.test.ts` |
+| `test/config-live-file-watch.test.ts` |
+| `test/config-load-atomicity.test.ts` |
+| `test/config-manager-invalidation.test.ts` |
+| `test/config-manager-path-accessors.test.ts` |
+| `test/config-manager-persistence.test.ts` |
+| `test/config-migrations.test.ts` |
+| `test/config-persists-user-keys-only.test.ts` |
+| `test/config-prepared-mutation.test.ts` |
+| `test/config-runtime-admission.test.ts` |
+| `test/config-runtime-cli-lifecycle.test.ts` |
+| `test/config-runtime-mutation-lifecycle.test.ts` |
+| `test/config-runtime-overlay-contract.test.ts` |
+| `test/config-runtime-prepared-lifecycle.test.ts` |
+| `test/config-runtime-provenance.test.ts` |
+| `test/config-runtime-reconstruction.test.ts` |
+| `test/config-runtime-review-regressions.test.ts` |
+| `test/config-shared-voice-tier.test.ts` |
+| `test/config-terminal-theme.test.ts` |
+| `test/connector-config-schema.test.ts` |
+| `test/consolidation-receipt.test.ts` |
+| `test/content-taint-cancellation.test.ts` |
+| `test/context-accounting-tool.test.ts` |
+| `test/context-compaction-threshold.test.ts` |
+| `test/context-window-catalog-labels.test.ts` |
+| `test/context-window-catalog-resolution.test.ts` |
+| `test/context-window-consumer-provenance.test.ts` |
+| `test/context-window-fallback-current-generation.test.ts` |
+| `test/context-window-override-and-model-warning.test.ts` |
+| `test/context-window-unknown-and-disproven.test.ts` |
+| `test/contract-agent-seams.test.ts` |
+| `test/contract-fleet-adapters.test.ts` |
+| `test/contract-input-authority-boundaries.test.ts` |
+| `test/contract-input-authority.test.ts` |
+| `test/contract-input-manifest-preparation.test.ts` |
+| `test/contract-input-retained-process.test.ts` |
+| `test/contract-input-snapshot.test.ts` |
+| `test/contract-proof-model.test.ts` |
+| `test/contract-widths.test.ts` |
+| `test/contracts-event-envelope.test.ts` |
+| `test/contracts-generated-ownership.test.ts` |
+| `test/contracts-portability.test.ts` |
+| `test/contracts-sync.test.ts` |
+| `test/contracts-testing-kit.test.ts` |
+| `test/control-plane-base-url-removal.test.ts` |
+| `test/control-plane-gateway-stream.test.ts` |
+| `test/control-plane-store-paths.test.ts` |
+| `test/conversation-chain-authority.test.ts` |
+| `test/conversation-compaction-keeps-records.test.ts` |
+| `test/conversation-continuation-reading.test.ts` |
+| `test/conversation-fold-policy.test.ts` |
+| `test/conversation-gate-surface-ingress.test.ts` |
+| `test/conversation-gate.test.ts` |
+| `test/conversation-message-routing.test.ts` |
+| `test/conversation-redelivered-assistant-message.test.ts` |
+| `test/conversation-tool-outcome.test.ts` |
+| `test/conversation-tool-result-content.test.ts` |
+| `test/conversation-usage-persistence.test.ts` |
+| `test/conversation-work-readings.test.ts` |
+| `test/conversational-diagnosis-contract.test.ts` |
+| `test/conversational-empty-reply-recovery.test.ts` |
+| `test/conversational-reply-style.test.ts` |
+| `test/core-circuit-breaker.test.ts` |
+| `test/core-event-replay.test.ts` |
+| `test/core-qol-f456.test.ts` |
+| `test/core-verb-rename-daemon-wire.test.ts` |
+| `test/core-verbs-conformance.test.ts` |
+| `test/correlation-ids.test.ts` |
+| `test/cost-attribution-actuals.test.ts` |
+| `test/cost-attribution-origin.test.ts` |
+| `test/cost-attribution.test.ts` |
+| `test/cost-provenance-wire.test.ts` |
+| `test/cost-tracker-terminal.test.ts` |
+| `test/crash-capture.test.ts` |
+| `test/credential-availability.test.ts` |
+| `test/credential-read-defaults.test.ts` |
+| `test/credential-resolver-live.test.ts` |
+| `test/credential-scope-gate.test.ts` |
+| `test/credential-scope-index.test.ts` |
+| `test/credentials-write-verbs.test.ts` |
+| `test/crypto-adapter.test.ts` |
+| `test/daemon-adoption-policy.test.ts` |
+| `test/daemon-agent-knowledge-routes.test.ts` |
+| `test/daemon-auto-updater.test.ts` |
+| `test/daemon-batch-manager.test.ts` |
+| `test/daemon-build-floor-handshake.test.ts` |
+| `test/daemon-channel-continuation-tools.test.ts` |
+| `test/daemon-channel-route-lifecycle.test.ts` |
+| `test/daemon-channel-route-store.test.ts` |
+| `test/daemon-channel-routing-resolver.test.ts` |
+| `test/daemon-cluster-raw-reply.test.ts` |
+| `test/daemon-cluster-wire.test.ts` |
+| `test/daemon-cluster-ws-call.test.ts` |
+| `test/daemon-config-current-auth.test.ts` |
+| `test/daemon-config-migration.test.ts` |
+| `test/daemon-config-write-receipt.test.ts` |
+| `test/daemon-connected-host-split.test.ts` |
+| `test/daemon-crash-loop-rollback.test.ts` |
+| `test/daemon-credential-cipher.test.ts` |
+| `test/daemon-credential-scope-and-migration.test.ts` |
+| `test/daemon-draft-lifecycle.test.ts` |
+| `test/daemon-draft-register.test.ts` |
+| `test/daemon-draft-registration-lifecycle.test.ts` |
+| `test/daemon-draft-store.test.ts` |
+| `test/daemon-embed-in-process-removal.test.ts` |
+| `test/daemon-enabled-resolution.test.ts` |
+| `test/daemon-exec-invocation.test.ts` |
+| `test/daemon-handler-sqlite-lifecycle.test.ts` |
+| `test/daemon-handler-sqlite-recovery.test.ts` |
+| `test/daemon-handover.test.ts` |
+| `test/daemon-home-setting-perms.test.ts` |
+| `test/daemon-home.test.ts` |
+| `test/daemon-host-handler-contract.test.ts` |
+| `test/daemon-http-policy-source-parity.test.ts` |
+| `test/daemon-inbox-aggregation.test.ts` |
+| `test/daemon-inbox-composite.test.ts` |
+| `test/daemon-inbox-cursor-lifecycle.test.ts` |
+| `test/daemon-inbox-cursor-store.test.ts` |
+| `test/daemon-inbox-imap-checkpoint.test.ts` |
+| `test/daemon-inbox-imap-disclosure.test.ts` |
+| `test/daemon-inbox-imap-poller.test.ts` |
+| `test/daemon-inbox-poller-lifecycle.test.ts` |
+| `test/daemon-inbox-poller.test.ts` |
+| `test/daemon-inbox-provider-contract.test.ts` |
+| `test/daemon-inbox-registration.test.ts` |
+| `test/daemon-inbox-timestamp-persistence.test.ts` |
+| `test/daemon-ingress-preflight.test.ts` |
+| `test/daemon-isolation-guards.test.ts` |
+| `test/daemon-key-namespace.test.ts` |
+| `test/daemon-native-cohort-emitted.test.ts` |
+| `test/daemon-native-cohort-real.test.ts` |
+| `test/daemon-owned-config-read.test.ts` |
+| `test/daemon-owned-config-scope.test.ts` |
+| `test/daemon-provider-registration-source-parity.test.ts` |
+| `test/daemon-remote-backend-lifetime.test.ts` |
+| `test/daemon-remote-backends-port.test.ts` |
+| `test/daemon-remote-basic-backends.test.ts` |
+| `test/daemon-remote-basic-lifecycle.test.ts` |
+| `test/daemon-remote-cloud-terminal.test.ts` |
+| `test/daemon-remote-dispatcher-lifecycle.test.ts` |
+| `test/daemon-remote-dispatcher.test.ts` |
+| `test/daemon-remote-owned-credentials.test.ts` |
+| `test/daemon-remote-peer-lifecycle.test.ts` |
+| `test/daemon-remote-peer-registry.test.ts` |
+| `test/daemon-remote-process-runner.test.ts` |
+| `test/daemon-remote-route-gating.test.ts` |
+| `test/daemon-remote-service.test.ts` |
+| `test/daemon-remote-ssh.test.ts` |
+| `test/daemon-remote-surface-lifecycle.test.ts` |
+| `test/daemon-remote-surface.test.ts` |
+| `test/daemon-response-url-safety.test.ts` |
+| `test/daemon-routing-register.test.ts` |
+| `test/daemon-routing-registration-lifecycle.test.ts` |
+| `test/daemon-safe-serve.test.ts` |
+| `test/daemon-sdk-auth-boundary.test.ts` |
+| `test/daemon-sdk-helpers.test.ts` |
+| `test/daemon-sdk.test.ts` |
+| `test/daemon-service-handover.test.ts` |
+| `test/daemon-shutdown-timer-teardown.test.ts` |
+| `test/daemon-state-reconciliation.test.ts` |
+| `test/daemon-stop-watchers-disabled.test.ts` |
+| `test/daemon-surface-control-reading.test.ts` |
+| `test/daemon-survival-contract.test.ts` |
+| `test/daemon-tier-app-layer-sections.test.ts` |
+| `test/daemon-tier-migration-ownership.test.ts` |
+| `test/daemon-unbound-teardown.test.ts` |
+| `test/daemon-update-artifact.test.ts` |
+| `test/daemon-update-check-source-parity.test.ts` |
+| `test/daemon-update-handover.test.ts` |
+| `test/daemon-version-compat.test.ts` |
+| `test/decision-log-otlp.test.ts` |
+| `test/default-config-runtime.test.ts` |
+| `test/delegated-telegram-intake.test.ts` |
+| `test/delegated-workspace-fence.test.ts` |
+| `test/delete-key-policy.test.ts` |
+| `test/delete-means-delete-daemon-wire.test.ts` |
+| `test/delivery-credential-diagnostics.test.ts` |
+| `test/delivery-publication.test.ts` |
+| `test/delivery-replay-shutdown.test.ts` |
+| `test/delivery-secret-resolver-required.test.ts` |
+| `test/delivery-shutdown.test.ts` |
+| `test/delivery-transience.test.ts` |
+| `test/dependency-braces-depth.test.ts` |
+| `test/dependency-git-security.test.ts` |
+| `test/dependency-source-map-security.test.ts` |
+| `test/detach-perhunk-daemon-wire.test.ts` |
+| `test/detach-perhunk.test.ts` |
+| `test/device-capabilities.test.ts` |
+| `test/diagnostics-panel-degradation.test.ts` |
+| `test/directory-credential-readers.test.ts` |
+| `test/discovery-cache-projection.test.ts` |
+| `test/discovery-persistence-observability.test.ts` |
+| `test/discovery-scanner-context.test.ts` |
+| `test/disposables.test.ts` |
+| `test/dist-freshness.test.ts` |
+| `test/dist-tag-alignment.test.ts` |
+| `test/distributed-work-admission.test.ts` |
+| `test/domain-events-listener-containment.test.ts` |
+| `test/durability-housekeeping.test.ts` |
+| `test/durable-file-io-public.test.ts` |
+| `test/ecosystem-capability-bundle.test.ts` |
+| `test/ecosystem-catalog-paths.test.ts` |
+| `test/ecosystem-catalog-readings.test.ts` |
+| `test/ecosystem-recommendations.test.ts` |
+| `test/edit-match-fallback-observability.test.ts` |
+| `test/embed-session.test.ts` |
+| `test/entry-file-size-report.test.ts` |
+| `test/error-cause-chain.test.ts` |
+| `test/error-code.test.ts` |
+| `test/error-display-readings.test.ts` |
+| `test/error-display-redaction-tokens.test.ts` |
+| `test/error-hint-provenance.test.ts` |
+| `test/error-kind.test.ts` |
+| `test/error-normalization-isolation.test.ts` |
+| `test/eval-gate-floors.test.ts` |
+| `test/eval-standing-gate.test.ts` |
+| `test/eval-task-suite-adapter.test.ts` |
+| `test/exec-containment-proof.test.ts` |
+| `test/exec-credential-env-scrub.test.ts` |
+| `test/exec-denial-reason-verbosity.test.ts` |
+| `test/exec-guard-permission-authority.test.ts` |
+| `test/exec-interactive.test.ts` |
+| `test/exec-output-truncation-marker.test.ts` |
+| `test/exec-pending-policy-cancellation.test.ts` |
+| `test/exec-phase-timeout.test.ts` |
+| `test/exec-retry.test.ts` |
+| `test/exec-sandbox-context-note.test.ts` |
+| `test/exec-sandbox-final-spawn.test.ts` |
+| `test/exec-sandbox.test.ts` |
+| `test/exec-tool-result-shape.test.ts` |
+| `test/exec-working-dir-default.test.ts` |
+| `test/execution-plan-dismiss.test.ts` |
+| `test/explicit-user-request-transport.test.ts` |
+| `test/expo-secure-token-store.test.ts` |
+| `test/export-map-subpaths.test.ts` |
+| `test/export-session-export.test.ts` |
+| `test/external-autonomous-permissions.test.ts` |
+| `test/failure-reading.test.ts` |
+| `test/fatal-boot-descriptors.test.ts` |
+| `test/feature-announcements.test.ts` |
+| `test/feature-flag-config-apply.test.ts` |
+| `test/feature-flag-config-bridge-services.test.ts` |
+| `test/feature-flag-gates.test.ts` |
+| `test/feature-flags-exports.test.ts` |
+| `test/feature-flags-graduation.test.ts` |
+| `test/feature-gate-membership.test.ts` |
+| `test/fetch-autonomous-localhost.test.ts` |
+| `test/fetch-dns-pinning.test.ts` |
+| `test/fetch-localhost-approval.test.ts` |
+| `test/fetch-page-reading.test.ts` |
+| `test/fetch-sniff-content-type.test.ts` |
+| `test/field-normalization.test.ts` |
+| `test/file-readings.test.ts` |
+| `test/file-watcher-config-reading.test.ts` |
+| `test/fill-card-field-attribution.test.ts` |
+| `test/find-search-observability.test.ts` |
+| `test/find-symbols-fallback-observability.test.ts` |
+| `test/flag-config-map.test.ts` |
+| `test/fleet-archive.test.ts` |
+| `test/fleet-checkpoints-search.test.ts` |
+| `test/fleet-emit-bridge.test.ts` |
+| `test/fleet-headlines.test.ts` |
+| `test/fleet-list-pagination.test.ts` |
+| `test/fleet-live-managers.test.ts` |
+| `test/fleet-owner-cost-honesty.test.ts` |
+| `test/fleet-pause-resume-automation.test.ts` |
+| `test/fleet-pick-conflict-lifecycle-verbs.test.ts` |
+| `test/fleet-registry.test.ts` |
+| `test/focus-tracker.test.ts` |
+| `test/follow-up-usage-context.test.ts` |
+| `test/forensics-classifier.test.ts` |
+| `test/forensics-compaction-ownership.test.ts` |
+| `test/forensics-slow-phases.test.ts` |
+| `test/foundation-io-browser-judgment.test.ts` |
+| `test/foundation-io-coverage-ratchet.test.ts` |
+| `test/foundation-io-decision-union.test.ts` |
+| `test/foundation-io-numeric-enum.test.ts` |
+| `test/framed-research-input-projection.test.ts` |
+| `test/gate-decision-category-reducer.test.ts` |
+| `test/gate-divergence-dashboard.test.ts` |
+| `test/gate-divergence-panel.test.ts` |
+| `test/gate-exec-posture.test.ts` |
+| `test/gate-exec-prompt-wiring.test.ts` |
+| `test/gate-execution-ledger-batch-lifetime.test.ts` |
+| `test/gate-execution-ledger-lifetime.test.ts` |
+| `test/gate-execution-ledger.test.ts` |
+| `test/gate-input-binding.test.ts` |
+| `test/gate-judgment-input-overlap.test.ts` |
+| `test/gate-judgment-input.test.ts` |
+| `test/gate-mcp-permissions-coherence.test.ts` |
+| `test/gate-mcp-schema-quarantine.test.ts` |
+| `test/gate-operator-policy.test.ts` |
+| `test/gate-permissions-command.test.ts` |
+| `test/gate-permissions-provenance.test.ts` |
+| `test/gate-policy-cancellation.test.ts` |
+| `test/gate-policy-command-safety.test.ts` |
+| `test/gate-policy-command.test.ts` |
+| `test/gate-policy-diagnostics-panel.test.ts` |
+| `test/gate-policy-lint.test.ts` |
+| `test/gate-policy-loader.test.ts` |
+| `test/gate-policy-preflight.test.ts` |
+| `test/gate-policy-registry.test.ts` |
+| `test/gate-policy-signer.test.ts` |
+| `test/gate-policy-simulation-scenarios.test.ts` |
+| `test/gate-presets-mode.test.ts` |
+| `test/gate-settings-request-confidence.test.ts` |
+| `test/gate-settings-write-policy.test.ts` |
+| `test/gate-shell-ast-parser.test.ts` |
+| `test/gate-shell-tokenizer-fuzz.test.ts` |
+| `test/gate-shell-verdict.test.ts` |
+| `test/gate-surface-authority.test.ts` |
+| `test/gate-tool-permission-safety.test.ts` |
+| `test/gate-tool-policy-guard-reads.test.ts` |
+| `test/gate-tool-policy-guard.test.ts` |
+| `test/gate-turn-surface.test.ts` |
+| `test/gate.test.ts` |
+| `test/gateway-default-streaming.test.ts` |
+| `test/gateway-domain-scope.test.ts` |
+| `test/gateway-method-not-found.test.ts` |
+| `test/gateway-method-not-invokable.test.ts` |
+| `test/gateway-native-required-conformance.test.ts` |
+| `test/gateway-response-contract-conformance.test.ts` |
+| `test/gateway-rest-parity.test.ts` |
+| `test/gateway-ring-buffer.test.ts` |
+| `test/gateway-scope-policy-owner.test.ts` |
+| `test/gateway-self-dispatch-loop.test.ts` |
+| `test/gateway-verb-groups-config-binding.test.ts` |
+| `test/gateway-verb-refusal-envelope.test.ts` |
+| `test/gateway-verb-required-conformance.test.ts` |
+| `test/gateway.test.ts` |
+| `test/gemini-response-identity.test.ts` |
+| `test/gemini-thought-signatures.test.ts` |
+| `test/generated-consumer-transports.test.ts` |
+| `test/git-structured-diff.test.ts` |
+| `test/git-worktree-metadata.test.ts` |
+| `test/glob-to-regex.test.ts` |
+| `test/goodvibes-home-resolution.test.ts` |
+| `test/goodvibes-runtime-tools.test.ts` |
+| `test/goodvibes-settings-tool-routing.test.ts` |
+| `test/google-adoption-reaches-the-daemon.test.ts` |
+| `test/google-calendar-dead-grant.test.ts` |
+| `test/google-calendar-store-credential-write.test.ts` |
+| `test/helper-tool-llm-config.test.ts` |
+| `test/home-single-writer.test.ts` |
+| `test/homeassistant-grounding.test.ts` |
+| `test/homeassistant-state-provenance.test.ts` |
+| `test/homeassistant-stream-deltas.test.ts` |
+| `test/homeassistant-surface.test.ts` |
+| `test/homegraph-answer-judgments.test.ts` |
+| `test/homegraph-ask-reindex.test.ts` |
+| `test/homegraph-ask-space-selection.test.ts` |
+| `test/homegraph-auto-link-readings.test.ts` |
+| `test/homegraph-extension.test.ts` |
+| `test/homegraph-fact-quality-propagation.test.ts` |
+| `test/homegraph-foreground-publication.test.ts` |
+| `test/homegraph-import-atomic.test.ts` |
+| `test/homegraph-map-routes.test.ts` |
+| `test/homegraph-map-scope-lifecycle.test.ts` |
+| `test/homegraph-object-search.test.ts` |
+| `test/homegraph-owned-clock-stamps.test.ts` |
+| `test/homegraph-page-priority.test.ts` |
+| `test/homegraph-page-quality-boundaries.test.ts` |
+| `test/homegraph-page-quality.test.ts` |
+| `test/homegraph-quality-authority.test.ts` |
+| `test/homegraph-quality-reader.test.ts` |
+| `test/homegraph-repair-pages.test.ts` |
+| `test/homegraph-routes.test.ts` |
+| `test/homegraph-search-judgments.test.ts` |
+| `test/homegraph-search-lifecycle.test.ts` |
+| `test/homegraph-self-improvement-abort.test.ts` |
+| `test/homegraph-sync-pages.test.ts` |
+| `test/homegraph-triage-authority.test.ts` |
+| `test/homegraph-triage-reader.test.ts` |
+| `test/homegraph-triage.test.ts` |
+| `test/hook-bridge-agent-lifecycle.test.ts` |
+| `test/hook-turn-ownership.test.ts` |
+| `test/hooks-activity.test.ts` |
+| `test/hooks-agent-owned-settlement.test.ts` |
+| `test/hooks-contract-search.test.ts` |
+| `test/hooks-dispatcher-missing-file.test.ts` |
+| `test/hooks-dispatcher.test.ts` |
+| `test/hooks-matcher.test.ts` |
+| `test/hooks-owned-execution.test.ts` |
+| `test/hooks-runner-agent.test.ts` |
+| `test/hooks-runner-typescript-root.test.ts` |
+| `test/hooks-runners-prompt.test.ts` |
+| `test/hooks-safe-evaluate.test.ts` |
+| `test/host-binding-resolver.test.ts` |
+| `test/hosted-autonomous-sandbox-escalation.test.ts` |
+| `test/hosted-autonomous-tool-prompts.test.ts` |
+| `test/hosted-exec-containment.test.ts` |
+| `test/hosted-initial-workspace-trust.test.ts` |
+| `test/hosted-native-event-retention.test.ts` |
+| `test/hosted-native-turn-host.test.ts` |
+| `test/hosted-native-turn-journal.test.ts` |
+| `test/hosted-session-contracts.test.ts` |
+| `test/hosted-session-create-shutdown.test.ts` |
+| `test/hosted-session-exec-posture.test.ts` |
+| `test/hosted-session-explicit-kill.test.ts` |
+| `test/hosted-session-intake-heartbeat-starvation.test.ts` |
+| `test/hosted-session-manager.test.ts` |
+| `test/hosted-session-model-route.test.ts` |
+| `test/hosted-session-render-grade-events.test.ts` |
+| `test/hosted-session-routes.test.ts` |
+| `test/hosted-session-spine-intake.test.ts` |
+| `test/hosted-session-store.test.ts` |
+| `test/hosted-session-surface-identity.test.ts` |
+| `test/hosted-session-turn.test.ts` |
+| `test/hosted-session-workspace-floor.test.ts` |
+| `test/hostmode-restart.test.ts` |
+| `test/http-access-log.test.ts` |
+| `test/http-body-size-cap.test.ts` |
+| `test/http-listener-trust-cloudflare-config.test.ts` |
+| `test/http-rate-limiter-lru.test.ts` |
+| `test/hunk-revert.test.ts` |
+| `test/idempotency-keys.test.ts` |
+| `test/in-process-bundling-guard.test.ts` |
+| `test/inbound-dedup.test.ts` |
+| `test/inbound-email-config-schema.test.ts` |
+| `test/inbound-intake-wiring.test.ts` |
+| `test/inbound-mail-attribution-attack.test.ts` |
+| `test/inbound-mail-body-redaction-window.test.ts` |
+| `test/inbound-mail-card-redaction.test.ts` |
+| `test/inbound-mail-cluster-gate.test.ts` |
+| `test/inbound-mail-cursor-store.test.ts` |
+| `test/inbound-mail-cursor-uid-bounds.test.ts` |
+| `test/inbound-mail-dedup-redelivery.test.ts` |
+| `test/inbound-mail-dedup-restart-honesty.test.ts` |
+| `test/inbound-mail-expectation-consume-durability.test.ts` |
+| `test/inbound-mail-expectation-hardening.test.ts` |
+| `test/inbound-mail-expectation-id-bounds.test.ts` |
+| `test/inbound-mail-expectation-probe-is-a-read.test.ts` |
+| `test/inbound-mail-expectation-registry.test.ts` |
+| `test/inbound-mail-expectation-roundtrip.test.ts` |
+| `test/inbound-mail-expectation-store.test.ts` |
+| `test/inbound-mail-expectation-sweep-schedule.test.ts` |
+| `test/inbound-mail-expectation-verbs.test.ts` |
+| `test/inbound-mail-gmail-metadata-notice.test.ts` |
+| `test/inbound-mail-gmail-reachability.test.ts` |
+| `test/inbound-mail-health-surface.test.ts` |
+| `test/inbound-mail-housekeeping.test.ts` |
+| `test/inbound-mail-intake.test.ts` |
+| `test/inbound-mail-lifecycle-failures.test.ts` |
+| `test/inbound-mail-message-id-collision.test.ts` |
+| `test/inbound-mail-notice-before-record.test.ts` |
+| `test/inbound-mail-notice-delivery.test.ts` |
+| `test/inbound-mail-notice-escaping-gaps.test.ts` |
+| `test/inbound-mail-notice-refusal-surfaced.test.ts` |
+| `test/inbound-mail-notice.test.ts` |
+| `test/inbound-mail-persistence-hygiene.test.ts` |
+| `test/inbound-mail-record-source-union.test.ts` |
+| `test/inbound-mail-record-store.test.ts` |
+| `test/inbound-mail-sender-field-redaction.test.ts` |
+| `test/inbound-mail-settings-take-effect.test.ts` |
+| `test/inbound-mail-store-guards.test.ts` |
+| `test/inbound-mail-supervisor.test.ts` |
+| `test/inbound-mail-unreadable-fetch.test.ts` |
+| `test/inbound-mail-wake-race-probe.test.ts` |
+| `test/inline-reasoning-extraction.test.ts` |
+| `test/input-sanitization.test.ts` |
+| `test/input-tokenizer-terminal-consumer.test.ts` |
+| `test/input-tokenizer.test.ts` |
+| `test/inspect-readings.test.ts` |
+| `test/instrumented-fetch.test.ts` |
+| `test/intake-discord-adapter.test.ts` |
+| `test/intake-discord-owner.test.ts` |
+| `test/intake-email-owner.test.ts` |
+| `test/intake-imap-byte-framing.test.ts` |
+| `test/intake-imap-client.test.ts` |
+| `test/intake-mapping-source-parity.test.ts` |
+| `test/intake-route-util.test.ts` |
+| `test/intake-slack-adapter.test.ts` |
+| `test/intake-slack-http.test.ts` |
+| `test/intake-slack-owner-fencing.test.ts` |
+| `test/intake-slack-owner.test.ts` |
+| `test/intake-text-normalization.test.ts` |
+| `test/intake-triage-custom-tags.test.ts` |
+| `test/intake-triage-filename.test.ts` |
+| `test/intake-triage-imap-source-parity.test.ts` |
+| `test/intake-triage-integration-source-parity.test.ts` |
+| `test/intake-triage-owned.test.ts` |
+| `test/intake-triage-source-parity.test.ts` |
+| `test/intake-triage-store.test.ts` |
+| `test/intake-triage-tagged-owned.test.ts` |
+| `test/intake-triage-tagger-source-parity.test.ts` |
+| `test/intake-triage-taggers.test.ts` |
+| `test/intake-triage.test.ts` |
+| `test/integration-config-reset.test.ts` |
+| `test/integration-helpers-surface-scope.test.ts` |
+| `test/intelligence-language-config-scan.test.ts` |
+| `test/intent-classifier.test.ts` |
+| `test/interactive-approval-disposition.test.ts` |
+| `test/internal-identifier-check.test.ts` |
+| `test/interval-unref.test.ts` |
+| `test/invoke-input-validation.test.ts` |
+| `test/ios-keychain-token-store.test.ts` |
+| `test/issuer-credential-predicate.test.ts` |
+| `test/judgment-authority-function-identity.test.ts` |
+| `test/judgment-caller-snapshot.test.ts` |
+| `test/judgment-composition.test.ts` |
+| `test/judgment-lint.test.ts` |
+| `test/judgment-owned-lifecycle.test.ts` |
+| `test/judgment-persisted-failover.test.ts` |
+| `test/judgment-result-admission.test.ts` |
+| `test/judgment-scoped-publication.test.ts` |
+| `test/judgment-settings-snapshot.test.ts` |
+| `test/keyless-default.test.ts` |
+| `test/knowledge-activation-hold-propagation.test.ts` |
+| `test/knowledge-admission-coverage.test.ts` |
+| `test/knowledge-answer-evidence-projection.test.ts` |
+| `test/knowledge-answer-evidence-selection.test.ts` |
+| `test/knowledge-answer-excerpt-batches.test.ts` |
+| `test/knowledge-answer-excerpt-integration.test.ts` |
+| `test/knowledge-answer-excerpt-reader.test.ts` |
+| `test/knowledge-answer-gap-integration.test.ts` |
+| `test/knowledge-answer-gap-plan.test.ts` |
+| `test/knowledge-answer-judgment-holds.test.ts` |
+| `test/knowledge-answer-object-alignment.test.ts` |
+| `test/knowledge-answer-object-plan.test.ts` |
+| `test/knowledge-answer-quality-integration.test.ts` |
+| `test/knowledge-answer-quality-reader.test.ts` |
+| `test/knowledge-answer-scope-selection.test.ts` |
+| `test/knowledge-browser-capture-outcomes.test.ts` |
+| `test/knowledge-browser-history.test.ts` |
+| `test/knowledge-choice-admission.test.ts` |
+| `test/knowledge-clock-admission.test.ts` |
+| `test/knowledge-compile-atomic.test.ts` |
+| `test/knowledge-consolidation-judgment.test.ts` |
+| `test/knowledge-coordinated-persistence.test.ts` |
+| `test/knowledge-entity-alias-judgment.test.ts` |
+| `test/knowledge-evidence-relevance-batches.test.ts` |
+| `test/knowledge-evidence-relevance.test.ts` |
+| `test/knowledge-extraction-holds.test.ts` |
+| `test/knowledge-extraction-policy.test.ts` |
+| `test/knowledge-fact-quality-callers.test.ts` |
+| `test/knowledge-fact-selection-judgment.test.ts` |
+| `test/knowledge-generated-fact-support.test.ts` |
+| `test/knowledge-generated-fact-write-boundaries.test.ts` |
+| `test/knowledge-graphql-get-mutation.test.ts` |
+| `test/knowledge-graphql-scope.test.ts` |
+| `test/knowledge-html-ingest-holds.test.ts` |
+| `test/knowledge-html-judgment.test.ts` |
+| `test/knowledge-import-publication.test.ts` |
+| `test/knowledge-ingest-alias-holds.test.ts` |
+| `test/knowledge-ingest-compile.test.ts` |
+| `test/knowledge-ingest-holds.test.ts` |
+| `test/knowledge-injection-scored.test.ts` |
+| `test/knowledge-instance-isolation.test.ts` |
+| `test/knowledge-jobruns-retention.test.ts` |
+| `test/knowledge-linked-evidence-scales.test.ts` |
+| `test/knowledge-memory-sync.test.ts` |
+| `test/knowledge-node-activation.test.ts` |
+| `test/knowledge-node-authority.test.ts` |
+| `test/knowledge-node-merge-atomicity.test.ts` |
+| `test/knowledge-packet-judgments.test.ts` |
+| `test/knowledge-pdf-readability.test.ts` |
+| `test/knowledge-prepared-node-bulk.test.ts` |
+| `test/knowledge-primary-source-planning.test.ts` |
+| `test/knowledge-projection-ownership.test.ts` |
+| `test/knowledge-projections-map.test.ts` |
+| `test/knowledge-public-retrieval.test.ts` |
+| `test/knowledge-record-read-frame.test.ts` |
+| `test/knowledge-refresh-window.test.ts` |
+| `test/knowledge-repair-clock-admission.test.ts` |
+| `test/knowledge-repair-empty-work.test.ts` |
+| `test/knowledge-repair-generated-reference-scope.test.ts` |
+| `test/knowledge-repair-profile-write-boundaries.test.ts` |
+| `test/knowledge-repair-profile.test.ts` |
+| `test/knowledge-repair-source-authority.test.ts` |
+| `test/knowledge-repair-subject-selection.test.ts` |
+| `test/knowledge-repair-usefulness-reader.test.ts` |
+| `test/knowledge-repair-usefulness-write-boundaries.test.ts` |
+| `test/knowledge-review.test.ts` |
+| `test/knowledge-routes-not-found-guard.test.ts` |
+| `test/knowledge-schedule-dispose-race.test.ts` |
+| `test/knowledge-schema-read-plan.test.ts` |
+| `test/knowledge-scope-consumers.test.ts` |
+| `test/knowledge-scope-edge-retention.test.ts` |
+| `test/knowledge-scope-lifecycle.test.ts` |
+| `test/knowledge-self-improve-scheduling.test.ts` |
+| `test/knowledge-self-improvement-failure.test.ts` |
+| `test/knowledge-semantic-answer.test.ts` |
+| `test/knowledge-semantic-repair.test.ts` |
+| `test/knowledge-semantic-runtime.test.ts` |
+| `test/knowledge-semantic-self-improvement.test.ts` |
+| `test/knowledge-source-quality-judgment.test.ts` |
+| `test/knowledge-source-ranking-judgment.test.ts` |
+| `test/knowledge-source-structural-references.test.ts` |
+| `test/knowledge-store-paging.test.ts` |
+| `test/knowledge-strict-lock.test.ts` |
+| `test/knowledge-structural-reference-projection.test.ts` |
+| `test/knowledge-terminal-decisions.test.ts` |
+| `test/knowledge-web-gap-reading.test.ts` |
+| `test/knowledge-wiki-honesty.test.ts` |
+| `test/kv-state-session-retention.test.ts` |
+| `test/lan-http-posture.test.ts` |
+| `test/launch-tolerant-provider-registry.test.ts` |
+| `test/layout-engine.test.ts` |
+| `test/lazy-native-imports.test.ts` |
+| `test/legacy-import-operator-transport.test.ts` |
+| `test/legacy-import-operator-workflow.test.ts` |
+| `test/legacy-import-read-reconstruction.test.ts` |
+| `test/legacy-import-recovery-reconstruction.test.ts` |
+| `test/legacy-import-request-binding.test.ts` |
+| `test/listener-errors.test.ts` |
+| `test/literal-union-api-cli.test.ts` |
+| `test/literal-union-api-comparison.test.ts` |
+| `test/live-model-discovery.test.ts` |
+| `test/live-roundtrip.test.ts` |
+| `test/llm-instrumentation.test.ts` |
+| `test/local-credential-snapshot.test.ts` |
+| `test/login-ratelimit.test.ts` |
+| `test/lsp-bash-bundled.test.ts` |
+| `test/lsp-bash-file-discovery.test.ts` |
+| `test/lsp-client-framing.test.ts` |
+| `test/lsp-client-notifications.test.ts` |
+| `test/mail-reply-subject-fresh-auth.test.ts` |
+| `test/malformed-secret-ref-refused.test.ts` |
+| `test/mcp-autonomous-dispatch.test.ts` |
+| `test/mcp-caller-currentness.test.ts` |
+| `test/mcp-client-protocol-observability.test.ts` |
+| `test/mcp-config-role-trust.test.ts` |
+| `test/mcp-elicitation-approval.test.ts` |
+| `test/mcp-env-reveal.test.ts` |
+| `test/mcp-http-transport.test.ts` |
+| `test/mcp-operator-server.test.ts` |
+| `test/mcp-permissions-config-refresh.test.ts` |
+| `test/mcp-permissions-path-scope.test.ts` |
+| `test/mcp-protocol-negotiation.test.ts` |
+| `test/mcp-registry-prehook.test.ts` |
+| `test/mcp-runtime-config.test.ts` |
+| `test/mcp-runtime-reload.test.ts` |
+| `test/mcp-tool-quarantine-approver.test.ts` |
+| `test/media-builtin-image-understanding.test.ts` |
+| `test/media-generation-providers.test.ts` |
+| `test/media-provider-registry.test.ts` |
+| `test/memory-canonical-cross-surface.test.ts` |
+| `test/memory-consolidation-gateway.test.ts` |
+| `test/memory-consolidation-scheduler.test.ts` |
+| `test/memory-consolidation.test.ts` |
+| `test/memory-embeddings.test.ts` |
+| `test/memory-file-projection.test.ts` |
+| `test/memory-governor.test.ts` |
+| `test/memory-honest-search.test.ts` |
+| `test/memory-operation-lifecycle.test.ts` |
+| `test/memory-projection-git-ownership.test.ts` |
+| `test/memory-projections-wire.test.ts` |
+| `test/memory-recall-contract.test.ts` |
+| `test/memory-records-daemon-wire.test.ts` |
+| `test/memory-review-queue-scope.test.ts` |
+| `test/memory-search-rerank.test.ts` |
+| `test/memory-spine-client.test.ts` |
+| `test/memory-spine-rest-transport.test.ts` |
+| `test/memory-status.test.ts` |
+| `test/memory-temporal-validity.test.ts` |
+| `test/memory-usage-detection.test.ts` |
+| `test/memory-usage-stats.test.ts` |
+| `test/memory-vector-platform-limit.test.ts` |
+| `test/memory-wire-verb-availability.test.ts` |
+| `test/model-benchmarks-settled.test.ts` |
+| `test/model-picker-family.test.ts` |
+| `test/model-picker-provider-filter.test.ts` |
+| `test/model-pricing-resolver.test.ts` |
+| `test/model-routes-secrets-skipped.test.ts` |
+| `test/model-routes.test.ts` |
+| `test/model-source-contract.test.ts` |
+| `test/models-effort-surface.test.ts` |
+| `test/multimodal-daemon-entity-ownership.test.ts` |
+| `test/multimodal-pdf-source.test.ts` |
+| `test/multimodal-writeback-commit-fences.test.ts` |
+| `test/narrowed-constraints.test.ts` |
+| `test/native-automation-mutation.test.ts` |
+| `test/native-channel-mutation.test.ts` |
+| `test/native-ci-cancellation-index.test.ts` |
+| `test/native-continuation-context.test.ts` |
+| `test/native-draft-reference-connected.test.ts` |
+| `test/native-execution-browser-contract.test.ts` |
+| `test/native-intake-browser-contract.test.ts` |
+| `test/native-intake-decisions.test.ts` |
+| `test/native-intake-host.test.ts` |
+| `test/native-integration-wire.test.ts` |
+| `test/native-profile-mutation.test.ts` |
+| `test/native-selected-diff-context.test.ts` |
+| `test/native-selected-diff-private-evidence.test.ts` |
+| `test/native-turn-admission.test.ts` |
+| `test/native-write-edit-final-effect.test.ts` |
+| `test/network-scoped-fetch.test.ts` |
+| `test/no-todo-markers.test.ts` |
+| `test/notification-burst-panel-routing.test.ts` |
+| `test/notification-dedup-and-deltas.test.ts` |
+| `test/notification-delivery-privacy.test.ts` |
+| `test/notification-privacy-reader.test.ts` |
+| `test/notification-runtime-adapters.test.ts` |
+| `test/notify-guard.test.ts` |
+| `test/npm-pack-json-shapes.test.ts` |
+| `test/npm-pack-output.test.ts` |
+| `test/ntfy-header-safe-title.test.ts` |
+| `test/ntfy-integration-stream.test.ts` |
+| `test/observe-analytics.test.ts` |
+| `test/observe-hoists.test.ts` |
+| `test/observed-external-agents.test.ts` |
+| `test/observer-coverage.test.ts` |
+| `test/observer-otel.test.ts` |
+| `test/occasions-dates.test.ts` |
+| `test/occasions-final-stretch-removal.test.ts` |
+| `test/occasions-nudge-cadence.test.ts` |
+| `test/occasions-semantic-ownership.test.ts` |
+| `test/occasions-service.test.ts` |
+| `test/occasions-state-store.test.ts` |
+| `test/occasions-sweep.test.ts` |
+| `test/occasions-ticker.test.ts` |
+| `test/occasions-verbs.test.ts` |
+| `test/openai-codex-refresh-on-401.test.ts` |
+| `test/openai-compat-inline-reasoning.test.ts` |
+| `test/openai-compat-provider.test.ts` |
+| `test/openai-compatible-routes.test.ts` |
+| `test/openapi-operator-contract.test.ts` |
+| `test/operator-contract-catalog.test.ts` |
+| `test/operator-schema-source-lifetime.test.ts` |
+| `test/operator-sdk-coverage.test.ts` |
+| `test/operator-sdk-schema-registry.test.ts` |
+| `test/operator-sdk.test.ts` |
+| `test/operator-token-cleanup.test.ts` |
+| `test/operator-token-global.test.ts` |
+| `test/ops-control-plane.test.ts` |
+| `test/ops-playbook-search.test.ts` |
+| `test/optional-dependency-boot.test.ts` |
+| `test/orchestration-agent-cwd.test.ts` |
+| `test/orchestration-cancellation-signal-propagation.test.ts` |
+| `test/orchestration-dependencies.test.ts` |
+| `test/orchestration-dirty-residue-guard.test.ts` |
+| `test/orchestration-engine.test.ts` |
+| `test/orchestration-graph-round.test.ts` |
+| `test/orchestration-join.test.ts` |
+| `test/orchestration-proposal-mapping.test.ts` |
+| `test/orchestration-repository-failure.test.ts` |
+| `test/orchestration-resume.test.ts` |
+| `test/orchestration-store-housekeeping.test.ts` |
+| `test/orchestration-task-graph.test.ts` |
+| `test/orchestration-worktree-gates.test.ts` |
+| `test/orchestration-worktree-isolation.test.ts` |
+| `test/orchestration-worktree-namespace.test.ts` |
+| `test/orchestrator-abort.test.ts` |
+| `test/orchestrator-active-agent-cycle.test.ts` |
+| `test/orchestrator-agent-continuation.test.ts` |
+| `test/orchestrator-async-prompt-lifecycle.test.ts` |
+| `test/orchestrator-conversation-snapshot-bridge.test.ts` |
+| `test/orchestrator-follow-up-async-prompt.test.ts` |
+| `test/orchestrator-prepared-knowledge.test.ts` |
+| `test/orchestrator-runner-lazy-model.test.ts` |
+| `test/orchestrator-runner-retry-cancel.test.ts` |
+| `test/orchestrator-runner-steer-drain.test.ts` |
+| `test/orchestrator-runner-turn-knowledge-injection.test.ts` |
+| `test/orchestrator-semantic-observations.test.ts` |
+| `test/orchestrator-turn-boundary-wiring.test.ts` |
+| `test/orchestrator-turn-injections-accessor.test.ts` |
+| `test/orchestrator-turn-loop-passive-knowledge-injection.test.ts` |
+| `test/order-correlation.test.ts` |
+| `test/origin-defaults.test.ts` |
+| `test/otlp-ingest-e2e.test.ts` |
+| `test/otlp-ingest-routes.test.ts` |
+| `test/otlp-logger.test.ts` |
+| `test/output-policy.test.ts` |
+| `test/overflow-keep.test.ts` |
+| `test/overlay-viewport.test.ts` |
+| `test/owner-profile-composition-home.test.ts` |
+| `test/owner-profile-composition-readiness.test.ts` |
+| `test/owner-profile-consumers.test.ts` |
+| `test/owner-profile-containment.test.ts` |
+| `test/owner-profile-defects.test.ts` |
+| `test/owner-profile-delegated-effects.test.ts` |
+| `test/owner-profile-document.test.ts` |
+| `test/owner-profile-forget-by-content.test.ts` |
+| `test/owner-profile-person-reading.test.ts` |
+| `test/owner-profile-postal-reading.test.ts` |
+| `test/owner-profile-read-latency.test.ts` |
+| `test/owner-profile-trust.test.ts` |
+| `test/owner-profile-turn-boundary.test.ts` |
+| `test/owner-profile-verbs.test.ts` |
+| `test/owner-profile-writer.test.ts` |
+| `test/pack-manifest-output.test.ts` |
+| `test/package-metadata-check.test.ts` |
+| `test/package-readme-readings.test.ts` |
+| `test/pagination-cursor.test.ts` |
+| `test/pairing-device-lines.test.ts` |
+| `test/pairing-handoff-mint.test.ts` |
+| `test/pairing-handoff.test.ts` |
+| `test/pairing-native-authority.test.ts` |
+| `test/pairing-native-continuation-adversarial.test.ts` |
+| `test/pairing-node-cap.test.ts` |
+| `test/pairing-token-daemon-wire.test.ts` |
+| `test/pairing-token-manager.test.ts` |
+| `test/pairing-web-origin.test.ts` |
+| `test/path-shadow.test.ts` |
+| `test/payments-adversarial.test.ts` |
+| `test/payments-browser-checkout-seam.test.ts` |
+| `test/payments-browser-entrypoint.test.ts` |
+| `test/payments-card-entry-surface.test.ts` |
+| `test/payments-checkout-address.test.ts` |
+| `test/payments-checkout-gate-snapshot.test.ts` |
+| `test/payments-cvv-containment.test.ts` |
+| `test/payments-daemon-wiring.test.ts` |
+| `test/payments-host-approval-store.test.ts` |
+| `test/payments-host-budget-store.test.ts` |
+| `test/payments-host-card-store.test.ts` |
+| `test/payments-host-checkout-journal-store.test.ts` |
+| `test/payments-host-gateway-verbs.test.ts` |
+| `test/payments-host-purchase-ledger.test.ts` |
+| `test/payments-host-register.test.ts` |
+| `test/payments-merchant-recourse.test.ts` |
+| `test/payments-money-amounts.test.ts` |
+| `test/payments-notice-delivery.test.ts` |
+| `test/payments-notice-injection.test.ts` |
+| `test/payments-owner-chain-acceptance.test.ts` |
+| `test/payments-purchase-execution.test.ts` |
+| `test/payments-reply-inbox.test.ts` |
+| `test/payments-reply-lifecycle.test.ts` |
+| `test/payments-routes.test.ts` |
+| `test/payments-shutdown-veto.test.ts` |
+| `test/peer-sdk-coverage.test.ts` |
+| `test/peer-sdk.test.ts` |
+| `test/permission-client-cancellation.test.ts` |
+| `test/permission-config-snapshot.test.ts` |
+| `test/permission-consumer-cancellation.test.ts` |
+| `test/permission-guard-benign-diagnostics.test.ts` |
+| `test/permission-heredoc-denial-explanation.test.ts` |
+| `test/permission-hunk-approval-broker-e2e.test.ts` |
+| `test/permission-hunk-modified-args.test.ts` |
+| `test/permission-normalization-lifecycle.test.ts` |
+| `test/permission-normalization.test.ts` |
+| `test/permission-remembered-scope.test.ts` |
+| `test/permission-rule-persistence.test.ts` |
+| `test/persisted-store-housekeeping.test.ts` |
+| `test/personal-information-capture.test.ts` |
+| `test/phased-tool-phase-warnings.test.ts` |
+| `test/plaintext-credential-sweep.test.ts` |
+| `test/plan-decomposition.test.ts` |
+| `test/plan-integration.test.ts` |
+| `test/plan-proposal.test.ts` |
+| `test/plan-status-judgment.test.ts` |
+| `test/plan-status-orchestrator-lifetime.test.ts` |
+| `test/planner-decomposition-runner.test.ts` |
+| `test/planner-template-tool-policy.test.ts` |
+| `test/planning-answer-actions.test.ts` |
+| `test/planning-persisted-generation.test.ts` |
+| `test/planning-readiness-reading.test.ts` |
+| `test/planning-revision-guards.test.ts` |
+| `test/planning-startup-readiness.test.ts` |
+| `test/platform-adapter-contract.test.ts` |
+| `test/platform-bookmarks-smoke.test.ts` |
+| `test/platform-browser-daemon-verbs.test.ts` |
+| `test/platform-caldav-gateway.test.ts` |
+| `test/platform-calendar-oauth.test.ts` |
+| `test/platform-calendar.test.ts` |
+| `test/platform-daemon-mailbox-schema.test.ts` |
+| `test/platform-discovery-smoke.test.ts` |
+| `test/platform-email-imap-byte-framing.test.ts` |
+| `test/platform-email-imap-complete.test.ts` |
+| `test/platform-email-imap-delivery-recipient.test.ts` |
+| `test/platform-email-imap-fetch-frames.test.ts` |
+| `test/platform-email-imap-fetch.test.ts` |
+| `test/platform-email-imap-semantic.test.ts` |
+| `test/platform-email-imap-source-lifetime.test.ts` |
+| `test/platform-email-imap-tls.test.ts` |
+| `test/platform-email-imap-uid.test.ts` |
+| `test/platform-email-imap-wire-shapes.test.ts` |
+| `test/platform-email-imap.test.ts` |
+| `test/platform-email-inbound-backoff.test.ts` |
+| `test/platform-email-inbound-gmail-source.test.ts` |
+| `test/platform-email-inbound-watcher.test.ts` |
+| `test/platform-email-inbox-page.test.ts` |
+| `test/platform-email-inbox-readiness.test.ts` |
+| `test/platform-email-inbox-snapshot.test.ts` |
+| `test/platform-email-mailbox-owner.test.ts` |
+| `test/platform-email-no-authority-drift.test.ts` |
+| `test/platform-email-reply-subject-source.test.ts` |
+| `test/platform-email-sender-claim-end-to-end.test.ts` |
+| `test/platform-email-service-inbox.test.ts` |
+| `test/platform-email-service.test.ts` |
+| `test/platform-email-smtp.test.ts` |
+| `test/platform-email-style-reply.test.ts` |
+| `test/platform-email-surface-config.test.ts` |
+| `test/platform-email-unreadable-answers.test.ts` |
+| `test/platform-eval-smoke.test.ts` |
+| `test/platform-export-smoke.test.ts` |
+| `test/platform-forensics-smoke.test.ts` |
+| `test/platform-git-smoke.test.ts` |
+| `test/platform-google-account-registry.test.ts` |
+| `test/platform-google-browser-flows.test.ts` |
+| `test/platform-google-caldav.test.ts` |
+| `test/platform-google-connection-flow.test.ts` |
+| `test/platform-google-consent-session.test.ts` |
+| `test/platform-google-control-semantics.test.ts` |
+| `test/platform-google-credentials.test.ts` |
+| `test/platform-google-daemon-ownership.test.ts` |
+| `test/platform-google-delivery-evidence.test.ts` |
+| `test/platform-google-engine-boundary.test.ts` |
+| `test/platform-google-gcloud.test.ts` |
+| `test/platform-google-history-delta.test.ts` |
+| `test/platform-google-oauth-loopback.test.ts` |
+| `test/platform-google-setup-flow.test.ts` |
+| `test/platform-google-unconfigured-machine.test.ts` |
+| `test/platform-google-verification-expectations.test.ts` |
+| `test/platform-http-context-inheritance.test.ts` |
+| `test/platform-multimodal-smoke.test.ts` |
+| `test/platform-network-smoke.test.ts` |
+| `test/platform-orchestration-smoke.test.ts` |
+| `test/platform-plugins-smoke.test.ts` |
+| `test/platform-presentation-bundle.test.ts` |
+| `test/platform-presentation-theme.test.ts` |
+| `test/platform-presentation.test.ts` |
+| `test/platform-profiles-smoke.test.ts` |
+| `test/platform-route-manager-emissions.test.ts` |
+| `test/platform-secret-daemon-routing.test.ts` |
+| `test/platform-session-manager-persistence-errors.test.ts` |
+| `test/platform-state-inspector-smoke.test.ts` |
+| `test/platform-stop-reason-mappers.test.ts` |
+| `test/platform-store-domains-smoke.test.ts` |
+| `test/platform-templates-smoke.test.ts` |
+| `test/platform-trigger-executor-shell-split.test.ts` |
+| `test/platform-workflow-smoke.test.ts` |
+| `test/plugin-capability-node.test.ts` |
+| `test/plugin-capability-shutdown.test.ts` |
+| `test/plugin-delivery-lifetime.test.ts` |
+| `test/plugin-error-validator.test.ts` |
+| `test/plugin-hot-reload-drain.test.ts` |
+| `test/plugin-shutdown-http-and-preference.test.ts` |
+| `test/plugin-shutdown.test.ts` |
+| `test/plugin-trust-signature.test.ts` |
+| `test/plugins-hooks-permissions-observability.test.ts` |
+| `test/plugins-quarantine-restart.test.ts` |
+| `test/post-edit-diagnostics.test.ts` |
+| `test/power-darwin-caffeinate.test.ts` |
+| `test/power-keep-awake-remote.test.ts` |
+| `test/power-sleep-ownership.test.ts` |
+| `test/power-work-signals-envelope.test.ts` |
+| `test/pr57-independent-persisted-races.test.ts` |
+| `test/pre-commit-product-gates.test.ts` |
+| `test/pre-split-control-plane-sweep.test.ts` |
+| `test/prepared-scoped-secret-deletion.test.ts` |
+| `test/prepared-settings-compound-owner.test.ts` |
+| `test/prepared-settings-import-owner.test.ts` |
+| `test/prepublish-registry-state.test.ts` |
+| `test/principals-gateway-verbs.test.ts` |
+| `test/probe-roundtrip-count.test.ts` |
+| `test/process-manager-admission-cancellation.test.ts` |
+| `test/process-manager-close.test.ts` |
+| `test/process-manager-group-close.test.ts` |
+| `test/process-manager-identifiers.test.ts` |
+| `test/process-manager-input.test.ts` |
+| `test/process-manager-kill-on-timeout.test.ts` |
+| `test/process-manager-list-done.test.ts` |
+| `test/process-manager-timeout.test.ts` |
+| `test/product-workspace-contract.test.ts` |
+| `test/profiles-manager.test.ts` |
+| `test/project-index-shutdown.test.ts` |
+| `test/project-planning-answer.test.ts` |
+| `test/project-planning-routes.test.ts` |
+| `test/project-planning-service.test.ts` |
+| `test/project-temp.test.ts` |
+| `test/prompt-content-width.test.ts` |
+| `test/prompt-file-utils.test.ts` |
+| `test/prompt-loader-agents-md.test.ts` |
+| `test/prompt-redaction.test.ts` |
+| `test/proof-temp-sweep.test.ts` |
+| `test/provider-adapter-kind.test.ts` |
+| `test/provider-auth-aggregate.test.ts` |
+| `test/provider-billing-vs-rate-limit.test.ts` |
+| `test/provider-cache-fixture.test.ts` |
+| `test/provider-cache-observability.test.ts` |
+| `test/provider-capability-context-regression.test.ts` |
+| `test/provider-configured-ids.test.ts` |
+| `test/provider-fallback-model.test.ts` |
+| `test/provider-health-fallback-chain.test.ts` |
+| `test/provider-health-posture.test.ts` |
+| `test/provider-live-model-discovery.test.ts` |
+| `test/provider-model-family-protected-input.test.ts` |
+| `test/provider-model-family-snapshot.test.ts` |
+| `test/provider-model-live-config-change.test.ts` |
+| `test/provider-model-parsing.test.ts` |
+| `test/provider-native-sdk-attempt-guard.test.ts` |
+| `test/provider-prompt-cache-config.test.ts` |
+| `test/provider-registry-canonical-api.test.ts` |
+| `test/provider-registry-live-model-discovery.test.ts` |
+| `test/provider-retry-wait.test.ts` |
+| `test/provider-sse-integration.test.ts` |
+| `test/provider-stream-retry.test.ts` |
+| `test/provider-tool-args-parser.test.ts` |
+| `test/provider-transport-cache-readings.test.ts` |
+| `test/provider-usage-native-authority.test.ts` |
+| `test/provider-watcher-drain.test.ts` |
+| `test/providers-context-window-routing.test.ts` |
+| `test/providers-discovered-factory.test.ts` |
+| `test/providers-favorites.test.ts` |
+| `test/providers-llama-cpp.test.ts` |
+| `test/providers-local-context-ingestion.test.ts` |
+| `test/providers-ollama.test.ts` |
+| `test/providers-openai-stream-delta.test.ts` |
+| `test/providers-reasoning-effort.test.ts` |
+| `test/providers-setup.test.ts` |
+| `test/providers-tier-prompts-audience.test.ts` |
+| `test/providers-tier-prompts.test.ts` |
+| `test/push-blocked-escalation.test.ts` |
+| `test/push-completion-source.test.ts` |
+| `test/push-needs-input-source.test.ts` |
+| `test/push-subscription-housekeeping.test.ts` |
+| `test/race-deadline-timer-teardown.test.ts` |
+| `test/rate-limit-headers-quota.test.ts` |
+| `test/reachability-check.test.ts` |
+| `test/read-versioned-quarantine-reap.test.ts` |
+| `test/read-versioned.test.ts` |
+| `test/reasoning-effort-per-model.test.ts` |
+| `test/recall-snapshot-note-and-floor.test.ts` |
+| `test/recovery-snapshot-apply.test.ts` |
+| `test/redaction-assignment-boundaries.test.ts` |
+| `test/redaction-semantic-reading.test.ts` |
+| `test/regex-admission.test.ts` |
+| `test/regex-contract-client.test.ts` |
+| `test/regex-exec-lifetime.test.ts` |
+| `test/registry-tool-rank.test.ts` |
+| `test/relay-daemon-client-integration.test.ts` |
+| `test/relay-e2e-channel.test.ts` |
+| `test/relay-event-streaming.test.ts` |
+| `test/relay-judgment-lifecycle.test.ts` |
+| `test/relay-key-extractability.test.ts` |
+| `test/relay-reachability.test.ts` |
+| `test/relay-registration-context-cap.test.ts` |
+| `test/relay-security.test.ts` |
+| `test/relay-server-hub.test.ts` |
+| `test/relay-server-integration.test.ts` |
+| `test/relay-step-up-integration.test.ts` |
+| `test/relay-step-up-webauthn.test.ts` |
+| `test/relay-verbs.test.ts` |
+| `test/release-error-decisions.test.ts` |
+| `test/release-gates-policy-and-budget-evidence-gate.test.ts` |
+| `test/release-gates-session-route-execution-intents-gate.test.ts` |
+| `test/remote-capabilities.test.ts` |
+| `test/remote-reconnect-terminal.test.ts` |
+| `test/repl-tool.test.ts` |
+| `test/replay-run-snapshot-store.test.ts` |
+| `test/repo-map-tool.test.ts` |
+| `test/retained-judgment-source.test.ts` |
+| `test/retention-user-saved-exemption.test.ts` |
+| `test/retry-events.test.ts` |
+| `test/retry.test.ts` |
+| `test/rewind-service.test.ts` |
+| `test/rewind-turn-anchors.test.ts` |
+| `test/rn-bundle-node-imports.test.ts` |
+| `test/router-e2e-automation.test.ts` |
+| `test/router-e2e-control.test.ts` |
+| `test/router-e2e-remote.test.ts` |
+| `test/router-e2e-session.test.ts` |
+| `test/router-e2e-tasks.test.ts` |
+| `test/router-e2e-telemetry.test.ts` |
+| `test/runtime-bootstrap-helpers.test.ts` |
+| `test/runtime-eval-runner.test.ts` |
+| `test/runtime-event-bus-dispatch-contract.test.ts` |
+| `test/runtime-event-bus-max-listeners.test.ts` |
+| `test/runtime-event-discriminated-union.test.ts` |
+| `test/runtime-event-notice-lines.test.ts` |
+| `test/runtime-event-notice-resume.test.ts` |
+| `test/runtime-event-notice-wake.test.ts` |
+| `test/runtime-health-gc-health-003-playbook-map.test.ts` |
+| `test/runtime-http-json-transport.test.ts` |
+| `test/runtime-idempotency-store.test.ts` |
+| `test/runtime-import-architecture.test.ts` |
+| `test/runtime-integration-helper-accounts.test.ts` |
+| `test/runtime-message-readings.test.ts` |
+| `test/runtime-meter.test.ts` |
+| `test/runtime-metrics-gateway-verb.test.ts` |
+| `test/runtime-network-shared.test.ts` |
+| `test/runtime-notifications-burst-routing.test.ts` |
+| `test/runtime-poller-owners-satisfiable.test.ts` |
+| `test/runtime-remote-snapshot-contract.test.ts` |
+| `test/runtime-session-input-cancel.test.ts` |
+| `test/runtime-shutdown-lifecycle.test.ts` |
+| `test/runtime-sse-stream.test.ts` |
+| `test/runtime-state-inspector-hotspot-sampler.test.ts` |
+| `test/runtime-state-inspector-timeline.test.ts` |
+| `test/runtime-store-seams.test.ts` |
+| `test/runtime-task-retry-ownership.test.ts` |
+| `test/sandbox-boundary.test.ts` |
+| `test/sandbox-escalation-judgment.test.ts` |
+| `test/sandbox-needs-public-reader.test.ts` |
+| `test/sandbox-policy-exports.test.ts` |
+| `test/sandbox-qemu-migration.test.ts` |
+| `test/scan-modes.test.ts` |
+| `test/scheduler-capacity.test.ts` |
+| `test/scheduler-history.test.ts` |
+| `test/sdk-auth.test.ts` |
+| `test/sdk-dev-tool.test.ts` |
+| `test/sdk-observer.test.ts` |
+| `test/sdk-platforms.test.ts` |
+| `test/sdk-root-barrel-uniqueness.test.ts` |
+| `test/sdk-runtime-boundaries.test.ts` |
+| `test/sdk-transport-http.test.ts` |
+| `test/search-tools-read-deny-enforcement.test.ts` |
+| `test/secret-refs.test.ts` |
+| `test/secrets-key-mismatch-guards.test.ts` |
+| `test/secrets-keyfile-store.test.ts` |
+| `test/secrets-pending-mutation-fence.test.ts` |
+| `test/security-calendar-trust.test.ts` |
+| `test/security-content-taint.test.ts` |
+| `test/security-email-trust.test.ts` |
+| `test/security-http-auth.test.ts` |
+| `test/security-link-validation.test.ts` |
+| `test/security-outward-effect-wiring.test.ts` |
+| `test/security-owner-exemption.test.ts` |
+| `test/security-path-traversal.test.ts` |
+| `test/self-update-policy.test.ts` |
+| `test/self-update-transaction.test.ts` |
+| `test/service-manager-systemd-serialization.test.ts` |
+| `test/service-manager.test.ts` |
+| `test/session-broker-channel-rollover.test.ts` |
+| `test/session-broker-delegated.test.ts` |
+| `test/session-broker-state-migration.test.ts` |
+| `test/session-broker.test.ts` |
+| `test/session-concurrent-matrix.test.ts` |
+| `test/session-context-usage-http.test.ts` |
+| `test/session-cookie-auth-roundtrip.test.ts` |
+| `test/session-cost-budget-breach.test.ts` |
+| `test/session-followup-closed-guard-routes.test.ts` |
+| `test/session-followup-receipts-http.test.ts` |
+| `test/session-followup-submit-closed-guard.test.ts` |
+| `test/session-history-inversion-guard.test.ts` |
+| `test/session-idle-reaper-honesty.test.ts` |
+| `test/session-lifecycle-events.test.ts` |
+| `test/session-lineage-original-task.test.ts` |
+| `test/session-liveness-marker-reap.test.ts` |
+| `test/session-liveness-marker.test.ts` |
+| `test/session-maintenance-context.test.ts` |
+| `test/session-manager-list-and-search.test.ts` |
+| `test/session-migration.test.ts` |
+| `test/session-modes.test.ts` |
+| `test/session-persistence-surface.test.ts` |
+| `test/session-reaper-hosted-turn-liveness.test.ts` |
+| `test/session-recovery-per-session.test.ts` |
+| `test/session-recovery-supersession.test.ts` |
+| `test/session-return-context-migration.test.ts` |
+| `test/session-runtime-verbs.test.ts` |
+| `test/session-schema-version.test.ts` |
+| `test/session-spine-client.test.ts` |
+| `test/session-spine-daemon-integration.test.ts` |
+| `test/session-spine-identity.test.ts` |
+| `test/session-spine-legacy-fold-marker.test.ts` |
+| `test/session-spine-rest-transport.test.ts` |
+| `test/session-steer-closed-guard.test.ts` |
+| `test/session-steer-surface-routing.test.ts` |
+| `test/session-store-importer.test.ts` |
+| `test/session-surface.test.ts` |
+| `test/session-union-cache-daemon-integration.test.ts` |
+| `test/session-union-cache.test.ts` |
+| `test/session-update-scope-enforcement.test.ts` |
+| `test/session-wire-open-kind-enum.test.ts` |
+| `test/settings-bundle-risk.test.ts` |
+| `test/settings-current-auth-owner.test.ts` |
+| `test/settings-import-native-loopback.test.ts` |
+| `test/settings-import-precondition-client.test.ts` |
+| `test/settings-migration-legacy-toggles.test.ts` |
+| `test/settings-precondition-compound-loopback.test.ts` |
+| `test/settings-precondition-protocol.test.ts` |
+| `test/settings-precondition-serving-owners.test.ts` |
+| `test/settings-precondition-wire-compatibility.test.ts` |
+| `test/shared-reading-authority.test.ts` |
+| `test/skills-gateway-verbs.test.ts` |
+| `test/skills-service.test.ts` |
+| `test/slack-surface-credentials.test.ts` |
+| `test/smoke.test.ts` |
+| `test/source-screening-owner.test.ts` |
+| `test/source-screening-reference.test.ts` |
+| `test/source-screening-transport.test.ts` |
+| `test/source-spans.test.ts` |
+| `test/spawn-policy-bound-cap.test.ts` |
+| `test/sqlite-local-observation.test.ts` |
+| `test/sqlite-owned-observation.test.ts` |
+| `test/sqlite-publication-durability.test.ts` |
+| `test/sqlite-vec-resolver.test.ts` |
+| `test/sse-connector-resumes-across-streams.test.ts` |
+| `test/sse-heartbeat-idle-timeout.test.ts` |
+| `test/sse-lifecycle.test.ts` |
+| `test/sse-replay-poisons-next-turn.test.ts` |
+| `test/ssrf-filter.test.ts` |
+| `test/stable-host.test.ts` |
+| `test/stale-daemon-record-and-voice-setup.test.ts` |
+| `test/stale-server-kind-gate.test.ts` |
+| `test/stale-sweep-revalidation.test.ts` |
+| `test/state-json-file-store.test.ts` |
+| `test/state-knowledge-injection.test.ts` |
+| `test/state-memory-embeddings.test.ts` |
+| `test/state-memory-ingest.test.ts` |
+| `test/state-persistence.test.ts` |
+| `test/state-tool-memory-promotes-to-memory-store.test.ts` |
+| `test/state-tool-workspace-keys.test.ts` |
+| `test/static-source-anchors.test.ts` |
+| `test/static-source-capture-paths.test.ts` |
+| `test/static-source-current-projection.test.ts` |
+| `test/static-source-markdown-context.test.ts` |
+| `test/static-source-readings.test.ts` |
+| `test/static-source-structured-context.test.ts` |
+| `test/static-source-weak-anchor.test.ts` |
+| `test/store-data-safety.test.ts` |
+| `test/store-write-ordering-extras.test.ts` |
+| `test/store-write-ordering-registries.test.ts` |
+| `test/store-write-ordering.test.ts` |
+| `test/stream-status-label-stability.test.ts` |
+| `test/structured-credential-config.test.ts` |
+| `test/subpath-api-surface-gate.test.ts` |
+| `test/subpath-declared.test.ts` |
+| `test/subpath-export-coverage.test.ts` |
+| `test/subscriptions-shared-tier.test.ts` |
+| `test/surface-card-gate.test.ts` |
+| `test/surface-layout.test.ts` |
+| `test/surface-notice-delivery.test.ts` |
+| `test/surface-reply-duplicate-append.test.ts` |
+| `test/tailscale-auto-wire.test.ts` |
+| `test/task-tool-session-binding.test.ts` |
+| `test/telegram-bot-identity.test.ts` |
+| `test/telegram-conflict-policy.test.ts` |
+| `test/telegram-ingress-closed-session-recovery.test.ts` |
+| `test/telegram-ingress.test.ts` |
+| `test/telegram-source-account.test.ts` |
+| `test/telemetry-event-severity.test.ts` |
+| `test/telemetry-exporters.test.ts` |
+| `test/telemetry-label-allowlist.test.ts` |
+| `test/telemetry-raw-opt-in.test.ts` |
+| `test/temp-cleanup.test.ts` |
+| `test/templates-manager.test.ts` |
+| `test/term-caps.test.ts` |
+| `test/terminal-output-guard-counter.test.ts` |
+| `test/terminal-output-guard-double-install.test.ts` |
+| `test/terminal-output-guard-notify.test.ts` |
+| `test/terminal-output-guard.test.ts` |
+| `test/terminal-shell-bottom-bar.test.ts` |
+| `test/terminal-shell-conformance.test.ts` |
+| `test/terminal-shell-text-selection-copy.test.ts` |
+| `test/test-discovery.test.ts` |
+| `test/test-helper-teardown-guard.test.ts` |
+| `test/test-isolation.test.ts` |
+| `test/test-network-proxy.test.ts` |
+| `test/test-partitions.test.ts` |
+| `test/test-runner-ceilings.test.ts` |
+| `test/test-runner-output.test.ts` |
+| `test/test-tmp-containment.test.ts` |
+| `test/text-layout.test.ts` |
+| `test/tool-call-cancel-and-queued-messages.test.ts` |
+| `test/tool-cancellation-signal.test.ts` |
+| `test/tool-contract-verifier.test.ts` |
+| `test/tool-definition-retention.test.ts` |
+| `test/tool-denial-structured.test.ts` |
+| `test/tool-effect-authority.test.ts` |
+| `test/tool-format-telemetry.test.ts` |
+| `test/tool-input-ingress.test.ts` |
+| `test/tool-input-projection.test.ts` |
+| `test/tool-invocation-sync-authority.test.ts` |
+| `test/tool-nested-admission.test.ts` |
+| `test/tool-nested-settings-plan.test.ts` |
+| `test/tool-registry-freshness.test.ts` |
+| `test/tool-result-summary.test.ts` |
+| `test/tool-schema-wire-compat.test.ts` |
+| `test/tool-side-effect-observability.test.ts` |
+| `test/tools-auto-repair-cancellation.test.ts` |
+| `test/tools-auto-repair.test.ts` |
+| `test/tools-channel-agent-tools.test.ts` |
+| `test/tools-channel-tool.test.ts` |
+| `test/tools-edit-notebook.test.ts` |
+| `test/tools-edit.test.ts` |
+| `test/tools-find-ranked.test.ts` |
+| `test/tools-registry.test.ts` |
+| `test/tools-shared-auto-heal.test.ts` |
+| `test/traceparent-propagation.test.ts` |
+| `test/transcript-approval-reading.test.ts` |
+| `test/transcript-journal-reap.test.ts` |
+| `test/transcript-journal-replay.test.ts` |
+| `test/transcript-journal.test.ts` |
+| `test/transport-direct.test.ts` |
+| `test/transport-failure-classification.test.ts` |
+| `test/transport-http-json-schema-constraints.test.ts` |
+| `test/transport-http.test.ts` |
+| `test/transport-middleware.test.ts` |
+| `test/transport-observer.test.ts` |
+| `test/transport-parity.test.ts` |
+| `test/transport-realtime.test.ts` |
+| `test/tree-glyph-setting.test.ts` |
+| `test/trigger-condition-manager.test.ts` |
+| `test/trigger-dsl-rules.test.ts` |
+| `test/trigger-on-exit-lifecycle.test.ts` |
+| `test/trigger-supervision-store.test.ts` |
+| `test/tts-speed-config.test.ts` |
+| `test/turn-budget.test.ts` |
+| `test/turn-cancellation.test.ts` |
+| `test/turn-code-canonical-relevance.test.ts` |
+| `test/turn-knowledge-injection-code.test.ts` |
+| `test/turn-knowledge-injection.test.ts` |
+| `test/turn-memory-provenance.test.ts` |
+| `test/typecheck-gate.test.ts` |
+| `test/types-resolution-check.test.ts` |
+| `test/upstream-source-snapshot.test.ts` |
+| `test/user-auth-file-perms.test.ts` |
+| `test/utils-glob-to-regex.test.ts` |
+| `test/utils-markdown-disclosure.test.ts` |
+| `test/utils-notify.test.ts` |
+| `test/utils-path-safety.test.ts` |
+| `test/utils-url-safety.test.ts` |
+| `test/ux-enhancements.test.ts` |
+| `test/version-consistency.test.ts` |
+| `test/version-sync.test.ts` |
+| `test/vibe-projection.test.ts` |
+| `test/voice-audio-sink-contract.test.ts` |
+| `test/voice-capture.test.ts` |
+| `test/voice-default-provider-selection.test.ts` |
+| `test/voice-download-and-breaker.test.ts` |
+| `test/voice-local-engines.test.ts` |
+| `test/voice-local-failure-semantics.test.ts` |
+| `test/voice-noise-suppression.test.ts` |
+| `test/voice-provider-registry.test.ts` |
+| `test/voice-provisioning.test.ts` |
+| `test/voice-recorder-browser-entrypoint.test.ts` |
+| `test/voice-recorder-failure-semantics.test.ts` |
+| `test/voice-round-trip-semantics.test.ts` |
+| `test/voice-sdk-speech-seams.test.ts` |
+| `test/voice-setup-progress.test.ts` |
+| `test/voice-setup-verb.test.ts` |
+| `test/voice-spoken-turn-controller.test.ts` |
+| `test/voice-stt-realtime-smoke.test.ts` |
+| `test/voice-tts-stream.test.ts` |
+| `test/voice-tts-text-chunker.test.ts` |
+| `test/voice-vad-gate.test.ts` |
+| `test/waiting-on-human-classification.test.ts` |
+| `test/wake-input-device-hint.test.ts` |
+| `test/wake-race-sweep-runner.test.ts` |
+| `test/wake-runtime-browser-entrypoint.test.ts` |
+| `test/wake-word-config-and-supervisor.test.ts` |
+| `test/wake-word-detection.test.ts` |
+| `test/wake-word-front-end-parity.test.ts` |
+| `test/wake-word-listener.test.ts` |
+| `test/wake-word-provisioning.test.ts` |
+| `test/walk-directory-admission.test.ts` |
+| `test/walk-directory-gate.test.ts` |
+| `test/watcher-failure-retryable.test.ts` |
+| `test/watcher-persist-containment.test.ts` |
+| `test/watcher-recovery-window.test.ts` |
+| `test/watcher-store.test.ts` |
+| `test/web-push-daemon-wire.test.ts` |
+| `test/web-push-vapid-chain.test.ts` |
+| `test/web-search-providers-smoke.test.ts` |
+| `test/webhook-default-target-secret.test.ts` |
+| `test/webhook-lifecycle.test.ts` |
+| `test/webhook-notify-guard.test.ts` |
+| `test/webui-browser-adapters.test.ts` |
+| `test/webui-browser-catalogs.test.ts` |
+| `test/webui-cross-origin-serving-daemon-wire.test.ts` |
+| `test/webui-facade-verb-union.test.ts` |
+| `test/webui-judgment-batteries.test.ts` |
+| `test/webui-provider-credential-catalog.test.ts` |
+| `test/work-ledger-directory-ancestry.test.ts` |
+| `test/work-ledger-import-transport.test.ts` |
+| `test/work-ledger-import.test.ts` |
+| `test/work-ledger-native-execution-client.test.ts` |
+| `test/work-ledger-native-execution.test.ts` |
+| `test/work-ledger-native-import.test.ts` |
+| `test/work-ledger-native-intake-client.test.ts` |
+| `test/work-ledger-native-intake-routes.test.ts` |
+| `test/work-ledger-native-intake-storage.test.ts` |
+| `test/work-ledger-native-intent-storage.test.ts` |
+| `test/work-ledger-native-settlement-storage.test.ts` |
+| `test/work-ledger-native-settlement.test.ts` |
+| `test/work-ledger-native-submission-client.test.ts` |
+| `test/work-ledger-native-submission-storage.test.ts` |
+| `test/work-ledger-operator-package-consumer.test.ts` |
+| `test/work-ledger-package-consumer.test.ts` |
+| `test/work-ledger-read-client.test.ts` |
+| `test/work-ledger-read-transport.test.ts` |
+| `test/work-ledger-sqlite-process.test.ts` |
+| `test/work-ledger-sqlite.test.ts` |
+| `test/work-ledger.test.ts` |
+| `test/work-plan-store.test.ts` |
+| `test/work-proposal-lifetime.test.ts` |
+| `test/work-proposal-reply.test.ts` |
+| `test/work-proposal-store.test.ts` |
+| `test/workflow-schedule-env-scrub.test.ts` |
+| `test/workflow-shape.test.ts` |
+| `test/workflow-structure.test.ts` |
+| `test/workspace-checkpoint-drain.test.ts` |
+| `test/workspace-checkpoint-events.test.ts` |
+| `test/workspace-checkpoint-manager.test.ts` |
+| `test/workspace-checkpoint-manifest-recovery.test.ts` |
+| `test/workspace-checkpoint-retention.test.ts` |
+| `test/workspace-checkpoint-root-guard.test.ts` |
+| `test/workspace-checkpoint-topgitignore.test.ts` |
+| `test/workspace-lock-lifecycle.test.ts` |
+| `test/workspace-registration-manager.test.ts` |
+| `test/workspace-registration-native-durability.test.ts` |
+| `test/workspace-registration-native-scope.test.ts` |
+| `test/workspace-registration.test.ts` |
+| `test/workspace-swap-failed.test.ts` |
+| `test/workspace-swap-http.test.ts` |
+| `test/workspace-swap-reroot.test.ts` |
+| `test/workspace-trust-approval.test.ts` |
+| `test/workspace-trust-autonomous.test.ts` |
+| `test/workspace-trust-disposition.test.ts` |
+| `test/workspace-trust.test.ts` |
+| `test/workstream-draft-edits.test.ts` |
+| `test/workstream-draft-store.test.ts` |
+| `test/workstream-planner-inputs.test.ts` |
+| `test/workstream-services.test.ts` |
+| `test/worktree-setup-derivation.test.ts` |
+| `test/worktree-setup.test.ts` |
+| `test/write-atomic-auto-heal-failure.test.ts` |
+| `test/write-atomic-failure.test.ts` |
+| `test/ws-call-context-retention.test.ts` |
+| `test/zod-validation.test.ts` |
 
 
 ## Integration tests (`test/integration/**/*.test.ts`)
 
-| # | File |
-|---|------|
-| I001 | `test/integration/any-runtime-event-property.test.ts` |
-| I002 | `test/integration/auth-flow-e2e.test.ts` |
+| File |
+|------|
+| `test/integration/any-runtime-event-property.test.ts` |
+| `test/integration/auth-flow-e2e.test.ts` |
 
 
 ## Sub-runner tests (`test/workers*/**/*.test.ts`)
 
-| # | File |
-|---|------|
-| W001 | `test/workers-wrangler/wrangler.test.ts` |
-| W002 | `test/workers/workers.test.ts` |
+| File |
+|------|
+| `test/workers-wrangler/wrangler.test.ts` |
+| `test/workers/workers.test.ts` |
 

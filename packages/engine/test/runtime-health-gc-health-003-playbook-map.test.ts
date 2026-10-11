@@ -1,5 +1,5 @@
 /**
- * GC-HEALTH-003: Playbook mapping completeness tests.
+ * Playbook mapping completeness tests.
  *
  * Verifies that:
  * - Every cascade rule in CASCADE_RULES has at least one entry in CASCADE_PLAYBOOK_MAP

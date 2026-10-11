@@ -3,11 +3,16 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
+import { installJudgmentPort, restoreJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import { authorizeContractInputPath, createContractInputAuthority, revokeContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
 import { captureContractInput, contractInputPath, materializeContractInput } from '../sdk/src/platform/contract/input-snapshot.js';
 import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { executeCapturedFileOperations } from '../sdk/src/platform/tools/exec/captured-exec-file-ops.js';
 import type { ExecFileOp } from '../sdk/src/platform/tools/exec/schema.js';
+import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.js';
+import { residualCredential } from '../sdk/src/platform/utils/batteries/redaction.js';
+import { captureRedactionSource } from '../sdk/src/platform/utils/redaction.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -67,31 +72,79 @@ test('recursive copies authorize generated descendants and delete previews retai
 
 test('overwrite rules, missing-file warnings and operation errors preserve existing semantics', async () => {
   const f = fixture({ 'input.txt': 'SYNTHETIC_INPUT', 'copy.txt': 'SYNTHETIC_OLD' });
-  const blocked = await executeCapturedFileOperations(f.root, f.projection, [
-    { op: 'copy', source: 'input.txt', destination: 'copy.txt' },
-  ], f.authorize);
-  expect(blocked.fileOpError).toBe('file_ops failed: [REDACTED]');
-  expect(blocked.fileOpResults).toEqual([]);
-  expect(blocked.fileOpWarnings).toBeUndefined();
-  expect(blocked.fileOpError).not.toContain(f.projection);
-  expect(readFileSync(join(f.projection, 'input.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
-  expect(readFileSync(join(f.projection, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
-  expect(readFileSync(join(f.root, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
-  const result = await executeCapturedFileOperations(f.root, f.projection, [
-    { op: 'copy', source: 'input.txt', destination: 'copy.txt', overwrite: true },
-    { op: 'delete', source: 'missing.txt', dry_run: true },
-  ], f.authorize);
-  expect(result.fileOpError).toBeUndefined();
-  expect(readFileSync(join(f.projection, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
-  expect(result.fileOpResults[1]?.would_delete).toEqual([join(f.root, 'missing.txt')]);
-  expect(result.fileOpWarnings).toEqual([
-    `Could not inspect '${join(f.root, 'missing.txt')}' while collecting delete preview: [REDACTED]`,
-  ]);
-  expect(result.fileOpResults[1]?.warnings).toEqual(result.fileOpWarnings);
-  expect(existsSync(join(f.projection, 'missing.txt'))).toBe(false);
-  expect(existsSync(join(f.root, 'missing.txt'))).toBe(false);
-  expect(JSON.stringify(result)).not.toContain(f.projection);
-  expect(readFileSync(join(f.root, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
+  let privacySource: ReturnType<typeof captureRedactionSource> | undefined;
+  try { privacySource = captureRedactionSource(); }
+  catch { /* An unavailable native profile source closes the entire diagnostic. */ }
+  const fields: ('copy' | 'exists' | 'overwrite')[] = [];
+  let unexpectedFieldReading = false, capturedOverwriteResidual = false;
+  const withheldPrivacy: JudgmentPort = {
+    model: 'jev-1.13.0',
+    async ask(request) {
+      if (request.context?.battery === fieldKind.name) {
+        const state = request.state;
+        const field = state !== null && typeof state === 'object' && !Array.isArray(state) && 'field' in state
+          ? state.field : undefined;
+        if ((field === 'copy' || field === 'exists' || field === 'overwrite')
+          && JSON.stringify(state) === JSON.stringify({ field })
+          && JSON.stringify(request.questions) === JSON.stringify({ kind: fieldKind.items.kind.question })) fields.push(field);
+        else unexpectedFieldReading = true;
+      }
+      if (request.context?.battery === residualCredential.name) {
+        capturedOverwriteResidual ||= JSON.stringify(request.state) === JSON.stringify({ parts: [
+          { kind: 'text', text: 'file_ops copy: ' }, { kind: 'withheld', reference: 'span-1' },
+          { kind: 'text', text: ' exists: ' }, { kind: 'withheld', reference: 'span-2' },
+          { kind: 'text', text: '. Set overwrite: ' }, { kind: 'withheld', reference: 'span-3' },
+          { kind: 'text', text: '' },
+        ] }) && JSON.stringify(request.questions) === JSON.stringify({ credentialRemains: residualCredential.items.credentialRemains.question });
+      }
+      throw new Error('Captured file-operation privacy reading is unavailable');
+    },
+  };
+  const previousPort = installJudgmentPort(withheldPrivacy);
+  try {
+    const blocked = await executeCapturedFileOperations(f.root, f.projection, [
+      { op: 'copy', source: 'input.txt', destination: 'copy.txt' },
+    ], f.authorize);
+    // Drain the original diagnostic's finite, rejected background readings.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (privacySource) {
+      privacySource.assertCurrent();
+      expect(fields).toEqual(['copy', 'exists', 'overwrite']);
+      expect(capturedOverwriteResidual).toBe(true);
+      expect(blocked.fileOpError).toBe('file_ops failed: [REDACTED] [REDACTED] [REDACTED]');
+    } else {
+      expect(fields).toEqual([]);
+      expect(capturedOverwriteResidual).toBe(false);
+      expect(blocked.fileOpError).toBe('file_ops failed: [REDACTED]');
+    }
+    expect(unexpectedFieldReading).toBe(false);
+    expect(f.authorized).toEqual([join(f.root, 'input.txt'), join(f.root, 'copy.txt'), join(f.root, 'copy.txt')]);
+    expect(blocked.fileOpResults).toEqual([]);
+    expect(blocked.fileOpWarnings).toBeUndefined();
+    expect(blocked.fileOpError).not.toContain(f.projection);
+    expect(blocked.fileOpError).not.toContain(f.root);
+    expect(blocked.fileOpError).not.toContain('copy.txt');
+    expect(readFileSync(join(f.projection, 'input.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
+    expect(readFileSync(join(f.projection, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
+    expect(readFileSync(join(f.root, 'input.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
+    expect(readFileSync(join(f.root, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
+    const result = await executeCapturedFileOperations(f.root, f.projection, [
+      { op: 'copy', source: 'input.txt', destination: 'copy.txt', overwrite: true },
+      { op: 'delete', source: 'missing.txt', dry_run: true },
+    ], f.authorize);
+    expect(result.fileOpError).toBeUndefined();
+    expect(readFileSync(join(f.projection, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
+    expect(result.fileOpResults[1]?.would_delete).toEqual([join(f.root, 'missing.txt')]);
+    expect(result.fileOpWarnings).toEqual([
+      `Could not inspect '${join(f.root, 'missing.txt')}' while collecting delete preview: [REDACTED]`,
+    ]);
+    expect(result.fileOpResults[1]?.warnings).toEqual(result.fileOpWarnings);
+    expect(existsSync(join(f.projection, 'missing.txt'))).toBe(false);
+    expect(existsSync(join(f.root, 'missing.txt'))).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(f.projection);
+    expect(readFileSync(join(f.root, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
+    privacySource?.assertCurrent();
+  } finally { restoreJudgmentPort(withheldPrivacy, previousPort); }
 });
 
 test('move import rewrites run after all operations and return captured paths', async () => {

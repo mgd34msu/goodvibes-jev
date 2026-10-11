@@ -46,7 +46,7 @@ export interface PhaseClaim {
 }
 
 /**
- * Whether an item's inter-item dependencies (BIG-3 item 2) are all satisfied,
+ * Whether an item's inter-item dependencies are all satisfied,
  * and, when not, WHY, split into dependencies still in flight vs. ones that
  * have terminally failed. Pure (no side effects): the engine's per-tick
  * dependency pre-pass (applyDependencyGates, engine.ts) calls this and applies

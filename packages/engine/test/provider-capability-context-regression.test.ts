@@ -3,13 +3,13 @@
  *
  * Regression guards for two provider-resolution defects:
  *
- * S01, getContextWindowForModel must NOT widen (or narrow) a model whose
+ * getContextWindowForModel must NOT widen (or narrow) a model whose
  *       contextWindowProvenance === 'configured_cap', even when a fuzzy
  *       OpenRouter id (e.g. 'meta-llama/llama-3.1-8b-instruct' for a local
  *       'llama-3.1-8b-instruct') would otherwise match a larger window. The
  *       explicit user cap is authoritative.
  *
- * S05, ProviderCapabilityRegistry.getCapability must fold a provider
+ * ProviderCapabilityRegistry.getCapability must fold a provider
  *       instance's self-declared capabilities into the cache key, so a call
  *       WITHOUT an instance cannot poison the entry a later call WITH a
  *       self-declaring instance reads back (and vice versa).
@@ -146,7 +146,7 @@ describe('S01: getContextWindowForModel honors configured_cap over an OpenRouter
 // S05: self-declared capabilities participate in the cache key
 // ---------------------------------------------------------------------------
 
-describe('S05: getCapability cache is not poisoned across provider-instance presence', () => {
+describe('getCapability cache is not poisoned across provider-instance presence', () => {
   // Discovered/custom provider id with no PROVIDER_DEFAULTS entry, so the
   // resolved record depends entirely on GLOBAL_DEFAULTS + self-declared caps.
   const providerId = 'lmstudio-discovered';

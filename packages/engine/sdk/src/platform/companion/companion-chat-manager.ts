@@ -248,7 +248,7 @@ export class CompanionChatManager {
   private readonly idleEmptyMs: number;
   private readonly closedMemoryGraceMs: number;
   private readonly closedRetentionMs: number | undefined;
-  /** Live mirror of sessions into the shared broker store (S1 item D). */
+  /** Live mirror of sessions into the shared broker store. */
   private readonly _brokerSync: CompanionBrokerSync;
   private gcTimer: ReturnType<typeof setInterval> | null = null;
   /** Tracks whether the async init() has completed. */
@@ -1128,7 +1128,7 @@ export class CompanionChatManager {
   }
 
   // ---------------------------------------------------------------------------
-  // Live shared-broker registration (S1 item D), see companion-chat-broker-sync.ts
+  // Live shared-broker registration, see companion-chat-broker-sync.ts
   // ---------------------------------------------------------------------------
 
   /**

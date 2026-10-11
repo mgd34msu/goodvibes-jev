@@ -461,7 +461,7 @@ describe('SmtpClient protocol', () => {
     ).rejects.toThrow('SMTP AUTH');
   });
 
-  test('non-empty body passes through to DATA phase (CRIT-2 regression guard)', async () => {
+  test('non-empty body passes through to DATA phase (regression guard)', async () => {
     const collectedData: string[] = [];
     fakeServer = await makeFakeSmtpServer((sock) => happyPathScript(sock, collectedData));
 

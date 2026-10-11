@@ -1,5 +1,5 @@
 /**
- * voice-setup-verb.test.ts (item 8b)
+ * voice-setup-verb.test.ts
  *
  * The managed local-voice provisioning verbs are wired: voice.local.status and
  * voice.local.install are in the live catalog with REST bindings that reconcile
@@ -78,7 +78,7 @@ describe('voice.local provisioning verbs are wired', () => {
   });
 });
 
-describe('install single-flight + admission (fix-round 2)', () => {
+describe('install single-flight + admission', () => {
   test('concurrent install calls collapse into ONE run; callers share the result; next call starts fresh', async () => {
     const { singleFlight } = await import('../sdk/src/platform/utils/single-flight.ts');
     let runs = 0;

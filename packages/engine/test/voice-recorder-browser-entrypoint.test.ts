@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-// B20 must stay loadable in a browser, even though Node hosts supply its spawn.
+// The recorder must stay loadable in a browser, even though Node hosts supply its spawn.
 // This verifies retained code and transitive imports, not just a source regex.
 describe('browser-safe recorder semantic capture', () => {
   test('bundles the actual source opener without Node admission or full judgment transport', async () => {

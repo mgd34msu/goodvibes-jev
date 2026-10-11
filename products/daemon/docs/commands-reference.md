@@ -95,7 +95,7 @@ exits 1, rather than reporting a successful drain.
 Overrides apply in this order: repeated `--config` values, feature toggles,
 provider/model flags, then endpoint flags. Explicit `--provider` wins over the
 provider inferred from either `provider:model` or `provider/model`, regardless of argv order.
-These overlays are not persisted. See [configuration](configuration.md#runtime-overrides).
+These overlays are not persisted. See [CLI dispatch and overrides](cli-and-package-contracts.md#command-grammar-and-dispatch).
 
 ### `install-service`
 
@@ -224,7 +224,7 @@ goodvibes-daemon sessions list|kill <id> [--json] [--all] [--host <name>] [--por
 
 `--all` includes sessions that have already ended; they are kept, with the reason they
 ended, until the retention window retires them. These are the daemon's own hosted
-sessions (see [hosted-sessions.md](hosted-sessions.md)), not sessions a terminal runs
+sessions (see [hosted session commands](cli-and-package-contracts.md#status-sessions-and-config)), not sessions a terminal runs
 locally on this machine. `kill` with no id is a usage refusal (exit 2), never "kill
 everything."
 
@@ -246,7 +246,8 @@ works whether or not a daemon is running. A running daemon picks up most changes
 the write receipt gives a general restart warning for bind-time settings. It does not enumerate per-key reload behavior or the destination tier. Anything that reads like a
 credential (a token, a password, an API key) prints as `<redacted>` in every read
 path; `config set` still writes the real value, only the *output* is cleaned. See
-[configuration.md](configuration.md) for the settings themselves.
+[config output and sensitivity](cli-and-package-contracts.md#recursive-config-output)
+for recursive rendering and reader-failure behavior.
 
 ### `update`
 
@@ -271,8 +272,8 @@ Send a message through any configured channel. The message is an argument or
 stdin, so it composes with other tooling. The thirteen supported IDs come from the product surface catalog and canonical
 channel delivery router. Listing is configuration inspection, not credential or provider verification. Each row below names the id `--channel` takes, what `--to`
 means in that channel's own vocabulary, and what has to be configured before the
-channel is usable; the exact settings keys are tabled in
-[configuration.md](configuration.md#channels-surfaces).
+channel is usable. See [standalone send](cli-and-package-contracts.md#standalone-send)
+for channel selection and credential ownership.
 
 | `--channel` | Channel | `--to` names | Needs configured |
 | --- | --- | --- | --- |

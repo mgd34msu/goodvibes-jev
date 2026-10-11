@@ -15,8 +15,8 @@ import {
   type NativeWorkSubmissionReceipt,
 } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission-client';
 import { createOperatorRemoteClient, type OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
+import { getOperatorContract } from '@goodvibes-jev/engine/contracts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
-import { buildOperatorContract } from '../sdk/src/platform/control-plane/operator-contract.js';
 import { createHttpTransport, firstJsonSchemaFailure } from '../transport-http/src/index.js';
 
 const projectId = 'native-submission-project';
@@ -130,7 +130,15 @@ describe('native submission operator client', () => {
         const request = new Request(url, init); requests.push(request);
         return Response.json(new URL(request.url).pathname.endsWith('/get') ? { kind: 'found', receipt: receipt() } : submitted());
       } });
-    const remote = createOperatorRemoteClient(transport, buildOperatorContract(new GatewayMethodCatalog()));
+    const contract = getOperatorContract();
+    const catalog = new GatewayMethodCatalog();
+    for (const methodId of ['workLedger.submit', 'workLedger.submission.get']) {
+      const published = contract.operator.methods.find(method => method.id === methodId)!;
+      const native = catalog.get(methodId)!;
+      expect(published.inputSchema).toEqual(await Response.json(native.inputSchema).json());
+      expect(published.outputSchema).toEqual(await Response.json(native.outputSchema).json());
+    }
+    const remote = createOperatorRemoteClient(transport, contract);
     const client = createOperatorNativeWorkSubmissionClient(remote, projectId);
     expect(await client.submit(input())).toEqual(submitted());
     expect(await client.get({ requestId: 'request-1' })).toEqual({ kind: 'found', receipt: receipt() });

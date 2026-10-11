@@ -31,3 +31,9 @@ e054c80100249341c6eebc02d21ff64ebc94abc3:docs/audit/sdk-nullable-context-windows
 # Redaction fixture with literal synthetic material, not a decodable DER key.
 # Only the published pre-comment finding is ignored; future values remain scanned.
 64c9d6d565e2e16641970310d8ca90caaa0008c0:products/agent/src/test/cli/redaction-credential-names.test.ts:private-key:159
+
+# Synthetic issuer-redaction fixture: token prefix plus a repeated decimal
+# sequence, used only in a synthetic ProviderError. The current fixture assembles
+# it at runtime; ignore only these exact pre-repair historical findings.
+fa73eda00b5b147d48a569d4535b5571a3c4b0d9:packages/engine/test/error-display-readings.test.ts:github-pat:262
+fa73eda00b5b147d48a569d4535b5571a3c4b0d9:packages/engine/test/error-display-readings.test.ts:generic-api-key:262

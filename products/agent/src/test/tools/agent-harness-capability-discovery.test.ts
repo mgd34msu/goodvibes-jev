@@ -62,10 +62,16 @@ async function settingsPage(query: string, extra: Record<string, unknown> = {}):
       { query, ...extra } as never,
       rankingOptions(),
     ) as unknown as SettingsPage;
-    // The complete real catalog must reach the reader, including rejected rows.
-    expect(fake.requests).toHaveLength(CONFIG_SCHEMA.length);
-    expect(fake.requests.every(request => request.context?.battery === 'engine.tools.registry-rank')).toBe(true);
-    expect(new Set(fake.requests.map(request => (request.state as unknown as { candidate: { name: string } }).candidate.name)))
+    // The shared port may also receive other readers' requests. Count this
+    // settings reader's complete catalog, including rejected rows.
+    const catalogRequests = fake.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank'
+      && request.context.site === 'agent.harness.settings');
+    expect(catalogRequests).toHaveLength(CONFIG_SCHEMA.length);
+    expect(catalogRequests.every(request => {
+      const state = request.state;
+      return typeof state === 'object' && state !== null && 'query' in state && state.query === query;
+    })).toBe(true);
+    expect(new Set(catalogRequests.map(request => (request.state as unknown as { candidate: { name: string } }).candidate.name)))
       .toEqual(new Set(CONFIG_SCHEMA.map(setting => setting.key)));
     return page;
   } finally { installJudgmentPort(previous); }

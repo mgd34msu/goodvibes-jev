@@ -97,7 +97,7 @@ a port probe and an identity probe onto one of these outcomes, reported as
 - **`disabled`**: `daemon.enabled` (or the caller's own gate) is false.
 
 A caller that does not pass `adoptOnly: true` and finds the port free spawns
-the detached `goodvibes-daemon` binary (Owner ruling D7a: the daemon is a
+the detached `goodvibes-daemon` binary (the daemon is a
 system service, so a surface starting must not couple the daemon's lifetime to
 that surface's process) and then adopts it the same way as an already-running
 one, still reported as `external`.

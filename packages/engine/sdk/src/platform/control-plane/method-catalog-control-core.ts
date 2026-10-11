@@ -632,7 +632,7 @@ export const builtinGatewayControlCoreMethodDescriptors: readonly GatewayMethodD
   // client-core.ts's invokeContractRoute, which dispatches by literal
   // http.method/http.path) is NOT wired for these verbs by this brief,
   // that is curated, consumer-side work for whichever later stage first
-  // needs a typed wrapper (W1/W2/T2), not a requirement of landing the SDK
+  // needs a typed wrapper, not a requirement of landing the SDK
   // contract itself.
   methodDescriptor({
     id: 'sessions.search',

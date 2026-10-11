@@ -1,5 +1,5 @@
 /**
- * BIG-3 item 5 (+ items 2/3 in worktree mode), configured quality gates run
+ * Configured quality gates run
  * INSIDE the item's worktree in worktree-isolation mode, and the dependency
  * flow composes with per-item worktrees + the sequential integration lane.
  *

@@ -243,6 +243,40 @@ describe('the other API', () => {
 });
 
 describe('local server identity', () => {
+  test('an aborted scan lifetime refuses before asking for server identity', async () => {
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'vllm', 0.95));
+    installJudgmentPort(fixture.port);
+    const controller = new AbortController(); controller.abort();
+    await expect(readLocalServerIdentity({ port: 8000, headers: {}, modelIds: ['fixture-model'] }, 'test',
+      { signal: controller.signal })).rejects.toThrow('no longer current');
+    expect(fixture.requests).toHaveLength(0);
+  });
+
+  test('an admitted identity reading is cancelled without recording its late answer', async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let records = 0, actions = 0;
+    const fixture = fakePort(async (_name, question) => {
+      entered.resolve(); await release.promise;
+      return choiceAnswer(question, 'vllm', 0.95);
+    });
+    installJudgmentPort({ ...fixture.port, recorder: {
+      recordReadings() { records++; }, recordAction() { actions++; },
+    } });
+    const controller = new AbortController();
+    const pending = readLocalServerIdentity({ port: 8000, headers: {}, modelIds: ['fixture-model'] }, 'test',
+      { signal: controller.signal });
+    void pending.catch(() => {});
+    try {
+      await entered.promise; controller.abort(); await expect(pending).rejects.toThrow('no longer current');
+      expect(fixture.requests).toHaveLength(1);
+      expect(fixture.requests[0]?.state).toEqual({ port: 8000, headers: {}, model_ids: ['fixture-model'] });
+      expect(records).toBe(0); expect(actions).toBe(0);
+    } finally { release.resolve(); await Promise.allSettled([pending]); }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(records).toBe(0); expect(actions).toBe(0);
+  });
+
   test('a weak reading is unknown', async () => {
     installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'vllm', 0.3)).port);
     expect(await readLocalServerIdentity({ port: 8000, headers: {}, modelIds: ['m'] }, 'test')).toBe('unknown');

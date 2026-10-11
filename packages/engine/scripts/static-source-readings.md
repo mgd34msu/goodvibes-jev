@@ -40,8 +40,8 @@ for approved public source or synthetic fixtures. Do not submit private source
 or credentials without their existing authorization.
 
 The canonical receipt uses deterministic, lossless gzip with an epoch timestamp.
-Decompress it to inspect the complete JSON, including raw answers and prior
-capture lineage. The reader validates the same complete schema and evidence;
+Decompress it to inspect the complete current evidence JSON, including original
+raw answers and capture manifests. The reader validates the same complete schema and evidence;
 invalid compressed data holds the gates. Custom paths ending in `.gz` use gzip;
 other custom paths keep plain JSON.
 
@@ -55,17 +55,28 @@ An unsettled group can be revised through smaller exact candidate subsets.
 Every subset retains the original context and every candidate remains covered.
 A subset that stays unsettled holds validation. This process has a finite
 candidate tree and never substitutes a token-based verdict.
-Reading plan version 2 gives an unsettled single candidate one new exact-identity
+Reading plan version 3 gives an unsettled single candidate one exact-identity
 selector request using the named weak-anchor choice and fit questions. Weak-anchor
 version 2 reads actual offered text and decoded literals in complete source
 context; generated ids and coordinates only locate the candidate. It retains the
-original presence answer. A settled `none` choice clears only when every offered
-candidate also has a settled no fit. A positive selection needs both a settled
-choice and a settled yes fit. Uncertain answers, confirmation outcomes and
-contradictions remain held. A settled yes presence cannot be cleared by a
+original presence answer. Complete settled no fits for every offered candidate
+clear weak presence even when routing confidence remains unsettled. A settled
+positive candidate identity contradicting those no fits remains held. A positive selection needs both a settled
+choice and a settled yes fit. Uncertain fits, unresolved positive selections and
+semantic contradictions remain held. A settled yes presence cannot be cleared by a
 contradictory negative selection. Each new selector capture binds its named
 battery and original source manifest; older captures cannot supply this new
 measurement. Once answered, a held selector is retained without resampling.
+Unchanged original plan-2 answers can be explicitly revalidated under plan 3;
+their original capture plan, question, time, identity and probabilities remain
+intact, with the current validation plan recorded separately.
+Source windows retain their complete original numbered lines. Markdown also
+retains actual preambles, ATX heading ancestry, table headers and fence boundaries.
+Parsed TypeScript and JavaScript structured-data declarations retain their complete
+binding or expression, attached comments, module preamble and imports when the
+window cuts that declaration. These are untrusted source evidence; a declaration's
+name or a claimed fixture role grants no exemption and makes no local decision.
+Already complete declarations keep the original context unchanged.
 Before dispatch, complete source windows must fit both actual canonical presence
 and selector budgets. An oversized group splits into smaller windows; a complete
 unit that cannot fit fails without clipping or submitting partial evidence.
@@ -78,9 +89,12 @@ Its original capture hash, time, identifier and raw answers remain intact; the
 artifact records the current validation hash separately. Changed comment units
 require new genuine calls. Original source manifests and prior captures retain
 the provenance of reused observations.
-The canonical receipt also retains prior observations whose complete input keys
-have changed. Gates use only the exact current input key and independently
-validate its source and policy; historical entries cannot authorize current code.
+The canonical receipt contains exact current input keys and their complete active
+subset trees. All referenced source manifests, original capture identities and raw
+answers remain intact, including held observations. The separate local checkpoint,
+journal and SQLite log retain prior observations and capture lineage losslessly.
+Gates use only the exact current input key and independently validate its source
+and policy; historical entries cannot authorize current code.
 
 Progress is saved separately. The canonical artifact is published atomically
 only if the source snapshot is still current. If source changes during a run,

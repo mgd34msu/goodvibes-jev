@@ -190,7 +190,7 @@ describe('WorkspaceCheckpointManager', () => {
     // Widen the window between the side index being reset to the target
     // tree and the working tree actually being checked out from it, exactly
     // the window a same-tick auto-snapshot create() could land its
-    // `git add -A` inside if operations weren't serialized (FINDING 1). We
+    // `git add -A` inside if operations weren't serialized. We
     // only patch this one manager instance's runner, not the class, and we
     // restore the real behavior first thing inside the wrapper, this is a
     // timing probe, not a stub.

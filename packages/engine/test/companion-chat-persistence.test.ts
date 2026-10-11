@@ -6,7 +6,7 @@
  *
  * P1: Sessions written during one manager lifetime load into a fresh instance.
  * P2: Messages (user + assistant) are restored in order.
- * P3: Closed sessions SURVIVE restart (closed-skip fix) and stay GC-eligible.
+ * Closed sessions SURVIVE restart (closed-skip fix) and stay GC-eligible.
  * P4: Session directory is created if it does not exist.
  */
 
@@ -157,7 +157,7 @@ describe('P2: messages restored in order after restart', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P3: Closed sessions SURVIVE restart (closed-skip data-loss fix, S1 spine) and
+// Closed sessions SURVIVE restart (closed-skip data-loss fix) and
 // are HISTORY. The old behavior dropped closed sessions on reload, the exact
 // "299 on-disk, serves 0" bug. They must now load (listable + importable). GC's
 // deletion authority is SPLIT: it may evict message BODIES from memory after a
@@ -364,7 +364,7 @@ describe('P5: persistence failures are observable', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P6: deleteSession never loses a race against closeSession's fire-and-forget
+// deleteSession never loses a race against closeSession's fire-and-forget
 // persist save (regression). closeSession schedules its save via
 // _persist() without awaiting it, so a caller that immediately follows close
 // with delete (the webui's normal close-then-delete sequence) can have that

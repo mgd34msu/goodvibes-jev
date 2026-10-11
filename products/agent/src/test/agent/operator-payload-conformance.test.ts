@@ -95,6 +95,7 @@ function assertOperatorBody<
 interface ContractInput {
   readonly properties: ReadonlySet<string>;
   readonly required: ReadonlySet<string>;
+  readonly admission: unknown;
 }
 
 /**
@@ -115,6 +116,7 @@ function contractInput(methodId: string): ContractInput {
   return {
     properties: new Set(Object.keys(schema.properties ?? {})),
     required: new Set(schema.required ?? []),
+    admission: schema.properties?.admission,
   };
 }
 
@@ -246,8 +248,11 @@ describe('operator payload conformance for the profile verbs', () => {
     // Read from the shipped contract rather than restated here, so this cannot
     // drift into agreeing with a lineIndex that came back.
     const schema = contractInput(PROFILE_METHOD_IDS.forget);
-    expect([...schema.properties].sort()).toEqual(['authority', 'fieldId', 'section', 'text']);
+    expect([...schema.properties].sort()).toEqual(['admission', 'authority', 'fieldId', 'section', 'text']);
     expect([...schema.required]).toEqual(['authority']);
+    // Native admission selects a fresh server decision. It adds no positional
+    // identity and remains optional for the existing human protocol.
+    expect(schema.admission).toEqual({ type: 'string', enum: ['autonomous'] });
   });
 
   test('the nine method ids this lane calls are the ids the contract declares', () => {

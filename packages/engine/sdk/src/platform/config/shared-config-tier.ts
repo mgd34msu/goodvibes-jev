@@ -5,7 +5,7 @@
  * every surface, terminal, desktop, and the agent, rather than living in a
  * per-surface silo (`~/.goodvibes/<surface>/settings.json`). Those keys read from
  * and write to one neutral on-disk store, `~/.goodvibes/shared/settings.json`
- * (the E7 shared-tier path; see docs/decisions/2026-07-06-config-sharing-shared-tier-and-secret-read.md
+ * (the shared-tier path; see docs/decisions/2026-07-06-config-sharing-shared-tier-and-secret-read.md
  * and docs/decisions/2026-07-06-shared-voice-config-tier.md).
  *
  * Resolution order for a shared key: defaults < global surface < project surface

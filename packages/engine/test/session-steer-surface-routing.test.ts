@@ -6,7 +6,7 @@ import { trackDisposables } from './_helpers/disposables.ts';
 
 const disposables = trackDisposables();
 
-// D3, STEER ROUTING TO SURFACE-BACKED SESSIONS. A steer/follow-up to a
+// STEER ROUTING TO SURFACE-BACKED SESSIONS. A steer/follow-up to a
 // surface-managed session with a live registered surface participant queues for
 // the surface (no daemon executor spawn); the surface collects and marks
 // delivery through the existing input lifecycle. A surfaceless session keeps the

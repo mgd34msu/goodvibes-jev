@@ -170,7 +170,7 @@ import type { PolicyRegistryConfig } from './policy-registry.js';
  * ```
  *
  * @param config    , Optional configuration; all fields have safe defaults.
- * @param provenance, Optional bundle provenance (GC-PERM-011).
+ * @param provenance, Optional bundle provenance.
  */
 export function createPermissionEvaluator(
   config: PermissionsConfig = {},

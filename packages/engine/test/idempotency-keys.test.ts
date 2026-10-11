@@ -259,7 +259,7 @@ describe('perMethodPolicy override', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MAJOR 1: perMethodPolicy end-to-end, methodId from contract, 3 attempts
+// perMethodPolicy end-to-end, methodId from contract, 3 attempts
 // ---------------------------------------------------------------------------
 
 describe('perMethodPolicy end-to-end via contract route', () => {
@@ -323,7 +323,7 @@ describe('perMethodPolicy end-to-end via contract route', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MAJOR 2: contract.idempotent=true enables retry for POST on 5xx
+// contract.idempotent=true enables retry for POST on 5xx
 // ---------------------------------------------------------------------------
 
 describe('contract.idempotent flag enables retry for mutating methods', () => {

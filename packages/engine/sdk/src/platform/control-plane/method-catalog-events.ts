@@ -15,9 +15,9 @@ import { RUNTIME_EVENT_DOMAINS, type RuntimeEventDomain } from '../../events/dom
  * subscriber (webui/TUI) can switch on `payload.event` against a contract-backed enum
  * instead of guessing from undocumented behavior.
  *
- * NOTE (One-Platform S1 coordination): new broker signals flow through the SAME
+ * NOTE: new broker signals flow through the SAME
  * `session-update` wire channel automatically because `publishUpdate` is generic, when
- * S1's `sessions.register` flow emits e.g. `session-registered`, only THIS enum needs the
+ * the `sessions.register` flow emits e.g. `session-registered`, only THIS enum needs the
  * added string (the wire channel already carries it). Keep this list aligned with the
  * broker's publishUpdate/publishInputLifecycleEvent call sites.
  */

@@ -3,7 +3,7 @@
  *
  * External-calendar READ connectivity, the SDK machinery behind the agent's
  * `/calendar import`, `/calendar subscribe`, and the connect wizard (see
- * CHANGELOG 1.0.0, A9). Two pieces, both honest by construction:
+ * CHANGELOG 1.0.0). Two pieces, both honest by construction:
  *
  *  - A vendored iCalendar (RFC 5545) reader: `parseIcs` turns .ics text (a file body
  *    or a fetched feed) into typed events, and `expandEvent` expands the honest RRULE
@@ -75,8 +75,8 @@ export type {
 
 // ---------------------------------------------------------------------------
 // Authenticated provider connectivity, Google Calendar API v3 + Microsoft Graph
-// over OAuth 2.0 (see CHANGELOG 1.0.0, A10). This half connects to real accounts;
-// A9's half above reads .ics files and feeds. Both normalize into ONE merged event
+// over OAuth 2.0 (see CHANGELOG 1.0.0). This half connects to real accounts;
+// The file/feed half above reads .ics files and feeds. Both normalize into ONE merged event
 // model (see MergedCalendarEvent) that a unified /calendar view renders source-
 // labeled (google-api / microsoft-graph / ics-feed / local).
 //

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { canonicalJson, choice, hashState, JudgmentError, noul, PINNED_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, deferredWork, INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS, staticOffendingAnchor } from './batteries/static-source.ts';
-import { deferredBatteryPolicyStatements, internalSourceAnchors } from './static-source-anchors.ts';
+import { deferredBatteryPolicyStatements, internalSourceAnchors, markdownSourceContext, structuredSourceContext } from './static-source-anchors.ts';
 import { STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, STATIC_WEAK_ANCHOR_INSTRUCTIONS, staticWeakAnchor } from './batteries/static-weak-anchor.ts';
 
 export type StaticRule = 'internal-identifier' | 'deferred-work';
@@ -25,7 +25,7 @@ export interface StaticSourceInput {
 }
 export interface StaticSourceReadings {
   readonly format: 1;
-  readonly readingPlanVersion?: 1 | 2;
+  readonly readingPlanVersion?: 1 | 2 | 3;
   readonly decisionSourceHash: string;
   readonly readings: Readonly<Record<string, unknown>>;
   /** Original source manifests prove which policy a retained wire capture used. */
@@ -35,7 +35,7 @@ export interface StaticSourceReadings {
 
 export const STATIC_READINGS_PATH = resolve(import.meta.dir, '../etc/static-source-readings.json.gz');
 export const STATIC_SITE = 'engine.gates.static-source';
-export const STATIC_SOURCE_READING_PLAN_VERSION = 2;
+export const STATIC_SOURCE_READING_PLAN_VERSION = 3;
 export const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 
 /** Bind extraction, questions, model and reading bands to the actual source. */
@@ -60,6 +60,7 @@ export function captureStaticInputs(kind: StaticRule, path: string, text: string
   const anchors = offered ?? (kind === 'internal-identifier' ? internalSourceAnchors(path, text)
     : lines.flatMap((line, index) => line.trim().length === 0 ? [] : [{ id: `line_${index + 1}`, line: index + 1, col: 1, text: line }]));
   if (anchors.length === 0) return [];
+  const structuredContext = structuredSourceContext(path, text);
   const sourceHash = sha256(text);
   const lineOffsets = [0];
   for (const line of lines) lineOffsets.push(lineOffsets.at(-1)! + line.length + 1);
@@ -79,8 +80,21 @@ export function captureStaticInputs(kind: StaticRule, path: string, text: string
     const lastLine = Math.max(...current.map(anchor => anchor.line + anchor.text.split('\n').length - 1));
     const start = Math.max(1, firstLine - 20);
     const end = Math.min(lines.length, lastLine + 20);
+    const declarations = structuredContext.declarations.filter(range => (range.firstLine < start || range.lastLine > end)
+      && current.some(anchor => anchor.line >= range.firstLine && anchor.line <= range.lastLine));
+    const ranges = [{ firstLine: start, lastLine: end }, ...declarations,
+      ...(declarations.length ? structuredContext.module : []),
+      ...(path.endsWith('.md') ? markdownSourceContext(text, current) : [])]
+      .sort((a, b) => a.firstLine - b.firstLine || a.lastLine - b.lastLine);
+    const merged: { firstLine: number; lastLine: number }[] = [];
+    for (const range of ranges) {
+      const previous = merged.at(-1);
+      if (previous && range.firstLine <= previous.lastLine + 1) previous.lastLine = Math.max(previous.lastLine, range.lastLine);
+      else merged.push({ ...range });
+    }
     return { kind, path: path.split('\\').join('/'), sourceHash, firstLine, lastLine,
-      source: lines.slice(start - 1, end).map((line, index) => `${start + index}| ${line}`).join('\n'), anchors: current };
+      source: merged.flatMap(range => lines.slice(range.firstLine - 1, range.lastLine)
+        .map((line, index) => `${range.firstLine + index}| ${line}`)).join('\n'), anchors: current };
   };
   const bounded = (current: readonly SourceAnchor[]): StaticSourceInput[] => {
     const input = window(current);
@@ -112,9 +126,38 @@ const nonempty = (value: unknown): value is string => typeof value === 'string' 
 const ownValue = (values: Readonly<Record<string, unknown>> | undefined, key: string): unknown =>
   values && Object.hasOwn(values, key) ? values[key] : undefined;
 
+/** Publish current active evidence; the separate checkpoint and journal retain history. */
+export function projectCurrentStaticSourceReadings(inputs: readonly StaticSourceInput[], readings: StaticSourceReadings): StaticSourceReadings {
+  const references = new Set([readings.decisionSourceHash]);
+  const active = (value: unknown): unknown => {
+    if (!object(value)) return value;
+    const retained = { ...value };
+    delete retained.previousCaptures;
+    for (const key of ['decisionSourceHash', 'validatedDecisionSourceHash']) {
+      if (Object.hasOwn(value, key) && typeof value[key] === 'string') references.add(value[key]);
+    }
+    for (const key of ['presence', 'selection']) {
+      const evidence = ownValue(value, key);
+      if (object(evidence) && Object.hasOwn(evidence, 'captureDecisionSourceHash')
+        && typeof evidence.captureDecisionSourceHash === 'string') references.add(evidence.captureDecisionSourceHash);
+    }
+    if (Object.hasOwn(value, 'parts') && Array.isArray(value.parts)) retained.parts = value.parts.map(active);
+    return retained;
+  };
+  const current = Object.fromEntries(inputs.flatMap(input => {
+    const key = staticInputKey(input);
+    return Object.hasOwn(readings.readings, key) ? [[key, active(readings.readings[key])] as const] : [];
+  }));
+  const referenced = (values: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> =>
+    Object.fromEntries([...references].filter(key => Object.hasOwn(values, key)).map(key => [key, values[key]]));
+  return { ...readings, readings: current,
+    ...(readings.captureSources ? { captureSources: referenced(readings.captureSources) } : {}),
+    ...(readings.captureBatterySources ? { captureBatterySources: referenced(readings.captureBatterySources) } : {}) };
+}
+
 export function parseStaticSourceReadings(value: unknown): StaticSourceReadings | null {
   if (!object(value) || value.format !== 1 || typeof value.decisionSourceHash !== 'string' || !object(value.readings)) return null;
-  if (value.readingPlanVersion !== undefined && value.readingPlanVersion !== 1 && value.readingPlanVersion !== 2) return null;
+  if (value.readingPlanVersion !== undefined && value.readingPlanVersion !== 1 && value.readingPlanVersion !== 2 && value.readingPlanVersion !== 3) return null;
   if ((value.captureSources !== undefined && !object(value.captureSources))
     || (value.captureBatterySources !== undefined && !object(value.captureBatterySources))) return null;
   return { format: 1, decisionSourceHash: value.decisionSourceHash, readings: value.readings,
@@ -214,7 +257,7 @@ export interface StaticCallEvidence {
   readonly captureDecisionSourceHash?: string;
 }
 export interface StaticSourceReceipt {
-  readonly readingPlanVersion?: 1 | 2;
+  readonly readingPlanVersion?: 1 | 2 | 3;
   readonly inputHash: string;
   readonly sourceHash: string;
   readonly decisionSourceHash: string;
@@ -223,6 +266,8 @@ export interface StaticSourceReceipt {
   readonly parts: readonly StaticSourceReceipt[];
   /** Revalidation does not change the original capture hash or wire evidence. */
   readonly validatedDecisionSourceHash?: string;
+  /** Current composition applied to unchanged original plan-2 question answers. */
+  readonly validatedReadingPlanVersion?: 3;
   readonly previousCaptures?: readonly unknown[];
 }
 
@@ -254,6 +299,7 @@ export async function readStaticInput(port: JudgmentPort, log: DecisionLog, inpu
     let presence = prior && object(prior) ? receiptEvidence(current, prior, false, sourceHash, progress?.previous.captureSources ?? {}, progress?.previous.captureBatterySources ?? {}) : null;
     const reusedPresence = presence !== null;
     let previousCaptures: readonly unknown[] | undefined = object(prior) && Array.isArray(prior.previousCaptures) ? prior.previousCaptures : undefined;
+    if (object(original) && original.readingPlanVersion === 2) previousCaptures = [original];
     if (!presence) {
       const run = await batteryFor(current.kind).run(port, staticInputState(current), options);
       run.recordAction(`prepared static source observation:${run.readings.violation.verdict}`);
@@ -392,7 +438,7 @@ function revalidateReceipt(input: StaticSourceInput, receipt: unknown, readings:
       const anchors = subsets[index];
       return anchors ? clone({ ...partInput, anchors }, part) : part;
     }) : value.parts;
-    return { ...value, parts, validatedDecisionSourceHash: sourceHash };
+    return { ...value, parts, validatedDecisionSourceHash: sourceHash, validatedReadingPlanVersion: STATIC_SOURCE_READING_PLAN_VERSION };
   };
   const value = clone(input, receipt);
   const manifests = readings.captureSources ?? {};
@@ -408,13 +454,15 @@ function revalidateReceipt(input: StaticSourceInput, receipt: unknown, readings:
 
 function receiptEvidence(input: StaticSourceInput, receipt: Record<string, unknown>, selection: boolean, sourceHash: string,
   manifests: Readonly<Record<string, unknown>>, batterySources: Readonly<Record<string, unknown>>): StaticCallEvidence | null {
-  if (receipt.readingPlanVersion !== undefined && receipt.readingPlanVersion !== 1 && receipt.readingPlanVersion !== 2) return null;
+  if (receipt.readingPlanVersion !== undefined && receipt.readingPlanVersion !== 1 && receipt.readingPlanVersion !== 2 && receipt.readingPlanVersion !== 3) return null;
   if (receipt.decisionSourceHash !== sourceHash && (receipt.validatedDecisionSourceHash !== sourceHash
     || !capturePolicyMatches(receipt.decisionSourceHash, input.kind, manifests, batterySources))) return null;
   const presenceAnswer = object(receipt.presence) && object(receipt.presence.answers) ? receipt.presence.answers.violation : undefined;
   const weakSelection = selection && input.anchors.length === 1 && object(presenceAnswer) && presenceAnswer.type === 'noul'
     && probability(presenceAnswer.noul) && readYesNo({ type: 'noul', noul: presenceAnswer.noul }, STAKES_BANDS.high.yesNo).outcome !== 'act';
-  if (weakSelection && receipt.readingPlanVersion !== STATIC_SOURCE_READING_PLAN_VERSION) return null;
+  if (weakSelection && receipt.readingPlanVersion !== STATIC_SOURCE_READING_PLAN_VERSION
+    && !(receipt.readingPlanVersion === 2 && receipt.validatedReadingPlanVersion === STATIC_SOURCE_READING_PLAN_VERSION
+      && receipt.validatedDecisionSourceHash === sourceHash)) return null;
   const value = currentEvidence(selection ? receipt.selection : receipt.presence, input, selection, weakSelection);
   if (!value) return null;
   if (value.captureDecisionSourceHash !== undefined && value.captureDecisionSourceHash !== sourceHash
@@ -482,6 +530,13 @@ function receiptStanding(input: StaticSourceInput, receipt: unknown, sourceHash:
   const selected = selectionAnswer(selectedEvidence?.answers, input);
   if (!selected) return held('missing or invalid exact anchor evidence');
   const chosen = selected.choice;
+  if (weakSelection && selected.fits.every(fit => {
+    const fitting = readYesNo({ type: 'noul', noul: fit }, STAKES_BANDS.high.yesNo);
+    return fitting.verdict === 'no' && fitting.outcome === 'act';
+  })) {
+    return chosen.outcome === 'act' && chosen.choice !== 'none'
+      ? held('settled offending identity contradicts negative candidate fits') : { kind: 'clear' };
+  }
   if (weakSelection && chosen.choice === 'none' && chosen.outcome === 'act') {
     const allNo = selected.fits.every(fit => {
       const fitting = readYesNo({ type: 'noul', noul: fit }, STAKES_BANDS.high.yesNo);

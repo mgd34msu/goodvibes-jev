@@ -101,37 +101,92 @@ export function captureJudgmentPort(site: string, options: JudgmentReadingOption
   }
 }
 
+function retainPropertyPlan(subject: object, keys: readonly string[]): () => void {
+  const chain: { readonly owner: object; readonly prototype: object | null;
+    readonly fields: readonly { readonly key: string; readonly descriptor: PropertyDescriptor | undefined }[] }[] = [];
+  let owner: object | null = subject;
+  while (owner !== null) {
+    if (chain.length >= 64) throw new JudgmentAuthorityRetiredError();
+    const prototype: unknown = Object.getPrototypeOf(owner);
+    if (prototype !== null && typeof prototype !== 'object' && typeof prototype !== 'function') throw new JudgmentAuthorityRetiredError();
+    chain.push({ owner, prototype, fields: keys.map(key => ({ key, descriptor: Object.getOwnPropertyDescriptor(owner, key) })) });
+    owner = prototype;
+  }
+  return () => {
+    for (const { owner, prototype, fields } of chain) {
+      if (Object.getPrototypeOf(owner) !== prototype) throw new JudgmentAuthorityRetiredError();
+      for (const { key, descriptor } of fields) {
+        const current = Object.getOwnPropertyDescriptor(owner, key);
+        if ((descriptor === undefined) !== (current === undefined)
+          || descriptor?.value !== current?.value || descriptor?.get !== current?.get || descriptor?.set !== current?.set
+          || descriptor?.writable !== current?.writable || descriptor?.enumerable !== current?.enumerable
+          || descriptor?.configurable !== current?.configurable) throw new JudgmentAuthorityRetiredError();
+      }
+    }
+  };
+}
+
+function readCurrentProperty<T>(assertCurrent: () => void, read: () => T): T {
+  assertCurrent();
+  try { return read(); }
+  finally { assertCurrent(); }
+}
+
 function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCapture {
   const installation = judgmentPortInstallation(site);
   const base = installation.port;
   const binding = ownerBinding(base);
+  let consumed = false;
+  let observationSignal: AbortSignal | undefined;
+  const assertLifetime = () => {
+    if (installation.signal.aborted || binding.controller.signal.aborted || owners.get(base) !== binding
+      || (!consumed && observationSignal?.aborted)) throw new JudgmentAuthorityRetiredError();
+  };
+  assertLifetime();
   const owner = binding.capture?.();
-  const ownerIdentity = owner?.identity, ownerSignal = owner?.signal, sourceCurrent = owner?.assertCurrent;
+  assertLifetime();
+  const assertPortProperties = retainPropertyPlan(base, ['model', 'ask', 'health', 'recorder']);
+  const assertOwnerProperties = owner ? retainPropertyPlan(owner, ['identity', 'signal', 'assertCurrent']) : undefined;
+  let assertRecorderProperties: (() => void) | undefined;
+  const assertProperties = () => {
+    assertLifetime(); assertPortProperties(); assertOwnerProperties?.(); assertRecorderProperties?.(); assertLifetime();
+  };
+  const read = <T>(property: () => T): T => readCurrentProperty(assertProperties, property);
+  const ownerIdentity = read(() => owner?.identity), ownerSignal = read(() => owner?.signal), sourceCurrent = read(() => owner?.assertCurrent);
   const signal = AbortSignal.any([installation.signal, binding.controller.signal, ...(ownerSignal ? [ownerSignal] : []),
     ...(options.signal ? [options.signal] : [])]);
-  const model = base.model;
-  const ask = base.ask, health = base.health, recorder = base.recorder;
+  observationSignal = signal;
+  const model = read(() => base.model);
+  const ask = read(() => base.ask), health = read(() => base.health), recorder = read(() => base.recorder);
+  assertRecorderProperties = recorder ? retainPropertyPlan(recorder, ['recordReadings', 'recordAction']) : undefined;
   const ownedAsk = ask.bind(base);
-  const recordReadings = recorder?.recordReadings, recordAction = recorder?.recordAction;
+  const recordReadings = read(() => recorder?.recordReadings), recordAction = read(() => recorder?.recordAction);
   const callerCurrent = options.assertCurrent, assertResult = options.assertResult, captureResult = options.captureResult, prepareResultCapture = options.prepareResultCapture;
-  let consumed = false;
-  const installationCurrent = () => {
+  const readObservation = <T>(property: () => T): T => readCurrentProperty(() => {
+    if (consumed || signal.aborted) throw new JudgmentAuthorityRetiredError();
+    assertProperties();
+    if (consumed || signal.aborted) throw new JudgmentAuthorityRetiredError();
+  }, property);
+  const installationCurrent = (observation = false) => {
+    const readInstalled = observation ? readObservation : read;
+    assertProperties();
     if (installation.signal.aborted || binding.controller.signal.aborted || owners.get(base) !== binding
-      || owner?.identity !== ownerIdentity || owner?.signal !== ownerSignal || owner?.assertCurrent !== sourceCurrent
-      || base.model !== model || base.ask !== ask || base.health !== health || base.recorder !== recorder
-      || recorder?.recordReadings !== recordReadings || recorder?.recordAction !== recordAction) throw new JudgmentAuthorityRetiredError();
+      || readInstalled(() => owner?.identity) !== ownerIdentity || readInstalled(() => owner?.signal) !== ownerSignal || readInstalled(() => owner?.assertCurrent) !== sourceCurrent
+      || readInstalled(() => base.model) !== model || readInstalled(() => base.ask) !== ask || readInstalled(() => base.health) !== health || readInstalled(() => base.recorder) !== recorder
+      || readInstalled(() => recorder?.recordReadings) !== recordReadings || readInstalled(() => recorder?.recordAction) !== recordAction) throw new JudgmentAuthorityRetiredError();
   };
   const current = () => {
     try {
-      installationCurrent();
-      if (consumed || signal.aborted || owners.get(base) !== binding || owner?.identity !== ownerIdentity
-        || owner?.signal !== ownerSignal || owner?.assertCurrent !== sourceCurrent) throw new JudgmentAuthorityRetiredError();
+      if (consumed || signal.aborted) throw new JudgmentAuthorityRetiredError();
+      installationCurrent(true);
+      if (consumed || signal.aborted || owners.get(base) !== binding || readObservation(() => owner?.identity) !== ownerIdentity
+        || readObservation(() => owner?.signal) !== ownerSignal || readObservation(() => owner?.assertCurrent) !== sourceCurrent) throw new JudgmentAuthorityRetiredError();
       synchronous(sourceCurrent);
       synchronous(callerCurrent);
-      installationCurrent();
+      installationCurrent(true);
       if (consumed) throw new JudgmentAuthorityRetiredError();
-      if (base.model !== model || base.ask !== ask || base.health !== health || base.recorder !== recorder
-        || recorder?.recordReadings !== recordReadings || recorder?.recordAction !== recordAction || signal.aborted) throw new JudgmentAuthorityRetiredError();
+      if (readObservation(() => base.model) !== model || readObservation(() => base.ask) !== ask || readObservation(() => base.health) !== health || readObservation(() => base.recorder) !== recorder
+        || readObservation(() => recorder?.recordReadings) !== recordReadings || readObservation(() => recorder?.recordAction) !== recordAction || signal.aborted) throw new JudgmentAuthorityRetiredError();
     } catch { throw new JudgmentAuthorityRetiredError(); }
   };
   current();
@@ -209,6 +264,6 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
   current();
   return Object.freeze({ identity: installation.identityFor(identity), port, signal, assertCurrent: current, consumeObservation: () => {
     current(); consumed = true;
-    return Object.freeze({ assertCurrent: installationCurrent });
+    return Object.freeze({ assertCurrent: () => installationCurrent() });
   } });
 }

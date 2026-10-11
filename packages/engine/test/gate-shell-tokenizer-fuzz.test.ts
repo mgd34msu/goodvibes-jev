@@ -1,6 +1,6 @@
 // Ported from goodvibes-tui src/test/runtime/permissions/normalization/tokenizer-fuzz.test.ts.
 /**
- * GC-PERM-010, Tokenizer fuzz and pathological-input guards.
+ * Tokenizer fuzz and pathological-input guards.
  *
  * Test suite verifies that:
  *  1. MAX_INPUT_LENGTH truncation prevents the tokenizer from processing
@@ -137,7 +137,7 @@ const FUZZ_CORPUS: Array<[string, string]> = [
  */
 const MAX_ALLOWED_MS = 5_000;
 
-describe('GC-PERM-010: tokenizer fuzz and pathological guards', () => {
+describe('tokenizer fuzz and pathological guards', () => {
   describe('property: always terminates within bounded time', () => {
     for (const [label, input] of FUZZ_CORPUS) {
       it(`terminates for: ${label}`, () => {

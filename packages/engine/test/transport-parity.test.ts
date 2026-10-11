@@ -1,5 +1,5 @@
 /**
- * transport-parity.test.ts  (One-Platform parity gate, S2b)
+ * transport-parity.test.ts  (Transport parity gate)
  *
  * THE PARITY GATE. HTTP + WebSocket parity is automatic (the operator-sdk client is
  * contract-driven), but DirectTransport (the TUI's in-process path) is HAND-WIRED in
@@ -77,7 +77,7 @@ const DIRECT_TRANSPORT_COVERAGE: Record<string, string> = {
   // gets in-process via services.sessionBroker directly (through this same
   // operator-client), which sessions.search does not add anything over.
   // 'http-only' documents the deliberate skip; add a DirectTransport wrapper
-  // if/when a concrete in-process consumer (e.g. T2's union surface) needs
+  // if/when a concrete in-process consumer (e.g. a combined session view) needs
   // cursor pagination without going through the wire.
   'sessions.search': 'http-only',
   // sessions.permissionMode.get/set + sessions.contextUsage.get: session-scoped
@@ -223,7 +223,7 @@ function sessionsClientMethodNames(): ReadonlySet<string> {
 // 1. Transport-declaration honesty
 // ---------------------------------------------------------------------------
 
-describe('S2b parity gate: transport-declaration honesty', () => {
+describe('Parity gate: transport-declaration honesty', () => {
   test('no contract method advertises a transport it is not reachable on', () => {
     const contract = buildOperatorContract(new GatewayMethodCatalog());
     const violations = findTransportHonestyViolations(contract.operator.methods);
@@ -259,7 +259,7 @@ describe('S2b parity gate: transport-declaration honesty', () => {
 // 2. DirectTransport coverage (the real hole)
 // ---------------------------------------------------------------------------
 
-describe('S2b parity gate: DirectTransport coverage', () => {
+describe('Parity gate: DirectTransport coverage', () => {
   test('every in-process namespace method is mapped or explicitly http-only', () => {
     const contract = buildOperatorContract(new GatewayMethodCatalog());
     const ids = contract.operator.methods.map((m) => m.id);
@@ -304,7 +304,7 @@ describe('S2b parity gate: DirectTransport coverage', () => {
 //     (name-existence alone cannot catch a mis-wire like list→getSession).
 // ---------------------------------------------------------------------------
 
-describe('S2b parity gate: DirectTransport routing (effect-based)', () => {
+describe('Parity gate: DirectTransport routing (effect-based)', () => {
   // wire id → { the args to call the mapped client method with, the underlying
   // services effect it MUST produce }. Covers all non-http-only manifest mappings.
   const ROUTING: Record<string, { args: readonly unknown[]; effect: string }> = {
@@ -383,7 +383,7 @@ describe('S2b parity gate: DirectTransport routing (effect-based)', () => {
 // 3. Cataloged-but-not-invokable is an honest failure, never a silent 200
 // ---------------------------------------------------------------------------
 
-describe('S2b parity gate: cataloged-but-not-invokable is honest', () => {
+describe('Parity gate: cataloged-but-not-invokable is honest', () => {
   test('a method with no http binding is not HTTP-invokable via the contract-driven client', () => {
     const transport = createHttpTransport({ baseUrl: 'http://127.0.0.1:3210', fetch: stubFetch(async () => new Response('{}')) });
     const contract = {

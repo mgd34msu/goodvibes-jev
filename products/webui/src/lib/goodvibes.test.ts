@@ -13,6 +13,7 @@ import {
   sdk,
 } from './goodvibes';
 import { getObservedClientCompatibilityFloor } from './client-compatibility';
+import type { OperatorMethodOutput } from './goodvibes';
 
 describe('isRuntimeDomain', () => {
   test('returns true for known domains', () => {
@@ -643,16 +644,33 @@ describe('occasions.* (docs/occasions.md, the dates panel) wire calls', () => {
     expect(result.gifts).toEqual([]);
   });
 
-  test('operator.occasions.sweep POSTs /api/occasions/sweep with no body and returns the full run receipt', async () => {
-    stubFetch({
+  test('operator.occasions.sweep POSTs empty input to /api/occasions/sweep and returns the full run receipt', async () => {
+    const receipt = {
       ranAt: 1, today: '2026-07-29', hold: null, nudge: null, conflictMessages: [], resumedInterviews: [],
-      delivered: false, deliveryChannel: 'telegram', deliveryId: null, mirrored: 0, housekeeping: null,
-    });
+      delivered: false, deliveryChannel: 'telegram', deliveryId: null, deliveries: [], mirrored: 0, housekeeping: null,
+    } satisfies OperatorMethodOutput<'occasions.sweep'>;
+    stubFetch(receipt);
     const result = await sdk.operator.occasions.sweep();
     expect(calls[0].url).toContain('/api/occasions/sweep');
     expect(calls[0].method).toBe('POST');
-    expect(result.delivered).toBe(false);
+    expect(calls[0].body).toEqual({});
+    expect(result).toEqual(receipt);
   });
+
+  test.each([
+    { complete: false, acceptedDeliveries: 1, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: 2, stopped: 'delivery-processing-stopped' },
+  ] satisfies readonly OperatorMethodOutput<'occasions.sweep'>[])(
+    'operator.occasions.sweep preserves the accepted delivery receipt when $stopped',
+    async (receipt) => {
+      stubFetch(receipt);
+      const result = await sdk.operator.occasions.sweep();
+      expect(calls[0].url).toContain('/api/occasions/sweep');
+      expect(calls[0].method).toBe('POST');
+      expect(calls[0].body).toEqual({});
+      expect(result).toEqual(receipt);
+    },
+  );
 
   test('operator.occasions.conflict.resolve POSTs occasionId to /api/occasions/conflict/resolve', async () => {
     stubFetch({ occasionId: 'occ-1', resolved: true });

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { ConfigError } from '@goodvibes-jev/engine/sdk/platform/types';
 import { createDaemonCliConfiguration } from '../../cli/configuration.js';
 import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../../config/surface.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
@@ -28,6 +29,7 @@ interface ProbeResult {
   readonly stderr: string[];
   readonly logs: Array<[string, string, Record<string, unknown>]>;
   readonly privateErrorPreserved: boolean;
+  readonly privateErrorSerializationWithheld: boolean;
   readonly secretLookups: number;
   readonly serviceResolutions: number;
   readonly transports: number;
@@ -70,7 +72,16 @@ spyOn(ServiceRegistry.prototype, 'resolveSecret').mockImplementation(async () =>
 spyOn(globalThis, 'fetch').mockImplementation(async () => {
   transports++; throw new Error('Unexpected transport in malformed-settings fixture');
 });
-const stdout = []; const stderr = []; let code = 1; let privateErrorPreserved = false;
+const stdout = []; const stderr = []; let code = 1; let privateErrorPreserved = false; let privateErrorSerializationWithheld = false;
+const parse = JSON.parse.bind(JSON);
+let originalParserError;
+spyOn(JSON, 'parse').mockImplementation((...args) => {
+  try { return parse(...args); }
+  catch (error) {
+    if (args[0] === ${JSON.stringify(MALFORMED)}) originalParserError = error;
+    throw error;
+  }
+});
 const mode = ${JSON.stringify(mode)};
 if (mode === 'send' || mode === 'config') {
   code = await runDaemonCli(mode === 'send'
@@ -79,17 +90,19 @@ if (mode === 'send' || mode === 'config') {
       stdout: (line) => stdout.push(line), stderr: (line) => stderr.push(line),
     });
 } else {
-  let parseMessage = '';
-  try { JSON.parse(${JSON.stringify(MALFORMED)}); } catch (error) { parseMessage = error.message; }
   try {
     createDaemonCliConfiguration({}, process.env, process.cwd(),
       mode === 'structural' ? { diagnosticMode: 'structural' } : {});
   } catch (error) {
-    privateErrorPreserved = error.message.endsWith(': ' + parseMessage)
-      && error.message.includes(${JSON.stringify(SENTINEL)});
+    privateErrorPreserved = error.cause === originalParserError
+      && originalParserError instanceof SyntaxError
+      && originalParserError.message.includes(${JSON.stringify(SENTINEL)})
+      && !error.message.includes(${JSON.stringify(SENTINEL)});
+    privateErrorSerializationWithheld = !JSON.stringify(error).includes(${JSON.stringify(SENTINEL)})
+      && !Object.hasOwn(error.toJSON(), 'cause');
   }
 }
-console.log(JSON.stringify({ code, stdout, stderr, logs: records, privateErrorPreserved,
+console.log(JSON.stringify({ code, stdout, stderr, logs: records, privateErrorPreserved, privateErrorSerializationWithheld,
   secretLookups, serviceResolutions, transports }));
 `);
   const child = spawnSync(process.execPath, ['--no-env-file', script], {
@@ -128,26 +141,41 @@ describe('standalone send config-load diagnostics', () => {
     });
   }
 
-  test('structural publication preserves the original private ConfigError parse detail', () => {
+  test('structural publication retains the exact original parser error only as local ConfigError cause', () => {
     const fx = probe('structural');
     expect(fx.result.privateErrorPreserved).toBe(true);
+    expect(fx.result.privateErrorSerializationWithheld).toBe(true);
     expect(fx.rawStdout).not.toContain(SENTINEL);
     expect(fx.rawStderr).not.toContain(SENTINEL);
+    let causeReads = 0;
+    const cause = Object.defineProperties(new Error(SENTINEL), Object.fromEntries(
+      ['name', 'message', 'cause', 'toJSON'].map(key => [key, { get() { causeReads++; throw new Error('Private cause accessor executed'); } }]),
+    ));
+    const error = new ConfigError('Owned config load failed: [REDACTED]', { cause });
+    expect(error.cause).toBe(cause);
+    const serialized = JSON.stringify(error);
+    expect(serialized).not.toContain(SENTINEL);
+    expect(JSON.parse(serialized)).toEqual({ name: error.name, message: error.message, kind: error.kind,
+      code: 'CONFIG_ERROR', category: 'config', source: 'config', recoverable: false });
+    expect(causeReads).toBe(0);
   });
 
-  test('the existing default configuration diagnostics and private error remain unchanged', () => {
+  test('default configuration diagnostics retain the local parser cause and withhold its private prose', () => {
     const fx = probe('default');
     expect(fx.result.privateErrorPreserved).toBe(true);
-    expect(fx.rawStdout).toContain(SENTINEL);
-    expect(fx.rawStderr).toContain(SENTINEL);
-    expect(fx.result.logs.find((entry) => entry[0] === 'warn')?.[2].error).toContain(SENTINEL);
+    expect(fx.result.privateErrorSerializationWithheld).toBe(true);
+    expect(fx.rawStdout).not.toContain(SENTINEL);
+    expect(fx.rawStderr).not.toContain(SENTINEL);
+    expect(fx.result.logs.find((entry) => entry[0] === 'warn')?.[2].error).toContain('[REDACTED]');
   });
 
-  test('the CLI selects structural mode only for send', () => {
+  test('the config CLI also withholds malformed private settings source bytes', () => {
     const fx = probe('config');
     expect(fx.result.code).toBe(1);
-    expect(fx.rawStdout).toContain(SENTINEL);
-    expect(fx.rawStderr).toContain(SENTINEL);
+    expect(fx.result.stdout).toEqual([]);
+    expect(fx.result.stderr).toEqual(['Daemon command failed']);
+    expect(fx.rawStdout).not.toContain(SENTINEL);
+    expect(fx.rawStderr).not.toContain(SENTINEL);
   });
 
   test('structural mode retains canonical daemon migration and settings precedence', () => {

@@ -1,5 +1,5 @@
 /**
- * D7a Layer 2, pid/port discovery for the detached daemon.
+ * pid/port discovery for the detached daemon.
  *
  * When a surface spawns the daemon as a detached, standalone process, it records
  * the pid/host/port to a small JSON file under the daemon home so a later surface

@@ -344,7 +344,7 @@ export class DaemonHttpRouter {
   /**
    * Dispatches routes that are exempt from the auth gate: login, remote-peer
    * handshake, webhooks, and the control-plane web UI. Extracted from
-   * handleRequest to eliminate the 8-entry inline if-chain (m2/m3).
+   * handleRequest to eliminate the 8-entry inline if-chain.
    */
   private async dispatchPreAuthRoutes(req: Request): Promise<Response | null> {
     const url = new URL(req.url);

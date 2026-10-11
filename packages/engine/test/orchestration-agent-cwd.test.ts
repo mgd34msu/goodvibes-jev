@@ -1,8 +1,8 @@
 /**
- * Worktree isolation (wo/worktree-isolation), stage (b): AgentOrchestrator
+ * Worktree isolation: AgentOrchestrator
  * honors a per-call working-directory override.
  *
- * Verified BEFORE this stage: AgentOrchestrator.getFullRegistry() cached ONE
+ * Previously: AgentOrchestrator.getFullRegistry() cached ONE
  * ToolRegistry with `workingDirectory` baked in at registration;
  * createRunContext() used a single fixed `toolDeps.workingDirectory`; there
  * was no per-call cwd seam anywhere in AgentInput/AgentRecord/
@@ -21,7 +21,7 @@
  *  2. The real thing, getFullRegistry(cwd) against REAL tool deps: two
  *     distinct cwds produce two DISTINCT ToolRegistry instances, and a
  *     spawned agent's real `write` tool actually writes into whichever cwd
- *     its record carries, the concrete claim stage (b) exists to prove.
+ *     its record carries, the concrete behavior this test verifies.
  */
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';

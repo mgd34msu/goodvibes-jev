@@ -95,7 +95,7 @@ test('real account lifecycle reports config and aliased secret ABA changes witho
       stop = capability.onAccountInvalidation!((...args: unknown[]) => { observed.push(args); });
       return { async close() {} };
     }, context, routing, controls, { configManager, secretsManager });
-    expect(Object.keys(captured!).sort()).toEqual(['createEmailService', 'gatePolling', 'onAccountInvalidation']);
+    expect(Object.keys(captured!).sort()).toEqual(['createEmailService', 'gatePolling', 'onAccountInvalidation', 'onConfigurationChange']);
     expect(secretReads).not.toHaveBeenCalled();
     const initial = observed.length;
     configManager.set('surfaces.slack.workspaceId', 'T-SYNTHETIC-ONE');

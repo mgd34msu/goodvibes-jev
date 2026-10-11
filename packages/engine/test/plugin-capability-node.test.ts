@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 // These exact stream rules differ between Bun and Node. Strip types only so
@@ -12,14 +12,17 @@ test('plugin stream ownership preserves native Node byte and iterator behavior',
   const root = mkdtempSync(join(tmpdir(), 'jev-plugin-node-streams-'));
   try {
     const transpiler = new Bun.Transpiler({ loader: 'ts', target: 'node' });
-    for (const name of ['owned-capabilities', 'in-flight']) {
-      const source = readFileSync(new URL(`../sdk/src/platform/plugins/${name}.ts`, import.meta.url), 'utf8');
-      writeFileSync(join(root, `${name}.mjs`), transpiler.transformSync(source));
+    writeFileSync(join(root, 'package.json'), '{"type":"module"}\n');
+    for (const name of ['plugins/owned-capabilities', 'plugins/in-flight', 'utils/file-mutation']) {
+      const source = readFileSync(new URL(`../sdk/src/platform/${name}.ts`, import.meta.url), 'utf8');
+      const output = join(root, `${name}.js`);
+      mkdirSync(dirname(output), { recursive: true });
+      writeFileSync(output, transpiler.transformSync(source));
     }
     writeFileSync(join(root, 'probe.mjs'), `
 import assert from 'node:assert/strict';
-import {createOwnedPluginCapabilities} from './owned-capabilities.mjs';
-import {PluginInFlightTracker} from './in-flight.mjs';
+import {createOwnedPluginCapabilities} from './plugins/owned-capabilities.js';
+import {PluginInFlightTracker} from './plugins/in-flight.js';
 assert.equal(process.versions.bun,undefined,'This compatibility proof must execute in native Node');
 assert.ok(process.versions.node);
 function gate(){let release;const promise=new Promise(resolve=>{release=resolve});return {release,promise}}

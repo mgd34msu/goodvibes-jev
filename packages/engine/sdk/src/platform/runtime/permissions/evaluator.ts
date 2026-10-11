@@ -257,7 +257,7 @@ export class LayeredPolicyEvaluator {
   private sessionPublication = 0;
   private readonly decisionOwners = new WeakMap<PermissionDecision, () => void>();
   readonly log: DecisionLog;
-  /** GC-PERM-011: Provenance from the loaded policy bundle, if any. */
+  /** Provenance from the loaded policy bundle, if any. */
   private readonly provenance?: BundleProvenance | undefined;
 
   private static readonly MAX_SESSION_CACHE_SIZE = 500;
@@ -478,7 +478,7 @@ export class LayeredPolicyEvaluator {
       classification: params.classification,
       timestamp: Date.now(),
       evaluationTrace: params.trace,
-      // GC-PERM-011: Attach provenance from the loaded policy bundle
+      // Attach provenance from the loaded policy bundle
       ...(this.provenance !== undefined && {
         policyBundleId: this.provenance.policyBundleId,
         signatureStatus: this.provenance.signatureStatus,

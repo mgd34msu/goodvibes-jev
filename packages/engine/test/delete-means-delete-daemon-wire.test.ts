@@ -2,7 +2,7 @@
  * delete-means-delete-daemon-wire.test.ts
  *
  * DELETE-MEANS-DELETE, proven over a REAL bootDaemon (isolated home,
- * ephemeral port, token auth, the boot-daemon-factory R1 pattern).
+ * ephemeral port, token auth, the boot-daemon-factory pattern).
  *
  * PART A, companion-chat close vs delete:
  *   - POST .../close soft-closes (history preserved, still gettable).

@@ -13,7 +13,7 @@ import type { ArtifactDescriptor } from '../artifacts/index.js';
 /**
  * Re-export the shared envelope so chat-mode code can import from one place.
  * The envelope shape is the canonical message unit flowing through
- * the control-plane gateway across both chat-mode and Problem-2 routing.
+ * the control-plane gateway across both chat-mode and companion-message routing.
  */
 export type { ConversationMessageEnvelope } from '../control-plane/conversation-message.js';
 

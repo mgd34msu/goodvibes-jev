@@ -209,7 +209,7 @@ The local ledger barrel does not import this transport. The SDK's existing
 operator-sdk dependency remains one-way; no operator-sdk-to-SDK reference or
 copied reader authority/type contract is introduced.
 
-## Bounded legacy import (THE-105)
+## Bounded legacy import
 
 Agent and TUI explicitly invoke the shared native import workflow described in
 [`legacy-ledger-migration.md`](../../../../../../../products/agent/docs/legacy-ledger-migration.md).

@@ -17,6 +17,7 @@
 
 import type OpenAI from 'openai';
 import { loadOptionalDependency } from '../utils/optional-dependency.js';
+import { ProviderError } from '../types/errors.js';
 
 type OpenAIModule = typeof import('openai');
 
@@ -31,7 +32,10 @@ export interface OpenAIAvailability {
 
 async function loadOpenAIModule(): Promise<OpenAIModule> {
   const loaded = await loadOptionalDependency('openai', () => import('openai'));
-  if (!loaded.available) throw new Error(loaded.reason);
+  if (!loaded.available) throw new ProviderError(loaded.reason, {
+    category: 'config',
+    guidance: 'Install the optional openai package to enable this feature.',
+  });
   return loaded.module;
 }
 

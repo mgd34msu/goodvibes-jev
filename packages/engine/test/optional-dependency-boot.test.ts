@@ -219,9 +219,15 @@ describe('an absent optional client package does not take the process down', () 
     // Constructing the provider used to build the client, so an absent package
     // broke provider registration; now it does not.
     expect(lazyRun.stdout).toContain('OPENAI_PROVIDER_CONSTRUCTED=openai');
-    expect(lazyRun.stdout).toContain('OPENAI_EMBED_THREW=');
-    expect(lazyRun.stdout.split('\n').find(line => line.startsWith('OPENAI_EMBED_THREW=')))
-      .toBe('OPENAI_EMBED_THREW=[REDACTED] [REDACTED]');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_THREW=openai is not installed');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_CODE=PROVIDER_ERROR');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_CATEGORY=config');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_PROVIDER=openai');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_OPERATION=embed');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_PHASE=request');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_RECOVERABLE=false');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_MESSAGE=[REDACTED]');
+    expect(lazyRun.stdout).toContain('OPENAI_EMBED_NATIVE_HINT=Install the optional openai package to enable this feature.');
   });
 
   test('@anthropic-ai/bedrock-sdk: unavailable by name, and the model fetch says so', () => {

@@ -456,7 +456,7 @@ export class HostedSessionSpineIntake {
     assertCurrent(); signal.throwIfAborted();
     const key = pendingKey(pending.sessionId, pending.inputId);
     const cap = this.options.maxDeliveryAttempts ?? DEFAULT_MAX_DELIVERY_ATTEMPTS;
-    // A-F1540: the count is only the mechanical ceiling AFTER eligibility.
+    // the count is only the mechanical ceiling AFTER eligibility.
     if (transience.failureClass === 'retryable' && pending.attempts < cap) {
       this.pending.set(key, { ...pending, failure: undefined });
       logger.warn('[hosted-sessions] a collected input could not be delivered; it stays queued for the next tick', {

@@ -9,6 +9,10 @@ import {
   upsertMcpServerConfig,
 } from '@goodvibes-jev/engine/sdk/platform/mcp';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { authoredPrivacyAnswer, errorSpan, errorText } from '../helpers/authored-diagnostic-readings.ts';
 
 function makeShellPaths(root: string) {
   return {
@@ -195,6 +199,23 @@ describe('/mcp runtime config commands', () => {
 
   test('refuses direct MCP allow-all trust through add command', async () => {
     const root = makeProjectTempDir('gv-mcp-command');
+    const refusal = 'Use /settings -> MCP to explicitly enable allow-all.\n'
+      + 'Usage: /mcp add <name> <command> ... --yes; options: --scope project|global, --role <role>, --trust constrained|ask-on-risk|blocked, --env KEY=VALUE, --path <path>, --host <host>';
+    const answer = authoredPrivacyAnswer({
+      fields: { Usage: 'other', options: 'other', KEY: 'other' },
+      parts: [
+        [errorText('Use /settings -> MCP to explicitly enable allow-all.')],
+        [errorText('Usage: '), errorSpan('Usage'), errorText('; options: '), errorSpan('options', 2),
+          errorText(', --role <role>, --trust constrained|ask-on-risk|blocked, --env KEY='), errorSpan('KEY', 3),
+          errorText(', --path <path>, --host <host>')],
+      ],
+    });
+    const readings = fakePort((name, question, state) => {
+      const result = answer(name, question, state);
+      if (result === undefined) throw new Error(`Unexpected MCP refusal question: ${name}`);
+      return result;
+    });
+    const previous = installJudgmentPort(readings.port);
     try {
       const registry = new CommandRegistry();
       registerMcpRuntimeCommands(registry);
@@ -202,6 +223,7 @@ describe('/mcp runtime config commands', () => {
       const callLog = makeCallLog();
       const ctx = makeContext(root, out, callLog);
 
+      expect(await redactSensitiveDataAsync(refusal)).toBe(refusal);
       await registry.get('mcp')!.handler(['add', 'docs', 'node', 'server.js', '--trust', 'allow-all', '--yes'], ctx);
 
       const output = out.join('\n');
@@ -211,6 +233,7 @@ describe('/mcp runtime config commands', () => {
       expect(output).toContain('Use /settings -> MCP to explicitly enable allow-all.');
       expect(output).toContain('--trust constrained|ask-on-risk|blocked');
     } finally {
+      installJudgmentPort(previous);
       rmSync(root, { recursive: true, force: true });
     }
   });

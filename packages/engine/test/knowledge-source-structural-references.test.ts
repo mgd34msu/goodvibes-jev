@@ -45,7 +45,7 @@ function candidate(source: GeneratedFactSupportInput['source'], extraction: Gene
   return { spaceId, source, extraction, subjects: [], claim: { id: 'synthetic-claim', kind: 'specification', title: 'AC-7 ports', summary: 'AC-7 has four HDMI ports.' } };
 }
 
-describe('fresh generated source and extraction references (THE36)', () => {
+describe('fresh generated source and extraction references', () => {
   test('snapshot sync registers only its freshly minted structural URI and preserves ordinary content preflight', async () => {
     const fake = readings(); const { store, service, dbPath } = await fixture();
     const result = await service.syncSnapshot({ installationId: 'house', capturedAt: 1791110401109,

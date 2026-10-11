@@ -1,5 +1,5 @@
 /**
- * Auth hardening tests, Item 5, goodvibes-sdk
+ * Auth hardening tests, goodvibes-sdk
  *
  * Covers:
  *   1. fsync parity, atomicWriteSecretFile uses fsync (structural test via file integrity check)
@@ -624,7 +624,7 @@ describe('accountLocks cap and eviction', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 9. Bootstrap credential retire, non-bootstrap vs bootstrap paths (M3)
+// 9. Bootstrap credential retire, non-bootstrap vs bootstrap paths
 // ---------------------------------------------------------------------------
 describe('bootstrap credential retire: non-bootstrap only', () => {
   let dir: string;
@@ -683,9 +683,9 @@ describe('bootstrap credential retire: non-bootstrap only', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. m1, lock escalation during active window is documented and tested
+// 10. lock escalation during active window is documented and tested
 // ---------------------------------------------------------------------------
-describe('lock escalation during active window (m1)', () => {
+describe('lock escalation during active window', () => {
   let dir: string;
   beforeEach(() => { dir = tempDir('lock-escalation'); });
   afterEach(() => cleanup(dir));

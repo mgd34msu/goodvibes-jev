@@ -418,9 +418,14 @@ async function prepareAnswerEvidenceScope(store: KnowledgeStore, spaceId: string
 
 function answerEvidenceGuard(store: KnowledgeStore, selection: KnowledgeScopeSelection, signal?: AbortSignal): SemanticWriteGuard {
   const guard = createSemanticWriteGuard(store, signal);
-  guard.watch('answer-evidence-scope', () => { selection.assertCurrent(); return true; });
-  const assertEdgesCurrent = selection.retainEdges(selection.edges);
-  guard.watch('answer-scope-relations', () => { assertEdgesCurrent(); return true; });
+  try { store.assertRecordSnapshotFrame(() => {
+    guard.watch('answer-evidence-scope', () => { selection.assertCurrent(); return true; });
+    const assertEdgesCurrent = selection.retainEdges(selection.edges);
+    guard.watch('answer-scope-relations', () => { assertEdgesCurrent(); return true; });
+  }); } catch (error) {
+    if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new KnowledgeEvidenceRelevanceHeldError('stale');
+    throw error;
+  }
   return guard;
 }
 

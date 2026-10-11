@@ -68,7 +68,7 @@ export interface AgentManagerDependencies {
 
 export type { ContractOwnerBinding, ContractUnitBinding } from './contract-binding.js';
 /**
- * Conversation-snapshot tab attach point (Part C6): default bound on how many recently
+ * Conversation-snapshot tab attach point: default bound on how many recently
  * finished agents' final conversation snapshot AgentManager keeps around
  * after their live source is released. Without a bound, a long-lived process
  * that spawns many short-lived agents would retain every finished agent's
@@ -164,7 +164,7 @@ export class AgentManager {
   private readonly configManager: Pick<ConfigManager, 'get'> | null;
   private readonly additionalFleetOwnership: (() => readonly AgentFleetOwnership[]) | undefined;
   /**
-   * Live snapshot accessors for RUNNING agents (conversation-snapshot bridge, Part C6).
+   * Live snapshot accessors for RUNNING agents (conversation-snapshot bridge).
    * Registered by the executor (orchestrator-runner.ts) right after it
    * creates the agent's ConversationManager; the manager never stores
    * messages itself while an agent is running, it just holds a callback.
@@ -821,7 +821,7 @@ export class AgentManager {
 
   /**
    * Register the live conversation-snapshot source for a running agent
-   * (conversation-snapshot bridge, Part C6). Called by the executor (orchestrator-runner.ts)
+   * (conversation-snapshot bridge). Called by the executor (orchestrator-runner.ts)
    * once its ConversationManager exists, `source` is invoked on demand by
    * getConversationSnapshot(); the manager never copies or stores the
    * messages itself while the agent is running.

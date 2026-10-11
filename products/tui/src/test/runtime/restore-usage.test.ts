@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { Orchestrator } from '@goodvibes-jev/engine/sdk/platform/core';
+import type { JsonValue } from '@goodvibes-jev/judgment';
 import { ToolRegistry, ContextAccountingHolder, createContextAccountingTool } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { ConversationManager } from '../../core/conversation.ts';
 import { hydrateConversationUsage, isConversationUsageAvailable, isConversationContextAvailable } from '../../core/conversation-usage.ts';
@@ -77,10 +78,23 @@ describe('real bootstrap usage restoration', () => {
     expect(f.footer()).toContain('usage unavailable');
     expect(f.footer()).toContain('context unavailable');
     expect(f.footer()).not.toMatch(/9000|22000|PRIVATE-BILLING-VALUE|NaN/);
+    const usageParts: JsonValue[] = [
+      { kind: 'text', text: 'Session usage unavailable: ' },
+      { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'unavailable' },
+      { kind: 'text', text: ' usage is ' },
+      { kind: 'span', reference: 'span-2', syntax: 'assignment-value', field: 'usage' },
+      { kind: 'text', text: '' },
+    ];
     const unknown = await withPublicErrorText(['Session usage unavailable: saved token usage is invalid.'], () => f.accountingTool.execute({}, {} as never), {
-      ordinaryFields: ['unavailable'],
-      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [{ kind: 'text', text: 'Session usage unavailable: ' }, { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'unavailable' }, { kind: 'text', text: '' }] }],
-      residualProjections: [{ parts: [{ kind: 'text', text: 'Session usage unavailable: ' }, { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] }],
+      ordinaryFields: ['unavailable', 'usage'],
+      credentialProjections: ['span-1', 'span-2'].map(target => ({ phase: 'source', target, parts: usageParts })),
+      residualProjections: [{ parts: [
+        { kind: 'text', text: 'Session usage unavailable: ' },
+        { kind: 'withheld', reference: 'span-1' },
+        { kind: 'text', text: ' usage is ' },
+        { kind: 'withheld', reference: 'span-2' },
+        { kind: 'text', text: '' },
+      ] }],
     });
     expect(unknown.success).toBe(false);
     expect('error' in unknown ? unknown.error : '').toContain('usage unavailable');

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { ConfigError } from '../sdk/src/platform/types/errors.js';
 
 /**
- * Item 5b, tts.speed config key
+ * tts.speed config key
  *
  * Verifies that:
  * 1. TtsConfig interface has a `speed` field typed as number.
@@ -23,7 +23,7 @@ afterEach(() => {
   }
 });
 
-describe('tts.speed config key (Item 5b)', () => {
+describe('tts.speed config key', () => {
   test('coreConfigDefaults.tts.speed is 1.0', async () => {
     const { coreConfigDefaults } = await import('../sdk/src/platform/config/schema-domain-core.js');
     expect(coreConfigDefaults.tts.speed).toBe(1.0);

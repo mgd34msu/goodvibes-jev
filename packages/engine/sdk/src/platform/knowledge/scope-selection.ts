@@ -6,6 +6,7 @@ import {
 } from '@goodvibes-jev/engine/errors';
 import { mapLimit, toJson } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
+import { retainStrictJudgmentJson } from '../gate/judgment-result.js';
 import { knowledgeScopeSelection } from './batteries/scope-selection.js';
 import { knowledgeSourceJudgmentUris } from './source-structural-references.js';
 import { DEFAULT_KNOWLEDGE_SPACE_ID, getKnowledgeSpaceId, getExplicitKnowledgeSpaceId, resolveKnowledgeSpaceScope, type KnowledgeSpaceScopeInput } from './spaces.js';
@@ -13,7 +14,7 @@ import { knowledgeIssueMatchesScope, knowledgeNodeMatchesScope, knowledgeSourceM
 import { knowledgeRawRepresentation, knowledgeRecordVersion, sameKnowledgeRecord } from './store-record-representation.js';
 import { KnowledgeRecordAdmissionHeldError } from './store-record-snapshot.js';
 import type { KnowledgeStore } from './store.js';
-import type { KnowledgeEdgeRecord, KnowledgeIssueRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
+import type { KnowledgeEdgeRecord, KnowledgeExtractionRecord, KnowledgeIssueRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
 import { KnowledgeWebGapRepairHeldError } from './semantic/web-gap-repair/types.js';
 import { captureStrictRepairJson, prepareRepairJudgmentResult } from './semantic/web-gap-repair/admission.js';
 
@@ -188,25 +189,64 @@ export async function prepareKnowledgeScopeSelection(
   const records: ScopeRecord[] = [...sources.map(record => ({ kind: 'source' as const, record })),
     ...nodes.map(record => ({ kind: 'node' as const, record })), ...issues.map(record => ({ kind: 'issue' as const, record }))];
   const keyFor = (value: ScopeRecord): string => `${value.kind}:${value.record.id}`;
-  const project = (value: ScopeRecord) => {
+  const project = (value: ScopeRecord, inspectExtraction?: (extraction: KnowledgeExtractionRecord | null) => void) => {
     const projected = content(value);
     if (value.kind !== 'source') return projected;
     const extraction = store.getExtractionBySourceId(value.record.id);
+    if (inspectExtraction) inspectExtraction(extraction);
     if (!extraction) return projected;
-    captureStrictRepairJson(extraction);
+    if (!inspectExtraction) captureStrictRepairJson(extraction);
     const fields = [...CONTENT_FIELDS, 'sections', 'summary', 'title', 'excerpt'];
     const structure = Object.fromEntries(fields.filter(key => extraction.structure[key] !== undefined).map(key => [key, extraction.structure[key]]));
     return { kind: projected.kind, content: { ...projected.content, extraction: { format: extraction.format, title: extraction.title,
       summary: extraction.summary, excerpt: extraction.excerpt, sections: extraction.sections, structure } } };
   };
-  const signature = (value: ScopeRecord) => {
-    captureStrictRepairJson(value.record);
-    return knowledgeRecordVersion(captureStrictRepairJson({
-      kind: value.kind, id: value.record.id, status: value.record.status, space: getKnowledgeSpaceId(value.record),
-      references: references(value), content: project(value),
-    }));
+  const signatureInput = (value: ScopeRecord, inspectExtraction?: (extraction: KnowledgeExtractionRecord | null) => void) => ({
+    kind: value.kind, id: value.record.id, status: value.record.status, space: getKnowledgeSpaceId(value.record),
+    references: references(value), content: project(value, inspectExtraction),
+  });
+  const slotsMatch = (slots: { readonly assertCurrent: () => void }) => {
+    try { slots.assertCurrent(); return true; } catch { return false; }
   };
-  const snapshots = new Map<string, { readonly value: ScopeRecord; readonly version: string }>();
+  const retainSignature = (value: ScopeRecord) => {
+    const recordSlots = retainStrictJudgmentJson(value.record, problem => new KnowledgeWebGapRepairHeldError(problem));
+    let originalExtraction: KnowledgeExtractionRecord | null = null;
+    let extractionSlots = retainStrictJudgmentJson<KnowledgeExtractionRecord | null>(originalExtraction, problem => new KnowledgeWebGapRepairHeldError(problem));
+    captureStrictRepairJson(value.record);
+    const originalInput = signatureInput(value, extraction => {
+      originalExtraction = extraction;
+      extractionSlots = retainStrictJudgmentJson(extraction, problem => new KnowledgeWebGapRepairHeldError(problem));
+    });
+    const version = knowledgeRecordVersion(captureStrictRepairJson(originalInput));
+    const originalContent = originalInput.content.content;
+    const originalUris = 'canonicalUri' in originalContent ? {
+      url: originalContent.url, sourceUri: originalContent.sourceUri, canonicalUri: originalContent.canonicalUri,
+    } : undefined;
+    return (current: ScopeRecord) => {
+      let unchanged = current.kind === value.kind && current.record === value.record && slotsMatch(recordSlots);
+      if (!unchanged) captureStrictRepairJson(current.record);
+      let observedExtraction: KnowledgeExtractionRecord | null = null;
+      // Always execute the original projection, including its owning source
+      // lookup and second extraction lookup, before considering the fast path.
+      const input = signatureInput(current, extraction => {
+        observedExtraction = extraction;
+        const extractionUnchanged = extraction === originalExtraction && slotsMatch(extractionSlots);
+        if (!extractionUnchanged) captureStrictRepairJson(extraction);
+        unchanged = unchanged && extractionUnchanged;
+      });
+      const projectedContent = input.content.content;
+      const urisUnchanged = originalUris === undefined || ('canonicalUri' in projectedContent
+        && projectedContent.url === originalUris.url && projectedContent.sourceUri === originalUris.sourceUri
+        && projectedContent.canonicalUri === originalUris.canonicalUri);
+      if (unchanged && urisUnchanged && slotsMatch(recordSlots) && slotsMatch(extractionSlots)) return true;
+      // Equal replacements and reordered object slots retain the original
+      // value comparison. A fallback never becomes a new retained baseline.
+      captureStrictRepairJson(current.record);
+      captureStrictRepairJson(observedExtraction);
+      return knowledgeRecordVersion(captureStrictRepairJson(input)) === version;
+    };
+  };
+  const snapshots = new Map<string, ReturnType<typeof retainSignature>>();
   const readRecord = (value: ScopeRecord): ScopeRecord | undefined => {
     switch (value.kind) {
       case 'source': { const record = store.getSource(value.record.id); return record ? { kind: value.kind, record } : undefined; }
@@ -240,8 +280,8 @@ export async function prepareKnowledgeScopeSelection(
     const previous = retained.get(key);
     if (previous) return previous;
     captureStrictRepairJson(value.record);
-    const version = signature(value);
-    snapshots.set(key, { value, version });
+    const matchesSignature = retainSignature(value);
+    snapshots.set(key, matchesSignature);
     const original = readRecord(value)?.record;
     const generation = (adopt = false) => {
       if (value.kind === 'issue') return undefined;
@@ -269,7 +309,7 @@ export async function prepareKnowledgeScopeSelection(
     const originalExtractionGeneration = extractionGeneration(true);
     const check = addCheck(key, () => {
       const current = readRecord(value);
-      if (!current || current.record !== original || generation() !== originalGeneration || extractionGeneration() !== originalExtractionGeneration || signature(current) !== version) throw new KnowledgeScopeSelectionHeldError('stale');
+      if (!current || current.record !== original || generation() !== originalGeneration || extractionGeneration() !== originalExtractionGeneration || !matchesSignature(current)) throw new KnowledgeScopeSelectionHeldError('stale');
     });
     const extraction = value.kind === 'source' ? store.getExtractionBySourceId(value.record.id) : null;
     generationSelectors.set(check, [...(value.kind === 'issue' ? [] : [{ kind: value.kind, id: value.record.id }]),
@@ -360,7 +400,7 @@ export async function prepareKnowledgeScopeSelection(
       }
       const view = resolveKnowledgeSpaceScope(scopeSnapshot) === null ? 'all'
         : resolveKnowledgeSpaceScope(scopeSnapshot) === DEFAULT_KNOWLEDGE_SPACE_ID ? 'ordinary' : 'explicit';
-      const candidateContent = project(value), relatedContent = [...related.values()].map(project);
+      const candidateContent = project(value), relatedContent = [...related.values()].map(other => project(other));
       assertJudgmentInput({ view, candidate: candidateContent, related: relatedContent, associations: { outsideRequestedScope } });
       const state = { view, candidate: toJson(candidateContent), related: relatedContent.map(other => toJson(other)),
         associations: { outsideRequestedScope } };
@@ -417,12 +457,17 @@ export async function prepareKnowledgeScopeSelection(
     } catch (error) { fail(error); }
     const key = `${kind}:${record.id}`, snapshot = snapshots.get(key);
     if (!snapshot) return false;
-    if (signature(value) !== snapshot.version) throw new KnowledgeScopeSelectionHeldError('stale');
+    if (!snapshot(value)) throw new KnowledgeScopeSelectionHeldError('stale');
     return accepted.has(key);
   };
   const selectedEdges = potentialEdges.filter(edge => edgeInWindow(edge, accepted));
   const retainEdges = (records: readonly KnowledgeEdgeRecord[], window: KnowledgeScopeEdgeWindow = {}) => {
     const inputVersion = edgeVersion(records), windowSnapshot = captureStrictRepairJson(window), windowVersion = knowledgeRecordVersion(windowSnapshot);
+    const retainedRecords = retainStrictJudgmentJson(records, problem => new KnowledgeWebGapRepairHeldError(problem));
+    const retainedWindow = retainStrictJudgmentJson(window, problem => new KnowledgeWebGapRepairHeldError(problem));
+    const originalSlotsMatch = (retained: { readonly assertCurrent: () => void }) => {
+      try { retained.assertCurrent(); return true; } catch { return false; }
+    };
     const keys = new Set([...accepted].filter(key => key.startsWith('source:')
       ? !windowSnapshot.sourceIds || windowSnapshot.sourceIds.includes(key.slice('source:'.length))
       : key.startsWith('node:') && (!windowSnapshot.nodeIds || windowSnapshot.nodeIds.includes(key.slice('node:'.length)))));
@@ -441,6 +486,16 @@ export async function prepareKnowledgeScopeSelection(
     const byId = new Map(selectedEdges.map(edge => [edge.id, edge]));
     for (const record of records) if (!includes(record) || !sameKnowledgeRecord(record, byId.get(record.id))) throw new KnowledgeScopeSelectionHeldError('stale');
     const original = potentialEdges.filter(includes), version = edgeVersion(original);
+    const retainedEdges = retainStrictJudgmentJson(original, problem => new KnowledgeWebGapRepairHeldError(problem));
+    const originalEdges = new Set(original);
+    const cachedWindowMatches = () => {
+      const current = store.listEdges().filter(includes);
+      const currentEdges = new Set(current);
+      if (originalSlotsMatch(retainedEdges) && originalEdges.size === original.length
+        && current.length === original.length && currentEdges.size === originalEdges.size
+        && original.every(edge => currentEdges.has(edge))) return true;
+      return edgeVersion(current) === version;
+    };
     const originalWindowGeneration = originalEdgeChanges.reduce((latest, change) => {
       const from = `${change.fromKind}:${change.fromId}`, to = `${change.toKind}:${change.toId}`;
       return (openIncident ? touchesIncident(from, to) : keys.has(from) && keys.has(to) && (!incident || touchesIncident(from, to)))
@@ -450,8 +505,9 @@ export async function prepareKnowledgeScopeSelection(
       try {
         store.assertRecordSnapshotFrame(() => {
           assertAuthorityCurrent();
-          if (edgeVersion(records) !== inputVersion || knowledgeRecordVersion(captureStrictRepairJson(window)) !== windowVersion
-            || edgeVersion(store.listEdges().filter(includes)) !== version
+          if ((!originalSlotsMatch(retainedRecords) && edgeVersion(records) !== inputVersion)
+            || (!originalSlotsMatch(retainedWindow) && knowledgeRecordVersion(captureStrictRepairJson(window)) !== windowVersion)
+            || !cachedWindowMatches()
             || (openIncident && topologyVersion(store.listEdges()) !== originalTopologyVersion)
             || store.getEdgeWindowGeneration([...keys], incident ? [...incident] : undefined, openIncident) !== originalWindowGeneration) throw new KnowledgeScopeSelectionHeldError('stale');
           const physical = store.getEdgeGenerationSnapshots().filter(includes);

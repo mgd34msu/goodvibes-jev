@@ -19,7 +19,7 @@ import {
   DivergencePanel,
 } from '../sdk/src/platform/runtime/diagnostics/panels/divergence.ts';
 
-// Drain queued microtasks so bus.emit() listeners (OBS-14 async dispatch) run before assertions.
+// Drain queued microtasks so bus.emit() listeners (async dispatch) run before assertions.
 const flushMicrotasks = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

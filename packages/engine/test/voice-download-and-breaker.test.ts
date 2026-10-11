@@ -1,11 +1,11 @@
 /**
  * voice-download-and-breaker.test.ts
  *
- * Item 5: local voice model downloads are atomic + verified, a truncated .onnx
+ * Local voice model downloads are atomic + verified, a truncated .onnx
  * (Content-Length short, too small, HTML error page, or bad magic) is rejected
  * and never left at the final path.
  *
- * Item 6: when the local TTS engine hard-fails (the piper SIGABRT / onnxruntime
+ * When the local TTS engine hard-fails (the piper SIGABRT / onnxruntime
  * "Unsupported model IR version" abort on this host), the provider trips a
  * circuit breaker, one honest engine-unavailable state, no per-chunk crash
  * storm, and a transient timeout does NOT trip it.
@@ -42,7 +42,7 @@ function tempDir(): string {
   return dir;
 }
 
-describe('atomic voice model download (item 5)', () => {
+describe('atomic voice model download', () => {
   test('a complete, verified model lands atomically at the final path', async () => {
     const dir = tempDir();
     const dest = join(dir, 'en_US-glados-high.onnx');
@@ -125,7 +125,7 @@ function abortError(message: string, signal: string | undefined = 'SIGABRT'): Er
   return e;
 }
 
-describe('local TTS hard-failure circuit breaker (item 6)', () => {
+describe('local TTS hard-failure circuit breaker', () => {
   test('a piper onnxruntime abort trips the breaker: one honest state, no re-invocation', async () => {
     let calls = 0;
     const provider = createLocalVoiceProvider({

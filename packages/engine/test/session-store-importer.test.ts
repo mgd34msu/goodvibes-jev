@@ -184,7 +184,7 @@ describe('migration importer: folds all three legacy stores into one home store'
 });
 
 // ---------------------------------------------------------------------------
-// MAJOR 1, the persisted-message cap is PER SESSION, not global. The old cap
+// the persisted-message cap is PER SESSION, not global. The old cap
 // flattened every session's messages then sliced the combined stream, silently
 // dropping the OLDEST sessions' whole transcripts while messageCount stayed
 // inflated. This is the 299×10 scenario: 2 990 messages must all survive.

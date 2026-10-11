@@ -1,7 +1,7 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * CodeIndexReindexScheduler, Stage B tool-site reindex hooks.
+ * CodeIndexReindexScheduler, tool-site reindex hooks.
  *
  * After a successful file-writing tool call (write / edit, including the edit
  * tool's notebook operations), the touched path(s) are scheduled for an

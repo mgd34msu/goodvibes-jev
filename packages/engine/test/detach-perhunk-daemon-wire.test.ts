@@ -1,7 +1,7 @@
 /**
  * sessions.detach + per-hunk approvals, proven over a REAL bootDaemon.
  *
- * Follows the boot-daemon-factory R1 pattern: a live daemon on an ephemeral
+ * Follows the boot-daemon-factory pattern: a live daemon on an ephemeral
  * port, token auth, exercised over HTTP including its honest 4xx shapes.
  *
  *  - sessions.detach: register two participants to one session, detach one over
@@ -207,7 +207,7 @@ describe('per-hunk approvals over HTTP', () => {
   // against our typed inputSchemas BEFORE delegating to the HTTP route. These
   // pins record WHICH validation source fires on each failure mode so the
   // honest-400 contract is owned deliberately, not accidentally:
-  //   - shape/type errors (missing required, wrong element type) -> S1 gate
+  //   - shape/type errors (missing required, wrong element type) -> schema gate
   //     (code INVALID_INPUT), pre-empting our handlers, fine, still honest;
   //   - request-specific errors (hunk index out of range) -> OUR broker
   //     (INVALID_ARGUMENT), because only it knows the pending edit list.

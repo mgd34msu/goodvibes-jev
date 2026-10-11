@@ -24,6 +24,8 @@
 
 import { describeOpenAIAvailability } from '../../sdk/src/platform/providers/optional-openai.ts';
 import { OpenAIProvider } from '../../sdk/src/platform/providers/openai.ts';
+import { ProviderError } from '../../sdk/src/platform/types/errors.ts';
+import { readNormalizedError } from '../../sdk/src/platform/utils/error-display.ts';
 import { describeBedrockAvailability } from '../../sdk/src/platform/providers/optional-bedrock.ts';
 import { fetchBedrockModelIds } from '../../sdk/src/platform/providers/amazon-bedrock.ts';
 import {
@@ -45,12 +47,13 @@ import {
 process.stdout.write('INIT_SURVIVED\n');
 
 /** Run a call that must fail, and print the message it failed with. */
-async function reportThrow(label: string, run: () => Promise<unknown>): Promise<void> {
+async function reportThrow(label: string, run: () => Promise<unknown>): Promise<unknown> {
   try {
     await run();
     process.stdout.write(`${label}_THREW=false\n`);
   } catch (error: unknown) {
     process.stdout.write(`${label}_THREW=${error instanceof Error ? error.message : String(error)}\n`);
+    return error;
   }
 }
 
@@ -61,7 +64,17 @@ process.stdout.write(`OPENAI_REASON=${openai.reason ?? 'none'}\n`);
 // first use), and the first call must fail by name rather than at boot.
 const openaiProvider = new OpenAIProvider('test-key');
 process.stdout.write(`OPENAI_PROVIDER_CONSTRUCTED=${openaiProvider.name}\n`);
-await reportThrow('OPENAI_EMBED', () => openaiProvider.embed({ text: 'hello', dimensions: 384, usage: 'query' }));
+const openaiFailure = await reportThrow('OPENAI_EMBED', () => openaiProvider.embed({ text: 'hello', dimensions: 384, usage: 'query' }));
+if (!(openaiFailure instanceof ProviderError)) throw new Error('Expected a native OpenAI provider failure');
+const normalizedOpenaiFailure = await readNormalizedError(openaiFailure, { site: 'fixture.optional-openai' });
+process.stdout.write(`OPENAI_EMBED_NATIVE_CODE=${normalizedOpenaiFailure.code}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_CATEGORY=${normalizedOpenaiFailure.category}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_PROVIDER=${normalizedOpenaiFailure.provider}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_OPERATION=${normalizedOpenaiFailure.operation}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_PHASE=${normalizedOpenaiFailure.phase}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_RECOVERABLE=${String(normalizedOpenaiFailure.recoverable)}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_MESSAGE=${normalizedOpenaiFailure.message}\n`);
+process.stdout.write(`OPENAI_EMBED_NATIVE_HINT=${normalizedOpenaiFailure.hint}\n`);
 
 const bedrock = await describeBedrockAvailability();
 process.stdout.write(`BEDROCK_AVAILABLE=${String(bedrock.available)}\n`);

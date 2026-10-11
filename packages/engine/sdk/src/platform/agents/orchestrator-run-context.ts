@@ -44,7 +44,7 @@ export interface AgentOrchestratorRunContext {
   ) => void;
   readonly emitStreamDelta: (recordId: string, content: string, accumulated: string) => void;
   /**
-   * Conversation-snapshot bridge (Part C6): register the running
+   * Conversation-snapshot bridge: register the running
    * agent's live snapshot accessor with AgentManager so
    * AgentManager.getConversationSnapshot(agentId) can serve a full-fidelity
    * live transcript to a fleet tab. Optional, contexts that don't wire a
@@ -73,7 +73,7 @@ export interface AgentOrchestratorRunContext {
   readonly knowledgeService?: Pick<KnowledgeService, 'preparePromptPacket'> | undefined;
   readonly memoryRegistry?: Pick<import('../state/index.js').MemoryRegistry, 'getAll' | 'semanticCandidates' | 'vectorStats'> | undefined;
   /**
-   * Stage B, repo code index for per-turn code injection in a spawned agent run.
+   * repo code index for per-turn code injection in a spawned agent run.
    * Undefined is a hard no-op. Actual injection additionally requires the
    * `agent-passive-code-injection` flag (DEFAULT OFF) and `isCodeInjectionSettingEnabled`.
    */
@@ -82,7 +82,7 @@ export interface AgentOrchestratorRunContext {
   /** Live gate for the embedder's storage.codeIndexEnabled setting. Undefined defaults to allowed. */
   readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined;
   /**
-   * Stage B, called once per executed tool (toolName, args, success) so a code-index
+   * called once per executed tool (toolName, args, success) so a code-index
    * reindex scheduler can debounce an incremental reindex of touched files. Never awaited.
    */
   readonly onToolExecuted?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined;

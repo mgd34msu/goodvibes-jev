@@ -1,5 +1,5 @@
 /**
- * Tool result reconciliation types and utilities for GC-ORCH-015.
+ * Tool result reconciliation types and utilities.
  *
  * Provides types and helpers for detecting and resolving unresolved tool calls
  * at turn end, ensuring no turn exits with dangling tool-call state.

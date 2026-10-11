@@ -44,9 +44,8 @@ describe('exec tool: AbortSignal reaches the spawned child process', () => {
     // runtime.ts) so this exercises the plain foreground path specifically;
     // the progress-streamed path (timeout_ms above the threshold, which is
     // what the exec tool's own 120s DEFAULT timeout always triggers) is
-    // covered separately below, both are wired for opts.signal. Only
-    // `until`-pattern commands (runUntil) are explicitly deferred, see the
-    // WO report.
+    // covered separately below. Both paths and until-pattern execution
+    // forward opts.signal.
     const resultPromise = tool.execute(
       { working_dir: root, commands: [{ cmd: 'sleep 30', timeout_ms: 20_000 }] },
       { signal: controller.signal },
@@ -115,7 +114,7 @@ describe('exec tool: AbortSignal reaches the spawned child process', () => {
     // No explicit timeout_ms, this is the real-world default shape, and
     // the exec tool's own 120s DEFAULT_TIMEOUT_MS exceeds
     // PROGRESS_AUTO_THRESHOLD_MS (30s), so it auto-engages
-    // runCommandWithProgress. Before this WO wired that path too, a
+    // runCommandWithProgress. Before this path forwarded cancellation, a
     // cancellation here would silently do nothing until the full 120s
     // default elapsed, exactly the orphaned-child-process gap the brief
     // calls out.

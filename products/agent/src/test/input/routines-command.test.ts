@@ -9,6 +9,7 @@ import { registerRoutinesRuntimeCommands } from '../../input/commands/routines-r
 import { registerScheduleRuntimeCommands } from '../../input/commands/schedule-runtime.ts';
 import { createShellPathService } from '@/runtime/index.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import type { OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
 
 function commandHarness(): {
   readonly registry: CommandRegistry;
@@ -52,6 +53,7 @@ function inputUrl(input: Parameters<typeof fetch>[0]): string {
 function scheduleResponse(): Response {
   return new Response(JSON.stringify({
     id: 'sched-1',
+    mutationRevision: 'schedule-revision-1',
     name: 'Agent routine: Inbox Sweep',
     labels: [],
     createdAt: 1,
@@ -87,7 +89,7 @@ function scheduleResponse(): Response {
     successCount: 0,
     failureCount: 0,
     deleteAfterRun: false,
-  }), {
+  } satisfies OperatorMethodOutput<'automation.schedules.create'>), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
@@ -98,6 +100,7 @@ function schedulesListResponse(): Response {
     jobs: [
       {
         id: 'sched-1',
+        mutationRevision: 'schedule-revision-1',
         name: 'Agent routine: Inbox Sweep',
         labels: [],
         createdAt: 1,
@@ -137,7 +140,7 @@ function schedulesListResponse(): Response {
       },
     ],
     runs: [],
-  }), {
+  } satisfies OperatorMethodOutput<'automation.schedules.list'>), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });

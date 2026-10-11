@@ -604,7 +604,7 @@ export async function startHostServices(
   });
 
   if (resolveDaemonEnabled(config)) {
-    // Owner ruling (D7a): the daemon is a SYSTEM SERVICE, so starting a surface
+    // the daemon is a SYSTEM SERVICE, so starting a surface
     // must NOT couple the daemon's lifetime to this process. With the port free
     // the host spawns the standalone `goodvibes-daemon` binary as a detached
     // child and adopts it as 'external'; with the port occupied by a compatible

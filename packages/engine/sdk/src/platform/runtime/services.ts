@@ -247,7 +247,7 @@ export interface RuntimeServices {
   readonly judgment: JudgmentServices;
   /** Optional borrowed browser transport capability; its host retains async lifecycle ownership. */
   readonly browserJudgment?: BrowserJudgmentCapability | undefined;
-  /** Repo code index (Stage A): schema-initialized eagerly; the build is never auto-triggered here (would walk arbitrary workingDirectories incl. test fixtures). */
+  /** Repo code index: schema-initialized eagerly; the build is never auto-triggered here (would walk arbitrary workingDirectories incl. test fixtures). */
   readonly codeIndexStore: CodeIndexStore;
   /** Stage B tool-site incremental reindex scheduler (bound to codeIndexStore). */
   readonly codeIndexReindexScheduler: CodeIndexReindexScheduler;

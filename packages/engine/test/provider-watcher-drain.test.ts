@@ -1,4 +1,4 @@
-/** Owned native watcher admission and real registry reload settlement (THE-102). */
+/** Owned native watcher admission and real registry reload settlement. */
 import { afterEach, beforeEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
 import * as fs from 'fs';
 import { tmpdir } from 'node:os';

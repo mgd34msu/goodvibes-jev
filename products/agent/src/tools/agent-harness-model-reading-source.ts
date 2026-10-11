@@ -93,13 +93,14 @@ export function captureModelReadingSnapshotGuard(captured: unknown): (value: unk
         if (!Object.is(current, snapshot.value)) changed();
         return true;
       }
-      if (current === null || typeof current !== 'object' || nodeTypes.isProxy(current) || ancestors.has(current)) return changed();
-      if (Array.isArray(current) !== snapshot.array) changed();
-      const prototype: unknown = Object.getPrototypeOf(current);
-      if (snapshot.array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
+      if (current === null || typeof current !== 'object') return changed();
       // A complete match of a recursively frozen native tree remains exact:
       // neither its slots nor any descendant's prototype can subsequently change.
       if (immutableMatches.get(current)?.has(snapshot)) return true;
+      if (nodeTypes.isProxy(current) || ancestors.has(current)) return changed();
+      if (Array.isArray(current) !== snapshot.array) changed();
+      const prototype: unknown = Object.getPrototypeOf(current);
+      if (snapshot.array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
       if (Reflect.ownKeys(current).length !== snapshot.slots.length) changed();
       ancestors.add(current);
       let immutable = Object.isFrozen(current);

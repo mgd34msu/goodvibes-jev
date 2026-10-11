@@ -182,11 +182,31 @@ export function useDaemonHealth(): DaemonHealth {
   const healthQuery = useQuery({
     queryKey: ['daemon-health', 'probe'] as const,
     queryFn: probeLatency,
+    networkMode: 'always',
     refetchInterval: HEALTH_PROBE_INTERVAL_MS,
     refetchIntervalInBackground: true,
     retry: 0,
     staleTime: HEALTH_PROBE_INTERVAL_MS / 2,
   });
+
+  const refetchHealth = healthQuery.refetch;
+  const [browserOffline, setBrowserOffline] = useState(() => !navigator.onLine);
+  useEffect(() => {
+    let cancelled = false;
+    const offline = () => setBrowserOffline(true);
+    const online = () => {
+      void refetchHealth().then(() => {
+        if (!cancelled && navigator.onLine) setBrowserOffline(false);
+      });
+    };
+    window.addEventListener('offline', offline);
+    window.addEventListener('online', online);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('offline', offline);
+      window.removeEventListener('online', online);
+    };
+  }, [refetchHealth]);
 
   // Derive connection + route state from the direct probe result, falling back to the
   // relay when direct is genuinely down (FAILURE_THRESHOLD+ consecutive misses) and a
@@ -196,6 +216,11 @@ export function useDaemonHealth(): DaemonHealth {
     let cancelled = false;
 
     async function evaluate() {
+      if (browserOffline) {
+        setLatencyMs(null);
+        setConnectionState('down');
+        return;
+      }
       if (healthQuery.isSuccess) {
         const { latencyMs: probed, ok } = healthQuery.data;
         if (cancelled) return;
@@ -242,7 +267,7 @@ export function useDaemonHealth(): DaemonHealth {
     return () => {
       cancelled = true;
     };
-  }, [healthQuery.isSuccess, healthQuery.isError, healthQuery.data]);
+  }, [browserOffline, healthQuery.isSuccess, healthQuery.isError, healthQuery.data, healthQuery.dataUpdatedAt]);
 
   // -- Tasks ----------------------------------------------------------------
   const tasksQuery = useQuery({

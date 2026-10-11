@@ -1,7 +1,7 @@
 # Receipt-bound passive code context
 
 Captured contract agents use a construction-owned, per-run passive code adapter.
-They never receive the owner's live `CodeIndexStore`. This is a bounded THE-103
+They never receive the owner's live `CodeIndexStore`. This is a bounded
 capability, not closure of captured runtime/history parity or all-Agent parity.
 
 ## Admission and provenance

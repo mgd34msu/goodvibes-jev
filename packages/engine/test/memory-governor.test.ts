@@ -1,7 +1,7 @@
 /**
  * memory-governor.test.ts
  *
- * Item 4 (a–d) guard for the SDK-owned memory governance layer: the cache
+ * Guard for the SDK-owned memory governance layer: the cache
  * registry's fail-closed membership gate, the pausable-job seam, and the
  * MemoryGovernor's tier machine + leak tripwire. Everything I/O is injected, so
  * the tiers and tripwire are exercised deterministically with fake clocks and
@@ -327,7 +327,7 @@ describe('MemoryGovernor budget resolution + snapshot', () => {
     expect(gov2.snapshot().budgetMb).toBe(2048);
   });
 
-  test('createMemoryGovernance registers all known caches + jobs and drives them (item 4f/4e)', () => {
+  test('createMemoryGovernance registers all known caches + jobs and drives them', () => {
     let rss = 10 * MB;
     let clock = 0;
     const { cacheRegistry, pauseController, memoryGovernor } = createMemoryGovernance({

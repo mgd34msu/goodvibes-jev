@@ -42,7 +42,7 @@ export async function readPermissionCategory(
  * A side-effect category is not permission: it cannot replace a failed boundary,
  * revoked authority, unavailable judgment, or a manager's typed decision.
  *
- * Retry belongs to the shared judgment/gate executor (THE116), never this wrapper.
+ * Retry belongs to the shared judgment/gate executor, never this wrapper.
  * Until that executor supplies a decision, its pending promise or typed failure
  * propagates unchanged. No outage is converted into a local allow or deny.
  */

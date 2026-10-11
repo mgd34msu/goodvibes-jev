@@ -1,5 +1,5 @@
 {
-  "provenance": "Recorded complete safe diagnostic subjects from checkpoint 64c9d6d565e2e16641970310d8ca90caaa0008c0 CI run 38113187945 jobs 114393096159 and 114393096195. Only the independently owned temporary root is parameterized. Questions come from the actual registered source contracts because GitHub log masking replaced Bearer in their instructions. Answers classify these exact synthetic diagnostic subjects only; refs remains uncertain. No original native input or withheld value is supplied or inferred. Two complete watchdog process-id subjects were subsequently recorded by the real source headless child run (headless-diagnostic-source-1.log). Nine complete provider fingerprint field subjects were recorded by that same run. Actual native fingerprint source publishes counts, budgets and category/boolean settings only. Message/image collections and reasoningSummary remain uncertain because field names alone do not establish their full role.",
+  "provenance": "Recorded complete safe diagnostic subjects from checkpoint 64c9d6d565e2e16641970310d8ca90caaa0008c0 CI run 38113187945 jobs 114393096159 and 114393096195. Only the independently owned temporary root is parameterized. Questions come from the actual registered source contracts because GitHub log masking replaced Bearer in their instructions. Answers classify these exact synthetic diagnostic subjects only; refs remains uncertain. No original native input or withheld value is supplied or inferred. Two complete watchdog process-id subjects were subsequently recorded by the real source headless child run (headless-diagnostic-source-1.log). Nine complete provider fingerprint field subjects were recorded by that same run. Actual native fingerprint source publishes counts, budgets and category/boolean settings only. Message/image collections and reasoningSummary remain uncertain because field names alone do not establish their full role. Twenty-one additional complete envelopes were recorded by fa73eda CI run 38120201253. Native sources connected-host-auth.ts and daemon-verbs.ts identify unknown-pairing and missing-token diagnostics; no hidden span value is inferred from them. Bare dispatch and opaque method-error/memory spans remain uncertain. A declared token span remains credential material even when another span is the target. Setup mode, identifier and confirmation targets are ordinary, but the whole line stays uncertain because explicitUserRequest is opaque content. Fixed residual text contains no credential value after all spans are withheld. Nine further complete protected-span envelopes were observed during the unchanged authenticated fa73eda CI binary replay after the preceding exact roles settled. These preserve the native projection after ordinary outcome metadata and protected token/content spans are removed. Opaque method-error spans remain uncertain. Only the three exact setup projections containing ordinary mode, setupItemId and confirm scalar roles, with the freeform span absent, settle credential-free. The failed 156-entry whole-suite replay is retained as evidence; no derivative request was guessed.",
   "contracts": [
     {
       "kind": "diagnostic-field-kind",
@@ -949,6 +949,78 @@
                 "owner_profile": 0.003,
                 "content": 0.003,
                 "other": 0.99
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "dispatch"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.4,
+              "probabilities": {
+                "secret": 0.1,
+                "owner_profile": 0.15,
+                "content": 0.35,
+                "other": 0.4
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "outcome"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "other",
+              "confidence": 0.99,
+              "probabilities": {
+                "secret": 0.004,
+                "owner_profile": 0.003,
+                "content": 0.003,
+                "other": 0.99
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "token"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "secret",
+              "confidence": 0.99,
+              "probabilities": {
+                "secret": 0.99,
+                "owner_profile": 0.003,
+                "content": 0.004,
+                "other": 0.003
+              }
+            }
+          }
+        },
+        {
+          "state": {
+            "field": "explicitUserRequest"
+          },
+          "answers": {
+            "kind": {
+              "type": "choice",
+              "choice": "content",
+              "confidence": 0.99,
+              "probabilities": {
+                "secret": 0.004,
+                "owner_profile": 0.003,
+                "content": 0.99,
+                "other": 0.003
               }
             }
           }
@@ -2820,6 +2892,238 @@
               "noul": 0.01
             }
           }
+        },
+        {
+          "state": {
+            "parts": [
+              {
+                "kind": "text",
+                "text": "'sessions.hosted.list' failed: "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-1"
+              },
+              {
+                "kind": "text",
+                "text": " method is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-2"
+              },
+              {
+                "kind": "text",
+                "text": " dispatch: "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-3"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ]
+          },
+          "answers": {
+            "credentialRemains": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-1"
+              },
+              {
+                "kind": "text",
+                "text": " outcome is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-2"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-3"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ]
+          },
+          "answers": {
+            "credentialRemains": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-1"
+              },
+              {
+                "kind": "text",
+                "text": " outcome is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-2"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-3"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ]
+          },
+          "answers": {
+            "credentialRemains": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-1"
+              },
+              {
+                "kind": "text",
+                "text": " token is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-2"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ]
+          },
+          "answers": {
+            "credentialRemains": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-1"
+              },
+              {
+                "kind": "text",
+                "text": " token is "
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-2"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ]
+          },
+          "answers": {
+            "credentialRemains": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-1"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-2"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-3"
+              },
+              {
+                "kind": "text",
+                "text": " explicitUserRequest:"
+              },
+              {
+                "kind": "withheld",
+                "reference": "span-4"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ]
+          },
+          "answers": {
+            "credentialRemains": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
         }
       ]
     },
@@ -2957,6 +3261,936 @@
               }
             ],
             "target": "whole-line"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.01
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "rewind.conversation.host.register"
+              },
+              {
+                "kind": "text",
+                "text": " outcome is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "outcome"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "rewind.conversation.host.register"
+              },
+              {
+                "kind": "text",
+                "text": " outcome is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "outcome"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-3"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "sessions.hosted.list"
+              },
+              {
+                "kind": "text",
+                "text": " outcome is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "outcome"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "sessions.hosted.list"
+              },
+              {
+                "kind": "text",
+                "text": " outcome is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "outcome"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-3"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "memory spine: "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "spine"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "rewind.conversation.host.register"
+              },
+              {
+                "kind": "text",
+                "text": " token is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "token"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.99
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "setupItemId"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "confirm"
+              },
+              {
+                "kind": "text",
+                "text": " explicitUserRequest:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-4",
+                "syntax": "assignment-value",
+                "field": "explicitUserRequest"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "sessions.hosted.list"
+              },
+              {
+                "kind": "text",
+                "text": " token is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "token"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.99
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "setupItemId"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "confirm"
+              },
+              {
+                "kind": "text",
+                "text": " explicitUserRequest:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-4",
+                "syntax": "assignment-value",
+                "field": "explicitUserRequest"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-2"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "setupItemId"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "confirm"
+              },
+              {
+                "kind": "text",
+                "text": " explicitUserRequest:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-4",
+                "syntax": "assignment-value",
+                "field": "explicitUserRequest"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-3"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  Then rerun this command or inspect agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": "."
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.01
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "rewind.conversation.host.register"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "rewind.conversation.host.register"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-2"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "sessions.hosted.list"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "sessions.hosted.list"
+              },
+              {
+                "kind": "text",
+                "text": "; no credential fallback or remint is "
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "remint"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-2"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'rewind.conversation.host.register': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "rewind.conversation.host.register"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "setupItemId"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "confirm"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.01
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "cannot invoke 'sessions.hosted.list': "
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "sessions.hosted.list"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-1"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.5
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.5
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "setupItemId"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "confirm"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-2"
+          },
+          "answers": {
+            "lineHasCredential": {
+              "type": "noul",
+              "noul": 0.01
+            },
+            "spanIsCredential": {
+              "type": "noul",
+              "noul": 0.01
+            }
+          }
+        },
+        {
+          "state": {
+            "phase": "source",
+            "parts": [
+              {
+                "kind": "text",
+                "text": "  agent_harness mode:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-1",
+                "syntax": "assignment-value",
+                "field": "mode"
+              },
+              {
+                "kind": "text",
+                "text": " setupItemId:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-2",
+                "syntax": "assignment-value",
+                "field": "setupItemId"
+              },
+              {
+                "kind": "text",
+                "text": " confirm:"
+              },
+              {
+                "kind": "span",
+                "reference": "span-3",
+                "syntax": "assignment-value",
+                "field": "confirm"
+              },
+              {
+                "kind": "text",
+                "text": ""
+              }
+            ],
+            "target": "span-3"
           },
           "answers": {
             "lineHasCredential": {

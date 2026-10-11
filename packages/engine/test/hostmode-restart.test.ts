@@ -7,7 +7,7 @@
  *
  * CM1: ConfigManager.subscribe(), keyed listener map, fires on set(), returns unsubscribe
  * CM2: ConfigManager.subscribe() fires with correct (newValue, oldValue) arguments
- * CM3: Unsubscribe stops receiving further notifications
+ * Unsubscribe stops receiving further notifications
  * CM4: Unrelated key change does not trigger a listener for a different key
  *
  * HL1: HttpListener restarts when httpListener.port changes while running
@@ -129,7 +129,7 @@ describe('CM2: ConfigManager.subscribe: correct argument shape', () => {
   });
 });
 
-describe('CM3: ConfigManager.subscribe: unsubscribe stops notifications', () => {
+describe('ConfigManager.subscribe: unsubscribe stops notifications', () => {
   test('unsub() prevents further callbacks', () => {
     const cm = makeConfigManager();
     const received: number[] = [];
@@ -284,7 +284,7 @@ describe('HL6: hostMode change triggers rebind', () => {
 // HW: createHostModeRestartWatcher unit tests
 // ---------------------------------------------------------------------------
 
-describe('HW1: createHostModeRestartWatcher: fires onRestart when key changes and running', () => {
+describe('createHostModeRestartWatcher: fires onRestart when key changes and running', () => {
   test('calls onRestart when a watched key is set and isRunning=true', () => {
     const cm = makeConfigManager();
     const onRestart = mock(() => {});
@@ -303,7 +303,7 @@ describe('HW1: createHostModeRestartWatcher: fires onRestart when key changes an
   });
 });
 
-describe('HW2: createHostModeRestartWatcher: does NOT fire when isRunning=false', () => {
+describe('createHostModeRestartWatcher: does NOT fire when isRunning=false', () => {
   test('skips onRestart when getIsRunning returns false', () => {
     const cm = makeConfigManager();
     const onRestart = mock(() => {});
@@ -339,7 +339,7 @@ describe('HW3: createHostModeRestartWatcher: unsubscribe prevents further callba
   });
 });
 
-describe('HW4: createHostModeRestartWatcher: unsubscribe is idempotent', () => {
+describe('createHostModeRestartWatcher: unsubscribe is idempotent', () => {
   test('calling unsubscribe() twice does not throw', () => {
     const cm = makeConfigManager();
     const handle = createHostModeRestartWatcher({

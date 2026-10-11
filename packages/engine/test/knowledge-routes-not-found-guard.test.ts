@@ -1,7 +1,7 @@
 /**
  * Pins the 404-mapping guard logic used in knowledge-routes.ts catch blocks.
  *
- * Rule (MIN-2 fix): After SDKErrorCode inference was introduced, `GoodVibesSdkError`
+ * Rule: After SDKErrorCode inference was introduced, `GoodVibesSdkError`
  * instances with `category: 'not_found'` always have `code === 'NOT_FOUND'` even when no
  * explicit code was supplied. To prevent category-only not-found errors from silently becoming
  * HTTP 404 responses, the guard now requires EITHER:

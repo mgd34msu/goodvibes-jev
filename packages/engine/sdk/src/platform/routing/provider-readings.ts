@@ -58,14 +58,19 @@ const PROBE_MODEL_IDS = 20;
 export type LocalServerSoftware = typeof localServerIdentity.routes[number];
 
 /** Which server software answered a probe; 'unknown' unless the reading is strong enough to act on. */
-export async function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string): Promise<LocalServerSoftware> {
-  const dispatched = await localServerIdentity.route(judgmentPort(site), {
+export async function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string,
+  options: JudgmentReadingOptions = {}): Promise<LocalServerSoftware> {
+  const owner = captureJudgmentPort(site, options);
+  owner.assertCurrent();
+  const dispatched = await localServerIdentity.route(owner.port, {
     port: evidence.port,
     headers: { ...evidence.headers },
     model_ids: evidence.modelIds.slice(0, PROBE_MODEL_IDS),
-  }, { site });
+  }, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  owner.assertCurrent();
   const software = dispatched.reading.outcome === 'act' ? dispatched.route : 'unknown';
   dispatched.recordAction(`server:${software}`);
+  owner.assertCurrent();
   return software;
 }
 

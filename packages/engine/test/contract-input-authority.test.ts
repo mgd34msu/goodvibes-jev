@@ -20,6 +20,7 @@ import {
 import type { Contract } from '../sdk/src/platform/contract/types.js';
 import { installJudgmentPort } from '../errors/src/index.js';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { hashState, SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 
 function git(root: string, ...args: string[]): void {
   const result = spawnSync('git', ['-C', root, ...args]);
@@ -131,16 +132,25 @@ for (const viewKind of ['snapshot', 'member'] as const) {
           tier: 'path',
           tool: 'read',
         });
-        const previous = installJudgmentPort(
-          fakePort((name, question) => {
-            if (question.type === 'choice') {
-              if (name !== 'family' || !('file-mutation' in question.criteria))
-                throw new Error('unexpected fixture choice');
-              return choiceAnswer(question, 'file-mutation', 0.99);
-            }
-            return noulAnswer(0.01);
-          }).port,
-        );
+        const failureState = access === 'policy-revoked'
+          ? 'Message: captured input path is [REDACTED]'
+          : access === 'concurrent'
+            ? 'Message: captured input authority is [REDACTED]'
+            : undefined;
+        const decisionLog = new SqliteDecisionLog(':memory:');
+        const judgment = fakePort((name, question, state) => {
+          if (failureState !== undefined && state === failureState && question.type === 'choice') {
+            if (name === 'category') return choiceAnswer(question, 'unknown', 0.99);
+            if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
+          }
+          if (question.type === 'choice') {
+            if (name !== 'family' || !('file-mutation' in question.criteria))
+              throw new Error('unexpected fixture choice');
+            return choiceAnswer(question, 'file-mutation', 0.99);
+          }
+          return noulAnswer(0.01);
+        });
+        const previous = installJudgmentPort(withDecisionLog(judgment.port, decisionLog));
         expect(await runtime.permissionManager.readAccess(join(root, 'private.ts'))).toBe('restricted');
         expect(await runtime.permissionManager.readAccess(join(root, 'allowed.ts'))).toBe('allow');
         const requests: string[] = [];
@@ -412,6 +422,21 @@ for (const viewKind of ['snapshot', 'member'] as const) {
             expect(runtime.agentManager.getStatus(id)!.status).toBe('completed');
             expect(runtime.agentManager.getStatus(secondId!)!.status).toBe('failed');
           }
+          if (failureState !== undefined) {
+            const failureRequests = judgment.requests.filter(request => request.context?.battery === 'engine.failure-reading');
+            expect(failureRequests).toHaveLength(1);
+            expect(failureRequests[0]!.state).toBe(failureState);
+            expect(failureRequests[0]!.context).toMatchObject({ batteryVersion: 2, site: 'engine.agent.run-failure' });
+            const decisions = decisionLog.query({ battery: 'engine.failure-reading', site: 'engine.agent.run-failure', status: 'answered' });
+            expect(decisions).toHaveLength(1);
+            expect(decisions[0]!.stateHash).toBe(hashState(failureState));
+            const failedId = access === 'concurrent' ? secondId! : id;
+            const failed = runtime.agentManager.getStatus(failedId)!;
+            expect(failed.status).toBe('failed');
+            expect(failed.error).toBe(failureState.slice('Message: '.length));
+            expect(fs.readFileSync(join(root, 'allowed.ts'), 'utf8')).toBe('export const SYNTHETIC_ALLOWED_MARKER = "fixture only";\n');
+            expect(fs.readFileSync(join(view, 'allowed.ts'), 'utf8')).toBe('export const SYNTHETIC_ALLOWED_MARKER = "fixture only";\n');
+          }
           expect(requests.some((request) => request.includes('SYNTHETIC_PRIVATE_MARKER'))).toBe(false);
           expect(opened).not.toContain(join(view, 'private.ts'));
           if (access === 'policy-revoked')
@@ -433,6 +458,7 @@ for (const viewKind of ['snapshot', 'member'] as const) {
           stop.abort();
           runtime.dispose();
           installJudgmentPort(previous);
+          decisionLog[Symbol.dispose]();
           rmSync(root, { recursive: true, force: true });
         }
       }, 20_000);

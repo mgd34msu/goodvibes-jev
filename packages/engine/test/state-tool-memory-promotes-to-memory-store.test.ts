@@ -1,12 +1,12 @@
 /**
- * Defect 5, memory ingest/retrieval gap.
+ * memory ingest/retrieval gap.
  *
  * Root cause: the `state` tool's `mode=memory action=set` wrote a preference ONLY to a flat
  * `.goodvibes/memory/*.json` file, while passive per-turn knowledge injection reads ONLY the
  * SQLite `memory_records` store. Two disjoint substrates with no bridge, so a "distilled"
  * preference was invisible to retrieval, the model couldn't answer it after a /reset.
  *
- * Fix (Option A): `set` also upserts a retrievable `memory_records` row (deduped per key, honest
+ * Fix: `set` also upserts a retrievable `memory_records` row (deduped per key, honest
  * `file` provenance, reviewState 'fresh' so it is not stamped as trusted). These tests prove the
  * record now exists, is retrievable by the passive-injection path, dedups on rewrite, and that the
  * flat-file write is unaffected (and still works with no registry wired).

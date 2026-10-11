@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ControlPlaneGateway } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { RuntimeEventBus } from './_helpers/runtime-seam.ts';
 
-// Drain queued microtasks so bus.emit() listeners (OBS-14 async dispatch) run before assertions.
+// Drain queued microtasks so bus.emit() listeners (async dispatch) run before assertions.
 const flushMicrotasks = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 function decodeChunk(chunk: Uint8Array | undefined): string {

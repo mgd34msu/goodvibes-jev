@@ -1,6 +1,6 @@
 # First WebUI battery readers
 
-These are server-only definitions and readers for the THE-30 registrations. The surrounding `webui-runtime.ts` source owner and daemon `browser-judgment-composition.ts` now install the command/error/mail readers under authenticated host ownership; this reader layer itself grants no access or transmission permission.
+These are server-only definitions and readers for the browser judgment registrations. The surrounding `webui-runtime.ts` source owner and daemon `browser-judgment-composition.ts` now install the command/error/mail readers under authenticated host ownership; this reader layer itself grants no access or transmission permission.
 
 `webui-adapters.ts` implements the published `BrowserJudgmentBattery` descriptor contract from PR31. `webuiDaemonRefusalAdapter` and `webuiStatusToneAdapter` resolve existing server references with the fresh `currentPrincipal` callback. `createWebuiCommandRankAdapter(sources)` accepts the `WebuiPaletteSources` authority supplied by daemon composition. It must resolve the query and all requested candidates in request order, retain the identity map locally, and bind query provenance together with candidate access/revisions in `sourceBinding`. Its `assertCurrent()` must recheck current identity, `read:sessions`, lifetime and source revisions after async work. The adapter checks the full returned projection before bounds/port/logging and verifies its query, version and candidate count against the request. No browser text-staging endpoint or private-source permission is created here.
 
@@ -63,4 +63,4 @@ The lease identifies an immutable observed read, not ongoing remote message exis
 
 Config mutations and credential changes synchronously retire account epochs, including ABA changes. Newer source reads, observed mailbox replacement, expiry and shutdown revoke old leases; shared retries recheck fresh authentication, source, purpose and route at every transmission and retention boundary. The WebUI opens an editable draft while waiting. Typing a subject, closing, selecting another message, starting a newer reply, changing client identity or navigating away cancels its pending interpretation. Unavailable or held readings leave the subject unset for explicit owner editing.
 
-The canonical in-memory IMAP fixtures, authenticated request/response tests and recorded-wire browser replay are synthetic implementation proof. They are not live mailbox/provider verification or THE-35 calibration.
+The canonical in-memory IMAP fixtures, authenticated request/response tests and recorded-wire browser replay are synthetic implementation proof. They are not live mailbox/provider verification or hosted browser calibration.

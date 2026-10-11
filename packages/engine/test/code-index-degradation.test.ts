@@ -1,17 +1,17 @@
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 /**
- * Repo code index (Stage A), no-embedding-provider degradation.
+ * Repo code index, no-embedding-provider degradation.
  *
  * The registry ALWAYS has HASHED_MEMORY_EMBEDDING_PROVIDER as its default,
  * there is never literally "no provider", but the hashed one is a
- * deterministic, weak lexical-ish signal. This suite covers the Stage-A
+ * deterministic, weak lexical-ish signal. This suite covers the
  * scope of that honesty contract: search still works in hashed mode (labeled
  * 'lexical'), the degradation reason is exposed exactly once (not per-turn
  * nagging), and a real provider flips retrieval quality to 'semantic' with no
  * further prompting.
  *
- * Stage B (auto-injection into coding turns) is explicitly deferred, see the
+ * Auto-injection into coding turns is explicitly deferred, see the
  * repo code index's staging decision, so this suite does not exercise
  * selectCodeContextForTask (it does not exist yet).
  */

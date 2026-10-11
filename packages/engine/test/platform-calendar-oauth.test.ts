@@ -519,7 +519,7 @@ describe('device-code flow', () => {
 });
 
 // ---------------------------------------------------------------------------
-// F3: expires_in coercion, never silently "never expires"
+// expires_in coercion, never silently "never expires"
 // ---------------------------------------------------------------------------
 
 describe('parseTokenResponse: expires_in coercion', () => {
@@ -585,7 +585,7 @@ describe('token refresh lifecycle', () => {
     expect(await store.connectionState('google')).toBe('reconnect-needed');
   });
 
-  // F2: Microsoft rotates refresh tokens on every use, so two concurrent
+  // Microsoft rotates refresh tokens on every use, so two concurrent
   // getFreshAccessToken calls sharing one stored (soon-to-be-invalidated) refresh
   // token must not both hit the provider, the loser would get invalid_grant on an
   // otherwise perfectly working account.

@@ -799,7 +799,7 @@ describe('each inbound setting reaches the thing it names', () => {
   });
 });
 
-describe('the expectation book is instantiated in production (gate #25)', () => {
+describe('the expectation book is instantiated in production', () => {
   test('composeInboundMail builds a registry and registers its three verbs', async () => {
     const rig = compose()!;
     expect([...rig.handlers.keys()].sort()).toEqual([

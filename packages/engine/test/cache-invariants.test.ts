@@ -336,10 +336,10 @@ describe('I2(d): _syncScheduled coalesces burst of rememberEvent calls', () => {
 });
 
 // ---------------------------------------------------------------------------
-// I2(e): getMessagesForLLM reference identity
+// getMessagesForLLM reference identity
 // ---------------------------------------------------------------------------
 
-describe('I2(e): getMessagesForLLM reference identity', () => {
+describe('getMessagesForLLM reference identity', () => {
   let conv: ConversationManager;
 
   beforeEach(() => {
