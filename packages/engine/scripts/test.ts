@@ -1,12 +1,16 @@
-import { dirname, resolve } from 'node:path';
+import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import type { Writable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
-import { runOwnedTestChild } from './owned-test-child.ts';
+import { pumpTestOutput, runOwnedTestChild } from './owned-test-child.ts';
 import { defaultTestArgs } from './test-discovery.ts';
 import { partitionTestArgs } from './test-partitions.ts';
 import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
 import {
   makeRunTmpDirName,
+  retainRunTmpDir,
   RUN_TMP_PREFIX,
   RUNNER_ENV_FLAG,
   STALE_RUN_MS,
@@ -78,42 +82,115 @@ function resolveTimeoutMs(): number {
 }
 
 /** True when the caller already passed an explicit --timeout, which wins. */
-function hasExplicitTimeout(): boolean {
-  return args.some((arg) => arg === '--timeout' || arg.startsWith('--timeout='));
+function hasExplicitTimeout(testArgs: readonly string[]): boolean {
+  return testArgs.some((arg) => arg === '--timeout' || arg.startsWith('--timeout='));
 }
 
-await withWorkspaceLock('test', async () => {
-  const testArgs = resolveTestArgs();
-  sweepStaleTmpDirs(TEST_TMP_ROOT, RUN_TMP_PREFIX, STALE_RUN_MS);
-  // withRunTmpDir removes the parent in a `finally`, so a failing suite takes
-  // its temp tree with it too. Sibling runs own their own parent and are never
-  // touched.
-  await withRunTmpDir(TEST_TMP_ROOT, async (runTmpDir) => {
-    const timeoutArgs = hasExplicitTimeout() ? [] : [`--timeout=${resolveTimeoutMs()}`];
-    // Owned, not merely spawned, see scripts/owned-test-child.ts for the
-    // orphan this replaces.
-    const { exitCode, signalCode, stopped, stopReason } = await runOwnedTestChild({
-        ownProcessGroup: process.platform !== 'win32',
-      argv: [...timeoutArgs, ...testArgs],
-      cwd: SDK_ROOT,
-      env: {
-        ...process.env,
-        ...testTmpEnv(runTmpDir),
-        // Sibling of the spread above, not part of it: see RUNNER_ENV_FLAG's
-        // note in scripts/test-run-tmp.ts. Deleting the spread must leave this
-        // behind, or test/test-tmp-containment.test.ts stops being able to see
-        // that the containment is gone.
-        [RUNNER_ENV_FLAG]: '1',
-      },
-    });
-    // A run this script ended itself reports WHY, by name. A generic "killed by
-    // SIGTERM" here would throw away the only sentence that says what the suite
-    // was doing, which is the whole point of the ceiling that ended it.
-    if (stopped !== null) {
-      throw new Error(`bun test ended by the ${stopped} ceiling: ${stopReason ?? 'no reason recorded'}`);
+/** Relay complete private logs without extending the shared execution deadline. */
+export async function replayTestOwnerLogs(paths: readonly string[], deadlineAt: number, sink: Writable = process.stdout, signal?: AbortSignal): Promise<{ outputTruncated: boolean; stopReason: string | null }> {
+  const abort = new AbortController();
+  const onInterrupt = () => abort.abort(new Error('Owner-log replay was interrupted'));
+  const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
+  for (const name of signals) process.on(name, onInterrupt);
+  signal?.addEventListener('abort', onInterrupt, { once: true });
+  if (signal?.aborted) onInterrupt();
+  const remaining = deadlineAt - Date.now();
+  const timer = setTimeout(() => abort.abort(new Error('The shared absolute deadline expired during owner-log replay')), Math.max(1, remaining));
+  try {
+    if (remaining <= 0 || abort.signal.aborted) return { outputTruncated: true, stopReason: 'The shared absolute deadline expired or replay was interrupted before owner-log replay' };
+    for (let index = 0; index < paths.length; index++) {
+      const header = new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(`[test-owner ${index + 1}/${paths.length}]\n`));
+        controller.close();
+      } });
+      await pumpTestOutput(header, sink, { lastLine: null, lastFile: null }, abort.signal);
+      await pumpTestOutput(Bun.file(paths[index]!).stream(), sink, { lastLine: null, lastFile: null }, abort.signal);
     }
-    if (exitCode !== 0) {
-      throw new Error(`bun test ${signalCode ? `killed by ${signalCode}` : `exited with code ${exitCode}`}`);
+    return { outputTruncated: false, stopReason: null };
+  } catch {
+    return { outputTruncated: true, stopReason: 'Owner-log replay failed or did not drain before the shared absolute deadline' };
+  } finally {
+    clearTimeout(timer);
+    for (const name of signals) process.off(name, onInterrupt);
+    signal?.removeEventListener('abort', onInterrupt);
+  }
+}
+
+/** Resolve every child selection inside the single workspace/build lease. */
+export async function runTests(resolvePlans: () => readonly (readonly string[])[] = () => [resolveTestArgs()], projectTmpParent?: string): Promise<void> {
+  const expectedParentPid = process.ppid;
+  await withWorkspaceLock('test', async () => {
+    const plans = resolvePlans();
+    if (plans.length === 0 || plans.some(plan => plan.length === 0)) throw new Error('Test child plans must be nonempty');
+    sweepStaleTmpDirs(TEST_TMP_ROOT, RUN_TMP_PREFIX, STALE_RUN_MS);
+    if (projectTmpParent) {
+      mkdirSync(projectTmpParent, { recursive: true });
+      sweepStaleTmpDirs(projectTmpParent, RUN_TMP_PREFIX, STALE_RUN_MS);
     }
-  }, RUN_TMP_DIR_NAME);
-});
+    await withRunTmpDir(TEST_TMP_ROOT, async (runTmpDir) => {
+      const interrupted = new AbortController();
+      const onInterrupt = () => interrupted.abort(new Error('The shared test runner was interrupted'));
+      const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
+      for (const name of signals) process.on(name, onInterrupt);
+      try {
+        const configuredCeiling = Number(process.env.GOODVIBES_TEST_CEILING_MS);
+        const ceilingMs = Number.isFinite(configuredCeiling) && configuredCeiling > 0
+          ? Math.min(720_000, Math.floor(configuredCeiling)) : 720_000;
+        const deadlineAt = Date.now() + ceilingMs;
+        const runPlan = async (testArgs: readonly string[], index: number) => {
+          const timeoutArgs = hasExplicitTimeout(testArgs) ? [] : [`--timeout=${resolveTimeoutMs()}`];
+          const output = plans.length > 1 ? createWriteStream(join(runTmpDir, `owner-${index + 1}.log`)) : undefined;
+          try {
+            const execute = (projectTmpRoot?: string) => {
+              if (interrupted.signal.aborted) throw new Error('Test dispatch was interrupted before this child could start');
+              return runOwnedTestChild({
+                ownProcessGroup: process.platform !== 'win32',
+                expectedParentPid,
+                ...(plans.length > 1 ? { deadlineAt, stdout: output, stderr: output } : {}),
+                argv: [...timeoutArgs, ...testArgs],
+                cwd: SDK_ROOT,
+                ...(projectTmpRoot ? { fixtureEnv: { GOODVIBES_TEST_PROJECT_TMP_ROOT: projectTmpRoot } } : {}),
+                env: {
+                  ...process.env,
+                  ...testTmpEnv(runTmpDir),
+                  // Keep the runner flag independent of the temporary environment.
+                  [RUNNER_ENV_FLAG]: '1',
+                },
+              });
+            };
+            return projectTmpParent ? await withRunTmpDir(projectTmpParent, async projectRoot => {
+              try { return await execute(projectRoot); }
+              catch (error) { retainRunTmpDir(projectRoot, 'Owned test lifecycle did not establish complete child settlement'); throw error; }
+            }) : await execute();
+          } finally {
+            if (output) { output.end(); await finished(output); }
+          }
+        };
+        const results = await Promise.allSettled(plans.map(runPlan));
+        let replay: { outputTruncated: boolean; stopReason: string | null } = { outputTruncated: false, stopReason: null };
+        if (plans.length > 1) {
+          replay = await replayTestOwnerLogs(plans.map((_, index) => join(runTmpDir, `owner-${index + 1}.log`)), deadlineAt, process.stdout, interrupted.signal);
+          const failed = replay.outputTruncated || interrupted.signal.aborted || results.some(result => result.status === 'rejected'
+            || result.value.exitCode !== 0 || result.value.stopped !== null || result.value.outputTruncated);
+          writeFileSync(join(runTmpDir, 'owner-results.json'), JSON.stringify({ plans, deadlineAt, replay, results: results.map(result => result.status === 'fulfilled'
+            ? result : { status: 'rejected', reason: 'Owned child lifecycle failed before settlement could be established' }) }, null, 2) + '\n');
+          if (failed) {
+            retainRunTmpDir(runTmpDir, 'Complete owner logs and failure/output-truncation manifest');
+            process.stderr.write(`goodvibes: test owner evidence retained at ${runTmpDir}\n`);
+          }
+        }
+        for (const result of results) {
+          if (result.status === 'rejected') throw result.reason;
+          const { exitCode, signalCode, stopped, stopReason, outputTruncated } = result.value;
+          if (stopped !== null) throw new Error(`bun test ended by the ${stopped} ceiling: ${stopReason ?? 'no reason recorded'}`);
+          if (outputTruncated) throw new Error('bun test output did not completely drain');
+          if (exitCode !== 0) throw new Error(`bun test ${signalCode ? `killed by ${signalCode}` : `exited with code ${exitCode}`}`);
+        }
+        if (replay.outputTruncated) throw new Error(`bun test outputTruncated: ${replay.stopReason}`);
+        if (interrupted.signal.aborted) throw new Error('bun test was interrupted');
+      } finally { for (const name of signals) process.off(name, onInterrupt); }
+    }, RUN_TMP_DIR_NAME);
+  });
+}
+
+if (import.meta.main) await runTests();

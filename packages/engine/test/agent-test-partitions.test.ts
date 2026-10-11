@@ -1,9 +1,15 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { AGENT_TEST_GROUPS, agentGroupTestArgs, agentTestFiles, agentTestManifest, agentTestMatrix, groupAgentTestFiles } from '../scripts/agent-test-partitions.ts';
+import { Writable } from 'node:stream';
+import { AGENT_TEST_GROUPS, agentGroupTestArgs, agentGroupTestPlans, agentTestFiles, agentTestManifest, agentTestMatrix, groupAgentTestFiles } from '../scripts/agent-test-partitions.ts';
+import { replayTestOwnerLogs } from '../scripts/test.ts';
+import { sweepStaleTmpDirs } from '../scripts/stale-tmp-sweep.ts';
+import { RUN_TMP_PREFIX, STALE_RUN_MS } from '../scripts/test-run-tmp.ts';
+import { HEARTBEAT_PATH_ENV } from '../toolchain/src/test-runner/test-child-watchdog-env.ts';
+import { NETWORK_VIOLATIONS_ENV } from '../toolchain/src/test-runner/test-isolation.ts';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -22,6 +28,17 @@ function fixture(): { root: string; agent: string } {
   const agent = join(root, 'products/agent');
   for (const path of paths) write(agent, path);
   return { root, agent };
+}
+
+function copyRunner(root: string): string {
+  const scripts = join(root, 'packages/engine/scripts'); mkdirSync(scripts, { recursive: true });
+  for (const file of ['agent-test-partitions.ts', 'test.ts', 'test-discovery.ts', 'test-partitions.ts', 'owned-test-child.ts', 'stale-tmp-sweep.ts',
+    'test-run-tmp.ts', 'workspace-lock.ts', 'test-child-watchdog-env.ts', 'test-child-watchdog.ts',
+    'test-isolation.ts', 'test-network-guard.ts', 'test-network-preload.ts']) {
+    copyFileSync(resolve(import.meta.dir, '../scripts', file), join(scripts, file));
+  }
+  cpSync(resolve(import.meta.dir, '../toolchain/src/test-runner'), join(root, 'packages/engine/toolchain/src/test-runner'), { recursive: true });
+  return scripts;
 }
 
 test('groups a complete canonical manifest deterministically without splitting files', () => {
@@ -74,6 +91,30 @@ test('every new group rejects the old grouping digest even when the file invento
   }
 });
 
+test('two owned remaining plans preserve every complete file and all future source owners', () => {
+  const { agent } = fixture();
+  const catalogs = ['src/test/tools/agent-harness-tool.test.ts', 'src/test/tools/agent-harness-semantic-record-catalogs.test.ts'];
+  const future = 'src/test/future/agent-harness-tool.test.ts';
+  for (const file of [...catalogs, future]) write(agent, file);
+  const manifest = agentTestManifest(agent);
+  const args = ['--group=remaining', `--manifest-sha256=${manifest.sha256}`];
+  const plans = agentGroupTestPlans(agent, args);
+  expect(plans).toHaveLength(2);
+  expect(plans[0]).toEqual(['--cwd', '../../products/agent', ...catalogs.map(file => `./${file}`)]);
+  expect(plans[1]).toContain(`./${future}`);
+  const all = plans.flatMap(plan => {
+    expect(plan.slice(0, 2)).toEqual(['--cwd', '../../products/agent']);
+    return plan.slice(2).map(file => file.slice(2));
+  });
+  expect(all.sort()).toEqual(manifest.groups[4]!.files);
+  expect(new Set(all).size).toBe(all.length);
+  for (const group of manifest.groups.slice(0, 4)) {
+    expect(agentGroupTestPlans(agent, [`--group=${group.id}`, args[1]!])).toEqual([agentGroupTestArgs(agent, [`--group=${group.id}`, args[1]!])]);
+  }
+  write(agent, 'src/test/future/new-worker.spec.ts');
+  expect(() => agentGroupTestPlans(agent, args)).toThrow('differs');
+});
+
 test('future nested tests are discovered once; stale, malformed, duplicate and mixed selectors fail closed', () => {
   const { agent } = fixture();
   const before = agentTestManifest(agent);
@@ -95,13 +136,7 @@ test('future nested tests are discovered once; stale, malformed, duplicate and m
 
 test('real grouped runner preserves preload, isolation, skip/TODO, owned tmp cleanup and child failure', () => {
   const { root, agent } = fixture();
-  const scripts = join(root, 'packages/engine/scripts'); mkdirSync(scripts, { recursive: true });
-  for (const file of ['agent-test-partitions.ts', 'test.ts', 'test-discovery.ts', 'test-partitions.ts', 'owned-test-child.ts', 'stale-tmp-sweep.ts',
-    'test-run-tmp.ts', 'workspace-lock.ts', 'test-child-watchdog-env.ts', 'test-child-watchdog.ts',
-    'test-isolation.ts', 'test-network-guard.ts', 'test-network-preload.ts']) {
-    copyFileSync(resolve(import.meta.dir, '../scripts', file), join(scripts, file));
-  }
-  cpSync(resolve(import.meta.dir, '../toolchain/src/test-runner'), join(root, 'packages/engine/toolchain/src/test-runner'), { recursive: true });
+  const scripts = copyRunner(root);
   const receipt = join(root, 'executed.jsonl');
   write(agent, 'bunfig.toml', '[test]\npreload = ["./preload.ts"]\n');
   write(agent, 'preload.ts', "process.env.TZ = 'UTC'; process.env.AGENT_FIXTURE_PRELOADED = 'yes';");
@@ -185,3 +220,204 @@ test('CI keeps exact artifacts, complete gates, other product commands and uncha
   expect(owned).toContain('const DEFAULT_CEILING_MS = 720_000');
   expect(readFileSync(join(repo, 'packages/engine/scripts/test.ts'), 'utf8')).toContain('return 60_000');
 });
+
+test('owner-log replay drains complete logs or reports bounded truncation and interruption', async () => {
+  const { root } = fixture(), logs = [join(root, 'first.log'), join(root, 'second.log')];
+  writeFileSync(logs[0]!, 'first complete tail\n'); writeFileSync(logs[1]!, 'second complete tail\n');
+  const chunks: Buffer[] = [];
+  const delivered = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+  expect(await replayTestOwnerLogs(logs, Date.now() + 1000, delivered)).toEqual({ outputTruncated: false, stopReason: null });
+  expect(Buffer.concat(chunks).toString()).toBe('[test-owner 1/2]\nfirst complete tail\n[test-owner 2/2]\nsecond complete tail\n');
+  delivered.destroy();
+  const blocked = new Writable({ write() { /* Actual sink accepts bytes but never acknowledges delivery. */ } });
+  const started = Date.now();
+  const truncated = await replayTestOwnerLogs(logs, started + 200, blocked);
+  expect(truncated.outputTruncated).toBe(true); expect(truncated.stopReason).toContain('shared absolute deadline');
+  expect(Date.now() - started).toBeLessThan(2000); blocked.destroy();
+  const interrupted = new Writable({ write() { /* Cancellation must also end a pending sink callback. */ } });
+  const listeners = process.listenerCount('SIGTERM');
+  const pending = replayTestOwnerLogs(logs, Date.now() + 10000, interrupted);
+  setTimeout(() => process.emit('SIGTERM'), 20);
+  expect((await pending).outputTruncated).toBe(true); interrupted.destroy();
+  expect(process.listenerCount('SIGTERM')).toBe(listeners);
+  expect(readFileSync(logs[0]!, 'utf8')).toBe('first complete tail\n');
+  expect(readFileSync(logs[1]!, 'utf8')).toBe('second complete tail\n');
+});
+
+test('bare Bun removes only its own unchanged fallback root and preserves late replacements', () => {
+  for (const replace of [false, true]) {
+    const { root, agent } = fixture(), helpers = join(agent, 'src/test/helpers');
+    mkdirSync(helpers, { recursive: true });
+    for (const file of ['preload.ts', 'project-temp.ts', 'temp-registry.ts']) copyFileSync(resolve(import.meta.dir, '../../../products/agent/src/test/helpers', file), join(helpers, file));
+    write(agent, 'bunfig.toml', '[test]\npreload = ["./src/test/helpers/preload.ts"]\n');
+    const receipt = join(root, 'fallback.json'), peer = join(agent, '.test-tmp', 'unrelated-peer');
+    mkdirSync(peer, { recursive: true }); writeFileSync(join(peer, 'keep'), 'Unrelated bare-Bun peer');
+    write(agent, 'src/test/fallback.test.ts', `
+      import {test,expect} from 'bun:test';
+      import {renameSync,mkdirSync,writeFileSync} from 'node:fs';
+      import {basename,join} from 'node:path';
+      import {makeProjectTempDir,makeLongLivedProjectTempDir,projectTestTmpRoot} from './helpers/project-temp.ts';
+      test('actual fallback ownership',()=>{
+        const owned=projectTestTmpRoot(), leaf=makeProjectTempDir('short'), long=makeLongLivedProjectTempDir('long');
+        ${replace ? `renameSync(owned,owned+'.displaced');mkdirSync(owned);
+          for(const path of [leaf,long]){mkdirSync(path);writeFileSync(join(path,'keep'),'Bare replacement survives');}
+          expect(()=>makeProjectTempDir('late')).toThrow('replaced Agent project test root');` : ''}
+        writeFileSync(${JSON.stringify(receipt)},JSON.stringify({owned,leaf,long}));
+      });
+    `);
+    const result = Bun.spawnSync([process.execPath, '--no-env-file', 'test', './src/test/fallback.test.ts'], {
+      cwd: agent, env: { PATH: process.env.PATH ?? '', HOME: root }, stdout: 'pipe', stderr: 'pipe', timeout: 10000,
+    });
+    const output = result.stdout.toString() + result.stderr.toString();
+    expect(result.exitCode === 0, output).toBe(!replace);
+    const native: unknown = JSON.parse(readFileSync(receipt, 'utf8'));
+    if (!native || typeof native !== 'object' || !('owned' in native) || typeof native.owned !== 'string'
+      || !('leaf' in native) || typeof native.leaf !== 'string' || !('long' in native) || typeof native.long !== 'string') throw new Error('Expected bare-Bun physical ownership receipt');
+    expect(existsSync(native.owned)).toBe(replace);
+    if (replace) {
+      expect(output).toContain('replaced Agent project test root');
+      for (const path of [native.leaf, native.long]) expect(readFileSync(join(path, 'keep'), 'utf8')).toBe('Bare replacement survives');
+      expect(existsSync(native.owned + '.displaced')).toBe(true);
+    }
+    expect(readFileSync(join(peer, 'keep'), 'utf8')).toBe('Unrelated bare-Bun peer');
+  }
+}, 60000);
+
+for (const outcome of ['pass', 'failure', 'ceiling', 'cancel', 'force-kill', 'parent-death', 'root-replacement', 'root-removal'] as const) {
+  test(`actual remaining owners preserve separate state, complete logs and cleanup on ${outcome}`, async () => {
+    const { root, agent } = fixture(), scripts = copyRunner(root);
+    const catalogs = ['src/test/tools/agent-harness-tool.test.ts', 'src/test/tools/agent-harness-semantic-record-catalogs.test.ts'];
+    for (const file of catalogs) write(agent, file);
+    const helpers = join(agent, 'src/test/helpers'); mkdirSync(helpers, { recursive: true });
+    for (const file of ['preload.ts', 'project-temp.ts', 'temp-registry.ts']) copyFileSync(resolve(import.meta.dir, '../../../products/agent/src/test/helpers', file), join(helpers, file));
+    write(agent, 'bunfig.toml', '[test]\npreload = ["./src/test/helpers/preload.ts"]\n');
+    const manifest = agentTestManifest(agent), files = manifest.groups[4]!.files;
+    const receipt = join(root, 'owners.jsonl'), refused = join(root, 'sigterm-refused.jsonl'), replaced = join(root, 'replacement.json'), peer = join(agent, '.test-tmp', 'unrelated-peer');
+    mkdirSync(peer, { recursive: true }); writeFileSync(join(peer, 'keep'), 'Unrelated owned fixture');
+    const old = new Date(Date.now() - 600000); utimesSync(peer, old, old);
+    for (const file of files) write(agent, file, `
+      import {test,expect} from 'bun:test';
+      import {appendFileSync,readFileSync,existsSync,renameSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+      import {basename,join} from 'node:path';
+      import {makeProjectTempDir,makeLongLivedProjectTempDir,projectTestTmpRoot} from ${JSON.stringify(join(helpers, 'project-temp.ts'))};
+      ${outcome === 'force-kill' ? `process.on('SIGTERM',()=>appendFileSync(${JSON.stringify(refused)},String(process.pid)+'\\n'));` : ''}
+      test(${JSON.stringify(file)}, async () => {
+        expect(process.env.OPENAI_API_KEY).toBeUndefined();
+        const leaf=makeProjectTempDir('actual-child');
+        const lock=JSON.parse(readFileSync(${JSON.stringify(join(root, 'packages/engine/.tmp/workspace.lock/owner.json'))},'utf8'));
+        expect(lock.pid).toBe(process.ppid);
+        appendFileSync(${JSON.stringify(receipt)},JSON.stringify({file:${JSON.stringify(file)},pid:process.pid,
+          home:process.env.HOME,heartbeat:process.env[${JSON.stringify(HEARTBEAT_PATH_ENV)}],
+          violations:process.env[${JSON.stringify(NETWORK_VIOLATIONS_ENV)}],projectRoot:projectTestTmpRoot(),leaf})+'\\n');
+        expect(existsSync(${JSON.stringify(join(peer, 'keep'))})).toBe(true);
+        ${outcome === 'root-replacement' && file === catalogs[0] ? `
+          const original=projectTestTmpRoot(), long=makeLongLivedProjectTempDir('late-registry');
+          renameSync(original,original+'.displaced'); mkdirSync(original);
+          const shortReplacement=join(original,basename(leaf)), longReplacement=join(original,basename(long));
+          for(const path of [shortReplacement,longReplacement]) {mkdirSync(path);writeFileSync(join(path,'keep'),'Replacement must survive cleanup');}
+          writeFileSync(${JSON.stringify(replaced)},JSON.stringify({original,shortReplacement,longReplacement}));
+          expect(()=>makeProjectTempDir('late-allocation')).toThrow('replaced Agent project test root');
+        ` : ''}
+        ${outcome === 'root-removal' && file === catalogs[0] ? `
+          const original=projectTestTmpRoot();
+          rmSync(original,{recursive:true,force:true});
+          expect(()=>makeProjectTempDir('lost-allocation')).toThrow('no longer exists');
+        ` : ''}
+        await Bun.sleep(${['ceiling', 'cancel', 'force-kill', 'parent-death'].includes(outcome) ? 10000 : 25});
+        expect(${outcome === 'failure' && file === catalogs[0] ? 'false' : 'true'}).toBe(true);
+      });
+    `);
+    const log = join(root, 'run.stdout.log'), errors = join(root, 'run.stderr.log');
+    const parent = Bun.spawn([process.execPath, join(scripts, 'agent-test-partitions.ts'), 'run', '--group=remaining', `--manifest-sha256=${manifest.sha256}`], {
+      cwd: root, stdout: Bun.file(log), stderr: Bun.file(errors),
+      env: { PATH: process.env.PATH ?? '', HOME: root, OPENAI_API_KEY: 'Synthetic-must-not-inherit', ...(outcome === 'ceiling' ? { GOODVIBES_TEST_CEILING_MS: '1000' } : {}) },
+    });
+    try {
+      if (outcome === 'cancel' || outcome === 'force-kill' || outcome === 'parent-death') {
+        const deadline = Date.now() + 10000;
+        while ((!existsSync(receipt) || new Set(readFileSync(receipt, 'utf8').trim().split('\n').map(line => {
+          const row: unknown = JSON.parse(line);
+          return row && typeof row === 'object' && 'pid' in row ? row.pid : undefined;
+        })).size < 2) && Date.now() < deadline) await Bun.sleep(20);
+        expect(existsSync(receipt)).toBe(true);
+        if (outcome === 'parent-death') {
+          const beforeDeath = readFileSync(receipt, 'utf8').trim().split('\n').map(line => {
+            const row: unknown = JSON.parse(line);
+            if (!row || typeof row !== 'object' || !('projectRoot' in row) || typeof row.projectRoot !== 'string') throw new Error('Expected owned checkout root');
+            return { projectRoot: row.projectRoot };
+          });
+          const expired = new Date(Date.now() - STALE_RUN_MS - 1000);
+          for (const record of beforeDeath) utimesSync(record.projectRoot, expired, expired);
+          sweepStaleTmpDirs(join(agent, '.test-tmp'), RUN_TMP_PREFIX, STALE_RUN_MS);
+          for (const record of beforeDeath) expect(existsSync(record.projectRoot)).toBe(true);
+          parent.kill('SIGKILL');
+        } else parent.kill('SIGTERM');
+      }
+      const code = await parent.exited, output = readFileSync(log, 'utf8') + readFileSync(errors, 'utf8');
+      expect(code === 0, output).toBe(outcome === 'pass');
+      if (outcome === 'pass' || outcome === 'failure') {
+        expect(output).toContain('[test-owner 1/2]'); expect(output).toContain('[test-owner 2/2]');
+      }
+      if (outcome === 'ceiling') expect(output).toContain('shared absolute deadline');
+      if (outcome === 'root-removal') expect(output).toContain('The owned Agent project test root no longer exists');
+      if (outcome !== 'pass' && outcome !== 'parent-death') {
+        const retained = /^goodvibes: test owner evidence retained at (.+)$/m.exec(output)?.[1];
+        if (!retained) throw new Error('Expected retained complete private owner logs');
+        const summary: unknown = JSON.parse(readFileSync(join(retained, 'owner-results.json'), 'utf8'));
+        if (!summary || typeof summary !== 'object' || !('results' in summary) || !Array.isArray(summary.results)
+          || !('plans' in summary) || !Array.isArray(summary.plans)) throw new Error('Expected complete native result and selection manifest');
+        expect(summary.results).toHaveLength(2); expect(summary.plans).toHaveLength(2);
+        for (let index = 1; index <= 2; index++) expect(readFileSync(join(retained, `owner-${index}.log`), 'utf8')).toContain('bun test');
+        if (outcome === 'force-kill') {
+          expect(readFileSync(refused, 'utf8').trim().split('\n')).toHaveLength(2);
+          for (const result of summary.results) expect(result.value.signalCode).toBe('SIGKILL');
+        }
+        if (outcome === 'ceiling' || outcome === 'cancel' || outcome === 'force-kill') {
+          expect('replay' in summary && summary.replay && typeof summary.replay === 'object' && 'outputTruncated' in summary.replay && summary.replay.outputTruncated).toBe(true);
+        }
+      }
+      const records = readFileSync(receipt, 'utf8').trim().split('\n').map(line => {
+        const row: unknown = JSON.parse(line);
+        if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Expected actual child receipt');
+        return Object.fromEntries(Object.entries(row));
+      });
+      expect(new Set(records.map(row => row.pid)).size).toBe(2);
+      for (const field of ['home', 'heartbeat', 'violations', 'projectRoot']) expect(new Set(records.map(row => row[field])).size).toBe(2);
+      if (outcome === 'pass' || outcome === 'failure') expect(records.map(row => row.file).sort()).toEqual(files);
+      const owned = records.map(row => {
+        if (typeof row.pid !== 'number' || typeof row.projectRoot !== 'string' || typeof row.leaf !== 'string') throw new Error('Invalid native child ownership receipt');
+        return { pid: row.pid, projectRoot: row.projectRoot, leaf: row.leaf };
+      });
+      for (const row of owned) {
+        const stoppedBy = Date.now() + 10000;
+        let alive = true;
+        do { try { process.kill(row.pid, 0); } catch { alive = false; }
+          if (alive) await Bun.sleep(20);
+        } while (alive && Date.now() < stoppedBy);
+        expect(alive).toBe(false);
+        if (outcome === 'parent-death') expect(existsSync(row.projectRoot)).toBe(true);
+      }
+      if (outcome === 'parent-death') sweepStaleTmpDirs(join(agent, '.test-tmp'), RUN_TMP_PREFIX, STALE_RUN_MS);
+      let replacement: { original: string; shortReplacement: string; longReplacement: string } | undefined;
+      if (outcome === 'root-replacement') {
+        const native: unknown = JSON.parse(readFileSync(replaced, 'utf8'));
+        if (!native || typeof native !== 'object' || !('original' in native) || typeof native.original !== 'string'
+          || !('shortReplacement' in native) || typeof native.shortReplacement !== 'string'
+          || !('longReplacement' in native) || typeof native.longReplacement !== 'string') throw new Error('Expected actual replacement receipt');
+        replacement = { original: native.original, shortReplacement: native.shortReplacement, longReplacement: native.longReplacement };
+        expect(output).toContain('replaced Agent project test root');
+        for (const path of [replacement.shortReplacement, replacement.longReplacement]) expect(readFileSync(join(path, 'keep'), 'utf8')).toBe('Replacement must survive cleanup');
+        expect(existsSync(replacement.original + '.displaced')).toBe(true);
+      }
+      for (const row of owned) {
+        const preserved = row.projectRoot === replacement?.original;
+        expect(existsSync(row.projectRoot)).toBe(preserved); expect(existsSync(row.leaf)).toBe(preserved);
+      }
+      expect(readFileSync(join(peer, 'keep'), 'utf8')).toBe('Unrelated owned fixture');
+      expect(existsSync(join(root, 'packages/engine/.tmp/workspace.lock'))).toBe(outcome === 'parent-death');
+    } finally {
+      try { parent.kill('SIGKILL'); } catch { /* already exited */ }
+      await parent.exited;
+    }
+  }, 60_000);
+}

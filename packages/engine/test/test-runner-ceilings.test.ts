@@ -461,3 +461,87 @@ describe('the suite dies with the process that started it', () => {
     expect(envModule).not.toMatch(/^\s*import\s/m);
   });
 });
+
+describe('owned children share one restrictive wall deadline', () => {
+  test('expired deadlines refuse before a test child starts', async () => {
+    const dir = mkTemp(), observed = join(dir, 'must-not-run');
+    const file = join(dir, 'expired.test.ts');
+    writeFileSync(file, `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(observed)}, 'started');`);
+    const result = await runOwnedTestChild({ argv: [file], cwd: dir, env: { ...process.env }, deadlineAt: Date.now() - 1, ownProcessGroup: true });
+    expect(result).toMatchObject({ exitCode: null, signalCode: null, stopped: 'ceiling', outputTruncated: false });
+    expect(result.stopReason).toContain('before this child could start');
+    expect(existsSync(observed)).toBe(false);
+  });
+
+  test.each([NaN, Infinity, 0, -1, 1.5])('invalid absolute deadline %s never starts a child', async deadlineAt => {
+    const dir = mkTemp();
+    await expect(runOwnedTestChild({ argv: [], cwd: dir, env: { ...process.env }, deadlineAt })).rejects.toThrow('positive integer wall-clock timestamp');
+  });
+
+  test('later children inherit the original deadline and both groups are reaped', async () => {
+    const dir = mkTemp(), firstPid = join(dir, 'first.pid'), secondPid = join(dir, 'second.pid');
+    const firstFile = writePidRecordingWedgedFile(dir, firstPid, 'first.test.ts');
+    const secondFile = writePidRecordingWedgedFile(dir, secondPid, 'second.test.ts');
+    setRunnerEnv('GOODVIBES_TEST_CEILING_MS', '10000');
+    setRunnerEnv('GOODVIBES_TEST_STALL_MS', '10000');
+    const startedAt = Date.now(), deadlineAt = startedAt + 3000;
+    const first = runOwnedTestChild({ argv: [firstFile], cwd: dir, env: { ...process.env }, deadlineAt, ownProcessGroup: true });
+    await Bun.sleep(1500);
+    const second = runOwnedTestChild({ argv: [secondFile], cwd: dir, env: { ...process.env }, deadlineAt, ownProcessGroup: true });
+    const results = await Promise.all([first, second]);
+    expect(Date.now() - startedAt).toBeLessThan(6000);
+    for (const result of results) {
+      expect(result.stopped).toBe('ceiling');
+      expect(result.stopReason).toContain('shared absolute deadline');
+      expect(result.outputTruncated).toBe(false);
+    }
+    expect(await waitForExit(Number(readFileSync(firstPid, 'utf8')), 1000)).toBe(true);
+    expect(await waitForExit(Number(readFileSync(secondPid, 'utf8')), 1000)).toBe(true);
+  }, 60_000);
+
+  test('a later absolute deadline cannot extend the original enabled ceiling', async () => {
+    const dir = mkTemp(), file = writeWedgedFile(dir);
+    setRunnerEnv('GOODVIBES_TEST_CEILING_MS', '2000');
+    setRunnerEnv('GOODVIBES_TEST_STALL_MS', '10000');
+    const startedAt = Date.now();
+    const result = await runOwnedTestChild({ argv: [file], cwd: dir, env: { ...process.env }, deadlineAt: startedAt + 20000, ownProcessGroup: true });
+    expect(result.stopped).toBe('ceiling');
+    expect(result.stopReason).toContain('GOODVIBES_TEST_CEILING_MS');
+    expect(result.stopReason).not.toContain('shared absolute deadline');
+    expect(Date.now() - startedAt).toBeLessThan(6000);
+  }, 60_000);
+});
+
+test('both owned child groups die when their shared parent is SIGKILLed', async () => {
+  const dir = mkTemp(), pidPaths = [join(dir, 'first-group.pid'), join(dir, 'second-group.pid')];
+  const files = pidPaths.map((pidPath, index) => {
+    const file = join(dir, `group-${index}.test.ts`);
+    writeFileSync(file, [
+      "import {writeFileSync} from 'node:fs';",
+      "const descendant=Bun.spawn([process.execPath,'-e','setInterval(()=>{},100)'],{stdin:'ignore',stdout:'ignore',stderr:'ignore'});",
+      `writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)+' '+String(descendant.pid));`,
+      'await new Promise<void>(()=>{});',
+    ].join('\n'));
+    return file;
+  });
+  const runner = join(dir, 'shared-parent.ts');
+  writeFileSync(runner, [
+    `import {runOwnedTestChild} from ${JSON.stringify(join(SDK_ROOT, 'scripts/owned-test-child.ts'))};`,
+    `const files=${JSON.stringify(files)};`,
+    'const deadlineAt=Date.now()+60000;',
+    `await Promise.allSettled(files.map(file=>runOwnedTestChild({argv:[file],cwd:${JSON.stringify(dir)},env:{...process.env},deadlineAt,ownProcessGroup:true})));`,
+  ].join('\n'));
+  const parent = Bun.spawn([process.execPath, runner], { cwd: dir, stdout: 'ignore', stderr: 'ignore', env: { ...process.env } });
+  try {
+    const deadline = Date.now() + 10000;
+    while (!pidPaths.every(path => existsSync(path)) && Date.now() < deadline) await Bun.sleep(20);
+    expect(pidPaths.every(path => existsSync(path))).toBe(true);
+    const pids = pidPaths.flatMap(path => readFileSync(path, 'utf8').split(' ').map(Number));
+    expect(new Set(pids).size).toBe(4);
+    parent.kill('SIGKILL'); await parent.exited;
+    for (const pid of pids) expect(await waitForExit(pid, 10000), `Owned group member ${pid} outlived its shared parent`).toBe(true);
+  } finally {
+    try { parent.kill('SIGKILL'); } catch { /* already exited */ }
+    await parent.exited;
+  }
+}, 60_000);

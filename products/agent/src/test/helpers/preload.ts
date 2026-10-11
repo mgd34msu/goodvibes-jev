@@ -7,10 +7,10 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach } from 'bun:test';
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sweepCreatedProjectTempDirs } from './project-temp.ts';
+import { assertProjectTestTmpCurrent, sweepCreatedProjectTempDirs, sweepProjectTestTmpRoot } from './project-temp.ts';
 import { sweepTrackedTempDirs } from './temp-registry.ts';
 
 // Golden fixtures use UTC. Establish it before any test captures/restores TZ:
@@ -109,55 +109,6 @@ function assertRedirect(): void {
 beforeAll(assertRedirect);
 beforeEach(assertRedirect);
 
-/** No entry idle for less than this is treated as abandoned. */
-const STALE_PROJECT_TEMP_MS = 5 * 60 * 1000;
-/** When this process started, so it can tell earlier residue from a live peer's work. */
-const PROCESS_STARTED_AT = Date.now();
-
-/**
- * Reclaim abandoned scratch trees under `<repo>/.test-tmp`, and ONLY abandoned
- * ones.
- *
- * This used to be `rmSync('<repo>/.test-tmp')`, on the premise (written down in
- * scripts/stale-tmp-sweep.ts) that the root "is exclusively owned by this
- * project's own test runs, so a full unconditional wipe is safe: there is
- * nothing else in there to lose". That premise holds for ONE test process at a
- * time. Two in the same checkout is an ordinary thing to do, run one file while
- * the suite runs, and then the first one to exit deleted the other's live
- * directories out from under it. What that looks like from inside the victim is
- * an ENOENT from `rename` in the middle of an atomic store write, in a test
- * about something else entirely; it was a one-in-four flake in the device
- * settings suite before it was traced here.
- *
- * So an entry is removed only when it both predates this process AND has been
- * idle longer than the grace window. A live peer's directories are newer or
- * being written, and survive. The cost is bounded and self-healing: an
- * unregistered tree this run created is left for the next sweep (or for
- * scripts/run-tests.ts, which still empties the root at a suite boundary where
- * no run of this project is in flight).
- */
-function sweepStaleProjectTempEntries(): void {
-  const root = join(process.cwd(), '.test-tmp');
-  let entries: string[];
-  try {
-    entries = readdirSync(root);
-  } catch {
-    return; // nothing there, nothing to do
-  }
-  const cutoff = Math.min(PROCESS_STARTED_AT, Date.now() - STALE_PROJECT_TEMP_MS);
-  for (const name of entries) {
-    const path = join(root, name);
-    try {
-      // mtime, not birthtime: a directory a peer is actively writing keeps a
-      // fresh mtime on every child change, which is exactly the signal wanted.
-      if (statSync(path).mtimeMs >= cutoff) continue;
-    } catch {
-      continue; // vanished between the listing and the stat
-    }
-    rmSync(path, { recursive: true, force: true });
-  }
-}
-
 afterAll(() => {
   // Fail the run loudly if the redirect did not hold to the end. Without this,
   // a suite that lost TMPDIR partway through would still report a clean temp
@@ -172,12 +123,8 @@ afterAll(() => {
   }
   // Directories deliberately created OUTSIDE the sandbox (under
   // <repo>/.test-tmp, so a test workspace sits inside this git checkout).
-  const swept = sweepTrackedTempDirs();
-  // Backstop for the same root: several test files build their scratch trees
-  // directly under <repo>/.test-tmp without going through the registry, and
-  // this reclaims those on a bare `bun test` rather than leaving them for a
-  // later run.
-  sweepStaleProjectTempEntries();
+  const swept = assertProjectTestTmpCurrent() ? sweepTrackedTempDirs() : 0;
+  sweepProjectTestTmpRoot();
   if (process.env['GOODVIBES_TEST_KEEP_TMP_SANDBOX'] === '1') {
     // Diagnostic mode: leave the sandbox in place so the per-run residual can
     // be counted (how much the suite creates and never removes itself). The

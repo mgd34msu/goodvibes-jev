@@ -245,6 +245,8 @@ export async function runOwnedTestChild(options: {
   readonly fixtureEnv?: Readonly<Record<string, string | undefined>>;
   /** Per-call ceiling; cannot extend an enabled environment/default ceiling. */
   readonly ceilingMs?: number;
+  /** Additional shared wall deadline; never extends the existing relative ceiling. */
+  readonly deadlineAt?: number;
   /** Declared long-test allowance; an explicitly configured stall ceiling still wins. */
   readonly stallMs?: number;
   /** SIGTERM/interruption escalation grace; defaults to 5 seconds. */
@@ -259,6 +261,9 @@ export async function runOwnedTestChild(options: {
   /** Preserve the owner captured before a worker is dispatched. */
   readonly expectedParentPid?: number;
 }): Promise<OwnedTestChildResult> {
+  if (options.deadlineAt !== undefined && (!Number.isSafeInteger(options.deadlineAt) || options.deadlineAt <= 0)) {
+    throw new RangeError('deadlineAt must be a positive integer wall-clock timestamp');
+  }
   sweepStaleTmpDirs(tmpdir(), RUN_TMP_PREFIX, STALE_RUN_MS);
   return withRunTmpDir(tmpdir(), async (ownedRoot) => {
   const initialPpid = perCallMs('expectedParentPid', options.expectedParentPid, process.ppid);
@@ -288,6 +293,12 @@ export async function runOwnedTestChild(options: {
   const heartbeatPath = join(heartbeatDir, 'progress');
   const violationsPath = join(heartbeatDir, 'network-violations');
   const startedAt = Date.now();
+  if (options.deadlineAt !== undefined && options.deadlineAt <= startedAt) {
+    return { exitCode: null, signalCode: null, stopped: 'ceiling', stopReason: 'The shared test deadline expired before this child could start', outputTruncated: false } satisfies OwnedTestChildResult;
+  }
+  const relativeDeadline = ceilingMs > 0 ? startedAt + ceilingMs : Infinity;
+  const deadline = Math.min(relativeDeadline, options.deadlineAt ?? Infinity);
+  const sharedDeadline = deadline < relativeDeadline;
 
   const child = (() => {
     try {
@@ -517,11 +528,11 @@ export async function runOwnedTestChild(options: {
       );
       return;
     }
-    if (ceilingMs > 0 && now - startedAt >= ceilingMs) {
+    if (now >= deadline) {
       stop(
         'ceiling',
         `the suite has run for ${describeSeconds(now - startedAt)}, past its ceiling of `
-        + `${describeSeconds(ceilingMs)} (${ceilingSource}), ${progress}; ${where}`,
+        + `${describeSeconds(deadline - startedAt)} (${sharedDeadline ? 'shared absolute deadline' : ceilingSource}), ${progress}; ${where}`,
       );
     }
   }, POLL_MS);
