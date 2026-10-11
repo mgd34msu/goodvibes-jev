@@ -373,6 +373,15 @@ function evidenceWithExcerpt(item: EvidenceItem, facts: readonly KnowledgeNodeRe
 async function prepareAnswerEvidenceScope(store: KnowledgeStore, spaceId: string, guard: SemanticWriteGuard,
   signal?: AbortSignal, sourceWindowIds?: ReadonlySet<string>): Promise<KnowledgeScopeSelection> {
   const preparationGuard = createSemanticWriteGuard(store, signal);
+  const assertScopeFrame = (assertion: () => undefined) => {
+    try { store.assertRecordSnapshotFrame(assertion); }
+    catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') {
+        throw new KnowledgeEvidenceRelevanceHeldError('stale');
+      }
+      throw error;
+    }
+  };
   const scope = answerEvidenceScope(spaceId);
   const lookup = () => ({ getSource: (id: string) => store.getSource(id), getNode: (id: string) => store.getNode(id), edges: store.listEdges() });
   const nodeWindow = () => store.listNodes(Number.MAX_SAFE_INTEGER).filter((node) => node.status === 'active'
@@ -408,12 +417,20 @@ async function prepareAnswerEvidenceScope(store: KnowledgeStore, spaceId: string
       assertJudgmentInput({ text: renderNodeEvidence(snapshot), claim: projectAnswerFactClaim(withoutLocalTargetKeys(store, snapshot), nodes) });
     }
   });
-  guard.assertCurrent(); preparationGuard.assertCurrent();
+  assertScopeFrame(() => {
+    guard.assertCurrent(); preparationGuard.assertCurrent();
+  });
   const selection = await prepareKnowledgeScopeSelection(store, scope, { signal, assertCurrent: guard.assertCurrent,
     assertPreparedInputCurrent: () => { guard.assertCurrent(); preparationGuard.assertCurrent(); },
     kinds: ['source', 'node'], sourceIds, nodeIds });
-  guard.assertCurrent(); preparationGuard.assertCurrent();
-  return Object.freeze({ ...selection, assertCurrent() { preparationGuard.assertCurrent(); selection.assertCurrent(); } });
+  assertScopeFrame(() => {
+    guard.assertCurrent(); preparationGuard.assertCurrent();
+  });
+  return Object.freeze({ ...selection, assertCurrent() {
+    assertScopeFrame(() => {
+      preparationGuard.assertCurrent(); selection.assertCurrent();
+    });
+  } });
 }
 
 function answerEvidenceGuard(store: KnowledgeStore, selection: KnowledgeScopeSelection, signal?: AbortSignal): SemanticWriteGuard {

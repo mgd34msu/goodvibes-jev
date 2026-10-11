@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { copyFileSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -7,6 +7,12 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { collectAnswerEvidence, includeOfficialLinkedEvidence, toSearchResult } from '../sdk/src/platform/knowledge/semantic/answer-evidence.js';
+import { bindAnswerCandidateWindow } from '../sdk/src/platform/knowledge/semantic/answer-candidate-window.js';
+import { KnowledgeEvidenceRelevanceHeldError } from '../sdk/src/platform/knowledge/semantic/evidence-ranking/types.js';
+import { sourceSemanticText } from '../sdk/src/platform/knowledge/semantic/utils.js';
+import { prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
+import { knowledgeSourceJudgmentUris } from '../sdk/src/platform/knowledge/source-structural-references.js';
+import * as judgmentInput from '../sdk/src/platform/gate/judgment-input.js';
 import { answerKnowledgeQuery } from '../sdk/src/platform/knowledge/semantic/answer.js';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
@@ -223,6 +229,54 @@ describe('initial answer evidence selection callers', () => {
       expect(edited).toBe(true);
     }
   });
+  test.each(['physical replacement', 'callback error'] as const)(
+    'complete preparation preserves %s at its final native frame boundary', async (mode) => {
+      const store = await fixture();
+      const record = await source(store, 'boundary-reference', 'AC-7 manual', 'AC-7 uses four ports.');
+      const admission = prepareKnowledgeRecordAdmission(store, 'source', record);
+      const input = { query: 'How many AC-7 ports?' };
+      const callbackError = new Error('Original candidate owner retired.');
+      let prepared = false, changed = false, depth = 0;
+      bindAnswerCandidateWindow(input, store, spaceId, [record.id], [], [], () => {
+        admission.assertCurrent();
+        if (prepared && mode === 'callback error') throw callbackError;
+      });
+      const expectedMeaning = sourceSemanticText({ ...record, ...knowledgeSourceJudgmentUris(record) },
+        store.getExtractionBySourceId(record.id));
+      const originalPreflight = judgmentInput.assertJudgmentInput;
+      const preflight = spyOn(judgmentInput, 'assertJudgmentInput').mockImplementation((value, toolName) => {
+        originalPreflight(value, toolName);
+        if (value === expectedMeaning) prepared = true;
+      });
+      const originalFrame = store.assertRecordSnapshotFrame;
+      const nativeFrame = spyOn(store, 'assertRecordSnapshotFrame').mockImplementation((assertion) => {
+        const replaceAtExit = depth++ === 0 && prepared && !changed && mode === 'physical replacement';
+        try {
+          return originalFrame.call(store, () => {
+            assertion();
+            if (replaceAtExit) {
+              copyFileSync(store.storagePath, `${store.storagePath}.replacement`);
+              renameSync(`${store.storagePath}.replacement`, store.storagePath);
+              changed = true;
+            }
+          });
+        } finally { depth--; }
+      });
+      const fake = readings({ 'AC-7 manual': 0.99 });
+      try {
+        const pending = collectAnswerEvidence(store, input, spaceId, 10, []);
+        if (mode === 'physical replacement') {
+          await expect(pending).rejects.toBeInstanceOf(KnowledgeEvidenceRelevanceHeldError);
+          await expect(pending).rejects.toMatchObject({ reason: 'stale' });
+          expect(changed).toBe(true);
+        } else await expect(pending).rejects.toBe(callbackError);
+        expect(prepared).toBe(true);
+        expect(fake.requests).toHaveLength(0);
+        expect(store.getSource(record.id)).toBe(record);
+        expect(depth).toBe(0);
+      } finally { nativeFrame.mockRestore(); preflight.mockRestore(); }
+    },
+  );
   test('answer callers preserve uncertain versus unavailable and perform no generation or repair writes', async () => {
     for (const unavailable of [false, true]) {
       const store = await fixture(); const record = await source(store, `held-${unavailable}`, 'AC-7 manual', 'AC-7 uses four ports.');
