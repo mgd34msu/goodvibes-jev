@@ -1,5 +1,6 @@
+import { captureKnowledgeStoreInput, copyKnowledgeRepresentation } from './store-record-representation.js';
 import type { SQLiteStore } from '../state/sqlite-store.js';
-import { activationSourceIds, snapshotNodeInput } from './activation/projection.js';
+import { activationSourceIds } from './activation/projection.js';
 import { KnowledgeNodeActivationHeldError as Held, type KnowledgeNodeActivationOptions } from './activation/types.js';
 import { supportHash } from './semantic/verification/projection.js';
 import { findKnowledgeEdge, prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow } from './store-edge-writes.js';
@@ -13,6 +14,12 @@ import type { KnowledgeEdgeRecord, KnowledgeEdgeUpsertInput, KnowledgeExtraction
   KnowledgeIssueRecord, KnowledgeIssueUpsertInput, KnowledgeNodeRecord, KnowledgeNodeRevisionRecord, KnowledgeNodeUpsertInput,
   KnowledgeSourceRecord, KnowledgeSourceUpsertInput } from './types.js';
 
+/** Exact committed identities; immutable arrays contain the rows published before save yields. */
+export interface KnowledgeImportReceipt {
+  readonly nodes: readonly KnowledgeNodeRecord[];
+  readonly sources: readonly KnowledgeSourceRecord[];
+  readonly edges: readonly KnowledgeEdgeRecord[];
+}
 export interface KnowledgeImportInput {
   readonly sources: readonly KnowledgeSourceUpsertInput[];
   readonly extractions: readonly KnowledgeExtractionUpsertInput[];
@@ -49,7 +56,7 @@ function extractionFor(extractions: ReadonlyMap<string, KnowledgeExtractionRecor
 /** Stage complete ordinary records and judgments without changing the live store or SQL. */
 export async function applyKnowledgeImport(store: KnowledgeStore, view: KnowledgeImportView, input: KnowledgeImportInput,
   prepareNode: (input: KnowledgeNodeUpsertInput, original: KnowledgeNodeUpsertInput) => NodeMutationDraft, floor: number | undefined, scope: object,
-  options: KnowledgeNodeActivationOptions, prepareGraph?: PrepareKnowledgeImportGraph): Promise<void> {
+  options: KnowledgeNodeActivationOptions, prepareGraph?: PrepareKnowledgeImportGraph, onCommitted?: () => void): Promise<KnowledgeImportReceipt> {
   const checks: (() => void)[] = [];
   function watch(read: () => unknown): void {
     const expected = supportHash(read() ?? null);
@@ -68,14 +75,16 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
   for (const source of input.sources) {
     watch(() => source.id ? view.sources.get(source.id) : source.canonicalUri ? store.getSourceByCanonicalUri(source.canonicalUri) : null);
     const existing = source.id ? sources.get(source.id) : source.canonicalUri ? [...sources.values()].find((record) => record.canonicalUri === source.canonicalUri) : undefined;
-    const record = snapshotNodeInput(prepareKnowledgeSourceRecord(source, existing));
+    const preparedSource = prepareKnowledgeSourceRecord(source, existing);
+    const record = copyKnowledgeRepresentation(preparedSource, captureKnowledgeStoreInput(preparedSource));
     sources.set(record.id, record); sourceWrites.push(record);
   }
   for (const extraction of input.extractions) {
     watch(() => extraction.id ? view.extractions.get(extraction.id) : extractionFor(view.extractions, extraction.sourceId));
     watch(() => extractionFor(view.extractions, extraction.sourceId));
     const existing = extraction.id ? extractions.get(extraction.id) : extractionFor(extractions, extraction.sourceId);
-    const record = snapshotNodeInput(prepareKnowledgeExtractionRecord(extraction, existing, sources.get(extraction.sourceId)));
+    const preparedExtraction = prepareKnowledgeExtractionRecord(extraction, existing, sources.get(extraction.sourceId));
+    const record = copyKnowledgeRepresentation(preparedExtraction, captureKnowledgeStoreInput(preparedExtraction));
     const displaced = extractionFor(extractions, record.sourceId);
     if (displaced && displaced.id !== record.id) { extractions.delete(displaced.id); removedExtractions.add(displaced.id); }
     extractions.set(record.id, record); extractionWrites.push(record);
@@ -83,22 +92,22 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
   const graph: KnowledgeImportGraph = prepareGraph ? await prepareGraph({ sources: Object.freeze([...sourceWrites]), extractions: Object.freeze([...extractionWrites]), assertCurrent: assertEvidenceCurrent }) : input;
   graphCheck = graph.assertCurrent;
   assertCurrent();
-  const drafts = graph.nodes.map((node) => prepareNode(snapshotNodeInput(node), node));
+  const drafts = graph.nodes.map((node) => prepareNode(captureKnowledgeStoreInput(node), node));
   if (new Set(drafts.map(({ record }) => record.id)).size !== drafts.length) throw new Held('stale');
   for (const { record } of drafts) for (const id of activationSourceIds(record)) {
     watch(() => store.getSource(id)); watch(() => store.getExtractionBySourceId(id));
   }
-  for (const edge of snapshotNodeInput(graph.edges)) {
+  for (const edge of captureKnowledgeStoreInput(graph.edges)) {
     watch(() => findKnowledgeEdge(view.edges, edge));
-    const record = snapshotNodeInput(prepareKnowledgeEdgeRecord(edge, findKnowledgeEdge(edges, edge)));
+    const record = captureKnowledgeStoreInput(prepareKnowledgeEdgeRecord(edge, findKnowledgeEdge(edges, edge)));
     edges.set(record.id, record); edgeWrites.push(record);
   }
   const nodeView = new Map(view.nodes);
   for (const { record } of drafts) nodeView.set(record.id, record);
-  for (const issue of snapshotNodeInput(graph.issues)) {
+  for (const issue of captureKnowledgeStoreInput(graph.issues)) {
     if (issue.id) watch(() => view.issues.get(issue.id!));
     const prepared = prepareKnowledgeIssueRecord({ issues, sources, nodes: nodeView }, issue);
-    const record = snapshotNodeInput(prepared.record);
+    const record = captureKnowledgeStoreInput(prepared.record);
     issues.set(record.id, record);
     if (!prepared.preserve) issueWrites.push(record);
   }
@@ -144,5 +153,9 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
   nodes.forEach(({ existing, record, observationEvidence, preserveObservation }, index) => {
     retainKnowledgeNodeObservation(preserveObservation ? existing : undefined, record, observationEvidence); markPreparedNodeWritten(prepared, index);
   });
+  const receipt = Object.freeze({ nodes: Object.freeze(nodes.map(({ record }) => record)), sources: Object.freeze([...sourceWrites]), edges: Object.freeze([...edgeWrites]) });
+  // The source/graph and caches are now committed; report before persistence yields.
+  onCommitted?.();
   await view.sqlite.save();
+  return receipt;
 }

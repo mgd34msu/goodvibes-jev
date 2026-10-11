@@ -9,7 +9,7 @@ import { inputAreaVisible, launchTui, makeHome, startStubModel, type TuiSession 
 
 const model = startStubModel(() => ({ text: 'unused' }));
 let tui: TuiSession | null = null;
-afterAll(() => { tui?.stop(); model.stop(); });
+afterAll(async () => { await tui?.stop(); model.stop(); });
 
 describe('startup', () => {
   test('a fresh home reaches the input area with no error', async () => {

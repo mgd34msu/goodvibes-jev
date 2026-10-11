@@ -14,6 +14,8 @@ packages/engine/.tmp/
 # Local release and test scratch directories
 packages/engine/.test-tmp/
 packages/engine/test/.test-tmp/
+# The hoisted providers-favorites fixture owns this exact local scratch root.
+/packages/engine/test/__favorites_tmp__/
 
 # api-extractor transient output (temp/ is gitignored; only etc/ baseline is committed)
 temp/

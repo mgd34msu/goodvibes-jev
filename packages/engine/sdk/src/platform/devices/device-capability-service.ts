@@ -1,3 +1,6 @@
+import { types as nodeTypes } from 'node:util';
+import { captureOwnedJson } from '../gate/judgment-input.js';
+import { beginDeviceRequest, type DeviceAutonomousOwner, type DeviceAdmission, type DeviceRequestOwner } from './device-autonomous.js';
 /**
  * device-capability-service.ts, the one path a paired device's camera, screen,
  * location, clipboard, or device command is reached through.
@@ -82,6 +85,7 @@ export interface DeviceConfirmationRequest {
    * capability under stock configuration.
    */
   readonly allowAlwaysOffered: boolean;
+  readonly dispatchTimeoutMs?: number | undefined;
   readonly sessionId?: string | undefined;
 }
 
@@ -112,6 +116,7 @@ export interface DeviceDispatchInput {
   readonly capabilityId: DeviceCapabilityId;
   readonly input: Readonly<Record<string, unknown>>;
   readonly timeoutMs: number;
+  readonly admission?: DeviceAdmission | undefined;
 }
 
 /** Transport to the node. The peer work queue in the daemon; a stub in tests. */
@@ -128,6 +133,7 @@ export type DeviceRequestRefusal =
   | 'disabled-by-config'
   | 'invalid-input'
   | 'denied-by-person'
+  | 'denied-by-jev'
   | 'dispatch-failed';
 
 export type DeviceCapabilityOutcome =
@@ -154,6 +160,7 @@ export interface DeviceCapabilityServiceOptions {
   readonly artifacts: DeviceCaptureArtifactStore;
   readonly dispatcher: DeviceCapabilityDispatcher;
   readonly confirm: DeviceConfirmationHandler;
+  readonly autonomous?: DeviceAutonomousOwner | undefined;
   /** Paired device nodes, resolved from the peer registry. */
   readonly listNodes: () => readonly DeviceNodeProfile[];
   /**
@@ -231,6 +238,7 @@ export class DeviceCapabilityService {
   private readonly artifacts: DeviceCaptureArtifactStore;
   private readonly dispatcher: DeviceCapabilityDispatcher;
   private readonly confirm: DeviceConfirmationHandler;
+  private readonly autonomous: DeviceAutonomousOwner | undefined;
   private readonly listNodes: () => readonly DeviceNodeProfile[];
   private readonly resolvePolicy: () => DeviceCapabilityPolicy;
 
@@ -239,6 +247,7 @@ export class DeviceCapabilityService {
     this.artifacts = options.artifacts;
     this.dispatcher = options.dispatcher;
     this.confirm = options.confirm;
+    this.autonomous = options.autonomous;
     this.listNodes = options.listNodes;
     this.resolvePolicy = resolveDevicePolicySource(options.policy, DEFAULT_DEVICE_CAPABILITY_POLICY);
   }
@@ -276,6 +285,9 @@ export class DeviceCapabilityService {
     // One read for the whole request: the posture that gates the capability, the
     // posture that decides whether a durable grant may be offered, and the
     // deadline the device is given are all the same snapshot.
+    // Borrowed wire arguments cannot mutate or execute getters during judgment.
+    try { input = captureOwnedJson(input, nodeTypes.isProxy) as typeof input; }
+    catch { return { ok: false, nodeId: '', capabilityId: '', refusal: 'invalid-input', detail: 'Device request must be owned JSON data.' }; }
     const policy = this.getPolicy();
     const node = this.listNodes().find((candidate) => candidate.nodeId === input.nodeId);
     if (!node) {
@@ -354,6 +366,9 @@ export class DeviceCapabilityService {
       };
     }
 
+    let owner: DeviceRequestOwner | undefined;
+    try {
+    if (this.autonomous) owner = beginDeviceRequest(this.autonomous, this.grants, node.nodeId, this.resolvePolicy, this.listNodes, policy, node, resolveDeviceRequestTimeoutMs(policy, input.timeoutMs));
     let authority: 'existing-grant' | 'confirmed-once' | 'confirmed-always' = 'confirmed-once';
     let grant: DeviceCapabilityGrant | null = null;
 
@@ -365,9 +380,32 @@ export class DeviceCapabilityService {
       });
     }
 
+    let dispatchAdmission: DeviceAdmission | undefined;
+    let dispatchClaimed = false;
+    if (owner) {
+      owner.assertCurrent();
+      const request: DeviceConfirmationRequest = { nodeId: node.nodeId, nodeKind: node.nodeKind, nodeLabel: node.label,
+        capabilityId: descriptor.id, descriptor, reason: input.reason, input: input.input ?? {},
+        allowAlwaysOffered: isAllowAlwaysOffered(descriptor, policy), dispatchTimeoutMs: resolveDeviceRequestTimeoutMs(policy, input.timeoutMs), ...(input.sessionId ? { sessionId: input.sessionId } : {}) };
+      authority = grant ? 'existing-grant' : 'confirmed-once';
+      let decision = await owner.decide(request, grant, 'dispatch', !grant && request.allowAlwaysOffered);
+      if (decision.decision.outcome === 'revise' && !grant && request.allowAlwaysOffered) {
+        const grantDecision = await owner.decide(request, null, 'grant', false);
+        if (grantDecision.decision.outcome !== 'act') throw new Error('Jev refused durable device grant');
+        const grantAdmission = owner.admission(grantDecision);
+        grant = await this.grants.record({ nodeId: node.nodeId, nodeKind: node.nodeKind, capabilityId: descriptor.id,
+          scope: 'always', grantedBy: 'jev:device', beforePersist: () => grantAdmission.claim() });
+        owner.acceptOwnLedgerWrite(grant); authority = 'confirmed-always';
+        decision = await owner.decide(request, grant, 'dispatch', false);
+      }
+      if (decision.decision.outcome !== 'act') throw new Error('Jev declined the exact device dispatch');
+      const admitted = owner.admission(decision);
+      dispatchAdmission = { signal: admitted.signal, assertCurrent: admitted.assertCurrent,
+        claim() { admitted.claim(); dispatchClaimed = true; } };
+    } else {
     if (grant) {
       authority = 'existing-grant';
-      await this.grants.markUsed(grant.id);
+
     } else {
       const allowAlwaysOffered = isAllowAlwaysOffered(descriptor, policy);
       const response = await this.confirm({
@@ -409,13 +447,18 @@ export class DeviceCapabilityService {
       }
     }
 
+    }
+    owner?.assertCurrent();
     const dispatched = await this.dispatcher.dispatch({
       nodeId: node.nodeId,
       capabilityId: descriptor.id,
       input: { ...(input.input ?? {}), reason: input.reason },
       timeoutMs: resolveDeviceRequestTimeoutMs(policy, input.timeoutMs),
+      ...(dispatchAdmission ? { admission: dispatchAdmission } : {}),
     });
 
+    owner?.assertCurrent();
+    if (owner && !dispatchClaimed) throw new Error('Device transport did not claim its exact admission');
     if (!dispatched.ok) {
       return {
         ok: false,
@@ -434,12 +477,14 @@ export class DeviceCapabilityService {
         kind: descriptor.artifactKind,
         mediaType: dispatched.mediaType ?? 'application/octet-stream',
         bytes: dispatched.bytes,
-        ttlMs: policy.captureRetentionMs,
+        ttlMs: Math.min(policy.captureRetentionMs, this.getPolicy().captureRetentionMs),
+        ...(owner ? { assertCurrent: owner.assertCurrent } : {}),
         ...(dispatched.workId ? { workId: dispatched.workId } : {}),
         reason: input.reason,
       });
     }
 
+    if (grant) await this.grants.markUsed(grant.id, owner?.assertCurrent);
     return {
       ok: true,
       capabilityId: descriptor.id,
@@ -449,5 +494,10 @@ export class DeviceCapabilityService {
       ...(dispatched.data === undefined ? {} : { data: dispatched.data }),
       ...(artifact ? { artifact } : {}),
     };
+    } catch (error) {
+      if (!this.autonomous) throw error;
+      return { ok: false, nodeId: input.nodeId, capabilityId: input.capabilityId, refusal: 'denied-by-jev',
+        detail: error instanceof Error ? error.message : 'Device ownership refused' };
+    } finally { owner?.close(); }
   }
 }

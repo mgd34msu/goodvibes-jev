@@ -15,9 +15,10 @@
  *
  * Scope: this understands the JSON Schema subset the contract generator emits,
  * object (properties/required), array (items), string (enum), number/integer,
- * boolean, null, literal const values, and anyOf/oneOf unions. It is a fixture generator, not a full JSON
- * Schema materializer; an unrecognized shape yields null rather than throwing,
- * so a new schema keyword degrades to a still-valid (if minimal) sample.
+ * boolean, null, literal const values, fixed-width character-class strings,
+ * and anyOf/oneOf unions. This is not a full JSON Schema materializer; other
+ * constraints need support here before schema-valid samples are guaranteed.
+ * An unrecognized type shape yields null rather than throwing.
  */
 import type { JsonSchema, OperatorContractManifest } from '../types.js';
 
@@ -79,8 +80,18 @@ export function sampleFromSchema(schema: JsonSchema | undefined): unknown {
   }
 
   switch (type) {
-    case 'string':
+    case 'string': {
+      // Content revisions use fixed-width character classes (for example a
+      // SHA-256 hex digest). Materialize their declared width instead of the
+      // unconstrained word "sample". Only this bounded pattern grammar is
+      // interpreted; it does not execute arbitrary schema regular expressions.
+      const pattern = record['pattern'];
+      const fixedClass = typeof pattern === 'string'
+        ? /^\^\[([A-Za-z0-9][A-Za-z0-9-]*)\]\{([1-9][0-9]{0,3})\}\$$/.exec(pattern)
+        : null;
+      if (fixedClass) return fixedClass[1]![0]!.repeat(Number(fixedClass[2]));
       return 'sample';
+    }
     case 'number':
     case 'integer':
       return 0;

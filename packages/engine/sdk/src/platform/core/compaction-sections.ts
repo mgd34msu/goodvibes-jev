@@ -449,7 +449,8 @@ function buildDelimitedMessagePrompt(opts: {
 /**
  * buildToolResultsPrompt, build the prompt for LLM-assisted tool relevance extraction.
  *
- * The caller sends this to the LLM and uses the response as the section content.
+ * @deprecated Compatibility-only prompt builder. Structured compaction uses
+ * registered source-membership readings; this prompt cannot authorize selection.
  */
 export function buildToolResultsPrompt(toolMessages: ProviderMessage[]): string {
   return buildDelimitedMessagePrompt({
@@ -477,7 +478,8 @@ export function buildToolResultsPrompt(toolMessages: ProviderMessage[]): string 
  * buildConversationFilterPrompt, build the LLM prompt for filtering gathered
  * recent messages for substance.
  *
- * The caller sends this to the LLM; the response replaces the raw gathered messages.
+ * @deprecated Compatibility-only prompt builder. Structured compaction uses
+ * registered source-membership readings; this prompt cannot authorize selection.
  * Multi-turn coherence rule: keep user-assistant PAIRS.
  */
 export function buildConversationFilterPrompt(
@@ -639,6 +641,8 @@ export function buildOlderAgentSummaryPrompt(olderContracts: readonly ContractVi
 /**
  * buildResolvedProblemsPrompt, build the prompt for LLM-assisted extraction
  * of problem → resolution pairs from the conversation.
+ * @deprecated Compatibility-only prompt builder. Structured compaction uses
+ * registered source-membership readings; this prompt cannot authorize selection.
  *
  * Returns empty string if no messages.
  */

@@ -1,3 +1,5 @@
+import type { ExternalOperationSource } from '../permissions/external-request.js';
+import { bindAutomationAction } from './action-source.js';
 import { randomUUID } from 'node:crypto';
 import { SharedSessionBroker } from '../control-plane/index.js';
 import type { SharedSessionRecord, SharedSessionSubmission } from '../control-plane/index.js';
@@ -98,13 +100,22 @@ export async function executeAutomationJob(
   trigger: AutomationRunTrigger,
   dueRun: boolean,
   attempt = 1,
+  operation?: ExternalOperationSource,
 ): Promise<AutomationRun> {
+  const original = JSON.stringify(job);
+  const assertSource = () => {
+    if (job.execution.requiresSourceOwner && !operation) throw new Error('Automation original source owner is unavailable');
+    operation?.assertCurrent(); operation?.signal?.throwIfAborted();
+    if (operation && (context.jobs.get(job.id) !== job || JSON.stringify(job) !== original)) throw new Error('Source-owned automation job changed or was removed');
+  };
+  assertSource();
   if (job.kind === 'checkin' && context.checkinEvaluator) {
     return await executeCheckinJob(context, context.checkinEvaluator, job, trigger, dueRun, attempt);
   }
   const now = Date.now();
   const prompt = job.execution.prompt ?? job.description ?? job.name;
   const resolved = await resolveAutomationExecution(context, job, prompt, trigger);
+  assertSource();
   const effectiveJob = resolved.updatedJob ?? job;
   const run: AutomationRun = {
     id: `autorun-${job.id}-${now}-${randomUUID().slice(0, 6)}`,
@@ -174,7 +185,8 @@ export async function executeAutomationJob(
     }
 
     const executionContext = buildAutomationExecutionContext(effectiveJob.execution, resolved.session?.id);
-    const agentId = context.spawnTask({
+    assertSource();
+    const agentId = context.spawnTask(bindAutomationAction({
       prompt: resolved.task,
       modelId: effectiveJob.execution.modelId,
       modelProvider: effectiveJob.execution.modelProvider,
@@ -185,7 +197,7 @@ export async function executeAutomationJob(
       reasoningEffort: effectiveJob.execution.reasoningEffort,
       toolAllowlist: effectiveJob.execution.toolAllowlist,
       ...(executionContext ? { context: executionContext } : {}),
-    });
+    }, operation));
     const runningRun: AutomationRun = {
       ...run,
       agentId,
@@ -461,6 +473,15 @@ export async function resolveSharedSessionExecution(
       ...(input.target.threadId ? { threadId: input.target.threadId } : {}),
       ...(input.target.channelId ? { channelId: input.target.channelId } : {}),
     });
+  }
+  if (job.execution.requiresSourceOwner) {
+    if (!input.sessionId) throw new Error('Source-owned automation needs its pinned session');
+    const session = context.sessionBroker.getSession(input.sessionId);
+    if (!session) throw new Error('Source-owned automation session is unavailable');
+    // Generated task prose must never become an authorized queued conversation input.
+    return { task: prompt, session, route, target: input.target, continuationMode: 'spawn',
+      executionIntent: buildAutomationExecutionIntent(input.target.kind, 'spawn'),
+      ...(input.updatedJob ? { updatedJob: input.updatedJob } : {}) };
   }
   const submission = await context.sessionBroker.submitMessage({
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),

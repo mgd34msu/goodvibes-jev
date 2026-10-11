@@ -39,6 +39,8 @@ import {
   type ClientRuntimeServicesFromHost,
   type SessionContinuationDispatch,
 } from '../sdk/src/platform/runtime/client-services.ts';
+import { WorkspaceTrustManager } from '../sdk/src/platform/runtime/workspace-trust.ts';
+import { createShellPathService } from '../sdk/src/platform/runtime/shell-paths.ts';
 import { createAgentGraph } from '../sdk/src/platform/runtime/agent-graph.ts';
 import { resolveRuntimeFeatureFlags } from '../sdk/src/platform/runtime/feature-flag-composition.ts';
 import {
@@ -59,6 +61,7 @@ let root: string;
 let daemonRoot: string;
 let configManager: ConfigManager;
 let client: ClientRuntimeServices;
+let workspaceTrust: WorkspaceTrustManager;
 let daemon: RuntimeServices;
 /** Every ask this composition raised, in order. */
 const asks: { tool: string; metadata: Record<string, unknown> | undefined }[] = [];
@@ -79,7 +82,12 @@ beforeAll(() => {
   seedBenchmarkCache(daemonRoot, 'goodvibes');
   configManager = new ConfigManager({ surfaceRoot: 'tui', configDir: join(root, 'cfg'), workingDir: root, homeDir: root });
 
+  workspaceTrust = new WorkspaceTrustManager({
+    shellPaths: createShellPathService({ workingDirectory: root, homeDirectory: root }),
+    surfaceRoot: 'tui',
+  });
   client = createClientRuntimeServices({
+    workspaceTrust,
     configManager,
     runtimeBus: new RuntimeEventBus(),
     runtimeStore: createRuntimeStore(),
@@ -311,4 +319,68 @@ test('both real runtime compositions install autonomous MCP input resolution wit
     } finally { services.judgment.port.ask = original; }
   }
   expect(asks.length).toBe(startAsks);
+  // Per-action Jev admission must not silently persist a workspace grant.
+  expect(workspaceTrust.isDecided()).toBe(false);
+});
+
+test('real client composition refuses missing or restricted workspace owners before judgment or human input', async () => {
+  const withoutOwner = createClientRuntimeServices({
+    configManager, runtimeBus: new RuntimeEventBus(), runtimeStore: createRuntimeStore(),
+    surfaceRoot: 'tui', workingDir: root, homeDirectory: root, requestApproval: declineEverything,
+  });
+  const startAsks = asks.length;
+  const gate = gateReadingsPort();
+  const semantic = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
+  try {
+    await workspaceTrust.setLevel('restricted');
+    for (const services of [withoutOwner, client]) {
+      const original = services.judgment.port.ask;
+      const intercepted = withDecisionLog({ model: gate.port.model, ask(request) {
+        request.signal?.throwIfAborted(); request.beforeAttempt?.();
+        return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
+      } }, services.judgment.decisionLog);
+      services.judgment.port.ask = intercepted.ask;
+      try {
+        const handler = (services.mcpRegistry as unknown as { elicitationHandler: McpElicitationHandler }).elicitationHandler;
+        expect(await handler({ requestId: 'blocked-composition-form', serverName: 'synthetic', message: 'Name to register',
+          requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } }, {
+          scope: { connectionId: 'blocked-composition-connection', destination: 'synthetic', signal: new AbortController().signal, assertCurrent() {} },
+          operation: { sourceOf: () => ({ goal: 'Register using the supplied name Alice', criteria: [] }), inputFacts: [{ name: 'Alice' }], assertCurrent() {} },
+        })).toEqual({ action: 'cancel' });
+      } finally { services.judgment.port.ask = original; }
+    }
+    expect(gate.requests).toHaveLength(0);
+    expect(semantic.requests).toHaveLength(0);
+    expect(asks.length).toBe(startAsks);
+  } finally { withoutOwner.dispose(); }
+});
+
+test('real client composition revokes an accepted MCP response when workspace trust changes before commit', async () => {
+  await workspaceTrust.setLevel('trusted');
+  const startAsks = asks.length;
+  const gate = gateReadingsPort();
+  const semantic = fakePort((_name, question) => choiceAnswer(question, 'act', 0.99));
+  const original = client.judgment.port.ask;
+  const intercepted = withDecisionLog({ model: gate.port.model, ask(request) {
+    request.signal?.throwIfAborted(); request.beforeAttempt?.();
+    return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request);
+  } }, client.judgment.decisionLog);
+  client.judgment.port.ask = intercepted.ask;
+  let outcome: Awaited<ReturnType<McpElicitationHandler>> | undefined;
+  try {
+    const handler = (client.mcpRegistry as unknown as { elicitationHandler: McpElicitationHandler }).elicitationHandler;
+    outcome = await handler({ requestId: 'revoked-composition-form', serverName: 'synthetic', message: 'Name to register',
+      requestedSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } }, {
+      scope: { connectionId: 'revoked-composition-connection', destination: 'synthetic', signal: new AbortController().signal, assertCurrent() {} },
+      operation: { sourceOf: () => ({ goal: 'Register using the supplied name Alice', criteria: [] }), inputFacts: [{ name: 'Alice' }], assertCurrent() {} },
+    });
+    expect(outcome).toEqual({ action: 'accept', content: { name: 'Alice' } });
+    await workspaceTrust.setLevel('restricted');
+    await workspaceTrust.setLevel('trusted');
+    expect(() => commitMcpElicitation(outcome)).toThrow('changed');
+    expect(asks.length).toBe(startAsks);
+  } finally {
+    discardMcpElicitation(outcome);
+    client.judgment.port.ask = original;
+  }
 });

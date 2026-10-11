@@ -64,18 +64,19 @@ export class BrowserJudgmentService {
 
   async execute(raw: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal, currentPrincipal: () => AuthenticatedPrincipal): Promise<object> {
     if (this.#closing) throw new BrowserJudgmentError('JUDGMENT_SHUTTING_DOWN');
+    const identity = { principalId: principal.principalId, principalKind: principal.principalKind };
     const request = parseBrowserJudgmentRequest(raw);
     const battery = this.options.registry.get(request.battery);
     if (!battery) throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE');
-    if (this.#active.size >= LIMIT.totalRuns || [...this.#active.values()].filter((run) => run.principal === principal.principalId).length >= LIMIT.principalRuns) {
+    if (this.#active.size >= LIMIT.totalRuns || [...this.#active.values()].filter((run) => run.principal === identity.principalId).length >= LIMIT.principalRuns) {
       throw new BrowserJudgmentError('JUDGMENT_BUSY');
     }
     const abort = new AbortController();
     const cancelled = () => abort.abort(new BrowserJudgmentError('JUDGMENT_ABORTED'));
     if (signal.aborted) cancelled(); else signal.addEventListener('abort', cancelled, { once: true });
     // Defer the resolver until after the run is owned, including synchronous throws.
-    const work = Promise.resolve().then(() => this.run(request, battery, principal, abort, currentPrincipal));
-    this.#active.set(work, { principal: principal.principalId, abort });
+    const work = Promise.resolve().then(() => this.run(request, battery, identity, abort, currentPrincipal));
+    this.#active.set(work, { principal: identity.principalId, abort });
     const release = () => { signal.removeEventListener('abort', cancelled); this.#active.delete(work); };
     void work.then(release, release);
     let stop = () => {};
@@ -89,7 +90,7 @@ export class BrowserJudgmentService {
     finally { abort.signal.removeEventListener('abort', stop); }
   }
 
-  private async run(request: BrowserJudgmentRequest, battery: RegisteredBrowserJudgmentBattery, principal: AuthenticatedPrincipal, abort: AbortController, currentPrincipal: () => AuthenticatedPrincipal): Promise<object> {
+  private async run(request: BrowserJudgmentRequest, battery: RegisteredBrowserJudgmentBattery, principal: Pick<AuthenticatedPrincipal, 'principalId' | 'principalKind'>, abort: AbortController, currentPrincipal: () => AuthenticatedPrincipal): Promise<object> {
     const signal = abort.signal;
     const checkAbort = () => { if (signal.aborted) throw signal.reason; };
     const authenticate = (): AuthenticatedPrincipal => {

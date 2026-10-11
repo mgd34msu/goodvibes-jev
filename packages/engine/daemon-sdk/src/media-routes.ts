@@ -503,7 +503,7 @@ async function handleMultimodalAnalyze(context: DaemonMediaRouteContext, req: Re
       ...(typeof body.language === 'string' ? { language: body.language } : {}),
       ...(typeof body.detail === 'string' ? { detail: body.detail as MultimodalDetail } : {}),
       ...(typeof body.metadata === 'object' && body.metadata !== null ? { metadata: body.metadata as Record<string, unknown> } : {}),
-    });
+    }, { signal: req.signal });
     const includePacket = body.includePacket === true;
     const writeback = body.writeback === true || (typeof body.writeback === 'object' && body.writeback !== null);
     const writebackBody = typeof body.writeback === 'object' && body.writeback !== null
@@ -522,7 +522,7 @@ async function handleMultimodalAnalyze(context: DaemonMediaRouteContext, req: Re
           ...(Array.isArray(writebackBody?.tags) ? { tags: writebackBody.tags.filter((entry): entry is string => typeof entry === 'string') } : {}),
           ...(typeof writebackBody?.folderPath === 'string' ? { folderPath: writebackBody.folderPath } : {}),
           ...(typeof writebackBody?.metadata === 'object' && writebackBody.metadata !== null ? { metadata: writebackBody.metadata as Record<string, unknown> } : {}),
-        })
+        }, { signal: req.signal, assertCurrent: () => { if (context.requireAdmin(req)) throw new Error('Multimodal write-back authorization is no longer current.'); } })
       : undefined;
     return Response.json({
       analysis,
@@ -541,13 +541,11 @@ async function handleMultimodalPacket(context: DaemonMediaRouteContext, req: Req
   if (body instanceof Response) return body;
   const input = mediaBodySchemas.multimodalPacket.parse(body);
   if (input instanceof Response) return input;
-  return Response.json({
-    packet: context.multimodalService.buildPacket(
-      input.analysis,
-      input.detail,
-      input.budgetLimit,
-    ),
-  });
+  try {
+    return Response.json({ packet: context.multimodalService.buildPacket(input.analysis, input.detail, input.budgetLimit) });
+  } catch (error) {
+    return readJsonErrorResponse(error, { status: 400 });
+  }
 }
 
 async function handleMultimodalWriteback(context: DaemonMediaRouteContext, req: Request): Promise<Response> {
@@ -569,6 +567,7 @@ async function handleMultimodalWriteback(context: DaemonMediaRouteContext, req: 
         ...(typeof body.folderPath === 'string' ? { folderPath: body.folderPath } : {}),
         ...(typeof body.metadata === 'object' && body.metadata !== null ? { metadata: body.metadata as Record<string, unknown> } : {}),
       },
+      { signal: req.signal, assertCurrent: () => { if (context.requireAdmin(req)) throw new Error('Multimodal write-back authorization is no longer current.'); } },
     );
     return Response.json({ writeback }, { status: 201 });
   } catch (error) {

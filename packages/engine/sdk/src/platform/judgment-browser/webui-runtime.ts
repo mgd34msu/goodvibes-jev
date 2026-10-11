@@ -1,3 +1,7 @@
+import { createSpeechSeamsAdapter } from './batteries/speech-seams.js';
+import { canonicalSpeechSeams, snapshotSpeechSeams } from './speech-source.js';
+import { createHash } from 'node:crypto';
+import { readCanonicalFencedBlock } from './code-source.js';
 import {
   BrowserJudgmentError, missingScopes,
   type AuthenticatedPrincipal, type BrowserJudgmentBatteryId, type BrowserJudgmentErrorSource, type BrowserJudgmentChatSessions, type BrowserJudgmentMailSubjectSource,
@@ -8,19 +12,36 @@ import { BrowserJudgmentReferences } from './references.js';
 import { BrowserJudgmentRegistry } from './registry.js';
 import { BrowserJudgmentService } from './service.js';
 import type { BrowserJudgmentAuthorization, BrowserJudgmentRoute } from './types.js';
-import { createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter, webuiMailReplySubjectAdapter } from './batteries/webui-adapters.js';
+import { createWebuiCatalogProviderAdapter, createWebuiCardMaterialKeyAdapter, createWebuiConfigKeyAdapter, createWebuiCodeLanguageAdapter, createWebuiCredentialProviderAdapter, createWebuiInstallPlatformAdapter, createWebuiCommandRankAdapter, webuiDaemonRefusalAdapter, webuiMailReplySubjectAdapter } from './batteries/webui-adapters.js';
 import { WEBUI_BUILTIN_COMMANDS, WEBUI_COMMAND_CATALOG_VERSION } from './batteries/webui-command-catalog.js';
-import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiMailSubject } from './batteries/webui-readers.js';
+import { readStructuredDaemonRefusal, snapshotWebuiCommandRank, snapshotWebuiDaemonRefusal, snapshotWebuiMailSubject, snapshotWebuiInstallPlatform, snapshotWebuiCredentialNames, snapshotWebuiCode, snapshotWebuiConfigKeys } from './batteries/webui-readers.js';
 import type { ResolvedCommandCandidate } from './batteries/webui-types.js';
 import { granted, requireSynchronousAssertion } from './guards.js';
 
 const PALETTE = 'webui.palette.command-rank';
 const ERRORS = 'webui.errors.daemon-refusal';
 const MAIL = 'webui.mail.reply-subject';
-export type WebuiJudgmentSourceKind = 'palette-query' | 'chat-title' | 'daemon-error' | 'mail-subject';
+export type WebuiJudgmentSourceKind = 'palette-query' | 'chat-title' | 'daemon-error' | 'mail-subject' | 'browser-platform' | 'credential-names' | 'chat-code' | 'config-key-names' | 'chat-speech' | 'provider-catalog-ids';
 
 /** Source/purpose permission is owned by the host, separately from read scopes. */
 export interface WebuiBrowserJudgmentOptions {
+  /** Canonical identity metadata only. The host retains the original registry generation and provider owners. */
+  readonly providerCatalog?: {
+    readonly capture: () => {
+      readonly snapshot: { readonly providerIds: readonly string[]; readonly catalogProviderIds: readonly string[] };
+      readonly signal: AbortSignal;
+      readonly assertCurrent: () => void;
+    };
+  };
+  readonly configNames?: {
+    readonly list: () => Promise<readonly { readonly key: string; readonly description: string }[]>;
+    readonly lifetime: () => { readonly signal: AbortSignal; readonly assertCurrent: () => void };
+  };
+  /** Canonical stored-name inventory only; this source must never resolve values. */
+  readonly credentialNames?: {
+    readonly list: () => Promise<readonly string[]>;
+    readonly lifetime: () => { readonly signal: AbortSignal; readonly assertCurrent: () => void };
+  };
   readonly methods: { get(id: string): GatewayMethodDescriptor | null };
   readonly currentRoute: () => BrowserJudgmentRoute | undefined;
   readonly authorize: (input: BrowserJudgmentAuthorization & { readonly sources: readonly WebuiJudgmentSourceKind[] }) => boolean;
@@ -112,6 +133,249 @@ export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions)
       } catch (error) { references.revoke(id); throw error; }
     },
   }));
+  registry.register(createWebuiCodeLanguageAdapter(async (input, context) => {
+    const battery = 'webui.code.language';
+    const principal = context.currentPrincipal();
+    const sessions = chatSource;
+    if (!sessions?.getMessages || !canRead(principal, ['read:sessions'])) return held();
+    const session = sessions.getSession(input.sessionId);
+    const message = sessions.getMessages(input.sessionId).find(item => item.id === input.messageId && item.sessionId === input.sessionId);
+    if (!session || session.id !== input.sessionId || !message) return held();
+    const content = message.content; const createdAt = message.createdAt; const supersededAt = message.supersededAt;
+    const assertCurrent = () => {
+      context.signal.throwIfAborted();
+      const current = context.currentPrincipal();
+      if (current.principalId !== principal.principalId || current.principalKind !== principal.principalKind || !canRead(current, ['read:sessions'])
+        || chatSource !== sessions || sessions.getSession(input.sessionId) !== session || session.id !== input.sessionId
+        || sessions.getMessages!(input.sessionId).find(item => item.id === input.messageId) !== message
+        || message.content !== content || message.createdAt !== createdAt || message.supersededAt !== supersededAt) return held();
+    };
+    assertCurrent();
+    let snapshot;
+    try {
+      // Complete original content is screened before hashing or selecting a block.
+      const original = snapshotJudgmentInput({ content }) as { readonly content: string };
+      if (createHash('sha256').update(original.content).digest('hex') !== input.contentDigest) return held();
+      snapshot = snapshotWebuiCode(readCanonicalFencedBlock(original.content, input.start, input.end));
+    } catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const id = remember(references.issue({ principalId: principal.principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: actor => actor.principalId === principal.principalId && actor.principalKind === principal.principalKind && canRead(actor, ['read:sessions']),
+    }), principal, battery, ['chat-code']);
+    try { return { ...references.resolve(id, context.currentPrincipal, battery, snapshotWebuiCode), dispose: () => references.revoke(id) }; }
+    catch (error) { references.revoke(id); throw error; }
+  }));
+  registry.register(createSpeechSeamsAdapter(async (input, context) => {
+    const battery = 'webui.voice.speech-seams';
+    const principal = context.currentPrincipal();
+    const sessions = chatSource;
+    if (!sessions?.getMessages || !canRead(principal, ['read:sessions'])) return held();
+    const session = sessions.getSession(input.sessionId);
+    const message = sessions.getMessages(input.sessionId).find(item => item.id === input.messageId && item.sessionId === input.sessionId);
+    if (!session || session.id !== input.sessionId || !message) return held();
+    const content = message.content; const createdAt = message.createdAt; const supersededAt = message.supersededAt;
+    const assertCurrent = () => {
+      context.signal.throwIfAborted();
+      const current = context.currentPrincipal();
+      if (current.principalId !== principal.principalId || current.principalKind !== principal.principalKind || !canRead(current, ['read:sessions'])
+        || chatSource !== sessions || sessions.getSession(input.sessionId) !== session || session.id !== input.sessionId
+        || sessions.getMessages!(input.sessionId).find(item => item.id === input.messageId) !== message
+        || message.id !== input.messageId || message.sessionId !== input.sessionId || message.content !== content || message.createdAt !== createdAt || message.supersededAt !== supersededAt) return held();
+    };
+    assertCurrent();
+    let snapshot;
+    try {
+      // Complete original content is screened before hashing or selecting a block.
+      const original = snapshotJudgmentInput({ content }) as { readonly content: string };
+      if (createHash('sha256').update(original.content).digest('hex') !== input.contentDigest) return held();
+      snapshot = canonicalSpeechSeams(original.content, input.start, input.end, input.cursor);
+    } catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const id = remember(references.issue({ principalId: principal.principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: actor => actor.principalId === principal.principalId && actor.principalKind === principal.principalKind && canRead(actor, ['read:sessions']),
+    }), principal, battery, ['chat-speech']);
+    try { return { ...references.resolve(id, context.currentPrincipal, battery, snapshotSpeechSeams), dispose: () => references.revoke(id) }; }
+    catch (error) { references.revoke(id); throw error; }
+  }));
+  registry.register(createWebuiConfigKeyAdapter(async (input, context) => {
+    const battery = 'webui.config.credential-key';
+    const principal = context.currentPrincipal();
+    const source = options.configNames;
+    const method = options.methods.get('config.get');
+    if (!source || !principal.admin || !method || method.access !== 'admin') return held();
+    const lifetime = source.lifetime();
+    const assertCurrent = () => {
+      context.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
+      requireSynchronousAssertion(lifetime.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      const current = context.currentPrincipal();
+      if (!current.admin || current.principalId !== principal.principalId || current.principalKind !== principal.principalKind
+        || options.methods.get('config.get') !== method || method.access !== 'admin') return held();
+    };
+    assertCurrent();
+    // Screen every caller name before comparing it to the canonical inventory.
+    try { snapshotJudgmentInput(input); } catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const keys = await source.list(); assertCurrent();
+    const selected = input.keys.map(key => keys.find(item => item.key === key));
+    if (selected.some(item => !item)) return held();
+    let snapshot;
+    try { snapshot = snapshotWebuiConfigKeys({ keys: selected }); }
+    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const id = remember(references.issue({ principalId: principal.principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: actor => actor.admin === true && actor.principalId === principal.principalId && actor.principalKind === principal.principalKind,
+    }), principal, battery, ['config-key-names']);
+    const revoke = () => references.revoke(id);
+    lifetime.signal.addEventListener('abort', revoke, { once: true });
+    try {
+      const lease = references.resolve(id, context.currentPrincipal, battery, snapshotWebuiConfigKeys);
+      lease.signal!.addEventListener('abort', () => lifetime.signal.removeEventListener('abort', revoke), { once: true });
+      assertCurrent();
+      return { ...lease, dispose: revoke };
+    } catch (error) { lifetime.signal.removeEventListener('abort', revoke); revoke(); throw error; }
+  }));
+  registry.register(createWebuiCardMaterialKeyAdapter(async (input, context) => {
+    const battery = 'webui.settings.card-material-key';
+    const principal = context.currentPrincipal();
+    const { principalId, principalKind } = principal;
+    const source = options.configNames;
+    const method = options.methods.get('config.get');
+    if (!source || !principal.admin || !method || method.access !== 'admin') return held();
+    const lifetime = source.lifetime();
+    const assertCurrent = () => {
+      context.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
+      requireSynchronousAssertion(lifetime.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      const current = context.currentPrincipal();
+      if (!current.admin || current.principalId !== principalId || current.principalKind !== principalKind
+        || options.methods.get('config.get') !== method || method.access !== 'admin') return held();
+    };
+    assertCurrent();
+    // Screen every caller name before comparing it to the canonical inventory.
+    try { snapshotJudgmentInput(input); } catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const inventory = await source.list(); assertCurrent();
+    // Admit the complete canonical metadata inventory before selection; no config values enter it.
+    let keys: readonly { readonly key: string; readonly description: string }[];
+    try { keys = snapshotJudgmentInput(inventory) as typeof keys; }
+    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    if (!Array.isArray(keys) || keys.some(item => !item || typeof item.key !== 'string' || typeof item.description !== 'string'
+      || Object.keys(item).some(key => key !== 'key' && key !== 'description')) || new Set(keys.map(item => item.key)).size !== keys.length) return held();
+    const selected = input.keys.map(key => keys.find(item => item.key === key));
+    if (selected.some(item => !item)) return held();
+    let snapshot;
+    try { snapshot = snapshotWebuiConfigKeys({ keys: selected }); }
+    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const id = remember(references.issue({ principalId: principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: actor => actor.admin === true && actor.principalId === principalId && actor.principalKind === principalKind,
+    }), principal, battery, ['config-key-names']);
+    const revoke = () => references.revoke(id);
+    lifetime.signal.addEventListener('abort', revoke, { once: true });
+    try {
+      const lease = references.resolve(id, context.currentPrincipal, battery, snapshotWebuiConfigKeys);
+      lease.signal!.addEventListener('abort', () => lifetime.signal.removeEventListener('abort', revoke), { once: true });
+      assertCurrent();
+      return { ...lease, dispose: revoke };
+    } catch (error) { lifetime.signal.removeEventListener('abort', revoke); revoke(); throw error; }
+  }));
+  registry.register(createWebuiCredentialProviderAdapter(async (input, context) => {
+    const battery = 'webui.credentials.provider-key';
+    const principal = context.currentPrincipal();
+    const source = options.credentialNames;
+    const method = options.methods.get('credentials.get');
+    if (!source || !principal.admin || !method || method.access !== 'admin') return held();
+    const lifetime = source.lifetime();
+    const assertCurrent = () => {
+      context.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
+      requireSynchronousAssertion(lifetime.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      const current = context.currentPrincipal();
+      if (!current.admin || current.principalId !== principal.principalId || current.principalKind !== principal.principalKind
+        || options.methods.get('credentials.get') !== method || method.access !== 'admin') return held();
+    };
+    assertCurrent();
+    // Validate complete caller names BEFORE comparing/narrowing. Names are never treated as values.
+    let snapshot;
+    try { snapshot = snapshotWebuiCredentialNames(input); }
+    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const keys = await source.list(); assertCurrent();
+    if (snapshot.keys.some(key => !keys.includes(key))) return held();
+    const id = remember(references.issue({ principalId: principal.principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: actor => actor.admin === true && actor.principalId === principal.principalId && actor.principalKind === principal.principalKind,
+    }), principal, battery, ['credential-names']);
+    const revoke = () => references.revoke(id);
+    lifetime.signal.addEventListener('abort', revoke, { once: true });
+    try {
+      const lease = references.resolve(id, context.currentPrincipal, battery, snapshotWebuiCredentialNames);
+      lease.signal!.addEventListener('abort', () => lifetime.signal.removeEventListener('abort', revoke), { once: true });
+      assertCurrent();
+      return { ...lease, dispose: revoke };
+    } catch (error) { lifetime.signal.removeEventListener('abort', revoke); revoke(); throw error; }
+  }));
+  registry.register(createWebuiCatalogProviderAdapter(async (input, context) => {
+    const battery = 'webui.models.catalog-provider-match';
+    const principal = context.currentPrincipal();
+    const { principalId, principalKind } = principal;
+    const source = options.providerCatalog;
+    const methods = ['providers.list', 'models.list'].map(id => options.methods.get(id));
+    if (!source || methods.some(method => !method || (method.access === 'admin' && !principal.admin) || !canRead(principal, method.scopes))) return held();
+    const captured = source.capture();
+    const assertCurrent = () => {
+      context.signal.throwIfAborted(); captured.signal.throwIfAborted();
+      requireSynchronousAssertion(captured.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      const current = context.currentPrincipal();
+      if (current.principalId !== principalId || current.principalKind !== principalKind
+        || options.providerCatalog !== source || methods.some((method, index) => !method
+          || options.methods.get(index === 0 ? 'providers.list' : 'models.list') !== method
+          || (method.access === 'admin' && !current.admin) || !canRead(current, method.scopes))) return held();
+    };
+    assertCurrent();
+    let snapshot;
+    try {
+      // The complete authoritative ID inventory is screened before request selection or hashing.
+      const inventory = snapshotJudgmentInput(captured.snapshot) as typeof captured.snapshot;
+      snapshot = snapshotWebuiCredentialNames(input);
+      const validIds = (value: readonly string[]) => Array.isArray(value)
+        && value.every(id => typeof id === 'string' && id.trim().length > 0 && id.length <= 128)
+        && new Set(value).size === value.length;
+      if (Object.keys(inventory).length !== 2 || !Object.hasOwn(inventory, 'providerIds') || !Object.hasOwn(inventory, 'catalogProviderIds')
+        || !validIds(inventory.providerIds) || !validIds(inventory.catalogProviderIds)
+        || !inventory.providerIds.includes(snapshot.providerId)
+        || snapshot.keys.some(key => !inventory.catalogProviderIds.includes(key))) return held();
+    } catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    assertCurrent();
+    const id = remember(references.issue({ principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: actor => actor.principalId === principalId && actor.principalKind === principalKind
+        && methods.every(method => !!method && (method.access !== 'admin' || actor.admin === true) && canRead(actor, method.scopes)),
+    }), principal, battery, ['provider-catalog-ids']);
+    const revoke = () => references.revoke(id);
+    captured.signal.addEventListener('abort', revoke, { once: true });
+    try {
+      const lease = references.resolve(id, context.currentPrincipal, battery, snapshotWebuiCredentialNames);
+      lease.signal!.addEventListener('abort', () => captured.signal.removeEventListener('abort', revoke), { once: true });
+      assertCurrent();
+      return { ...lease, dispose: revoke };
+    } catch (error) { captured.signal.removeEventListener('abort', revoke); revoke(); throw error; }
+  }));
+  registry.register(createWebuiInstallPlatformAdapter(async (input, context) => {
+    const battery = 'webui.pwa.install-platform';
+    const principal = context.currentPrincipal();
+    const { principalId, principalKind } = principal;
+    const assertCurrent = () => {
+      context.signal.throwIfAborted();
+      const current = context.currentPrincipal();
+      if (current.principalId !== principalId || current.principalKind !== principalKind) return held();
+    };
+    assertCurrent();
+    let snapshot;
+    try { snapshot = snapshotWebuiInstallPlatform(input); }
+    catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
+    const id = remember(references.issue({ principalId, battery, revision: crypto.randomUUID(),
+      expiresAt: Date.now() + 300_000, snapshot, assertCurrent,
+      mayRead: (actor) => actor.principalId === principalId && actor.principalKind === principalKind,
+    }), principal, battery, ['browser-platform']);
+    try { return { ...references.resolve(id, context.currentPrincipal, battery, snapshotWebuiInstallPlatform), dispose: () => references.revoke(id) }; }
+    catch (error) { references.revoke(id); throw error; }
+  }));
   registry.register(webuiDaemonRefusalAdapter);
   registry.register(webuiMailReplySubjectAdapter);
 
@@ -185,7 +449,7 @@ export function createWebuiBrowserJudgment(options: WebuiBrowserJudgmentOptions)
   return new BrowserJudgmentService({ registry, references, currentRoute: options.currentRoute, issueErrorReference, issueMailSubjectReference,
     bindChatSessions(source) {
       const invalidate = () => {
-        for (const [id, binding] of bindings) if (binding.sources.includes('chat-title')) references.revoke(id);
+        for (const [id, binding] of bindings) if (binding.sources.includes('chat-title') || binding.sources.includes('chat-code') || binding.sources.includes('chat-speech')) references.revoke(id);
       };
       invalidate();
       chatSource = source;

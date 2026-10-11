@@ -1,3 +1,6 @@
+import { captureAutonomousSource } from '../permissions/autonomous.js';
+import { getContractActionSource, getContractActionSignal } from '../tools/agent/contract-binding.js';
+import { bindOwnedContractSource, assertOwnedContractSource } from './owned-source.js';
 import { pinContractInputAdmission } from './input-authority.js';
 import { inspectContractIntegration } from './integration-inspection.js';
 import type { ContractIntegrationInspection } from './integration-inspection-wire.js';
@@ -307,7 +310,9 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     },
     autonomousSource(item) {
       const run = item.contractId === undefined ? undefined : runs.get(item.contractId);
-      if (run === undefined || run.contract.nativeSource === undefined) return undefined;
+      if (run === undefined) return undefined;
+      if (run.contract.originalSource) return () => { run.abort.signal.throwIfAborted(); assertOwnedContractSource(run.contract); return getContractActionSource(run.contract)!(); };
+      if (run.contract.nativeSource === undefined) return undefined;
       return nativeContractActionSource(run.contract, native, run.abort.signal);
     },
     withCurrentExecution(item, execute) {
@@ -688,7 +693,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     record.reviewMode = 'contract';
     startContractOwner(record, { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued`, settled: reserveSettlement(id).promise }, deps.runtimeBus);
     const input: StartContractInput = {
-      ask: record.task,
+      ask: getContractActionSource(record)?.().goal ?? record.task,
       sessionId: AGENT_MANAGER_SESSION_ID,
       origin: 'agent-tool',
       projectRoot: record.workingDirectory ?? deps.projectRoot,
@@ -741,6 +746,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     const config = env.config();
     const execution = extra.durableAdmission?.execution ?? resolveExecution(input, id);
     const isolation = execution.isolation;
+    const sourceOf = getContractActionSource(owner);
+    const originalSource = input.nativeSource === undefined && sourceOf ? captureAutonomousSource(sourceOf()) : undefined;
     const contract: Contract = {
       id,
       ...(extra.durableAdmission === undefined ? {} : { durableAdmission: extra.durableAdmission, durableLaunchState: 'prepared' as const }),
@@ -748,13 +755,14 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       sessionId: input.sessionId,
       origin: input.origin,
       ask: input.ask,
+      ...(originalSource ? { originalSource, taskEvidence: owner.task } : input.taskEvidence === undefined ? {} : { taskEvidence: input.taskEvidence }),
       ownerAgentId: owner.id,
       ...(input.parentAgentId === undefined ? {} : { parentAgentId: input.parentAgentId }),
       projectRoot: input.projectRoot,
       ...execution,
       ...(input.budget === undefined ? {} : { budget: input.budget }),
       ...(input.nativeSource === undefined ? {} : { nativeSource: input.nativeSource }),
-      goal: input.nativeSource?.goal ?? '',
+      goal: input.nativeSource?.goal ?? originalSource?.goal ?? '',
       criteria: input.nativeSource === undefined ? [] : nativeSourceCriteria(input.nativeSource),
       groups: [],
       units: [],
@@ -771,6 +779,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       createdAt: now(),
     };
     bindNativeContractSource(contract);
+    bindOwnedContractSource(contract, owner);
     const run = newRun(contract);
     run.requireSettlement = requireSettlement;
     deps.store.put(contract);
@@ -804,6 +813,13 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     }, contract.proposedUnits);
     reserveSettlement(contract.id);
     runs.set(contract.id, run);
+    const sourceSignal = getContractActionSignal(contract);
+    if (sourceSignal) {
+      const cancel = () => cancelRun(run, 'Original source owner cancelled');
+      sourceSignal.addEventListener('abort', cancel, { once: true });
+      run.abort.signal.addEventListener('abort', () => sourceSignal.removeEventListener('abort', cancel), { once: true });
+      if (sourceSignal.aborted) cancel();
+    }
     return run;
   }
 

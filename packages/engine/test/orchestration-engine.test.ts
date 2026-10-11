@@ -1,3 +1,5 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 /**
  * OrchestrationEngine: pipeline scheduling, dynamic phase
  * insertion, budget refusal, resume prefix replay, cancellation, and
@@ -495,6 +497,9 @@ describe('primitive reuse', () => {
 });
 
 describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase', () => {
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => { previousPort = installJudgmentPort(fakePort(() => noulAnswer(.01)).port); });
+  afterEach(() => { installJudgmentPort(previousPort); });
   /** A worktree whose commit always throws with the given error, exercises the post-gate commit-failure paths. */
   function throwingWorktree(error: Error): () => WorktreeOps {
     return () => ({
@@ -515,10 +520,10 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
     engine.start(ws.id);
-    await flushMicrotasks();
+    await flushMicrotasks(100);
     const item = ws.items[0]!;
     h.completeAgent(item.agentId!, engineerReportOutput('did work', { filesCreated: ['f.ts'] }));
-    await flushMicrotasks();
+    await flushMicrotasks(100);
 
     // The phase passed; the item is passed, NOT failed, with the commit miss surfaced as a warning.
     expect(item.state).toBe('passed');
@@ -539,6 +544,7 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
   });
 
   test('passing gate + NEGATING commit failure (workspace corruption) → item FAILED honestly, reason names the negation', async () => {
+    installJudgmentPort(fakePort(() => noulAnswer(.99)).port);
     const engine = h.makeEngine({ createWorktree: throwingWorktree(new Error("fatal: Unable to create '/repo/.git/index.lock': File exists")) });
     const ws = engine.createWorkstream({
       title: 'ws',
@@ -546,10 +552,10 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
     engine.start(ws.id);
-    await flushMicrotasks();
+    await flushMicrotasks(100);
     const item = ws.items[0]!;
     h.completeAgent(item.agentId!, engineerReportOutput('did work', { filesCreated: ['f.ts'] }));
-    await flushMicrotasks();
+    await flushMicrotasks(100);
 
     expect(item.state).toBe('failed');
     expect(item.failureReason).toMatch(/workspace was left unrecorded\/corrupted/i);
@@ -567,10 +573,10 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
     engine.start(ws.id);
-    await flushMicrotasks();
+    await flushMicrotasks(100);
     const item = ws.items[0]!;
     h.completeAgent(item.agentId!, engineerReportOutput('did work', { filesCreated: ['f.ts'] }));
-    await flushMicrotasks();
+    await flushMicrotasks(100);
 
     expect(item.state).toBe('passed');
     expect(item.warnings ?? []).toEqual([]);
@@ -587,13 +593,13 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
     engine.start(ws.id);
-    await flushMicrotasks();
+    await flushMicrotasks(100);
     const item = ws.items[0]!;
     h.completeAgent(item.agentId!, engineerReportOutput('did work', { filesCreated: ['f.ts'] }));
-    await flushMicrotasks();
+    await flushMicrotasks(100);
     // The second phase requires a gate that is not configured -> terminal gate failure.
     h.completeAgent(item.agentId!, engineerReportOutput('checked'));
-    await flushMicrotasks();
+    await flushMicrotasks(100);
 
     expect(item.state).toBe('failed');
     const results = engine.getPhaseResults(ws.id);

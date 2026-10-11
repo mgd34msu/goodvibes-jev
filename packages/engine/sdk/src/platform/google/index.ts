@@ -349,6 +349,7 @@ export {
 
 export {
   findElement,
+  consumeGoogleElement,
   requireElement,
   describeElements,
   looksLikeGoogleSignIn,
@@ -531,3 +532,7 @@ export {
   type SecretLikeTextReading,
   type AccountRegistryOperationOptions,
 } from './async-account-registry.js';
+
+export type { GoogleReadingOptions } from './browser-readings.js';
+
+export { GoogleSetupWriteCommittedError, type GoogleMutationOwnership } from './setup-effect.js';

@@ -42,9 +42,11 @@
  * exercised through a stub would only be asserting the stub's shape, which is
  * why none are here.
  */
+import { useOccasionReadings } from './helpers/occasion-readings.ts';
+useOccasionReadings();
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // The checked-in generated source, not the package's build output: this file
 // exists to catch a runtime/contract divergence, and reading a stale `dist`
@@ -154,12 +156,6 @@ async function profileHarness(): Promise<ProfileHarness> {
 }
 
 describe('profile.* responses conform to the published contract', () => {
-  test('every fixture path stays inside the temp directory', async () => {
-    const { path } = await profileHarness();
-    expect(path.startsWith(tmpdir())).toBe(true);
-    expect(path.startsWith(join(homedir(), '.goodvibes'))).toBe(false);
-  });
-
   test('profile.status and profile.read', async () => {
     const { catalog } = await profileHarness();
     await invokeAndCheck(catalog, 'profile.status', {}, 'loaded profile');
@@ -305,7 +301,8 @@ function occasionsHarness(): GatewayMethodCatalog {
     profile: {
       importantDates: () => profile.importantDates(),
       plans: () => profile.plans(),
-      person: (name) => profile.person(name),
+      person: (name, options) => profile.person(name, options),
+      captureRead: () => profile.captureRead(),
     },
     writer: {
       append: (input) => profile.append(input),

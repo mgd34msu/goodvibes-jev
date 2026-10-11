@@ -25,6 +25,7 @@
  * boundary is not a licence for a catastrophic command.
  */
 
+import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
 import { readCommandNeeds, type CommandNeeds } from '../../runtime/permissions/normalization/index.js';
 import { spawnSync } from 'node:child_process';
 import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
@@ -308,6 +309,28 @@ export function resolveExecSandboxPlan(input: ResolveSandboxPlanInput): ExecSand
   return { sandboxed: true, argvPrefix, boundary, network, escalationsGranted, homeMasked: input.homeDir !== undefined };
 }
 
+/** A host-owned, exact-plan admission; never an instruction to widen containment. */
+export interface SandboxEscalationRequest {
+  readonly command: string;
+  readonly escalations: readonly string[];
+  readonly boundary: string;
+  readonly policyReasons: readonly string[];
+  readonly workingDirectory?: string | undefined;
+  readonly plan?: Readonly<ExecSandboxPlan> | undefined;
+}
+export interface SandboxEscalationExecution {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent: () => void;
+}
+export interface SandboxEscalationPermit {
+  readonly signal: AbortSignal;
+  readonly assertCurrent: () => void;
+  readonly claim: () => void;
+  readonly close: () => void;
+}
+export type SandboxEscalationHandler = (input: SandboxEscalationRequest,
+  execution?: SandboxEscalationExecution) => Promise<boolean | SandboxEscalationPermit>;
+
 /**
  * The resolved sandbox context the exec runtime threads per call: the config,
  * the host availability, and whether the graduation-gated flag is on. Null on a
@@ -333,13 +356,7 @@ export interface ExecSandboxRuntime {
    * once-semantics, this seam just reports the runs.
    */
   readonly onSandboxedRun?: (() => void) | undefined;
-  readonly requestEscalation?: ((input: {
-    readonly command: string;
-    readonly escalations: readonly string[];
-    readonly boundary: string;
-    readonly policyReasons: readonly string[];
-    readonly workingDirectory?: string | undefined;
-  }) => Promise<boolean>) | undefined;
+  readonly requestEscalation?: SandboxEscalationHandler | undefined;
 }
 
 /**
@@ -372,7 +389,8 @@ export async function resolveRuntimeSandboxPlan(
  * Broker a sandbox host-access escalation ask through the injected
  * `requestEscalation` seam BEFORE the command runs. Returns the named
  * escalations when the ask was DENIED (the caller then denies the command), or
- * null when there was nothing to ask or the ask was approved. The frozen
+ * a live admission to claim immediately before spawning, or null for no ask /
+ * legacy direct approval. The frozen
  * catastrophic block is enforced independently (guardExecCommand) and is
  * untouched here, this only ever gates the host-access escalation, never the
  * command class.
@@ -382,7 +400,8 @@ export async function brokerSandboxEscalation(
   plan: ExecSandboxPlan | null,
   command: string,
   workingDirectory: string,
-): Promise<{ deniedEscalations: string[] } | null> {
+  execution?: SandboxEscalationExecution,
+): Promise<{ deniedEscalations: string[] } | { admission: SandboxEscalationPermit } | null> {
   if (!plan?.sandboxed) return null;
   // A null return means this command WILL run inside the boundary, report it
   // so the wired announcer can turn the first contained run into the one-time
@@ -392,6 +411,11 @@ export async function brokerSandboxEscalation(
     return null;
   };
   if (!sandbox?.requestEscalation) return reportContainedRun();
+  const revision = JSON.stringify({ plan, config: sandbox.config, availability: sandbox.availability, featureEnabled: sandbox.featureEnabled });
+  const assertCurrent = () => {
+    execution?.signal?.throwIfAborted(); execution?.assertCurrent();
+    if (revision !== JSON.stringify({ plan, config: sandbox.config, availability: sandbox.availability, featureEnabled: sandbox.featureEnabled })) throw new Error('Sandbox plan or policy changed');
+  };
   const decision = decideSandboxedExec({
     command,
     needs: await readCommandNeeds(command, workingDirectory),
@@ -400,14 +424,21 @@ export async function brokerSandboxEscalation(
     baseEffectWhenNotSandboxed: 'ask',
   });
   if (decision.effect !== 'ask' || decision.escalations.length === 0) return reportContainedRun();
-  const approved = await sandbox.requestEscalation({
+  assertCurrent();
+  const approved = await sandbox.requestEscalation(Object.freeze({
     command,
-    escalations: decision.escalations,
+    escalations: Object.freeze([...decision.escalations]),
     boundary: plan.boundary,
-    policyReasons: [decision.reason],
+    policyReasons: Object.freeze([decision.reason]),
     workingDirectory,
-  });
-  return approved ? reportContainedRun() : { deniedEscalations: decision.escalations };
+    plan: Object.freeze({ ...plan, argvPrefix: Object.freeze([...plan.argvPrefix]) as unknown as string[], escalationsGranted: Object.freeze([...plan.escalationsGranted]) as unknown as string[] }),
+  }), { signal: execution?.signal, assertCurrent });
+  try { assertCurrent(); } catch (error) { if (typeof approved === 'object') approved.close(); throw error; }
+  // Canonical autonomous dispatch requires a live final-effect capability. A
+  // wrapper must not downgrade that capability to a legacy truthy boolean.
+  if (!approved || (currentExternalOperationSource() && approved === true)) return { deniedEscalations: decision.escalations };
+  reportContainedRun();
+  return typeof approved === 'object' ? { admission: approved } : null;
 }
 
 /**

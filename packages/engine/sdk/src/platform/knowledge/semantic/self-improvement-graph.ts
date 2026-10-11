@@ -10,11 +10,7 @@ import {
   readStringArray,
   uniqueStrings,
 } from './utils.js';
-import {
-  hasConcreteFeatureSignal,
-  isLowValueFeatureOrSpecText,
-  semanticFactText,
-} from './fact-quality.js';
+
 
 export const BASE_OBJECT_PROFILES: readonly KnowledgeObjectProfilePolicy[] = [
   {
@@ -104,7 +100,6 @@ export function factCoverage(facts: readonly KnowledgeNodeRecord[]): { readonly 
   const coveredAreas = new Set<string>();
   let coreFactCount = 0;
   for (const fact of facts) {
-    if (!isUsableSelfImprovementFact(fact)) continue;
     const kind = readString(fact.metadata.factKind);
     if (!['feature', 'capability', 'specification', 'compatibility', 'configuration'].includes(kind ?? '')) continue;
     coreFactCount += 1;
@@ -123,13 +118,12 @@ export function factCoverage(facts: readonly KnowledgeNodeRecord[]): { readonly 
   return { coreFactCount, coveredAreas };
 }
 
-export function isUsableSelfImprovementFact(fact: KnowledgeNodeRecord, subjectIds: ReadonlySet<string> = new Set()): boolean {
+/** Structural candidate selection; callers must consume a prepared usefulness plan. */
+export function isSelfImprovementFactCandidate(fact: KnowledgeNodeRecord, subjectIds: ReadonlySet<string> = new Set()): boolean {
   if (fact.status !== 'active') return false;
   if (fact.metadata.semanticKind !== 'fact') return false;
   const kind = readString(fact.metadata.factKind);
   if (!['feature', 'capability', 'specification', 'compatibility', 'configuration', 'identity'].includes(kind ?? '')) return false;
-  const text = semanticFactText(fact);
-  if (isLowValueFeatureOrSpecText(text) || !hasConcreteFeatureSignal(text)) return false;
   if (subjectIds.size === 0) return true;
   const linkedIds = uniqueStrings([
     ...readStringArray(fact.metadata.linkedObjectIds),

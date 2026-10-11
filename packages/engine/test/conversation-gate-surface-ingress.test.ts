@@ -14,12 +14,26 @@
  *   bypasses the gate entirely
  * - mode 'off': previous behavior restored
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { DaemonSurfaceActionHelper } from '../sdk/src/platform/daemon/surface-actions.ts';
 import { handleNtfySurfacePayload } from '../sdk/src/platform/adapters/ntfy/index.ts';
 import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.ts';
 import { ntfyInboundDedup } from '../sdk/src/platform/adapters/inbound-dedup.ts';
 import { trackDisposables } from './_helpers/disposables.ts';
+
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+let prior: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  const work = new Set(['fix the parser in src/parse.ts', 'fix the login bug', 'refactor the session broker', 'deploy the worker']);
+  const replies: Record<string, string> = { yes: 'approve', 'no, not now': 'reject' };
+  prior = installJudgmentPort(fakePort((_name, question, state) => {
+    if (question.type === 'noul') return noulAnswer(0.01);
+    const input = state as { proposal: unknown; reply: string };
+    return choiceAnswer(question, input.proposal === null ? (work.has(input.reply) ? 'work' : 'conversation') : replies[input.reply] ?? 'message', 0.99);
+  }).port);
+});
+afterEach(() => installJudgmentPort(prior));
 
 const disposables = trackDisposables();
 
@@ -66,7 +80,6 @@ function buildHarness(
     surfaceId: 'ntfy',
     externalId: AGENT_TOPIC,
     channelId: AGENT_TOPIC,
-    threadId: AGENT_TOPIC,
     metadata: {},
   };
 
@@ -98,6 +111,9 @@ function buildHarness(
       getSession: (id: string) => (id === session.id ? session : undefined),
     },
     channelPolicy: {
+      listPolicies: () => [],
+      getPolicy: () => ({ allowlistUserIds: [] }),
+      preflightIngress: async () => ({ allowed: true, reason: 'ok', policy: { allowlistUserIds: [] } }),
       evaluateIngress: async () => ({ allowed: true, reason: 'ok', policy: { allowlistUserIds: [] } }),
     },
     controlPlaneGateway: {},
@@ -223,7 +239,7 @@ describe('conversation gate at the surface spawn boundary', () => {
   test('a proposal whose notice was refused is not answerable', async () => {
     const harness = buildHarness({}, undefined, { delivered: false, reason: 'surface-delivery-disabled' });
     const response = await harness.send('fix the login bug');
-    expect((await response.json() as Record<string, unknown>).outcome).toBe('work-proposed');
+    expect((await response.json() as Record<string, unknown>).outcome).toBe('work-proposal-undelivered');
 
     expect(harness.proposals.listPending()).toHaveLength(0);
     expect(harness.proposals.disclose().reaped.undelivered).toBe(1);

@@ -1,5 +1,6 @@
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
-import { isUsefulKnowledgePageFact } from '../semantic/fact-quality.js';
+import { createKnowledgeFactQualityReader, isKnowledgePageFactCandidate } from '../semantic/fact-quality.js';
+import type { KnowledgeStore } from '../store.js';
 import {
   compareKnowledgePageSources,
   createKnowledgePageSourceReader,
@@ -16,8 +17,34 @@ const HOME_GRAPH_PAGE_SOURCE_POLICY: KnowledgePageSourceQualityPolicy = {
   purpose: 'A grounded device/home-graph reference, including useful product documentation rather than a generic shopping or comparison listing',
 };
 
-export function isUsefulHomeGraphPageFact(fact: KnowledgeNodeRecord): boolean {
-  return isUsefulKnowledgePageFact(fact, { rejectRemoteAccessoryDetails: true });
+/** Structural discovery only; semantic consumption requires a prepared reader. */
+export function isHomeGraphPageFactCandidate(fact: KnowledgeNodeRecord): boolean {
+  return isKnowledgePageFactCandidate(fact, { rejectRemoteAccessoryDetails: true });
+}
+
+const homeGraphFactPlans = new WeakSet<object>();
+
+export function createHomeGraphPageFactReader(
+  store: KnowledgeStore,
+  options: Parameters<typeof createKnowledgeFactQualityReader>[1],
+) {
+  const reader = createKnowledgeFactQualityReader(store, { ...options, purpose: 'knowledge-page', rejectRemoteAccessoryDetails: true });
+  return {
+    assertCurrent: reader.assertCurrent,
+    async prepare(candidates: readonly KnowledgeNodeRecord[]) {
+      const plan = await reader.prepare(candidates);
+      homeGraphFactPlans.add(plan);
+      return plan;
+    },
+  };
+}
+export type HomeGraphPageFactReader = ReturnType<typeof createHomeGraphPageFactReader>;
+export type HomeGraphPageFactPlan = Awaited<ReturnType<HomeGraphPageFactReader['prepare']>>;
+
+/** A raw predicate or a repair-only plan cannot authorize Home Graph rendering. */
+export function assertHomeGraphPageFactPlan(plan: HomeGraphPageFactPlan): void {
+  if (!homeGraphFactPlans.has(plan)) throw new TypeError('Home Graph rendering requires a prepared page fact quality plan.');
+  plan.assertCurrent();
 }
 
 export function isUsefulHomeGraphPageSource(source: KnowledgeSourceRecord): Promise<boolean> {

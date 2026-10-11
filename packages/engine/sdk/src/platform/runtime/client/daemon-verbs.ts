@@ -45,6 +45,9 @@ export type DaemonReachability =
 export interface DaemonVerbCaller {
   /** Whether a daemon is reachable in principle, with the honest reason when not. */
   probe(): DaemonReachability;
+  /** Capture through this exact connection owner; never rediscover on apply. */
+  captureSettingsPrecondition?(request: import('../../config/settings-precondition-client.js').SettingsPreconditionRequest):
+    Promise<import('../../config/settings-precondition-client.js').RemoteSettingsPrecondition>;
   /**
    * Invoke a verb. Throws on a non-2xx, and on "no daemon is configured at all"
    *, a seam that wants to degrade instead of failing calls `probe()` first.

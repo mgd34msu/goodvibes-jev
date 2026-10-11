@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from 'bun:test';
+import * as approvalRules from '../sdk/src/platform/permissions/approval-rules.js';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,4 +90,25 @@ test('a persisted contradictory marker is refused rather than normalized into au
   snapshot.approvals[0]!.decision = { approved: true, disposition: 'denied' satisfies ExplicitApprovalDisposition };
   writeFileSync(storePath, JSON.stringify(snapshot));
   await expect(new ApprovalBroker({ storePath }).start()).rejects.toThrow('snapshot is invalid');
+});
+
+
+for (const terminal of ['denied', 'cancelled'] as const) test(`an awaited remembered sweep cannot overwrite a concurrent ${terminal} decision`, async () => {
+  const { broker } = fixture();
+  const first = await broker.raiseApproval({ request: request('first', 'one.txt') });
+  const second = await broker.raiseApproval({ request: request('second', 'two.txt') });
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const original = approvalRules.matchDurableRulesAsync;
+  const held = spyOn(approvalRules, 'matchDurableRulesAsync').mockImplementation(async (...args) => {
+    entered.resolve(); await release.promise; return original(...args);
+  });
+  const sweeping = broker.resolveApproval(first.approval.id, { approved: true, rememberTier: 'tool', actor: 'fixture-owner' });
+  try {
+    await entered.promise;
+    if (terminal === 'cancelled') await broker.cancelApproval(second.approval.id, 'fixture-owner');
+    else await broker.resolveApproval(second.approval.id, { approved: false, actor: 'fixture-owner', disposition: 'denied' });
+    release.resolve(); await sweeping;
+    expect((await second.decision).approved).toBe(false);
+    expect(broker.getApproval(second.approval.id)?.decision?.disposition).toBe(terminal);
+  } finally { release.resolve(); held.mockRestore(); await sweeping.catch(() => {}); }
 });

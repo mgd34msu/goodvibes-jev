@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import { waitFor } from '../contract/runner-support.js';
 import { terminal } from '../contract/steps-support.js';
 import { createNativeIntegrationRepairFixture, integrationBarrier } from '../contract/native-integration-support.js';
+import { createNativeReviewedRepairFixture } from '../contract/native-reviewed-repair-support.js';
 import { createOperatorSdk } from '../../operator-sdk/src/client.js';
 import { createOperatorNativeWorkExecutionClient } from '../../sdk/src/platform/workflow/work-ledger/native-execution-client.js';
 
-const f = await createNativeIntegrationRepairFixture({ withoutInspection: process.argv.includes('--without-inspection') });
+const reviewed = process.argv.includes('--reviewed-repair');
+const reviewedFixture = reviewed ? await createNativeReviewedRepairFixture() : undefined;
+const f = reviewedFixture ?? await createNativeIntegrationRepairFixture({ withoutInspection: process.argv.includes('--without-inspection') });
 const emit = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
 let hold: { gate: ReturnType<typeof integrationBarrier>; delivered: ReturnType<typeof integrationBarrier>; captured: boolean; statusOrdinal?: number } | undefined;
 let statusOrdinal = 0;
@@ -48,7 +51,8 @@ try {
   const retry = engine.retryItemIntegration.bind(engine);
   engine.retryItemIntegration = (...args) => { remergeCalls++; return retry(...args); };
   // The ephemeral fixture token is sent only through the child's private pipe.
-  emit({ kind: 'ready', baseUrl, token: f.paired.token, identity: f.identity, contractId });
+  emit({ kind: 'ready', baseUrl, token: f.paired.token, identity: f.identity, contractId,
+    ...(reviewedFixture ? { projectRoot: reviewedFixture.root, commitsBefore: reviewedFixture.commitsBefore } : {}) });
   stage = 'command';
   const decoder = new TextDecoder();
   let buffer = '';
@@ -62,6 +66,9 @@ try {
       if (command === null || typeof command !== 'object' || Object.keys(command).length !== 1 || !('type' in command)) throw new Error('Invalid test-host control message');
       if (command.type === 'repair') {
         f.releaseRepair(); await f.waitForRepaired(contractId); emit({ kind: 'repaired' });
+      } else if (command.type === 'reviewed-proof') {
+        if (!reviewedFixture) throw new Error('Reviewed proof requires the reviewed-repair scenario');
+        emit({ kind: 'reviewed-proof', ...reviewedFixture.proof(contractId) });
       } else if (command.type === 'remerge') {
         // Reconcile the genuine preserved branch, exactly as the engine-owned
         // lifecycle acceptance does; only the real engine can clear conflict.

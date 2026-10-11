@@ -6,8 +6,10 @@ import * as fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { isDeepStrictEqual } from 'node:util';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '../errors/src/index.js';
+import { codeChunkView } from '../sdk/src/platform/state/batteries/code-search-rerank.js';
 import { MemoryStore, MemoryRegistry } from '../sdk/src/platform/state/index.js';
 import { MemoryEmbeddingProviderRegistry } from '../sdk/src/platform/state/memory-embeddings.js';
 import { ConfigManager } from '../sdk/src/platform/config/index.js';
@@ -67,10 +69,45 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
     });
     await resumeContracts(runtime.contractRunner, root);
     const judgments: string[] = [];
-    const previous = installJudgmentPort(runnerPort((context) => {
+    const unexpectedCodeReadings: string[] = [];
+    // Script only the exact source fixtures this pipeline owns. A new source or
+    // changed projection must be reviewed rather than inheriting a blanket yes.
+    const authoredCode = [
+      ['allowed.ts', ORIGINAL, 'function', `export function ${ORIGINAL}() { return 'CSV parser'; }`],
+      ['allowed.ts', REVISED, 'function', `export function ${REVISED}() { return 'CSV parser'; }`],
+      ['generated.ts', 'PASSIVE_GENERATED', 'function', "export function PASSIVE_GENERATED() { return 'CSV parser'; }"],
+      ['command.ts', 'PASSIVE_COMMAND', 'function', 'export function PASSIVE_COMMAND() { return 1; }'],
+      ['src/csv.ts', 'parse', 'constant', 'export const parse = () => [];'],
+    ] as const;
+    const candidates = authoredCode.flatMap(([path, symbol, kind, code]) => [
+      codeChunkView({ path, symbol, kind, startLine: 1, endLine: 1 }, code),
+      codeChunkView({ path, symbol: '', kind: 'window', startLine: 1, endLine: 2 }, `${code}\n`),
+    ]);
+    const relevance = fakePort((name, question, state) => {
+      const value = state as { query?: unknown; candidate?: unknown };
+      const candidate = candidates.find(candidate => isDeepStrictEqual(candidate, value.candidate));
+      if (name !== 'match' || question.type !== 'noul' || typeof value.query !== 'string'
+        || value.query.length === 0 || !candidate) {
+        const diagnostic = JSON.stringify({ name, question, state });
+        unexpectedCodeReadings.push(diagnostic);
+        throw new Error(`Unexpected captured passive code reading: ${diagnostic}`);
+      }
+      return noulAnswer(0.99);
+    });
+    const semantic = runnerPort((context) => {
       judgments.push(JSON.stringify(context.state));
       return context.name === 'family' ? choiceAnswer(context.question, 'file-mutation', 0.99) : undefined;
-    }).port);
+    });
+    const previous = installJudgmentPort({ ...semantic.port, ask(request) {
+      if (request.context?.battery !== 'engine.state.code-search') return semantic.port.ask(request);
+      judgments.push(JSON.stringify(request.state));
+      if (request.context.site !== 'state.code-injection-relevance') {
+        const diagnostic = JSON.stringify(request.context);
+        unexpectedCodeReadings.push(diagnostic);
+        throw new Error(`Unexpected captured passive code site: ${diagnostic}`);
+      }
+      return relevance.port.ask(request);
+    } });
     await runtime.userPermissionRuleStore.add({
       rule: { id: 'deny-original-private-passive', type: 'path-scope', origin: 'user', effect: 'deny', toolPattern: 'read', pathPatterns: [join(root, 'private.ts')] },
       createdAt: Date.now(), tier: 'path', tool: 'read',
@@ -203,9 +240,11 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
       }
       await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'passive pipeline settlement', 120_000).catch((error) => { throw new Error(`${error.message}; members=${memberCalls}; agents=${JSON.stringify(runtime.agentManager.list().map(r => ({ status:r.status, error:r.error })))}; toolResults=${toolResults.slice(-4).join(' | ')}`); });
       const result = runner.get(id)!;
+      expect(unexpectedCodeReadings).toEqual([]);
       if (scenario === 'cancel-embedding' || scenario === 'revoke-embedding' || scenario === 'retry-revoked' || scenario === 'embedding-retry-revoked') {
         // Drain the late provider result before asserting it never reached chat.
         await runner.join(id);
+        expect(unexpectedCodeReadings).toEqual([]);
         expect(result.status).not.toBe('passed');
         expect([ownerStats, ownerSearch, ownerReindex]).toEqual([0, 0, 0]);
         expect(opens.mock.calls.filter(([path]) => String(path).endsWith('/private.ts'))).toHaveLength(0);
@@ -213,6 +252,7 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
         if (scenario === 'retry-revoked') {
           expect(retryRejected, `${result.error}; requests=${requests.length}`).toBe(1);
           expect(requests).toHaveLength(1);
+          expect(relevance.requests.length).toBeGreaterThan(0);
           expect(requests[0]!.prompt).toContain('## Injected Code Context');
         } else {
           expect(requests).toHaveLength(0);
@@ -246,6 +286,9 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
       }
       const enabled = scenario === 'allowed' || scenario === 'mutable';
       if (enabled) {
+        expect(relevance.requests.length).toBeGreaterThan(0);
+        expect(relevance.requests.every(request => request.context?.battery === 'engine.state.code-search'
+          && request.context.site === 'state.code-injection-relevance')).toBe(true);
         expect(opens.mock.calls.some(([path]) => String(path).endsWith('/allowed.ts'))).toBe(true);
         expect(embeddings.some((text) => text.includes(ORIGINAL))).toBe(true);
         expect(members[0]!.prompt).toContain('## Injected Code Context');

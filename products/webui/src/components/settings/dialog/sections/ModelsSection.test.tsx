@@ -129,6 +129,7 @@ const MODELS_LIST_FIXTURE = {
 };
 
 mock.module('../../../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic credential reading in this display fixture.')),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   sdk: {

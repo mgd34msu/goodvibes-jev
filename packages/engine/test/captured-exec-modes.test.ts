@@ -7,7 +7,8 @@ import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.js';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.js';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.js';
 import { createCapturedExecNodeRuntimeAdmission } from '../sdk/src/platform/tools/exec/captured-exec-runtime-input.js';
-import { probeCapturedExecAvailability } from '../sdk/src/platform/tools/exec/captured-exec.js';
+import { startCapturedBackground } from '../sdk/src/platform/tools/exec/captured-exec-background.js';
+import { runCapturedCommand, probeCapturedExecAvailability } from '../sdk/src/platform/tools/exec/captured-exec.js';
 import { detectPtyAvailability, probePtyHost } from '../sdk/src/platform/tools/exec/interactive.js';
 import { captureContractInput, contractInputPath, materializeContractInput } from '../sdk/src/platform/contract/input-snapshot.js';
 import { createContractInputAuthority, revokeContractInputAuthority } from '../sdk/src/platform/contract/input-authority.js';
@@ -257,3 +258,78 @@ test.skipIf(!supported)('a timed-out retained job keeps typed status while origi
   const captured = await f.tool.execute({ commands: [{ cmd: `bg_output ${id}` }] });
   expect(JSON.parse(captured.output!).timed_out).toBe(true);
 });
+
+
+for (const mode of ['foreground', 'pty', 'background', 'until'] as const) {
+  test.skipIf(!supported)(`captured ${mode} final spawn refuses a revoked command permit after projection admission`, async () => {
+    const f = await fixture();
+    let claims = 0;
+    const beforeSpawn = () => { claims++; throw new Error('Synthetic final command admission revoked'); };
+    const command = 'echo unexpected > forbidden-spawn.txt; echo READY';
+    const result = mode === 'background' || mode === 'until'
+      ? await startCapturedBackground(f.manager, f.binding, command,
+        mode === 'background' ? { background: true } : { until: { pattern: 'READY', kill_after: false } }, f.root, 2000, undefined, 'disabled', {}, beforeSpawn)
+      : await runCapturedCommand(f.binding, command, {}, f.root, 2000, undefined, 'disabled', {}, {
+        beforeSpawn, ...(mode === 'pty' ? { interaction: { availability: detectPtyAvailability(probePtyHost()) } } : {}),
+      });
+    expect(claims).toBe(1); expect(result.success).toBe(false);
+    expect(existsSync(join(f.root, 'forbidden-spawn.txt'))).toBe(false);
+    expect(existsSync(join(f.owner, 'forbidden-spawn.txt'))).toBe(false);
+  });
+}
+
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.ts';
+import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.ts';
+import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
+import { ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
+import { capturedInputTool } from '../sdk/src/platform/tools/shared/captured-input-tools.ts';
+
+for (const forwarding of ['exact', 'copied-options', 'cloned-args'] as const) {
+  test.skipIf(!supported)(`real admitted captured Exec enforces ${forwarding} body identity before process effects`, async () => {
+    const f = await fixture();
+    forgetGateReadings();
+    const config = {
+      getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: f.owner }),
+      getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
+      getWorkingDirectory: () => f.owner, isAutoApproveEnabled: () => false,
+    } as PermissionConfigReader;
+    const permissions = new PermissionManager(undefined, config, new PolicyRuntimeState());
+    const registry = new ToolRegistry(permissions);
+    const gate = gateReadingsPort();
+    const autonomous = fakePort((_key, question) => choiceAnswer(question, 'act', 0.99));
+    const log = new SqliteDecisionLog(':memory:');
+    const previous = installJudgmentPort(withDecisionLog({ ...gate.port, ask(request) {
+      return 'disposition' in request.questions ? autonomous.port.ask(request) : gate.port.ask(request);
+    } }, log));
+    // Keep the actual constructor-bound tool identity and captured backend.
+    // Interpose only the forwarding choice at its real executor boundary.
+    const execute = f.tool.execute;
+    let calls = 0;
+    f.tool.execute = (args, options) => {
+      calls++;
+      return execute(forwarding === 'cloned-args' ? structuredClone(args) : args,
+        forwarding === 'copied-options' ? { ...options } : options);
+    };
+    registry.register(capturedInputTool(f.tool, f.authority, f.root, f.binding.readAccessFilter, undefined));
+    try {
+      const call = await registry.prepareCall('captured-exec-identity', 'exec', {
+        commands: [{ cmd: "printf 'identity-owned' > identity.txt", timeout_ms: 5000 }],
+      });
+      const admission = await permissions.admitAutonomous(call.callId, call.name, call.args, {
+        sourceOf: () => ({ goal: 'Write the owned captured fixture marker', criteria: ['Execute the exact admitted command once'] }),
+        schemaRevision: call.schemaRevision, preparedCall: { registry, call },
+      });
+      const result = await registry.executePrepared(call, admission);
+      expect(calls).toBe(1);
+      expect(result.success, result.output ?? result.error).toBe(forwarding === 'exact');
+      expect(existsSync(join(f.root, 'identity.txt'))).toBe(forwarding === 'exact');
+      if (forwarding === 'exact') expect(readFileSync(join(f.root, 'identity.txt'), 'utf8')).toBe('identity-owned');
+      expect(existsSync(join(f.owner, 'identity.txt'))).toBe(false);
+      await expect(registry.executePrepared(call, admission)).rejects.toThrow('claimed');
+      expect(calls).toBe(1);
+    } finally { installJudgmentPort(previous); log[Symbol.dispose](); forgetGateReadings(); }
+  });
+}

@@ -81,7 +81,7 @@ test('emitted package sends arguments and stdin using only relocated daemon sett
     await run(['send', '--channel', 'ntfy', '--to', 'synthetic-override-topic', '--title=Stdin title'], 'synthetic first line\nsecond line\n');
     expect(calls).toEqual([
       { path: '/synthetic-owned-topic', method: 'POST', body: 'synthetic argument message', authorization: `Bearer ${PRIVATE_TOKEN}`, title: 'Argument title', click: null },
-      { path: '/synthetic-override-topic', method: 'POST', body: 'synthetic first line\nsecond line\n', authorization: `Bearer ${PRIVATE_TOKEN}`, title: 'Stdin title', click: null },
+      { path: '/synthetic-override-topic', method: 'POST', body: 'synthetic first line\nsecond line', authorization: `Bearer ${PRIVATE_TOKEN}`, title: 'Stdin title', click: null },
     ]);
     expect(readFileSync(join(daemon, 'settings.json'), 'utf8')).toBe(originalSettings);
     expect(readFileSync(join(daemon, 'secrets.json'), 'utf8')).toBe(originalSecrets);

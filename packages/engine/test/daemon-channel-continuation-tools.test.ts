@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { forgetGateReadings, gateReadingsPort, READ_ONLY } from './_helpers/gate-readings.ts';
 import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
@@ -173,6 +174,12 @@ function buildHarness(options: { attemptProfile?: boolean; ownerChannels?: strin
     continuationRunner: SharedSessionContinuationRunner;
   }).continuationRunner;
   const daemon = disposables.add(new DaemonServer({ runtimeServices: services }));
+  const conversation = fakePort((_name, question) => choiceAnswer(question, 'conversation', 0.99));
+  const prior = installJudgmentPort({ model: conversation.port.model, ask(request) {
+    if (request.context?.battery !== 'engine.daemon.inbound-intent') throw new Error('Unexpected fixture reading');
+    return conversation.port.ask(request);
+  } });
+  disposables.defer(() => { installJudgmentPort(prior); });
   return { services, daemon, requests, releaseFirst: () => release(), runtimeContinuation, profileCalls };
 }
 
@@ -194,7 +201,7 @@ async function startTelegramConversation(harness: Harness, identity = { channelI
   });
   expect(submission.mode).toBe('spawn');
   const helper = (harness.daemon as unknown as { surfaceActionHelper: DaemonSurfaceActionHelper }).surfaceActionHelper;
-  const spawned = gateSurfaceSpawn(
+  const spawned = await gateSurfaceSpawn(
     helper.conversationGateDeps(),
     { surface: 'telegram', text: FIRST_MESSAGE, userId: identity.userId, channelId: identity.channelId, threadId: identity.channelId },
     { mode: 'spawn', task: submission.task! },
@@ -236,6 +243,7 @@ describe('a served daemon offers a channel conversation the conversational tools
       const previous = installJudgmentPort({
         model: readings.port.model,
         async ask(request) {
+          if (request.context?.battery === 'engine.daemon.inbound-intent') return fakePort((_name, question) => choiceAnswer(question, 'conversation', 0.99)).port.ask(request);
           for (const name of Object.keys(request.questions)) {
             if (!knownQuestionNames.has(name)) throw new Error(`Unexpected fixture judgment question: ${name}`);
           }

@@ -1,8 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { TranscriptReadingLifetime } from '@goodvibes-jev/engine/sdk/platform/core';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ConversationManager } from '../../core/conversation';
 
+let prior: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { prior = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port); });
+afterEach(() => installJudgmentPort(prior));
+
 describe('transcript event index', () => {
-  test('classifies tool runs and system notices into grouped transcript events', () => {
+  test('classifies tool runs and system notices into grouped transcript events', async () => {
     const conversation = new ConversationManager(() => 100);
     conversation.addUserMessage('review the file');
     conversation.addAssistantMessage('Running checks.', {
@@ -13,7 +20,7 @@ describe('transcript event index', () => {
     conversation.addToolResults([{ callId: 'call-1', success: true, output: '1 file changed' }]);
     conversation.addSystemMessage('[Remote] Attached to runner pool alpha');
 
-    const index = conversation.getTranscriptEventIndex();
+    const index = await conversation.getTranscriptEventIndex();
     expect(index.events.some((event) => event.kind === 'user_input')).toBe(true);
     expect(index.events.some((event) => event.kind === 'tool_call' && event.relatedCallId === 'call-1')).toBe(true);
     expect(index.events.some((event) => event.kind === 'tool_result' && event.relatedCallId === 'call-1')).toBe(true);
@@ -22,7 +29,7 @@ describe('transcript event index', () => {
     expect(index.events.find((event) => event.kind === 'tool_result' && event.relatedCallId === 'call-1')?.title).toBe('exec');
   });
 
-  test('navigates to next and previous transcript event lines by kind', () => {
+  test('navigates to next and previous transcript event lines by kind', async () => {
     const conversation = new ConversationManager(() => 100);
     conversation.addUserMessage('review the file');
     conversation.addAssistantMessage('Running checks.', {
@@ -34,15 +41,15 @@ describe('transcript event index', () => {
     conversation.addSystemMessage('[Approval] Waiting for operator input');
 
     conversation.flushHistory();
-    const nextTool = conversation.nextTranscriptEventLine(0, 'tool_result');
-    const prevTool = conversation.prevTranscriptEventLine(999, 'tool_result');
+    const nextTool = await conversation.nextTranscriptEventLine(0, 'tool_result');
+    const prevTool = await conversation.prevTranscriptEventLine(999, 'tool_result');
 
     expect(nextTool).toBeGreaterThanOrEqual(0);
     expect(prevTool).toBe(nextTool);
-    expect(conversation.nextTranscriptEventLine(0, 'diagnostic_notice')).toBe(-1);
+    expect(await conversation.nextTranscriptEventLine(0, 'diagnostic_notice')).toBe(-1);
   });
 
-  test('messageLineRegistry uses absolute index: transcript navigation works after clearDisplay', () => {
+  test('messageLineRegistry uses absolute index: transcript navigation works after clearDisplay', async () => {
     // Regression for finding #4: with the bug, messageLineRegistry was keyed by
     // slice-relative index (msgIdx) but read by absolute index (event.messageIndex),
     // so nextTranscriptEventLine returned -1 after /clear.
@@ -74,13 +81,13 @@ describe('transcript event index', () => {
 
     // With the bug: messageLineRegistry[3..5] are undefined → navigation returns -1.
     // With the fix: messageLineRegistry[3..5] hold the rendered line numbers.
-    const nextLine = conversation.nextTranscriptEventLine(0, 'tool_result');
+    const nextLine = await conversation.nextTranscriptEventLine(0, 'tool_result');
     expect(nextLine).toBeGreaterThanOrEqual(0);
-    const prevLine = conversation.prevTranscriptEventLine(9999, 'tool_result');
+    const prevLine = await conversation.prevTranscriptEventLine(9999, 'tool_result');
     expect(prevLine).toBe(nextLine);
   });
 
-  test('rows hidden by a collapsed assistant turn resolve navigation to the turn header, not past it to the next message', () => {
+  test('rows hidden by a collapsed assistant turn resolve navigation to the turn header, not past it to the next message', async () => {
     // Regression: a folded (non-owning) group member renders zero lines while
     // its group stays collapsed, so its messageLineRegistry entry used to be
     // left at whatever position the buffer happened to be at afterward, the
@@ -115,10 +122,24 @@ describe('transcript event index', () => {
 
     // Both tool-result events resolve to the SAME turn header line while the
     // turn is collapsed, neither skips ahead to the trailing user message.
-    const first = conversation.nextTranscriptEventLine(-1, 'tool_result');
+    const first = await conversation.nextTranscriptEventLine(-1, 'tool_result');
     expect(first).toBe(groupBlock!.startLine);
-    const second = conversation.nextTranscriptEventLine(first, 'tool_result');
+    const second = await conversation.nextTranscriptEventLine(first, 'tool_result');
     expect(second).toBe(groupBlock!.startLine);
     expect(second).not.toBe(trailingUserLine);
   });
+});
+
+for (const direction of ['next', 'prev']) test(`${direction} navigation rejects owner retirement after manager settles`, async () => {
+  const manager = new ConversationManager(() => 100); manager.addSystemMessage('[Approval] Waiting');
+  let checks = 0;
+  class Lifetime extends TranscriptReadingLifetime {
+    override assertCurrent() {
+      super.assertCurrent();
+      if (++checks === 3) queueMicrotask(() => { const previous = installJudgmentPort(undefined); installJudgmentPort(previous); });
+    }
+  }
+  const options = { lifetime: new Lifetime() };
+  await expect(direction === 'next' ? manager.nextTranscriptEventLine(0, 'all', options) : manager.prevTranscriptEventLine(0, 'all', options)).rejects.toBeDefined();
+  expect(checks).toBe(3);
 });

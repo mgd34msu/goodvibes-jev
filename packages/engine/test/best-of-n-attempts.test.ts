@@ -1,3 +1,5 @@
+import { FLEET_ATTEMPTS_LIST_OUTPUT_SCHEMA, FLEET_ATTEMPTS_PICK_OUTPUT_SCHEMA } from '../sdk/src/platform/control-plane/operator-contract-schemas-fleet.js';
+import { firstJsonSchemaFailure } from '../transport-http/src/client-plumbing.js';
 /**
  * Best-of-N sibling attempts (platform/orchestration/attempts.ts).
  *
@@ -329,4 +331,51 @@ describe('the contract.best-of-n selector as the judge', () => {
     expect(verdict).toEqual({ winnerItemId: null, reasons: ['no attempt passed; there is nothing to select'] });
     expect(offered).toEqual([]);
   });
+});
+
+test('repository-reading hold is neither a passed candidate nor judgeable or pickable', async () => {
+  let ws!: Workstream;
+  let judged = 0;
+  const h = harness(async () => { judged++; return { winnerItemId: 'never', reasons: [] }; }, () => ws);
+  const siblings = h.coordinator.expandItems('ws-1', 'worktree', [{ title: 'T', task: 'x', attempts: 2 }], makeItem);
+  ws = makeWorkstream(siblings);
+  siblings[0]!.state = 'held-merge';
+  siblings[1]!.state = 'blocked-bookkeeping';
+  siblings[1]!.blockedReason = 'Repository condition unresolved.';
+  const groupId = siblings[0]!.attemptGroupId!;
+  const groups = await h.coordinator.listGroups();
+  expect(groups[0]!.ready).toBe(false);
+  expect(groups[0]!.attemptCount).toBe(2);
+  expect(groups[0]!.selectableCandidateCount).toBe(1);
+  expect(groups[0]!.unresolved).toEqual([{ itemId: siblings[1]!.id, attemptIndex: 1, title: siblings[1]!.title, state: 'blocked-bookkeeping', reason: 'Repository condition unresolved.' }]);
+  expect(groups[0]!.candidates.map(candidate => candidate.itemId)).toEqual([siblings[0]!.id]);
+  await expect(h.coordinator.proposeWinner(groupId)).rejects.toThrow('unresolved');
+  await expect(h.coordinator.pickWinner(groupId, siblings[0]!.id)).rejects.toThrow('not ready');
+  expect(judged).toBe(0); expect(h.enqueued).toHaveLength(0); expect(h.cleaned).toHaveLength(0);
+});
+
+
+test('all bookkeeping-held siblings retain actual size while exposing no selectable candidates', async () => {
+  let ws!: Workstream;
+  const h = harness(undefined, () => ws);
+  const siblings = h.coordinator.expandItems('ws-1', 'worktree', [{ title: 'T', task: 'x', attempts: 2 }], makeItem);
+  ws = makeWorkstream(siblings);
+  for (const item of siblings) { item.state = 'blocked-bookkeeping'; item.blockedReason = 'Commit failed; reading unavailable.'; }
+  const [group] = await h.coordinator.listGroups();
+  expect(group!.attemptCount).toBe(2);
+  expect(group!.selectableCandidateCount).toBe(0);
+  expect(group!.candidates).toHaveLength(0);
+  expect(group!.unresolved).toHaveLength(2);
+  expect(group!.unresolved!.every(item => item.state === 'blocked-bookkeeping' && item.reason === 'Commit failed; reading unavailable.')).toBe(true);
+  expect(group!.ready).toBe(false);
+  // Validate actual coordinator output through the source schema and the real
+  // strict-client validator; derived artifacts are regenerated in qualification.
+  expect(firstJsonSchemaFailure(FLEET_ATTEMPTS_LIST_OUTPUT_SCHEMA, { groups: [group] })).toBeUndefined();
+  expect(firstJsonSchemaFailure(FLEET_ATTEMPTS_PICK_OUTPUT_SCHEMA, {
+    applied: false, groupId: group!.groupId, winnerItemId: siblings[0]!.id, requiresConfirm: true, group,
+  })).toBeUndefined();
+  const { attemptCount: _count, selectableCandidateCount: _selectable, unresolved: _unresolved, ...legacy } = group!;
+  expect(firstJsonSchemaFailure(FLEET_ATTEMPTS_LIST_OUTPUT_SCHEMA, { groups: [legacy] })).toBeUndefined();
+  expect(firstJsonSchemaFailure(FLEET_ATTEMPTS_LIST_OUTPUT_SCHEMA, { groups: [{ ...group, unresolved: [{ ...group!.unresolved![0], reason: 42 }] }] })).toBeDefined();
+  expect(firstJsonSchemaFailure(FLEET_ATTEMPTS_LIST_OUTPUT_SCHEMA, { groups: [{ ...group, unresolved: [{ ...group!.unresolved![0], unexpected: true }] }] })).toBeDefined();
 });

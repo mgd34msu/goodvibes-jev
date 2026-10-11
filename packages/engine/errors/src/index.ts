@@ -665,7 +665,9 @@ export function createHttpStatusError(
   });
 }
 
-export { installJudgmentPort, judgmentPort, JudgmentPortMissingError } from './judgment-port.js';
+export { installJudgmentPort, judgmentPort, restoreJudgmentPort, JudgmentPortMissingError } from './judgment-port.js';
+export { bindJudgmentPortAuthority, captureJudgmentPort, JudgmentAuthorityRetiredError,
+  type JudgmentAuthorityFrame, type JudgmentEffectRestriction, type JudgmentPortCapture, type JudgmentReadingOptions } from './judgment-authority.js';
 export {
   categoryDependsOnWording,
   categoryForCode,
@@ -695,3 +697,6 @@ export {
   type TransienceBasis,
   type TransienceOptions,
 } from './failure-transience.js';
+
+export { admitRegex, compileLegacyRegex, regexBacktracking, RegexAdmissionError,
+  type AdmittedRegex, type RegexAdmissionOptions, type RegexReadingCapability, type ContractRegexReadingContext, type ContractRegexReadingFactory, type RegexMatch } from './regex-admission.js';

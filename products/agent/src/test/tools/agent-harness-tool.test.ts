@@ -2,7 +2,7 @@ import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../help
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { buildTestModelDefinition } from '../helpers/test-managers.ts';
 import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engine/sdk/platform/routing';
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
@@ -419,7 +419,7 @@ function makeFixture(options: {
       conversationManager: {
         title: 'Alpha planning session',
         getMessageCount: () => 5,
-        getTranscriptEventIndex: () => ({ events: [], groups: [] }),
+        getMessageSnapshot: () => [], getTranscriptEventIndex: () => ({ events: [], groups: [] }),
       },
       sessionManager,
     },
@@ -774,6 +774,8 @@ describe('agent_harness tool', () => {
     // Scripted P11 catalog readings keep discovery independent of local keyword matching.
     const catalogPicks: Readonly<Record<string, readonly string[]>> = {
       settings: ['settings', 'get_setting', 'set_setting', 'reset_setting'],
+      reasoning: ['provider.reasoningEffort'],
+      provider: ['provider.model', 'provider.reasoningEffort'],
       'personal operations': ['personal_ops'],
       'ongoing-work': ['autonomy_intake'],
       'local shell execution': ['execution_posture'],
@@ -966,9 +968,9 @@ describe('agent_harness tool', () => {
         id: 'set_setting',
         kind: 'effect',
         family: 'settings',
-        requiresConfirmation: true,
       });
-      expect(setSettingJson.parameters).toEqual(expect.arrayContaining(['key', 'value', 'confirm', 'explicitUserRequest']));
+      expect(setSettingJson.parameters).toEqual(expect.arrayContaining(['key', 'value']));
+      expect(setSettingJson.requiresConfirmation).toBeUndefined();
       expect(setSettingJson.lookup?.resolvedBy).toBe('id');
 
       const missing = await fixture.tool.execute({ mode: 'mode' });
@@ -5072,6 +5074,8 @@ describe('agent_harness tool', () => {
   });
 
   test('surfaces email and calendar MCP connectors as Personal Ops setup routes', async () => {
+    // This real epoch millisecond passes Luhn: decimal filenames used to trip the PAN gate.
+    setSystemTime(new Date(1_791_559_463_008));
     const artifactStore = createHarnessArtifactStore();
     const fixture = makeFixture({ artifactStore: artifactStore.store });
     try {
@@ -5241,6 +5245,7 @@ describe('agent_harness tool', () => {
                 from: 'lead@example.test',
                 receivedAt: '2026-06-06T14:00:00Z',
                 snippet: 'unblock proposal review token=SECRET123',
+                'token=SYNTHETIC_KEY': 'provider key carried only through rawKeys',
               }],
             },
           };
@@ -5566,6 +5571,25 @@ describe('agent_harness tool', () => {
       expect(executedRead.reviewRecords?.[0]?.followUpBoundary).toContain('separate confirmed route');
       expect(executedRead.savedReviewArtifact?.status).toBe('saved');
       expect(executedRead.savedReviewArtifact?.artifactId).toBe('artifact-1');
+      expect(artifactStore.store.get('artifact-1')?.filename).toMatch(/^Inbox-triage-cards-[a-p]{32}\.json$/);
+      expect(artifactStore.store.get('artifact-1')?.filename).not.toContain(String(Date.now()));
+      const savedReview = await artifactStore.store.readContent('artifact-1');
+      const savedReviewText = savedReview.buffer.toString('utf8');
+      const savedPayload = JSON.parse(savedReviewText) as {
+        readonly createdAt: string;
+        readonly outputPreview: string;
+        readonly inputFieldKeys: readonly string[];
+        readonly reviewRecords: readonly { readonly summary: string; readonly rawKeys: readonly string[] }[];
+      };
+      expect(savedPayload.createdAt).toBe('2026-10-09T15:24:23.008Z');
+      expect(savedPayload.outputPreview).toContain('password=<redacted>');
+      expect(savedPayload.reviewRecords[0]?.summary).toContain('token=<redacted>');
+      expect(savedPayload.reviewRecords[0]?.rawKeys).toContain('subject');
+      expect(savedPayload.reviewRecords[0]?.rawKeys).toContain('token=<redacted>');
+      expect(savedReviewText).not.toContain('SYNTHETIC_KEY');
+      expect(savedPayload.inputFieldKeys).toContain('query');
+      expect(savedReviewText).not.toContain('SECRET123');
+      expect(savedReviewText).not.toContain('hunter2');
       expect(executedRead.savedReviewArtifact?.modelRoute).toContain('agent_artifacts');
       expect(executedRead.savedReviewArtifact?.policy).toContain('redacted review cards');
       expect(executedRead.nextRoutes?.lane?.modelRoute).toBe('personal_ops action:"lane" laneId:"inbox" includeParameters:true');
@@ -5815,6 +5839,7 @@ describe('agent_harness tool', () => {
       expect(compactQueue.queue).toHaveLength(1);
       expect(compactQueue.queue[0]?.queueItemId).toBe('inbox:review-thread:artifact-1:msg-1');
     } finally {
+      setSystemTime();
       fixture.cleanup();
     }
   });
@@ -13904,40 +13929,15 @@ describe('agent_harness tool', () => {
     }
   });
 
-  test('gates setting mutations and allows daemon setup settings through confirmed harness routes', async () => {
+  test('direct harness setting mutations never mint authority from confirmation metadata', async () => {
     const fixture = makeFixture();
     try {
-      const missingConfirmation = await fixture.tool.execute({
-        mode: 'set_setting',
-        key: 'provider.model',
-        value: 'openai:gpt-4.1',
-        explicitUserRequest: 'Use this model.',
-      });
-      expect(missingConfirmation.success).toBe(false);
-      expect(missingConfirmation.error).toContain('confirm:true');
-
-      const set = await fixture.tool.execute({
-        mode: 'set_setting',
-        key: 'provider.model',
-        value: 'openai:gpt-4.1',
-        confirm: true,
-        explicitUserRequest: 'Use this model.',
-      });
-      expect(set.success).toBe(true);
-      expect(fixture.configManager.get('provider.model')).toBe('openai:gpt-4.1');
-
-      const serviceSetting = await fixture.tool.execute({
-        mode: 'set_setting',
-        key: 'service.enabled',
-        value: true,
-        confirm: true,
-        explicitUserRequest: 'Turn on the host service.',
-      });
-      expect(serviceSetting.success).toBe(true);
-      expect(fixture.configManager.get('service.enabled')).toBe(true);
-    } finally {
-      fixture.cleanup();
-    }
+      const previous = fixture.configManager.get('provider.model');
+      for (const confirm of [false, true]) {
+        const result = await fixture.tool.execute({ mode: 'set_setting', key: 'provider.model', value: 'openai:gpt-4.1', confirm, explicitUserRequest: 'Use this model.' });
+        expect(result.success).toBe(false); expect(fixture.configManager.get('provider.model')).toBe(previous);
+      }
+    } finally { fixture.cleanup(); }
   });
 
   test('resolves settings by key, target, and query without guessing ambiguous matches', async () => {
@@ -14053,11 +14053,7 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Use high reasoning effort.',
       });
-      expect(setByQuery.success).toBe(true);
-      expect(fixture.configManager.get('provider.reasoningEffort')).toBe('high');
-      const setResult = JSON.parse(setByQuery.output!);
-      expect(setResult.key).toBe('provider.reasoningEffort');
-      expect(setResult.lookup.resolvedBy).toBe('search');
+      expect(setByQuery.success).toBe(false);
 
       const resetByTarget = await fixture.tool.execute({
         mode: 'reset_setting',
@@ -14065,11 +14061,7 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Reset reasoning effort.',
       });
-      expect(resetByTarget.success).toBe(true);
-      expect(fixture.configManager.get('provider.reasoningEffort')).not.toBe('high');
-      const resetResult = JSON.parse(resetByTarget.output!);
-      expect(resetResult.key).toBe('provider.reasoningEffort');
-      expect(resetResult.lookup.resolvedBy).toBe('case-insensitive-key');
+      expect(resetByTarget.success).toBe(false);
 
       const ambiguous = await fixture.tool.execute({
         mode: 'get_setting',
@@ -14084,88 +14076,18 @@ describe('agent_harness tool', () => {
     }
   });
 
-  test('persists secret-backed setting values through the secret manager and redacts output', async () => {
+  test('direct harness secret mutation/reset require authentic prepared ownership', async () => {
     const fixture = makeFixture();
-    try {
-      const result = await fixture.tool.execute({
-        mode: 'set_setting',
-        key: 'surfaces.slack.botToken',
-        value: 'xoxb-secret-value',
-        confirm: true,
-        explicitUserRequest: 'Set the Slack bot token.',
-      });
-
-      expect(result.success, result.error).toBe(true);
-      expect(result.output).toContain('<secret-ref>');
-      expect(result.output).not.toContain('xoxb-secret-value');
-      expect(fixture.configManager.get('surfaces.slack.botToken')).toContain('goodvibes://secrets/');
-      expect(await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBe('xoxb-secret-value');
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  test('rejects raw secret-backed setting values when secret storage is unavailable', async () => {
-    const fixture = makeFixture({ secrets: false });
-    try {
-      const result = await fixture.tool.execute({
-        mode: 'set_setting',
-        key: 'surfaces.slack.botToken',
-        value: 'xoxb-secret-value',
-        confirm: true,
-        explicitUserRequest: 'Set the Slack bot token.',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('secrets manager is unavailable');
-      expect(fixture.configManager.get('surfaces.slack.botToken')).toBe('');
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  test('resets secret-backed settings only when stored secret deletion can run', async () => {
-    const fixture = makeFixture();
-    try {
-      const key = buildGoodVibesSecretKey('surfaces.slack.botToken');
-      await fixture.secretsManager?.set(key, 'xoxb-secret-value', { scope: 'user' });
-      fixture.configManager.setDynamic('surfaces.slack.botToken', buildGoodVibesSecretRef(key));
-
-      const result = await fixture.tool.execute({
-        mode: 'reset_setting',
-        key: 'surfaces.slack.botToken',
-        confirm: true,
-        explicitUserRequest: 'Reset the Slack bot token.',
-      });
-
-      expect(result.success, result.error).toBe(true);
-      expect(fixture.configManager.get('surfaces.slack.botToken')).toBe('');
-      expect(await fixture.secretsManager?.get(key)).toBeNull();
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  test('rejects reset of secret-backed refs when secret deletion is unavailable', async () => {
-    const fixture = makeFixture({ secrets: false });
     try {
       const key = buildGoodVibesSecretKey('surfaces.slack.botToken');
       const ref = buildGoodVibesSecretRef(key);
       fixture.configManager.setDynamic('surfaces.slack.botToken', ref);
-
-      const result = await fixture.tool.execute({
-        mode: 'reset_setting',
-        key: 'surfaces.slack.botToken',
-        confirm: true,
-        explicitUserRequest: 'Reset the Slack bot token.',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('secrets manager is unavailable');
+      const set = await fixture.tool.execute({ mode: 'set_setting', key: 'surfaces.slack.botToken', value: 'xoxb-secret-value', confirm: true, explicitUserRequest: 'Set the token.' });
+      const reset = await fixture.tool.execute({ mode: 'reset_setting', key: 'surfaces.slack.botToken', confirm: true, explicitUserRequest: 'Reset the token.' });
+      expect(set.success).toBe(false); expect(reset.success).toBe(false);
+      expect(set.error).not.toContain('xoxb-secret-value');
       expect(fixture.configManager.get('surfaces.slack.botToken')).toBe(ref);
-    } finally {
-      fixture.cleanup();
-    }
+    } finally { fixture.cleanup(); }
   });
 
   test('does not echo raw secret values when invoking settings through run_command', async () => {

@@ -165,6 +165,7 @@ export class PermissionSimulator {
    * @param args    , The arguments passed to the tool.
    * @param classification, What the call does, from the gate's Jev reading.
    */
+  /** @deprecated Synchronous compatibility only; use evaluateAsync. */
   evaluate(
     toolName: string,
     args: Record<string, unknown>,
@@ -178,6 +179,21 @@ export class PermissionSimulator {
     const actualDecision = this.actual.evaluate(toolName, args, classification);
     const simulatedDecision = this.simulated.evaluate(toolName, args, classification);
 
+    return this.finishEvaluation(toolName, args, classification, actualDecision, simulatedDecision);
+  }
+
+  async evaluateAsync(toolName: string, args: Record<string, unknown>, classification: CommandClassification): Promise<SimulationResult> {
+    if (this.simulationMode === 'enforce') this.assertDivergenceGate();
+    const actualDecision = await this.actual.evaluateAsync(toolName, args, classification);
+    const simulatedDecision = await this.simulated.evaluateAsync(toolName, args, classification);
+    this.actual.assertCurrent(actualDecision); this.simulated.assertCurrent(simulatedDecision);
+    const result = this.finishEvaluation(toolName, args, classification, actualDecision, simulatedDecision);
+    this.actual.assertCurrent(actualDecision); this.simulated.assertCurrent(simulatedDecision);
+    return result;
+  }
+
+  private finishEvaluation(toolName: string, args: Record<string, unknown>, classification: CommandClassification,
+    actualDecision: PermissionDecision, simulatedDecision: PermissionDecision): SimulationResult {
     const diverged =
       actualDecision.allowed !== simulatedDecision.allowed ||
       actualDecision.reason !== simulatedDecision.reason ||

@@ -54,7 +54,7 @@ test('one durable command creates exact source, claimed attempt and actor receip
   expect(readFileSync(f.file)).toEqual(before);
   expect((await reopened.service.readSnapshot(reopened.actor)).works[0]?.attempt?.report).toBe('Display report');
   const SQL = await loadSqlJsEngine(); const db = new SQL.Database(before);
-  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[7]]); expect(db.exec('SELECT format_version FROM work_ledgers')[0]?.values).toEqual([[2]]);
+  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); expect(db.exec('SELECT format_version FROM work_ledgers')[0]?.values).toEqual([[2]]);
   expect(db.exec('SELECT COUNT(*) FROM native_work_executions')[0]?.values).toEqual([[0]]); expect(db.exec('SELECT COUNT(*) FROM native_work_execution_intents')[0]?.values).toEqual([[0]]); db.close();
 });
 

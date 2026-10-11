@@ -184,6 +184,18 @@ describe('PersonalOps canonical catalog readings', () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  test('card-shaped arbitrary and legacy review filenames still refuse before transmission', async () => {
+    const fixture = researchScreeningFixture();
+    const fake = readings({ one: 0.99 }); installJudgmentPort(fake.port);
+    for (const filename of ['notes-4111111111111111.json', 'Inbox-review-cards-1791559463008.json']) {
+      await expect(rankHarnessCatalog([{ id: 'one', description: `Saved inbox review: ${filename}` }],
+        'review inbox', (entry) => entry, 'agent.personal-ops.queue', { sourceOwner: fixture.owner }))
+        .rejects.toMatchObject({ problem: 'card-material' });
+    }
+    expect(fixture.calls).toHaveLength(0);
+    expect(fake.requests).toHaveLength(0);
+  });
+
   test('complete query and candidate identity/description are screened for PII before hosted ranking', async () => {
     const sensitive = 'synthetic-private-contact';
     const fixture = researchScreeningFixture({ spans: exactSensitiveSpans([sensitive]) });

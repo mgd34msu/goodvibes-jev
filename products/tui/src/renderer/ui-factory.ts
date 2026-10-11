@@ -7,7 +7,7 @@ import { renderConversationFragment } from './conversation-surface.ts';
 import { activeTheme, activeTokens, activeUiTones } from './theme.ts';
 import { renderQueuedMessageList, renderMemoryProvenanceChip, type MemoryProvenanceEntry } from './composer-fragments.ts';
 import { renderUserMessage } from './user-message.ts';
-import type { StreamMetrics } from '../core/stream-event-wiring.ts';
+import type { StreamMetrics } from '../core/stream-metrics.ts';
 import { waitingPhrase, type WaitingState } from '@goodvibes-jev/engine/sdk/platform/presentation';
 
 /**

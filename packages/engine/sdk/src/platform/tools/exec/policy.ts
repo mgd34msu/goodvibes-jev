@@ -24,6 +24,10 @@ import type { ExecInteractionRuntime } from './interactive.js';
 
 /** What a composition stated about its exec tool. */
 export interface ExecRunPolicy {
+  /** Exact invocation proof, sampled at final effects, never model input. */
+  readonly assertCurrent?: (() => void) | undefined;
+  /** Restriction-only guard retained alongside a captured background owner. */
+  readonly assertWorkspaceCurrent?: (() => void) | undefined;
   readonly capturedInput?: CapturedExecAuthority | undefined;
   readonly sandbox: ExecSandboxRuntime | null;
   readonly interaction: ExecInteractionRuntime | null;

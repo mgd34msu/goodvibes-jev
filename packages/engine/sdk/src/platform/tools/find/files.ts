@@ -1,3 +1,4 @@
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { DirectoryWalk, type WalkDirOptions } from '../../utils/walk-dir.js';
 import { join, relative } from 'node:path';
@@ -16,7 +17,7 @@ import {
   withFindWarnings,
 } from './shared.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
+import { createSafeRegex } from '../../utils/safe-regex.js';
 import { accessRestrictedNote, partitionByReadAccess, type ReadAccessFilter } from '../shared/read-access.js';
 
 export async function executeFilesQuery(
@@ -25,8 +26,15 @@ export async function executeFilesQuery(
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
   capturedReadAccess?: ReadAccessFilter,
-  walkOptions: WalkDirOptions = {},
+  options: JudgmentReadingOptions & WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
+  const before = JSON.stringify([query, output]);
+  const current = () => {
+    options.signal?.throwIfAborted(); options.beforeAttempt?.(); options.assertCurrent?.();
+    if (JSON.stringify([query, output]) !== before) throw new Error('Find regex request changed');
+  };
+  current();
+  const walkOptions: WalkDirOptions = { ...options, beforeAttempt: current };
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
@@ -73,14 +81,8 @@ export async function executeFilesQuery(
     }
   }
 
-  let hasContentRegex: RegExp | undefined;
-  if (query.has_content) {
-    try {
-      hasContentRegex = compileSafeRegExp(query.has_content, '', { operation: 'find files has_content' });
-    } catch (e) {
-      return { error: `Invalid has_content regex: ${summarizeError(e)}` };
-    }
-  }
+  await using hasContentRegex = query.has_content
+    ? await createSafeRegex(query.has_content, '', { ...options, assertCurrent: current, operation: 'find files has_content', maxInputChars: 500_000 }) : undefined;
 
   const SCAN_CEILING = 50_000;
   const scannedFiles = await collectGlobFiles(basePath, patterns, includeHidden, followSymlinks, diagnostics, walk, walkOptions);
@@ -158,7 +160,7 @@ export async function executeFilesQuery(
         if (capturedReadAccess && !await capturedReadAccess(entry.path)) throw new Error('file read is access-restricted');
         assertCapturedInputPathContext(entry.path);
         const text = await Bun.file(entry.path).text();
-        if (safeRegExpTest(hasContentRegex, text, { operation: 'find files has_content', maxInputChars: 500_000 })) filtered.push(entry);
+        if (await hasContentRegex.test(text, 500_000)) filtered.push(entry);
       } catch (err) {
         addFindWarning(diagnostics, `Could not read '${entry.path}' for has_content filtering: ${summarizeError(err)}`);
       }
@@ -177,11 +179,13 @@ export async function executeFilesQuery(
   entries.sort((a, b) => {
     if (sortBy === 'size') return ((a.size ?? 0) - (b.size ?? 0)) * dir;
     if (sortBy === 'modified') return ((a.mtimeMs ?? 0) - (b.mtimeMs ?? 0)) * dir;
+    hasContentRegex?.assertCurrent();
     return a.path.localeCompare(b.path) * dir;
   });
 
   const format = output.format ?? 'files_only';
   if (format === 'count_only') {
+    hasContentRegex?.assertCurrent();
     return withFindWarnings(makeCountResult(entries.length), diagnostics.warnings);
   }
   if (format === 'with_stats') {
@@ -191,6 +195,7 @@ export async function executeFilesQuery(
       modified: e.mtimeMs !== undefined ? new Date(e.mtimeMs).toISOString() : undefined,
       ...(isRestricted(e.path) ? { access_restricted: true } : {}),
     }));
+    hasContentRegex?.assertCurrent();
     return withFindWarnings({ files: result, count: result.length }, diagnostics.warnings);
   }
   if (format === 'with_preview') {
@@ -213,11 +218,13 @@ export async function executeFilesQuery(
       }
       result.push({ file: entry.path, preview });
     }
+    hasContentRegex?.assertCurrent();
     return withFindWarnings({ files: result, count: result.length }, diagnostics.warnings);
   }
 
   const filesResult = makeFilesResult(entries.map((e) => e.path), entries.length);
   const accessRestrictedFiles = entries.map((e) => e.path).filter(isRestricted);
+  hasContentRegex?.assertCurrent();
   return withFindWarnings(
     accessRestrictedFiles.length > 0
       ? { ...filesResult, access_restricted: accessRestrictedFiles }

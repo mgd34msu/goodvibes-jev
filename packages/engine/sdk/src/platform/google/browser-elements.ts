@@ -1,58 +1,122 @@
-/**
- * Matching controls on Google's own pages by accessible role and name.
- *
- * Google's pages carry no stable test ids, so every browser-driven step in
- * this module matches controls by accessible role and name. This is the single
- * most brittle part of the whole integration, so a miss is designed to fail
- * loudly and specifically, "looked for a button named X, the page showed
- * these N controls instead", rather than silently clicking the wrong thing.
- *
- * Nothing here drives a browser. The flows are written against
- * `GoogleBrowserPort` (see `types.ts`), a six-method surface a product
- * implements over whatever automation it actually has: one product supplies a
- * Playwright-backed implementation, a test supplies a fake page, and neither
- * is visible from here. That is what makes the console walkthrough, the
- * app-password page and the calendar-settings page all runnable with no
- * browser at all.
- *
- * One honest limitation carried over from the first implementation: an
- * accessibility snapshot does not always report the DOM tag name of an
- * element, so `tag` on a `GoogleBrowserElement` may be a best-effort guess
- * derived from the accessible role (see `deriveTagFromRole`). Every flow
- * matches by role and name; `tag` in a `GoogleElementQuery` is an optional
- * extra filter, never load-bearing.
- */
+/** Purpose-grounded Google setup controls. Readings are observations, not action authorization. */
 
-import type { GoogleBrowserElement } from './types.js';
+import type { GoogleBrowserElement, GoogleBrowserPort } from './types.js';
+import { googleSetupControl, googleSignInPage, googleControlSnapshot, googleReadingOwner, GoogleReadingError, type GoogleReadingOptions } from './browser-readings.js';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 
 export interface GoogleElementQuery {
+  /** The action or observation this control must serve, not a substring filter. */
+  readonly purpose?: string;
   readonly role?: string;
   readonly nameIncludes?: string;
   readonly namePattern?: RegExp;
   readonly tag?: string;
 }
 
-/** Case-insensitive, whitespace-normalized name for matching purposes. */
-function normalizeName(name: string): string {
-  return name.replace(/\s+/g, ' ').trim().toLowerCase();
+interface SelectionLease {
+  readonly browser: GoogleBrowserPort | undefined;
+  readonly snapshot: string;
+  readonly url: string | undefined;
+  readonly assertCurrent: () => void;
+  readonly assertOwner: () => void;
+}
+const selected = new WeakMap<GoogleBrowserElement, SelectionLease>();
+
+/** Fence attempts and reading/action attachments to the same offered page. */
+function fencedPort(base: JudgmentPort, current: () => void, currentPage: () => Promise<void>): JudgmentPort {
+  return { ...base,
+    ...(base.recorder ? { recorder: {
+      recordReadings(id, readings) { current(); base.recorder!.recordReadings(id, readings); current(); },
+      recordAction(id, action) { current(); base.recorder!.recordAction(id, action); current(); },
+    } satisfies NonNullable<JudgmentPort['recorder']> } : {}),
+    async ask(request) {
+      await currentPage(); current();
+      const result = await base.ask({ ...request,
+        beforeAttempt: () => { current(); request.beforeAttempt?.(); current(); },
+        beforeAsyncAttempt: async () => { await currentPage(); await request.beforeAsyncAttempt?.(); current(); },
+        assertLogCurrent: () => { current(); request.assertLogCurrent?.(); current(); },
+      });
+      await currentPage(); current(); return result;
+    },
+  };
 }
 
-/** The first element in `elements` matching every part of `query`, or null. */
-export function findElement(
+/** All structurally eligible candidates participate; no first-match fallback. */
+export async function findElement(
   elements: readonly GoogleBrowserElement[],
   query: GoogleElementQuery,
-): GoogleBrowserElement | null {
-  const wantRole = query.role ? query.role.toLowerCase() : null;
-  const wantTag = query.tag ? query.tag.toLowerCase() : null;
-  const wantIncludes = query.nameIncludes ? normalizeName(query.nameIncludes) : null;
-  for (const element of elements) {
-    if (wantRole && element.role.toLowerCase() !== wantRole) continue;
-    if (wantTag && element.tag.toLowerCase() !== wantTag) continue;
-    if (wantIncludes && !normalizeName(element.name).includes(wantIncludes)) continue;
-    if (query.namePattern && !query.namePattern.test(element.name)) continue;
+  options: GoogleReadingOptions = {},
+): Promise<GoogleBrowserElement | null> {
+  try {
+    const browser = options.browser;
+    const snapshot = googleControlSnapshot(elements);
+    const describe = () => {
+      const descriptors = Object.getOwnPropertyDescriptors(query);
+      if (Object.values(descriptors).some(d => !('value' in d))) throw new GoogleReadingError();
+      return snapshotJudgmentInput({ purpose: query.purpose, nameIncludes: query.nameIncludes,
+        role: query.role, tag: query.tag, pattern: query.namePattern?.source, flags: query.namePattern?.flags });
+    };
+    const request = describe();
+    const requestKey = JSON.stringify(request);
+    const context = snapshotJudgmentInput({ ...request as object,
+      purpose: query.purpose ?? query.nameIncludes ?? 'Select the control matching the supplied structural constraints' });
+    const candidates = snapshot.filter(element => element.disabled !== true && (!query.role || element.role.toLowerCase() === query.role.toLowerCase())
+      && (!query.tag || element.tag.toLowerCase() === query.tag.toLowerCase())
+      && (!query.namePattern || new RegExp(query.namePattern.source, query.namePattern.flags.replace(/[gy]/g, '')).test(element.name)));
+    const owner = googleReadingOwner('google.setup.control', options);
+    const pageOwner = browser?.captureAuthority?.();
+    const url = browser ? await browser.currentUrl() : undefined;
+    owner.assertCurrent();
+    pageOwner?.assertCurrent();
+    snapshotJudgmentInput({ url });
+    const before = JSON.stringify(snapshot);
+    const current = () => { owner.assertCurrent(); pageOwner?.assertCurrent(); if (JSON.stringify(describe()) !== requestKey || JSON.stringify(googleControlSnapshot(elements)) !== before) throw new GoogleReadingError(); };
+    current();
+    const currentPage = async () => {
+      current();
+      if (browser) {
+        const freshUrl = await browser.currentUrl(); current();
+        const fresh = await (browser.verifySnapshot?.() ?? browser.snapshot()); current();
+        if (url !== freshUrl || JSON.stringify(googleControlSnapshot(fresh)) !== before) throw new GoogleReadingError();
+      }
+      current();
+    };
+    if (!candidates.length) { await currentPage(); return null; }
+    const port = fencedPort(owner.port, current, currentPage);
+    const reading = await googleSetupControl.select(port, context as never,
+      candidates.map((element, index) => ({ id: `control_${index}`, content: { role: element.role, name: element.name, tag: element.tag } })),
+      { site: 'google.setup.control', signal: owner.signal });
+    current();
+    await currentPage();
+    if (reading.outcome !== 'act') throw new GoogleReadingError();
+    if (reading.chosen === undefined) { reading.recordAction('no suitable Google setup control'); return null; }
+    const index = candidates.findIndex((_, index) => `control_${index}` === reading.chosen);
+    if (index < 0) throw new GoogleReadingError();
+    const element = Object.freeze({ ...candidates[index]! });
+    reading.recordAction('selected an offered Google setup control');
+    current();
+    selected.set(element, { browser, snapshot: before, url, assertCurrent: current, assertOwner: owner.assertCurrent });
     return element;
-  }
-  return null;
+  } catch { throw new GoogleReadingError(); }
+}
+
+/** Revalidate the full snapshot and original owner at the actual effect boundary. */
+export async function consumeGoogleElement(browser: GoogleBrowserPort, element: GoogleBrowserElement, text?: string): Promise<void> {
+  const lease = selected.get(element);
+  if (!lease || lease.browser !== browser) throw new GoogleReadingError();
+  lease.assertCurrent();
+  const url = await browser.currentUrl();
+  lease.assertCurrent();
+  if (url !== lease.url) throw new GoogleReadingError();
+  const snapshot = await (browser.verifySnapshot?.() ?? browser.snapshot());
+  lease.assertCurrent();
+  if (JSON.stringify(googleControlSnapshot(snapshot)) !== lease.snapshot) throw new GoogleReadingError();
+  lease.assertCurrent();
+  selected.delete(element);
+  if (text === undefined) await browser.click(element.ref, { assertCurrent: lease.assertCurrent });
+  else await browser.type(element.ref, text, { assertCurrent: lease.assertCurrent });
+  lease.assertOwner();
 }
 
 /** Describes what a query was looking for, in plain language. */
@@ -60,6 +124,7 @@ function describeQuery(query: GoogleElementQuery): string {
   const parts: string[] = [];
   if (query.role) parts.push(`role "${query.role}"`);
   if (query.tag) parts.push(`tag "${query.tag}"`);
+  if (query.purpose) parts.push(`purpose "${query.purpose}"`);
   if (query.nameIncludes) parts.push(`a name containing "${query.nameIncludes}"`);
   if (query.namePattern) parts.push(`a name matching ${query.namePattern.toString()}`);
   return parts.length > 0 ? `an element with ${parts.join(' and ')}` : 'an element matching an empty query';
@@ -73,7 +138,9 @@ export function describeElements(
   limit: number = DEFAULT_CANDIDATE_LIMIT,
 ): string {
   if (elements.length === 0) return 'no interactive elements were found in the snapshot';
-  const sample = elements.slice(0, limit);
+  let safe: readonly GoogleBrowserElement[];
+  try { safe = googleControlSnapshot(elements); } catch { return 'controls whose labels cannot safely be displayed'; }
+  const sample = safe.slice(0, limit);
   const described = sample.map((element) => `${element.role} "${element.name}"`).join(', ');
   const remaining = elements.length - sample.length;
   return remaining > 0 ? `${described}, and ${String(remaining)} more` : described;
@@ -99,11 +166,12 @@ export type GoogleElementLookup = GoogleElementFound | GoogleElementNotFound;
  * of `null`, the failure mode this module exists to make impossible to get
  * wrong silently.
  */
-export function requireElement(
+export async function requireElement(
   elements: readonly GoogleBrowserElement[],
   query: GoogleElementQuery,
-): GoogleElementLookup {
-  const element = findElement(elements, query);
+  options: GoogleReadingOptions = {},
+): Promise<GoogleElementLookup> {
+  const element = await findElement(elements, query, options);
   if (element) return { found: true, element };
   const message = `Looked for ${describeQuery(query)}, but the page showed ${String(elements.length)} control${
     elements.length === 1 ? '' : 's'
@@ -111,22 +179,36 @@ export function requireElement(
   return { found: false, query, candidateCount: elements.length, message };
 }
 
-/**
- * True when the page looks like Google's sign-in flow rather than the page
- * the flow expected: either the url landed on accounts.google.com's sign-in
- * route, or the snapshot shows an actual password input (the redirect
- * sometimes keeps the original url briefly, so the url check alone is not
- * sufficient).
- *
- * The password-field check is deliberately scoped to `role: 'textbox'`
- * (a real input) rather than matching "password" anywhere in any element's
- * name, Google's own pages routinely use the word in headings and buttons
- * ("App passwords", "Create app password"), and matching those would
- * misreport a normal page as a sign-in redirect.
- */
-export function looksLikeGoogleSignIn(url: string, elements: readonly GoogleBrowserElement[]): boolean {
-  if (/accounts\.google\.com\/.*signin/i.test(url)) return true;
-  return findElement(elements, { role: 'textbox', nameIncludes: 'password' }) !== null;
+/** A settled typed page reading. Unknown/unavailable is never "signed in". */
+export async function looksLikeGoogleSignIn(url: string, elements: readonly GoogleBrowserElement[], options: GoogleReadingOptions = {}): Promise<boolean> {
+  try {
+    const browser = options.browser;
+    const snapshot = googleControlSnapshot(elements);
+    const state = snapshotJudgmentInput({ url, elements: snapshot });
+    const owner = googleReadingOwner('google.setup.sign-in-page', options);
+    const pageOwner = browser?.captureAuthority?.();
+    const before = JSON.stringify(snapshot);
+    const current = () => {
+      owner.assertCurrent(); pageOwner?.assertCurrent();
+      if (JSON.stringify(googleControlSnapshot(elements)) !== before) throw new GoogleReadingError();
+    };
+    const currentPage = async () => {
+      current();
+      if (browser) {
+        const currentUrl = await browser.currentUrl(); current();
+        const currentElements = await (browser.verifySnapshot?.() ?? browser.snapshot()); current();
+        if (currentUrl !== url || JSON.stringify(googleControlSnapshot(currentElements)) !== before) throw new GoogleReadingError();
+      }
+      current();
+    };
+    const run = await googleSignInPage.run(fencedPort(owner.port, current, currentPage), state as never, { site: 'google.setup.sign-in-page', signal: owner.signal });
+    await currentPage();
+    const reading = run.readings.signIn;
+    if (reading.outcome !== 'act' || reading.verdict === 'uncertain') throw new GoogleReadingError();
+    run.recordAction('returned settled Google sign-in page state');
+    current();
+    return reading.verdict === 'yes';
+  } catch { throw new GoogleReadingError(); }
 }
 
 /** Best-effort DOM tag guessed from an accessible role. */

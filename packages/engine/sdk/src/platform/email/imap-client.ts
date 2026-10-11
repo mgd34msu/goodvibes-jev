@@ -89,10 +89,10 @@
  * behind it.
  */
 
+import { assertImapReadingCurrent, ImapReadingError, imapReadingLease, type ImapReadingOptions, type ImapReadingLease } from './imap-readings.js';
 import type { Socket } from 'node:net';
 import { hasFetchResponse } from './imap-bodystructure.js';
 import {
-  DEFAULT_DRAFTS_MAILBOX,
   buildDraftMessage,
   parseAppendUid,
   selectDraftsMailboxFrames,
@@ -203,6 +203,8 @@ export class ImapClient {
   private readonly options: ImapClientOptions;
   /** The one session this connection uses, from `open()` until `logout()`. */
   private active: ImapSession | null = null;
+  private readonly lifetime = new AbortController();
+  private readonly signal: AbortSignal;
   /** True only once EXAMINE has succeeded. Gates every read. */
   private readable = false;
   /** What EXAMINE reported, from `open()` onwards. */
@@ -213,7 +215,12 @@ export class ImapClient {
   private probedCapabilities = false;
 
   constructor(options: ImapClientOptions) {
-    this.options = options;
+    this.options = { ...options };
+    this.signal = AbortSignal.any([this.lifetime.signal, ...(options.signal ? [options.signal] : [])]);
+    const abort = () => this.close();
+    options.signal?.addEventListener('abort', abort, { once: true });
+    options.socket.once('close', () => { options.signal?.removeEventListener('abort', abort); this.lifetime.abort(); });
+    if (options.signal?.aborted) this.close();
   }
 
   /**
@@ -252,47 +259,54 @@ export class ImapClient {
     if (this.active !== null) {
       throw new Error('The IMAP connection is already open.');
     }
+    assertImapReadingCurrent({ signal: this.signal, assertCurrent: this.options.assertCurrent });
     const session = this.newSession();
     this.active = session;
     rememberConnection(this, session);
+    const reading = this.readingOptions(session);
 
     let greeting: string;
     try {
       greeting = await session.readGreeting();
+      assertImapReadingCurrent(reading);
     } catch (err) {
-      throw composeOpenFailure({
+      throw await composeOpenFailure({
         refusedReason: 'connection-failed',
         refusedSummary: 'The mail server did not answer.',
         error: err,
         mailbox: this.mailbox,
-      });
+      }, reading);
     }
 
     let authLines: string[];
     try {
+      assertImapReadingCurrent(reading);
       authLines = await this.authenticate(session);
+      assertImapReadingCurrent(reading);
     } catch (err) {
-      throw composeOpenFailure({
+      throw await composeOpenFailure({
         refusedReason: 'authentication-rejected',
         refusedSummary: `The mail server rejected the credentials for ${this.options.username}.`,
         error: err,
         mailbox: this.mailbox,
-      });
+      }, reading);
     }
 
     let examineLines: string[];
     try {
+      assertImapReadingCurrent(reading);
       examineLines = await session.command(`EXAMINE ${formatMailboxName(this.mailbox)}`);
     } catch (err) {
-      throw composeOpenFailure({
+      throw await composeOpenFailure({
         refusedReason: 'mailbox-unavailable',
         refusedSummary:
           `Signed in, but the mailbox '${this.mailbox}' could not be opened for reading.`,
         error: err,
         mailbox: this.mailbox,
-      });
+      }, reading);
     }
 
+    assertImapReadingCurrent(reading);
     this.status = parseMailboxStatus(examineLines);
     this.advertised = parseCapabilities([greeting, ...authLines, ...examineLines]);
     this.readable = true;
@@ -469,7 +483,7 @@ export class ImapClient {
     return probeMailboxBody(session, {
       exists: this.status?.exists ?? null,
       mailbox: this.mailbox,
-    });
+    }, this.readingOptions(session));
   }
 
   /**
@@ -576,8 +590,8 @@ export class ImapClient {
    * leave the tail of the message being read by the server as commands.
    *
    * The target folder is discovered, not assumed: `LIST` first, prefer the
-   * folder the server flagged `\Drafts`, then a name match, then the plain
-   * `Drafts` name. Gmail's is `[Gmail]/Drafts`, and appending to a literal
+   * folder the server flagged `\Drafts`, otherwise a settled candidate reading.
+   * Unavailable or ambiguous discovery never selects a default. Gmail's is `[Gmail]/Drafts`, and appending to a literal
    * `Drafts` there creates a stray folder the owner never sees.
    *
    * Every caller-supplied field is validated before a byte is written; a CR or
@@ -590,20 +604,37 @@ export class ImapClient {
    * this client reads from stays EXAMINEd, and stays read-only.
    */
   async appendDraft(input: ImapAppendDraftInput): Promise<ImapAppendDraftResult> {
+    input = { ...input };
     validateDraftInput(input);
 
     const session = this.requireSession();
-    const mailbox = await this.resolveDraftsMailbox(session, input.mailbox);
+    const selection = await this.resolveDraftsMailbox(session, input.mailbox);
+    const current = () => { selection.assertCurrent(); assertImapReadingCurrent(this.readingOptions(session)); };
+    current();
+    const mailbox = selection.value;
     const message = buildDraftMessage(input, new Date());
-    const lines = await session.commandWithLiteral(
-      `APPEND ${formatMailboxName(mailbox)} (\\Draft)`,
-      message,
-    );
-    return { uid: parseAppendUid(lines), mailbox };
+    const retire = () => this.close();
+    selection.signal?.addEventListener('abort', retire, { once: true });
+    try {
+      current();
+      const lines = await session.commandWithLiteral(
+        `APPEND ${formatMailboxName(mailbox)} (\\Draft)`, message,
+        { signal: selection.signal, assertCurrent: current },
+      );
+      current();
+      return { uid: parseAppendUid(lines), mailbox };
+    } catch {
+      // Once APPEND starts the server may be waiting for literal bytes. Never
+      // reuse that transport or expose its potentially private failure text.
+      this.close();
+      throw new Error('The draft append could not be confirmed.');
+    } finally { selection.signal?.removeEventListener('abort', retire); }
+
   }
 
   /** Cancel outstanding reads and release transport without waiting for LOGOUT. */
   close(): void {
+    this.lifetime.abort();
     const session = this.active;
     this.active = null;
     this.readable = false;
@@ -622,6 +653,7 @@ export class ImapClient {
    * call returns, rather than raising a second failure on top of the first.
    */
   async logout(): Promise<void> {
+    this.lifetime.abort();
     const session = this.active;
     this.active = null;
     this.readable = false;
@@ -654,24 +686,31 @@ export class ImapClient {
    * read whose headers and attachment list already succeeded.
    */
 
-  /**
-   * Where a draft should go: the caller's override, else what the server says,
-   * else the plain `Drafts` name as a last resort, including when LIST itself
-   * fails, since an unanswered question about folders is not a reason to lose
-   * the draft.
-   */
+  /** Discovery must establish a target; an unanswered LIST never authorizes APPEND. */
   private async resolveDraftsMailbox(
     session: ImapSession,
     override: string | undefined,
-  ): Promise<string> {
+  ): Promise<ImapReadingLease<string>> {
+    const reading = this.readingOptions(session);
+    assertImapReadingCurrent(reading);
     const explicit = (override ?? '').trim();
-    if (explicit.length > 0) return explicit;
-    try {
-      const lines = await session.commandFrames('LIST "" "*"');
-      return selectDraftsMailboxFrames(lines) ?? DEFAULT_DRAFTS_MAILBOX;
-    } catch {
-      return DEFAULT_DRAFTS_MAILBOX;
-    }
+    if (explicit.length > 0) return imapReadingLease(explicit, reading);
+    let lines;
+    try { lines = await session.commandFrames('LIST "" "*"'); }
+    catch { throw new ImapReadingError(); }
+    assertImapReadingCurrent(reading);
+    const selection = await selectDraftsMailboxFrames(lines, reading);
+    selection.assertCurrent();
+    assertImapReadingCurrent(reading);
+    if (selection.value === null) throw new ImapReadingError();
+    return imapReadingLease(selection.value, selection);
+  }
+
+  private readingOptions(session: ImapSession): ImapReadingOptions {
+    return { publication: this.options.publication ?? { signal: this.options.signal, assertCurrent: this.options.assertCurrent }, signal: this.signal, assertCurrent: () => {
+      assertImapReadingCurrent({ signal: this.signal, assertCurrent: this.options.assertCurrent });
+      if (this.active !== session) throw new ImapReadingError();
+    } };
   }
 
   /** The open connection's session, or a plain-language refusal. */

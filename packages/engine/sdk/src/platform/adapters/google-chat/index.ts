@@ -105,7 +105,7 @@ export async function handleGoogleChatSurfaceWebhook(req: Request, context: Surf
     });
   }
 
-  const controlCommand = context.parseSurfaceControlCommand(text);
+  const controlCommand = await context.parseSurfaceControlCommand(text, { signal: req.signal });
   if (controlCommand) {
     const message = await context.performSurfaceControlCommand(controlCommand);
     return Response.json({ text: message });
@@ -130,7 +130,7 @@ export async function handleGoogleChatSurfaceWebhook(req: Request, context: Surf
     return Response.json({ text: `Continuing session ${submission.session.id}.` });
   }
 
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleGoogleChatSurfaceWebhook',
     submission.session.id,

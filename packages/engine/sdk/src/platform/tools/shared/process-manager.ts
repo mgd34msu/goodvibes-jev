@@ -74,6 +74,8 @@ function assertSynchronousAdmission(check: (() => void) | undefined): void {
 // ─── SpawnOptions ─────────────────────────────────────────────────────────────
 
 export interface SpawnOptions {
+  /** Trusted per-invocation guard after all asynchronous preparation. */
+  beforeSpawn?: (() => void) | undefined;
   /** Cancel admission, including pending credential resolution. Once spawned,
    * the process keeps its declared lifetime; this signal never kills it. */
   signal?: AbortSignal | undefined;
@@ -337,6 +339,12 @@ export class ProcessManager {
       } as Parameters<typeof Bun.spawn>[1];
       // Caller-owned env/options can have accessors. Recheck after reading
       // them, at the final boundary before an actual process is created.
+      assertSynchronousAdmission(assertAdmissionCurrent);
+      if (this._closed) throw new Error('ProcessManager is closed');
+      admissionSignal?.throwIfAborted();
+      assertSynchronousAdmission(opts?.beforeSpawn);
+      // The one-shot claim can synchronously revoke or close its owner. Repeat
+      // only currentness, then finish on owned state immediately before spawn.
       assertSynchronousAdmission(assertAdmissionCurrent);
       if (this._closed) throw new Error('ProcessManager is closed');
       admissionSignal?.throwIfAborted();

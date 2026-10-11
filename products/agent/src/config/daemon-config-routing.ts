@@ -78,9 +78,13 @@ export type { ConfigScope, ConfigWriteOutcome, EffectiveConfigView };
 // ---------------------------------------------------------------------------
 
 let installedConfigClient: DaemonConfigClient | null = null;
+let installedConfigClientRevision = 0;
+/** Installation incarnation catches replacement and A→B→A without value comparison. */
+export function agentDaemonConfigClientRevision(): number { return installedConfigClientRevision; }
 
 /** Install the client daemon-owned config writes route through. */
 export function installAgentDaemonConfigClient(client: DaemonConfigClient | null): void {
+  installedConfigClientRevision++;
   installedConfigClient = client;
 }
 

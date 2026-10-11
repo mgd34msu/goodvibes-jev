@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { KnowledgeStore, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -11,20 +11,21 @@ async function seeded() {
   const file = path();
   const store = new KnowledgeStore({ dbPath: file });
   const service = new ProjectPlanningService(store);
-  await service.upsertState({ projectId: 'fixture', state: { goal: 'Original selected plan', executionApproved: false,
+  const authored: ProjectPlanningStateUpsertInput['state'] = { goal: 'Original selected plan', executionApproved: false,
     openQuestions: [{ id: 'q1', prompt: 'Which tests?', status: 'open' }],
     tasks: [{ id: 'original', title: 'Original task' }],
-  } });
+  };
+  await service.upsertState({ projectId: 'fixture', state: authored });
   const selected = await service.getState({ projectId: 'fixture' });
   if (!selected.revision || !selected.state) throw new Error('missing seeded revision');
-  return { file, store, service, selected };
+  return { file, store, service, selected, authored };
 }
 
 test('a writer through another real handle invalidates a selected approval without overwriting its rows', async () => {
   const first = await seeded();
   const otherStore = new KnowledgeStore({ dbPath: first.file });
   const otherService = new ProjectPlanningService(otherStore);
-  await otherService.upsertState({ projectId: 'fixture', state: { ...first.selected.state!, goal: 'Replacement from second handle',
+  await otherService.upsertState({ projectId: 'fixture', state: { ...first.authored, goal: 'Replacement from second handle',
     tasks: [{ id: 'replacement', title: 'Replacement task' }], executionApproved: false,
   } });
   const before = readFileSync(first.file);
@@ -55,7 +56,7 @@ test('an absent-row condition observes a creation through another initialized re
 test('same-handle deletion and changed recreation invalidate the captured revision', async () => {
   const f = await seeded();
   expect(await f.store.deleteSource(f.selected.revision!.sourceId)).toBe(true);
-  await f.service.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'Recreated replacement', executionApproved: false } });
+  await f.service.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'Recreated replacement', executionApproved: false } });
   const before = readFileSync(f.file);
   expect(await f.service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } })).toMatchObject({ applied: false, reason: 'state-changed' });
   expect(readFileSync(f.file)).toEqual(before);

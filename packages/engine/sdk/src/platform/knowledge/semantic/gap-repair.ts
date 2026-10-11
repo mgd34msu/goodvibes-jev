@@ -1,3 +1,4 @@
+import { knowledgeSearchStamp } from '../store-record-representation.js';
 import type {
   WebSearchRequest,
   WebSearchResponse,
@@ -162,7 +163,7 @@ async function repairKnowledgeGapsWithWeb(
         tags: ['semantic-gap-repair', 'gap-repair', ...gapRepairTags(request)],
         metadata: {
           knowledgeSpaceId: request.spaceId,
-          sourceDiscovery: {
+          sourceDiscovery: knowledgeSearchStamp({
             purpose: 'semantic-gap-repair',
             query: result.searchQuery,
             searchQueries: queries.slice(0, searchLimit),
@@ -179,8 +180,7 @@ async function repairKnowledgeGapsWithWeb(
             agreementSourceCount: candidates.length,
             checkedSourceLimit: sourceLimit,
             selectedUrl: result.url,
-            searchedAt: Date.now(),
-          },
+          }),
         },
       }), Math.max(1_000, timeoutMs), 'Semantic gap repair source ingest timed out.');
       if (ingested.source.status === 'indexed' || ingested.source.status === 'pending') {

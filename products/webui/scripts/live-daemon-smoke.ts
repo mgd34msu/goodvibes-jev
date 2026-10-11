@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '@goodvibes-jev/engine/sdk/daemon';
 import { installTestTempRoot, sweepStaleRunRoots } from './test-temp-root';
+import { requireSessionCloseReceipt } from './live-daemon-lifecycle';
 
 // The webui token store (createBrowserTokenStore) persists to localStorage. In this headless
 // lane there is no browser, so provide a minimal in-memory localStorage BEFORE importing the
@@ -208,62 +209,19 @@ async function main(): Promise<void> {
 
     // 3) Real streamed state: open the live control-plane SSE against the daemon and assert
     //    the stream genuinely opens (onReady from a real process, over Bun's streaming fetch).
-    //    Also observe a live session-update frame if one arrives within the window.
+    //    Require the close response AND its matching session-update frame within the window.
     log('opening the live event stream and driving a mutation…');
-    const streamed = await new Promise<{ ready: boolean; sawFrame: boolean }>((resolve, reject) => {
-      let ready = false;
-      let sawFrame = false;
-      let dispose: (() => void) | null = null;
-      const settle = () => {
-        dispose?.();
-        resolve({ ready, sawFrame });
-      };
-      const timer = setTimeout(() => {
-        if (ready) settle();
-        else {
-          dispose?.();
-          reject(new Error('the live event stream did not open within 10s'));
-        }
-      }, 10_000);
-
-      void sdk.streams
-        .open(
-          '/api/control-plane/events?domains=session',
-          {
-            onReady: () => {
-              ready = true;
-              // Trigger a lifecycle change so the spine broadcasts a session-update frame.
-              void sdk.operator.invoke('sessions.close', { sessionId: createdId }).catch(() => undefined);
-            },
-            onEvent: (eventName: string) => {
-              if (eventName === SESSION_UPDATE_WIRE_EVENT) {
-                sawFrame = true;
-                clearTimeout(timer);
-                settle();
-              }
-            },
-            // Transient stream errors are not fatal to this smoke: the timeout above is the
-            // authority on whether the stream opened, and onReady is the success signal.
-            onError: (error: unknown) => {
-              void error;
-            },
-            onTerminate: (info: unknown) => {
-              void info;
-            },
-          },
-          { reconnect: { enabled: false, baseDelayMs: 0, maxDelayMs: 0, backoffFactor: 1, maxAttempts: 0 } },
-        )
-        .then((close: () => void) => {
-          dispose = close;
-        })
-        .catch((error: unknown) => {
-          clearTimeout(timer);
-          reject(error instanceof Error ? error : new Error(String(error)));
-        });
+    await requireSessionCloseReceipt({
+      sessionId: createdId,
+      eventName: SESSION_UPDATE_WIRE_EVENT,
+      close: () => sdk.operator.invoke('sessions.close', { sessionId: createdId }),
+      open: (handlers) => sdk.streams.open(
+        '/api/control-plane/events?domains=session',
+        handlers,
+        { reconnect: { enabled: false, baseDelayMs: 0, maxDelayMs: 0, backoffFactor: 1, maxAttempts: 0 } },
+      ),
     });
-
-    assert.ok(streamed.ready, 'the live event stream opened against the real daemon');
-    log(streamed.sawFrame ? 'received a live session-update frame over the stream' : 'stream opened (no session-update frame observed in-window)');
+    log('close acknowledged and matching closed-session frame received over the live stream');
 
     process.stdout.write('\nLive-daemon smoke: PASS\n');
   } finally {

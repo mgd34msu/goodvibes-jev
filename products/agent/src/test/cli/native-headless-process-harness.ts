@@ -16,8 +16,9 @@ const intakePrefix = '/api/work-ledger/intake/';
 export interface WireRequest { readonly path: string; readonly body: unknown; }
 
 /** Discard only the response, after the daemon has durably processed the request. */
-function nativeDoor(upstream: string) {
+export function nativeDoor(upstream: string) {
   const requests: WireRequest[] = [];
+  const lifetime = new AbortController();
   let lostPath: string | undefined;
   let heldPath: string | undefined;
   let held: Promise<void> | undefined;
@@ -31,14 +32,23 @@ function nativeDoor(upstream: string) {
     requests.push({ path: url.pathname, body });
     if (heldPath === url.pathname) { arrived(); await held; }
     const headers = new Headers(request.headers); headers.delete('host');
-    const response = await fetch(`${upstream}${url.pathname}${url.search}`, { method: request.method, headers, body: bytes, redirect: 'manual' });
+    let response: Response;
+    try {
+      response = await fetch(`${upstream}${url.pathname}${url.search}`, { method: request.method, headers, body: bytes, redirect: 'manual', signal: lifetime.signal });
+    } catch (error) {
+      if (lifetime.signal.aborted) return new Response('fixture closed', { status: 503 });
+      throw error;
+    }
     if (lostPath === url.pathname) {
       lostPath = undefined;
       await response.arrayBuffer();
       // A malformed successful response cannot trigger automatic HTTP retries.
       return Response.json({ fixture: 'durable response acknowledgement lost' });
     }
-    return new Response(response.body, { status: response.status, headers: response.headers });
+    // Own the forwarded stream: passing Bun's native fetch body through can
+    // retain a pending request after stop(true), even after the child exits.
+    const bodyStream = response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>());
+    return new Response(bodyStream, { status: response.status, headers: response.headers });
   } });
   return {
     baseUrl: `http://127.0.0.1:${server.port}`, requests,
@@ -49,7 +59,12 @@ function nativeDoor(upstream: string) {
       const entered = new Promise<void>(resolveArrived => { arrived = resolveArrived; });
       return { entered, release: () => { heldPath = undefined; release(); } };
     },
-    async stop() { heldPath = undefined; release(); await server.stop(true); },
+    async stop() {
+      heldPath = undefined; release();
+      const stopped = server.stop(true);
+      lifetime.abort();
+      await stopped;
+    },
   };
 }
 

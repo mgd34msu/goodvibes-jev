@@ -1,4 +1,7 @@
-import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { createSemanticWriteGuard } from './primary-source-plan.js';
+import { KnowledgeRepairFactUsefulnessHeldError } from './repair-usefulness/types.js';
+import { createKnowledgeFactQualityReader, type KnowledgeFactQualityPlan } from './fact-quality.js';
+import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
 import { isGeneratedKnowledgeSource } from '../generated-projections.js';
 import { yieldEvery } from '../cooperative.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
@@ -14,7 +17,7 @@ import {
   factsForSource,
   hasSpecificIdentity,
   isConcreteRepairSubject,
-  isUsableSelfImprovementFact,
+  isSelfImprovementFactCandidate,
   linkedObjectsForSource,
   repairTargetFactCount,
   sourcesForObject,
@@ -33,6 +36,8 @@ export async function discoverIntrinsicGaps(
   spaceId: string,
   sourceIdFilter: ReadonlySet<string> | null,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
+  signal?: AbortSignal,
+  shouldStop?: () => boolean,
 ): Promise<number> {
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const edges = graph.edges;
@@ -52,8 +57,9 @@ export async function discoverIntrinsicGaps(
     const facts = factsForSource(source.id, edges, nodesById);
     for (const [subjectIndex, subject] of linkedObjects.filter((node) => isConcreteRepairSubject(node, objectProfiles)).entries()) {
       await yieldEvery(subjectIndex, 16);
-      if (!shouldCreateIntrinsicFeatureGap(subject, facts, objectProfiles, source)) continue;
-      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, facts, [source], createdIds)) created += 1;
+      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop);
+      if (!shouldCreateIntrinsicFeatureGap(subject, quality.facts, objectProfiles, source)) continue;
+      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, quality.facts, [source], createdIds, quality)) created += 1;
     }
   }
 
@@ -67,10 +73,11 @@ export async function discoverIntrinsicGaps(
         ...sourceList.flatMap((source) => factsForSource(source.id, edges, nodesById)),
         ...factsForObject(subject.id, edges, nodesById),
       ];
-      const coverage = factCoverage(facts);
+      const quality = await prepareQuality(store, spaceId, subject, facts, signal, shouldStop);
+      const coverage = factCoverage(quality.facts);
       if (coverage.coreFactCount >= 4 && coverage.coveredAreas.size >= 3) continue;
       if (!hasSpecificIdentity(subject, sourceList[0])) continue;
-      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, facts, sourceList, createdIds)) created += 1;
+      if (await upsertIntrinsicFeatureGap(store, spaceId, subject, quality.facts, sourceList, createdIds, quality)) created += 1;
     }
   }
 
@@ -84,7 +91,9 @@ async function upsertIntrinsicFeatureGap(
   facts: readonly KnowledgeNodeRecord[],
   sources: readonly KnowledgeSourceRecord[],
   createdIds: Set<string>,
+  quality: KnowledgeFactQualityPlan,
 ): Promise<boolean> {
+  quality.assertCurrent();
   const id = `sem-intrinsic-gap-${semanticHash(spaceId, subject.id, 'features-specifications')}`;
   if (createdIds.has(id)) return false;
   createdIds.add(id);
@@ -93,14 +102,13 @@ async function upsertIntrinsicFeatureGap(
   const existingRepaired = existing
     ? existing.status === 'active'
       && readString(existing.metadata.repairStatus) === 'repaired'
-      && facts.filter((fact) => isUsableSelfImprovementFact(fact, subjectIds)).length >= repairTargetFactCount(existing)
+      && facts.filter((fact) => isSelfImprovementFactCandidate(fact, subjectIds)).length >= repairTargetFactCount(existing)
     : false;
   if (existingRepaired) return false;
 
   const title = `What are the complete features and specifications for ${subjectTitle(subject)}?`;
   const primarySource = sources[0]!;
-  return store.batch(async () => {
-    const gap = await upsertObservedKnowledgeNode(store, {
+  const gapInput = prepareObservedKnowledgeNodeInput(store, {
       id,
       kind: 'knowledge_gap',
       slug: semanticSlug(`${spaceId}-intrinsic-gap-${subject.title}`),
@@ -121,41 +129,52 @@ async function upsertIntrinsicFeatureGap(
         ...(typeof existing?.metadata.nextRepairAttemptAt === 'number' ? { nextRepairAttemptAt: existing.metadata.nextRepairAttemptAt } : {}),
         createdBy: 'semantic-self-improvement',
       }),
-    }, 'research-task', subject, () => store.getNode(subject.id));
-    for (const source of sources) {
-      await store.upsertEdge({
-        fromKind: 'source',
+    }, 'research-task', subject, () => { quality.assertCurrent(); return store.getNode(subject.id); });
+  const edges: import('../types.js').KnowledgeEdgeUpsertInput[] = sources.map((source) => ({
+        fromKind: 'source' as const,
         fromId: source.id,
-        toKind: 'node',
-        toId: gap.id,
+        toKind: 'node' as const,
+        toId: id,
         relation: 'has_gap',
         metadata: semanticMetadata(spaceId, { intrinsic: true }),
-      });
-    }
-    await store.upsertEdge({
+      }));
+  edges.push({
       fromKind: 'node',
       fromId: subject.id,
       toKind: 'node',
-      toId: gap.id,
+      toId: id,
       relation: 'has_gap',
       metadata: semanticMetadata(spaceId, { intrinsic: true }),
     });
-    await store.upsertIssue({
+  const issue = {
       id: `sem-intrinsic-gap-issue-${semanticHash(spaceId, subject.id, 'features-specifications')}`,
-      severity: 'info',
+      severity: 'info' as const,
       code: 'knowledge.intrinsic_gap',
       message: title,
-      status: 'open',
+      status: 'open' as const,
       ...(primarySource ? { sourceId: primarySource.id } : {}),
-      nodeId: gap.id,
+      nodeId: id,
       metadata: semanticMetadata(spaceId, {
         namespace: `knowledge:${spaceId}:semantic`,
         subjectId: subject.id,
         gapKind: 'intrinsic_features',
       }),
-    });
-    return !existing;
-  });
+    };
+  const existingVersion = JSON.stringify(existing);
+  await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+    nodes: [gapInput], edges, issues: [issue], assertCurrent: () => {
+      quality.assertCurrent();
+      if (store.getNode(id) !== existing || JSON.stringify(store.getNode(id)) !== existingVersion) throw new KnowledgeRepairFactUsefulnessHeldError('stale');
+    },
+  }));
+  return !existing;
+}
+
+async function prepareQuality(store: KnowledgeStore, spaceId: string, subject: KnowledgeNodeRecord, facts: readonly KnowledgeNodeRecord[], signal?: AbortSignal, shouldStop?: () => boolean) {
+  const guard = createSemanticWriteGuard(store, signal, shouldStop);
+  const reader = createKnowledgeFactQualityReader(store, { spaceId, query: `What are the complete features and specifications for ${subjectTitle(subject)}?`,
+    purpose: 'repair', subjects: [subject], signal, guard });
+  return reader.prepare([...new Map(facts.filter((fact) => isSelfImprovementFactCandidate(fact)).map((fact) => [fact.id, fact])).values()]);
 }
 
 function shouldCreateIntrinsicFeatureGap(

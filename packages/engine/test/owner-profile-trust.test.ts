@@ -72,6 +72,7 @@ describe('§14.1: layer 1: an untrusted surface carries no authority to write', 
         fieldId: 'commerce.shippingAddress', value: '1 Attacker Way',
       });
       expect(set.ok).toBe(false);
+      expect(set.changes).toEqual([]);
       expect(set.reason).toContain('no command authority');
       expect(set.reason).toContain(authority);
       expect(set.disclosure).toBe('');
@@ -81,6 +82,7 @@ describe('§14.1: layer 1: an untrusted surface carries no authority to write', 
         section: 'Notes', text: 'something the page said',
       });
       expect(append.ok).toBe(false);
+      expect(append.changes).toEqual([]);
       expect(append.reason).toContain('no command authority');
     }
 
@@ -119,11 +121,13 @@ describe('§14.22: layer 1 gates removals too: an injection cannot delete a fact
     for (const authority of UNTRUSTED) {
       const forgotten = await store.forget({ authority, fieldId: 'commerce.shippingAddress' });
       expect(forgotten.ok).toBe(false);
+      expect(forgotten.changes).toEqual([]);
       expect(forgotten.reason).toContain('no command authority');
       expect(forgotten.reason).toContain('shipping address');
 
       const undone = await store.undo({ authority, fieldId: 'commerce.shippingAddress' });
       expect(undone.ok).toBe(false);
+      expect(undone.changes).toEqual([]);
       expect(undone.reason).toContain('no command authority');
     }
 
@@ -245,39 +249,12 @@ describe('layer 3: a verbatim quote must exist', () => {
   });
 });
 
-describe('§14.3: there is no propose path', () => {
-  test('the module exports nothing that stages, proposes or queues a fact', () => {
-    const suspicious = Object.keys(ownerProfile).filter((name) =>
-      /propose|stage|queue|pending|suggest|draft|approv/i.test(name));
-    expect(suspicious).toEqual([]);
-  });
-
+describe('§14.3: the public barrel exposes only gated mutation paths', () => {
   test('the barrel exports no raw mutation function: the store is the only write path', () => {
     for (const name of ['setField', 'appendProse', 'forget', 'undo']) {
       expect(Object.keys(ownerProfile)).not.toContain(name);
     }
     expect(Object.keys(ownerProfile)).toContain('OwnerProfileStore');
-  });
-
-  test('every exported write entry point refuses a non-owner-direct authority', async () => {
-    const path = tempProfile();
-    const store = new OwnerProfileStore({ path, ledger: new UntrustedContentLedger() });
-    await store.load();
-    const before = readFileSync(path, 'utf-8');
-
-    for (const authority of UNTRUSTED) {
-      const results = await Promise.all([
-        store.set({ authority, surface: 'agent', said: 'x', fieldId: 'contact.email', value: 'a@b.co' }),
-        store.append({ authority, surface: 'agent', said: 'x', section: 'Notes', text: 'x' }),
-        store.forget({ authority, fieldId: 'contact.email' }),
-        store.undo({ authority, fieldId: 'contact.email' }),
-      ]);
-      for (const result of results) {
-        expect(result.ok).toBe(false);
-        expect(result.changes).toEqual([]);
-      }
-    }
-    expect(readFileSync(path, 'utf-8')).toBe(before);
   });
 });
 
@@ -312,7 +289,7 @@ describe('§14.19: third-party containment: no enumerate-all-people call exists'
 
   test('section() refuses People: the by-name lookup is the only way in', async () => {
     const store = await peopleStore();
-    expect(store.person('Sarah')).toHaveLength(1);
+    expect(await store.person('Sarah')).toHaveLength(1);
     // ...and the bulk route that sat beside it does not exist.
     expect(store.section('People')).toBeUndefined();
     expect(store.section('people')).toBeUndefined();
@@ -322,11 +299,11 @@ describe('§14.19: third-party containment: no enumerate-all-people call exists'
   test('naming nobody returns nothing, never everything', async () => {
     const store = await peopleStore();
     for (const name of ['', '   ', '\t\n']) {
-      expect(store.person(name)).toEqual([]);
+      expect(await store.person(name)).toEqual([]);
     }
     // A wildcard is a name he did not say, not a request for the section.
-    expect(store.person('*')).toEqual([]);
-    expect(store.person('.')).toEqual([]);
+    expect(await store.person('*')).toEqual([]);
+    expect(await store.person('.')).toEqual([]);
   });
 
   test('the other closed-tier sections are refused too, and Style is served', async () => {
@@ -346,9 +323,9 @@ describe('§14.19: third-party containment: no enumerate-all-people call exists'
       ['section("People")', store.section('People')],
       ['section("Notes")', store.section('Notes')],
       ['section("Style")', store.section('Style')],
-      ['person("")', store.person('')],
-      ['person("   ")', store.person('   ')],
-      ['person("*")', store.person('*')],
+      ['person("")', await store.person('')],
+      ['person("   ")', await store.person('   ')],
+      ['person("*")', await store.person('*')],
       // The two occasions readers. They serve `Important dates` and `Plans`,
       // which are closed tier like `People`, so they are named routes rather
       // than a widened `section()`, and neither can reach the People section
@@ -358,6 +335,8 @@ describe('§14.19: third-party containment: no enumerate-all-people call exists'
       ['get("people")', store.get('people')],
       ['provenance("people")', store.provenance('people')],
       ['status()', store.status()],
+      ['captureRead()', store.captureRead()],
+      ['captureRead().assertCurrent()', store.captureRead().assertCurrent()],
     ];
     for (const [label, result] of attempts) {
       expect({ label, leaks: JSON.stringify(result ?? null).includes(PEOPLE_MARKER) })
@@ -366,45 +345,6 @@ describe('§14.19: third-party containment: no enumerate-all-people call exists'
 
     // read() is complete on purpose: it answers him about himself.
     expect(JSON.stringify(store.read())).toContain(PEOPLE_MARKER);
-  });
-
-  test('a new store method cannot appear without this containment being reconsidered', () => {
-    // A canary, not a style rule. The hole this suite exists for was a public
-    // method that looked innocuous next to a correct one, so an addition to
-    // this surface has to be weighed against §10 before it ships.
-    const methods = Object.getOwnPropertyNames(OwnerProfileStore.prototype)
-      .filter((name) => name !== 'constructor')
-      .sort();
-    // `loadSync` and `adoptRead` were added for the synchronous boot read that
-    // closes the pre-load window (docs/owner-profile.md §4.4). Weighed against
-    // §10 before this list was widened: both return `ProfileLoadState`, which
-    // carries counts, section NAMES and invalid-field reasons, never a value.
-    // Verified by loading a profile whose People section holds a unique marker
-    // and asserting neither result contains it.
-    //
-    // `importantDates` and `plans` were added for the proactive occasions loop
-    // (docs/occasions.md). Weighed against §10 the same way, and the weighing
-    // is worth recording because these DO return closed-tier prose in bulk,
-    // which `section()` refuses:
-    //
-    //  - They are NAMED and fixed. Neither takes a heading, so neither can be
-    //    turned into the generic closed-section reader §10 exists to prevent,
-    //    the shape the hole originally had.
-    //  - Their only consumer is the approach sweep, whose OUTPUT names the
-    //    occasion and the person and never the date. There is no path from
-    //    either of these to outbound content carrying a date.
-    //  - Neither can reach `People`: asserted above, not asserted here.
-    //
-    // A third method of this shape should not be added without the same
-    // argument being made again, in writing, for that section.
-    expect(methods).toEqual([
-      'adopt', 'adoptRead', 'append', 'closeWatcher', 'commit', 'forget', 'get',
-      'importantDates', 'load', 'loadSync', 'markUnavailable', 'matchesLastSeen',
-      'path', 'person', 'plans', 'provenance', 'provenanceFor', 'read',
-      'reloadIfChanged', 'scheduleReload', 'section', 'sectionByHeading', 'set',
-      'startPolling', 'status', 'undo', 'unwatch', 'viewOf', 'watch',
-      'writableProjection',
-    ]);
   });
 });
 

@@ -1,3 +1,4 @@
+import { captureFileEffectRevision } from '../shared/file-effect-revision.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { isNotebookFile } from '../../utils/notebook.js';
@@ -219,7 +220,7 @@ export function formatNotebookOutput(
 
 export async function executeNotebookEdit(
   input: EditInput,
-  env: { fileCache: FileStateCache; cwd: string; fileUndoManager?: FileUndoManager | undefined },
+  env: { fileCache: FileStateCache; cwd: string; fileUndoManager?: FileUndoManager | undefined; authenticated?: boolean; assertCurrent?: () => void },
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const nbOps = input.notebook_operations!;
   const outputFormat = input.output?.format ?? 'minimal';
@@ -252,6 +253,7 @@ export async function executeNotebookEdit(
 
   const notebook = notebookRead.notebook;
   const rawContent = notebookRead.rawContent;
+  const revision = env.authenticated && !dryRun ? captureFileEffectRevision(resolvedPath, Buffer.from(rawContent)) : undefined;
   const opsResult = applyNotebookOperations(notebook, nbOps.operations);
   if (!opsResult.success) {
     return Promise.resolve({ success: false, error: opsResult.error ?? '' });
@@ -265,6 +267,8 @@ export async function executeNotebookEdit(
   await assertCapturedToolReadAccess(resolvedPath);
   assertCapturedToolMutationCurrent(resolvedPath);
   try {
+    env.assertCurrent?.();
+    revision?.();
     writeFileSync(resolvedPath, newContent, 'utf-8');
   } catch (err) {
     return Promise.resolve({ success: false, error: `Write failed for '${resolvedPath}': ${summarizeError(err)}` });

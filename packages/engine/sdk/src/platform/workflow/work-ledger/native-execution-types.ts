@@ -1,3 +1,4 @@
+import type { NativeCiContinuationStorage } from './native-ci-continuation-types.js';
 import type { NativeWorkSettlementReceipt, NativeWorkSettlementPublication } from './native-settlement-types.js';
 /** Host-only native execution records. Ledger reports are never execution authority. */
 import { types as nodeTypes } from 'node:util';
@@ -97,6 +98,7 @@ export interface NativeWorkExecutionMutation<T> {
   readonly value: T;
 }
 export interface NativeWorkExecutionStorage {
+  readonly continuations?: NativeCiContinuationStorage;
   /** Authoritative synchronous reads, required before every semantic/tool operation. */
   current(key: DurableContractRequest['key']): NativeWorkExecutionTransaction;
   /** Unique persisted association; ledger edits cannot strand inspection or cancellation. */

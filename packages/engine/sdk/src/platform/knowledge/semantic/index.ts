@@ -5,10 +5,9 @@ export { createWebKnowledgeGapRepairer } from './gap-repair.js';
 export { KnowledgeSemanticService } from './service.js';
 export { runKnowledgeSemanticSelfImprovement } from './self-improvement.js';
 export {
-  hasConcreteFeatureSignal,
-  isLowValueFeatureOrSpecText,
+  createKnowledgeFactQualityReader,
+  isKnowledgePageFactCandidate,
   isSemanticAnswerLinkedObject,
-  isUsefulKnowledgePageFact,
   semanticFactText,
 } from './fact-quality.js';
 export {

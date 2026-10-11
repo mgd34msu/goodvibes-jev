@@ -82,12 +82,14 @@ export function autoLinkExistingHomeGraphSources(
   spaceId: string,
   installationId: string,
   sourceIds?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<readonly HomeGraphAutoLinkResult[]> {
   const state = readHomeGraphState(store, spaceId);
   const extractionBySourceId = new Map(state.extractions.map((extraction) => [extraction.sourceId, extraction]));
   const wanted = sourceIds && sourceIds.length > 0 ? new Set(sourceIds) : null;
   const sources = wanted ? state.sources.filter((source) => wanted.has(source.id)) : state.sources;
   return autoLinkHomeGraphSources({
+    signal,
     store,
     spaceId,
     installationId,

@@ -17,3 +17,11 @@ export interface KnowledgeIngestContext {
   readonly lint: () => Promise<readonly KnowledgeIssueRecord[]>;
   readonly listConnectors: () => readonly KnowledgeConnector[];
 }
+
+/** Host-only ownership for an explicit ingest, separate from untrusted input metadata. */
+export interface KnowledgeIngestOwnership {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+  /** Called after the guarded atomic commit; later cancellation cannot undo that commit. */
+  readonly onCommitted?: ((sourceId: string) => void) | undefined;
+}

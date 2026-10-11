@@ -1,7 +1,9 @@
-import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
+import { prepareObservedKnowledgeNodeInput, upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
   KnowledgeIssueRecord,
+  KnowledgeIssueUpsertInput,
   KnowledgeNodeRecord,
 } from '../types.js';
 import {
@@ -15,8 +17,10 @@ export async function suppressGap(
   gap: KnowledgeNodeRecord,
   reason: string | undefined,
   spaceId: string,
+  assertCurrent: () => void = () => {},
 ): Promise<void> {
-  await upsertObservedKnowledgeNode(store, {
+  assertCurrent();
+  const node = prepareObservedKnowledgeNodeInput(store, {
     id: gap.id,
     kind: gap.kind,
     slug: gap.slug,
@@ -32,10 +36,16 @@ export async function suppressGap(
       repairReason: reason,
       repairedAt: Date.now(),
     },
-  }, 'research-task', gap, () => store.getNode(gap.id));
-  for (const issue of store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open')) {
-    await resolveIssue(store, issue, spaceId, reason ?? 'Gap was classified as not applicable.');
-  }
+  }, 'research-task', gap, () => { assertCurrent(); return store.getNode(gap.id); });
+  const issues = store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open');
+  const guard = () => {
+    assertCurrent();
+    for (const issue of issues) if (store.getIssue(issue.id) !== issue) throw new KnowledgeSourceQualityHeldError('stale');
+  };
+  await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+    nodes: [node], edges: [], issues: issues.map((issue) => resolvedIssueInput(issue, spaceId, reason ?? 'Gap was classified as not applicable.')),
+    assertCurrent: guard,
+  }));
 }
 
 export async function markGapRepairAttempt(
@@ -88,7 +98,11 @@ export async function markGapRepairAttempt(
 }
 
 async function resolveIssue(store: KnowledgeStore, issue: KnowledgeIssueRecord, spaceId: string, reason: string): Promise<void> {
-  await store.upsertIssue({
+  await store.upsertIssue(resolvedIssueInput(issue, spaceId, reason));
+}
+
+function resolvedIssueInput(issue: KnowledgeIssueRecord, spaceId: string, reason: string): KnowledgeIssueUpsertInput {
+  return {
     id: issue.id,
     severity: issue.severity,
     code: issue.code,
@@ -104,5 +118,5 @@ async function resolveIssue(store: KnowledgeStore, issue: KnowledgeIssueRecord, 
         resolvedAt: Date.now(),
       },
     }),
-  });
+  };
 }

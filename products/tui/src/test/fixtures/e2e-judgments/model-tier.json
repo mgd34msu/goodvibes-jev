@@ -1,0 +1,26 @@
+{
+  "state": {
+    "model": {
+      "id": "stub-model",
+      "name": "Stub Model",
+      "provider": "e2e-stub",
+      "context_window": 64000,
+      "price_per_million_tokens": "unpriced",
+      "reasoning": false,
+      "input_modalities": [
+        "text"
+      ]
+    }
+  },
+  "questions": {
+    "frontier": {
+      "type": "noul",
+      "instructions": "Is `model` a frontier flagship: among the most capable reasoning and coding models available today, the top tier of a leading model family and priced like it, rather than a smaller, cheaper, mid-range or previous-generation model? Being large or open-weight alone does not make a model frontier. Judge from its name, family, price per million tokens and benchmark score (0 to 1, higher is stronger) where given."
+    },
+    "small": {
+      "type": "noul",
+      "instructions": "Is `model` a small or lightweight model (roughly 15 billion parameters or fewer, or a variant its name marks as mini, nano, lite, tiny or instant), or a special-purpose model such as an embedding, speech, image or moderation model? A mid-range general model sold as fast or balanced is not small."
+    }
+  },
+  "model": "jev-1.13.0"
+}

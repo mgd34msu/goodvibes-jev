@@ -161,9 +161,16 @@ describe('fresh generated source and extraction references (THE36)', () => {
   });
   test('owned answer aliases preserve preflight of external numerical URI content', async () => {
     const fake = readings(); const { store, service, artifactId } = await fixture();
-    const result = await service.ingestArtifact({ installationId: 'house', artifactId,
-      uri: 'https://manuals.example.test/4111111111111111', title: 'AC-7 external manual' });
-    const source = store.getSource(result.source.id)!;
+    const protectedUri = 'https://manuals.example.test/4111111111111111';
+    const beforeCapture = fake.requests.length;
+    await expect(service.ingestArtifact({ installationId: 'house', artifactId,
+      uri: protectedUri, title: 'AC-7 external manual' })).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    expect(fake.requests).toHaveLength(beforeCapture);
+    // Raw capture precedes semantic auto-link. Its failure cannot bless the URI
+    // for a later alias or page-quality consumer.
+    const source = store.listSources().find(item => item.sourceUri === protectedUri)!;
+    expect(source).toBeDefined();
+    expect(store.edgesFor('source', source.id)).toHaveLength(0);
     const restored = restoreKnowledgeSourceAnswerAliases(store, withKnowledgeSourceAnswerAliases(source));
     expect(restored).toBe(source);
     const before = fake.requests.length;
@@ -204,8 +211,15 @@ describe('fresh generated source and extraction references (THE36)', () => {
     expect(knowledgeSourceJudgmentUris(source).sourceUri).toBe(external);
     await prepareGeneratedFactSupport([withStoredKnowledgeSourceReferences(candidate(source, extraction), store, source, extraction)]);
     expect(JSON.stringify(fake.requests)).toContain(external);
-    const protectedResult = await service.ingestArtifact({ installationId: 'house', artifactId, uri: 'https://manuals.example.test/4111111111111111', title: 'Protected external URI' });
-    const protectedSource = store.getSource(protectedResult.source.id)!, protectedExtraction = store.getExtractionBySourceId(protectedSource.id)!;
+    const protectedUri = 'https://manuals.example.test/4111111111111111';
+    const beforeCapture = fake.requests.length;
+    await expect(service.ingestArtifact({ installationId: 'house', artifactId, uri: protectedUri, title: 'Protected external URI' }))
+      .rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    expect(fake.requests).toHaveLength(beforeCapture);
+    const protectedSource = store.listSources().find(item => item.sourceUri === protectedUri)!;
+    expect(protectedSource).toBeDefined();
+    expect(store.edgesFor('source', protectedSource.id)).toHaveLength(0);
+    const protectedExtraction = store.getExtractionBySourceId(protectedSource.id)!;
     const before = fake.requests.length;
     await expect(prepareGeneratedFactSupport([withStoredKnowledgeSourceReferences(candidate(protectedSource, protectedExtraction), store, protectedSource, protectedExtraction)])).rejects.toBeInstanceOf(JudgmentInputError);
     await expect(store.upsertNode({ kind: 'fact', slug: 'external-uri-held', title: 'AC-7 ports', sourceId: protectedSource.id, metadata: { knowledgeSpaceId: spaceId } })).rejects.toBeInstanceOf(JudgmentInputError);

@@ -460,3 +460,36 @@ describe('getProviderUsageSnapshot(): honest degrade on an unresolvable current 
     expect(snapshot).toBeNull();
   });
 });
+
+describe('owned catalog provider identity', () => {
+  test('captures complete registered/catalog identities and rejects provider replacement ABA', () => {
+    const registry = makeRegistry(); const first = makeProvider('catalog-fixture', ['model-fixture']);
+    registry.register(first);
+    const source = registry.captureProviderCatalogIds();
+    expect(source.providerIds).toContain('catalog-fixture');
+    expect(source.catalogProviderIds).toContain('catalog-fixture');
+    expect(() => source.assertCurrent()).not.toThrow();
+    registry.register(makeProvider('catalog-fixture', ['replacement-model'])); registry.register(first);
+    expect(() => source.assertCurrent()).toThrow();
+  });
+  test('changed model provider data and accessor replacement retire the captured source without invoking getters', () => {
+    const registry = makeRegistry(); registry.register(makeProvider('catalog-fixture', ['model-fixture']));
+    const source = registry.captureProviderCatalogIds();
+    const model = registry.listModels().find(item => item.provider === 'catalog-fixture')!;
+    const descriptor = Object.getOwnPropertyDescriptor(model, 'provider')!;
+    let reads = 0;
+    Object.defineProperty(model, 'provider', { configurable: true, get() { reads++; return 'catalog-fixture'; } });
+    try {
+      expect(() => source.assertCurrent()).toThrow(); expect(reads).toBe(0);
+      expect(() => registry.captureProviderCatalogIds()).toThrow(); expect(reads).toBe(0);
+    } finally { Object.defineProperty(model, 'provider', descriptor); }
+  });
+});
+
+test('catalog source refuses replacement of a model owner with the same provider spelling', () => {
+  const registry = makeRegistry(); registry.register(makeProvider('catalog-fixture', ['model-fixture']));
+  const source = registry.captureProviderCatalogIds(); const models = registry.listModels();
+  const index = models.findIndex(model => model.provider === 'catalog-fixture');
+  const old = models[index]!; models[index] = { ...old };
+  try { expect(() => source.assertCurrent()).toThrow(); } finally { models[index] = old; }
+});

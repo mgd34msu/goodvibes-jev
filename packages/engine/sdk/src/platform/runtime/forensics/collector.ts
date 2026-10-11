@@ -13,6 +13,7 @@
  * event is emitted so the panel can refresh.
  */
 import { randomUUID } from 'node:crypto';
+import { OwnedJudgmentWork } from '../owned-judgment-work.js';
 import type { RuntimeEventBus, RuntimeEventEnvelope } from '../events/index.js';
 import type { AnyRuntimeEvent } from '../../../events/domain-map.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -93,6 +94,8 @@ interface TaskTracker {
 export class ForensicsCollector {
   private readonly _bus: RuntimeEventBus;
   private readonly _registry: ForensicsRegistry;
+  private readonly _lifetime = new AbortController();
+  private readonly _pending = new Set<Promise<void>>();
   private readonly _unsubs: Array<() => void> = [];
 
   /** Active turn trackers keyed by turnId. */
@@ -145,6 +148,7 @@ export class ForensicsCollector {
     env: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>,
     handle: () => void,
   ): void {
+    if (this._lifetime.signal.aborted) return;
     try {
       handle();
     } catch (error) {
@@ -555,8 +559,8 @@ export class ForensicsCollector {
     errorMessage: string | undefined,
     wasCancelled: boolean,
   ): void {
-    void this._reportTurn(tracker, stopReason, errorMessage, wasCancelled)
-      .catch((error: unknown) => this._logUnclassified(error, tracker, { turnId: tracker.turnId }));
+    this._trackReport((work) => this._reportTurn(tracker, stopReason, errorMessage, wasCancelled, work),
+      tracker, { turnId: tracker.turnId });
   }
 
   private async _reportTurn(
@@ -564,7 +568,9 @@ export class ForensicsCollector {
     stopReason: string | undefined,
     errorMessage: string | undefined,
     wasCancelled: boolean,
+    work: OwnedJudgmentWork,
   ): Promise<void> {
+    work.assertCurrent();
     const classification = await classifyFailure({
       stopReason,
       errorMessage,
@@ -573,7 +579,8 @@ export class ForensicsCollector {
       hasToolFailure: tracker.hasToolFailure,
       hasPermissionDenial: tracker.hasPermissionDenial,
       hasCompactionError: tracker.hasCompactionError,
-    });
+    }, work.options('runtime.forensics.classifier'));
+    work.assertCurrent();
 
     const summary = summariseFailure(classification, errorMessage, stopReason);
 
@@ -595,7 +602,7 @@ export class ForensicsCollector {
       errorMessage,
       turnId: tracker.turnId,
       phaseTimings: tracker.phaseTimings,
-      slowPhases: await readSlowPhases('turn', tracker.phaseTimings, 'runtime.forensics.turn-slow-phases'),
+      slowPhases: await readSlowPhases('turn', tracker.phaseTimings, 'runtime.forensics.turn-slow-phases', work.options('runtime.forensics.turn-slow-phases')),
       phaseLedger: tracker.phaseLedger,
       causalChain: tracker.causalChain,
       cascadeEvents: tracker.cascadeEvents,
@@ -604,7 +611,7 @@ export class ForensicsCollector {
       jumpLinks,
     };
 
-    this._publishReport(report, { turnId: tracker.turnId });
+    this._publishReport(report, { turnId: tracker.turnId }, work);
   }
 
   private _finalise_task(
@@ -612,15 +619,17 @@ export class ForensicsCollector {
     errorMessage: string | undefined,
     wasCancelled: boolean,
   ): void {
-    void this._reportTask(tracker, errorMessage, wasCancelled)
-      .catch((error: unknown) => this._logUnclassified(error, tracker, { taskId: tracker.taskId }));
+    this._trackReport((work) => this._reportTask(tracker, errorMessage, wasCancelled, work),
+      tracker, { taskId: tracker.taskId });
   }
 
   private async _reportTask(
     tracker: TaskTracker,
     errorMessage: string | undefined,
     wasCancelled: boolean,
+    work: OwnedJudgmentWork,
   ): Promise<void> {
+    work.assertCurrent();
     const classification = await classifyFailure({
       errorMessage,
       wasCancelled,
@@ -628,7 +637,8 @@ export class ForensicsCollector {
       hasToolFailure: tracker.hasToolFailure,
       hasPermissionDenial: tracker.hasPermissionDenial,
       hasCompactionError: tracker.hasCompactionError,
-    });
+    }, work.options('runtime.forensics.classifier'));
+    work.assertCurrent();
 
     const summary = summariseFailure(classification, errorMessage);
 
@@ -650,7 +660,7 @@ export class ForensicsCollector {
       taskId: tracker.taskId,
       agentId: tracker.agentId,
       phaseTimings: tracker.phaseTimings,
-      slowPhases: await readSlowPhases('task', tracker.phaseTimings, 'runtime.forensics.task-slow-phases'),
+      slowPhases: await readSlowPhases('task', tracker.phaseTimings, 'runtime.forensics.task-slow-phases', work.options('runtime.forensics.task-slow-phases')),
       phaseLedger: tracker.phaseLedger,
       causalChain: tracker.causalChain,
       cascadeEvents: tracker.cascadeEvents,
@@ -659,7 +669,20 @@ export class ForensicsCollector {
       jumpLinks,
     };
 
-    this._publishReport(report, { taskId: tracker.taskId });
+    this._publishReport(report, { taskId: tracker.taskId }, work);
+  }
+
+  private _trackReport(
+    report: (work: OwnedJudgmentWork) => Promise<void>,
+    tracker: { sessionId: string; traceId: string },
+    context: { turnId?: string; taskId?: string },
+  ): void {
+    if (this._lifetime.signal.aborted) return;
+    const work = new OwnedJudgmentWork({ signal: this._lifetime.signal });
+    const pending = work.wait(() => report(work)).catch((error: unknown) => {
+      if (work.current) this._logUnclassified(error, tracker, context);
+    }).finally(() => { this._pending.delete(pending); work.retire(); });
+    this._pending.add(pending);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -738,10 +761,13 @@ export class ForensicsCollector {
   private _publishReport(
     report: FailureReport,
     context: { turnId?: string | undefined; taskId?: string | undefined },
+    work: OwnedJudgmentWork,
   ): void {
+    work.assertCurrent();
     try {
       this._registry.push(report);
     } catch (error) {
+      if (!work.current) return;
       logger.warn('Forensics collector failed to store report', {
         reportId: report.id,
         classification: report.classification,
@@ -753,6 +779,7 @@ export class ForensicsCollector {
       return;
     }
 
+    work.assertCurrent();
     try {
       emitForensicsReportCreated(
         this._bus,
@@ -765,6 +792,7 @@ export class ForensicsCollector {
         },
       );
     } catch (error) {
+      if (!work.current) return;
       logger.warn('Forensics collector failed to emit report event', {
         reportId: report.id,
         classification: report.classification,
@@ -785,6 +813,8 @@ export class ForensicsCollector {
 
   /** Dispose all event bus subscriptions. */
   public dispose(): void {
+    if (this._lifetime.signal.aborted) return;
+    this._lifetime.abort(new Error('Forensics collector is disposed'));
     for (const unsub of this._unsubs) {
       try {
         unsub();

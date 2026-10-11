@@ -174,11 +174,12 @@ export class DeviceCaptureArtifactStore {
 
   private async mutate<T>(
     fn: (artifacts: DeviceCaptureArtifact[], malformed: number) => Promise<{ next: DeviceCaptureArtifact[]; result: T }>,
+    beforePublish?: () => void,
   ): Promise<T> {
     const run = this.writeChain.then(async () => {
       const { artifacts, malformed } = await this.readWithDrops();
       const { next, result } = await fn(artifacts, malformed);
-      await this.index.persist({ version: 1, artifacts: next });
+      await this.index.persist({ version: 1, artifacts: next }, { beforePublish });
       return result;
     });
     this.writeChain = run.then(() => undefined, () => undefined);
@@ -210,6 +211,7 @@ export class DeviceCaptureArtifactStore {
     readonly workId?: string | undefined;
     readonly reason?: string | undefined;
     readonly ttlMs?: number | undefined;
+    readonly assertCurrent?: (() => void) | undefined;
   }): Promise<DeviceCaptureArtifact> {
     const now = this.now();
     const id = randomUUID();
@@ -219,8 +221,12 @@ export class DeviceCaptureArtifactStore {
           : input.mediaType.includes('webm') ? 'webm'
             : 'bin';
     const fileName = `${id}.${extension}`;
+    input.assertCurrent?.();
     await fs.mkdir(this.directory, { recursive: true });
+    input.assertCurrent?.();
+    try {
     await fs.writeFile(join(this.directory, fileName), input.bytes);
+    input.assertCurrent?.();
     const ttl = input.ttlMs && input.ttlMs > 0 ? input.ttlMs : this.getPolicy().retentionMs;
     const artifact: DeviceCaptureArtifact = {
       id,
@@ -236,7 +242,8 @@ export class DeviceCaptureArtifactStore {
       ...(input.workId ? { workId: input.workId } : {}),
       ...(input.reason ? { reason: input.reason } : {}),
     };
-    return this.mutate(async (artifacts) => ({ next: [...artifacts, artifact], result: artifact }));
+    return await this.mutate(async (artifacts) => ({ next: [...artifacts, artifact], result: artifact }), input.assertCurrent);
+    } catch (error) { await fs.rm(join(this.directory, fileName), { force: true }); throw error; }
   }
 
   /** Absolute path of a retained capture's bytes. */

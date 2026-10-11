@@ -50,6 +50,8 @@
  * `Buffer.byteLength(payload)`, never `payload.length`.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertImapReadingCurrent } from './imap-readings.js';
 import type { Socket } from 'node:net';
 import type { ImapFetchFrame } from './imap-fetch-response.js';
 import { wireLines } from './imap-wire-frames.js';
@@ -719,12 +721,15 @@ export class ImapSession implements ImapConnection {
    * payload, and surfaces a `NO`/`BAD` sent instead of the continuation as the
    * same plain-language failure a normal command would raise.
    */
-  async commandWithLiteral(commandPrefix: string, payload: string): Promise<string[]> {
+  async commandWithLiteral(commandPrefix: string, payload: string, reading: JudgmentReadingOptions = {}): Promise<string[]> {
+    assertImapReadingCurrent(reading);
     const byteLength = Buffer.byteLength(payload, 'utf8');
     const tag = await this.sendCommand(`${commandPrefix} {${byteLength}}`);
-    await this.awaitContinuation(tag);
+    await this.awaitContinuation(tag, { signal: reading.signal });
+    assertImapReadingCurrent(reading);
     await this.write(`${payload}${CRLF}`);
-    return this.awaitTag(tag);
+    assertImapReadingCurrent(reading);
+    return this.awaitTag(tag, { signal: reading.signal });
   }
 
   private nextTag(): string {

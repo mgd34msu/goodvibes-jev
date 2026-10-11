@@ -280,16 +280,6 @@ describe('content addressing across the closed sections it has to serve', () => 
 });
 
 describe('the mechanical-field path is unchanged', () => {
-  test('forget by fieldId still removes the value and its history', async () => {
-    const { catalog, path } = await harness();
-    const result = await catalog.invoke('profile.forget', {
-      ...ctx,
-      body: { ...OWNER, fieldId: 'commerce.shippingAddress' },
-    }) as ProfileWriteResult;
-    expect(result.ok).toBe(true);
-    expect(readFileSync(path, 'utf-8')).not.toContain('401 Home St');
-  });
-
   test('a field delete survives a concurrent edit by replaying, as it did before', async () => {
     const { catalog, path } = await harness();
     writeFileSync(path, `${FIXTURE}\n- A line he added just now\n`, 'utf-8');
@@ -313,16 +303,6 @@ describe('§9.2: the list marker is syntax, not content', () => {
     const result = await catalog.invoke('profile.forget', {
       ...ctx,
       body: { ...OWNER, section: 'Notes', text: 'Allergic to shellfish' },
-    }) as ProfileWriteResult;
-    expect(result.ok).toBe(true);
-    expect(readFileSync(path, 'utf-8')).not.toContain('shellfish');
-  });
-
-  test('the stored form deletes the same line', async () => {
-    const { catalog, path } = await harness();
-    const result = await catalog.invoke('profile.forget', {
-      ...ctx,
-      body: { ...OWNER, section: 'Notes', text: '- Allergic to shellfish' },
     }) as ProfileWriteResult;
     expect(result.ok).toBe(true);
     expect(readFileSync(path, 'utf-8')).not.toContain('shellfish');

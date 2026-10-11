@@ -1,3 +1,5 @@
+import { agentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { captureTranscriptSource } from './transcript-reading.ts';
 import type { CommandRegistry } from '../command-registry.ts';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -5,13 +7,12 @@ import { requireYesFlag, stripYesFlag } from './confirmation.ts';
 import { handleContextWindowSubcommand } from './context-window.ts';
 import { AGENT_NOTIFICATIONS_METADATA_ONLY_KEY } from '../../config/host-settings.ts';
 import {
-  countHarnessSettings,
   formatHarnessError,
   formatHarnessMutation,
   formatHarnessSetting,
   formatHarnessSettingList,
   getEffectiveHarnessSetting,
-  listEffectiveHarnessSettings,
+  listEffectiveHarnessSettingsPage,
   resetHarnessSetting,
   setHarnessSetting,
 } from '../../agent/harness-control.ts';
@@ -91,8 +92,18 @@ export function registerOperatorRuntimeCommands(registry: CommandRegistry): void
         // `total` is what matched, not what fits on the page, the formatter
         // needs both so a short page can name itself as short.
         const listFilters = parseSettingListArgs(commandArgs.slice(1));
-        const listed = await listEffectiveHarnessSettings(ctx.platform.configManager, listFilters);
-        ctx.print(formatHarnessSettingList(listed, countHarnessSettings(ctx.platform.configManager, listFilters)));
+        const config = ctx.platform.configManager;
+        const owner = agentResearchSourceOwner(ctx.extensions.toolRegistry);
+        const source = listFilters.query ? captureTranscriptSource(ctx) : undefined;
+        const guards: (() => void)[] = [];
+        const assertCurrent = () => {
+          source?.assertPublishable();
+          if (ctx.platform.configManager !== config || agentResearchSourceOwner(ctx.extensions.toolRegistry) !== owner) throw new Error('Settings source changed.');
+        };
+        const page = await listEffectiveHarnessSettingsPage(config, listFilters, { sourceOwner: owner, assertCurrent,
+          retainCurrent: guard => { guards.push(guard); } });
+        assertCurrent(); for (const guard of guards) guard();
+        ctx.print(formatHarnessSettingList(page.settings, page.matched));
         return;
       }
 

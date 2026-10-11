@@ -16,6 +16,7 @@
  *   lifecycle events and leaves a boundary commit
  */
 
+import { OwnedJudgmentWork } from '../owned-judgment-work.js';
 import { logger } from '../../utils/logger.js';
 import type { RuntimeEventBus } from '../events/index.js';
 import type { FeatureFlagManager } from '../feature-flags/manager.js';
@@ -126,6 +127,7 @@ export class CompactionManager {
 
   /** Set by dispose(); a disposed manager starts no run and emits nothing. */
   private _disposed = false;
+  private readonly _lifetime = new AbortController();
 
   /** Current state machine state. */
   private _state: CompactionLifecycleState = 'idle';
@@ -191,6 +193,32 @@ export class CompactionManager {
     trigger: CompactionTrigger;
     isPromptTooLong?: boolean | undefined;
   }): Promise<CompactionLifecycleResult | null> {
+    if (this._disposed) return null;
+    const run = this._runChain.then(async () => {
+      if (this._disposed) return null;
+      const work = new OwnedJudgmentWork({ signal: this._lifetime.signal });
+      try {
+        const result = await this._compactCurrent(opts, work);
+        work.assertCurrent();
+        return result;
+      }
+      catch (error) { if (!work.current) return null; throw error; }
+      finally {
+        work.retire();
+        if (!this._disposed) this._state = 'idle';
+      }
+    });
+    this._runChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async _compactCurrent(opts: {
+    messages: ProviderMessage[];
+    tokenCount: number;
+    trigger: CompactionTrigger;
+    isPromptTooLong?: boolean | undefined;
+  }, work: OwnedJudgmentWork): Promise<CompactionLifecycleResult | null> {
+    work.assertCurrent();
     // ── Capability gate ──────────────────────────────────────────────────────
     if (!this._flags.isEnabled('session-compaction')) {
       logger.debug('[CompactionManager] session compaction is off (behavior.compactionStrategy); skipping', {
@@ -211,11 +239,13 @@ export class CompactionManager {
     // ── Transition: idle → checking_threshold ────────────────────────────────
     this._transition('checking_threshold');
 
+    work.assertCurrent();
     emitCompactionCheck(this._bus, this._ctx, {
       sessionId: this._sessionId,
       tokenCount,
       threshold,
     });
+    work.assertCurrent();
 
     // ── Check threshold ──────────────────────────────────────────────────────
     if (trigger === 'auto' && !isPromptTooLong && tokenCount < threshold) {
@@ -257,15 +287,18 @@ export class CompactionManager {
     };
 
     try {
-      strategyOutput = await this._runStrategy(strategy, strategyInput);
+      strategyOutput = await work.wait(() => this._runStrategy(strategy, strategyInput, work));
     } catch (err) {
+      work.assertCurrent();
       const error = summarizeError(err);
       this._transition('failed');
+      work.assertCurrent();
       emitCompactionFailed(this._bus, this._ctx, {
         sessionId: this._sessionId,
         strategy,
         error,
       });
+      work.assertCurrent();
       this._transition('idle');
       logger.error('[CompactionManager] strategy execution failed', {
         sessionId: this._sessionId,
@@ -276,9 +309,11 @@ export class CompactionManager {
     }
 
     // ── Score quality and auto-switch if low ─────────────────────────────────
-    qualityScore = await this._score(strategyInput, strategyOutput);
+    qualityScore = await this._score(strategyInput, strategyOutput, work);
+    work.assertCurrent();
     if (qualityScore === null) return null;
 
+    work.assertCurrent();
     emitCompactionQualityScore(this._bus, this._ctx, {
       sessionId: this._sessionId,
       strategy,
@@ -289,6 +324,7 @@ export class CompactionManager {
       isLowQuality: qualityScore.isLowQuality,
       description: qualityScore.description,
     });
+    work.assertCurrent();
 
     if (qualityScore.isLowQuality) {
       const escalated = escalateStrategy(strategy);
@@ -304,6 +340,7 @@ export class CompactionManager {
           grade: qualityScore.grade,
         });
 
+        work.assertCurrent();
         emitCompactionStrategySwitch(this._bus, this._ctx, {
           sessionId: this._sessionId,
           fromStrategy: strategy,
@@ -311,6 +348,7 @@ export class CompactionManager {
           reason,
           score: qualityScore.score,
         });
+        work.assertCurrent();
 
         // Force state to the escalated strategy state, bypassing normal transition
         // validation. This is intentional: quality-correction reruns are not modelled
@@ -321,8 +359,9 @@ export class CompactionManager {
         const escalatedInput: StrategyInput = { ...strategyInput, strategy: escalated };
         let escalatedOutput: StrategyOutput | undefined;
         try {
-          escalatedOutput = await this._runStrategy(escalated, escalatedInput);
+          escalatedOutput = await work.wait(() => this._runStrategy(escalated, escalatedInput, work));
         } catch (err) {
+          work.assertCurrent();
           const error = summarizeError(err);
           logger.warn('[CompactionManager] escalated strategy also failed; using original output', {
             sessionId: this._sessionId,
@@ -334,7 +373,8 @@ export class CompactionManager {
         }
         if (escalatedOutput !== undefined) {
           // Re-score the escalated result
-          const escalatedScore = await this._score(escalatedInput, escalatedOutput);
+          const escalatedScore = await this._score(escalatedInput, escalatedOutput, work);
+          work.assertCurrent();
           if (escalatedScore === null) return null;
           qualityScore = escalatedScore;
           strategyOutput = escalatedOutput;
@@ -365,11 +405,13 @@ export class CompactionManager {
     if (commitErrors.length > 0) {
       const error = commitErrors.join('; ');
       this._transition('failed');
+      work.assertCurrent();
       emitCompactionFailed(this._bus, this._ctx, {
         sessionId: this._sessionId,
         strategy,
         error,
       });
+      work.assertCurrent();
       this._transition('idle');
       logger.error('[CompactionManager] boundary commit validation failed', {
         sessionId: this._sessionId,
@@ -378,10 +420,12 @@ export class CompactionManager {
       return null;
     }
 
+    work.assertCurrent();
     emitCompactionBoundaryCommit(this._bus, this._ctx, {
       sessionId: this._sessionId,
       checkpointId: commit.checkpointId,
     });
+    work.assertCurrent();
 
     this._lastCommit = commit;
 
@@ -389,6 +433,7 @@ export class CompactionManager {
     this._transition('done');
     const durationMs = Date.now() - runStart;
 
+    work.assertCurrent();
     emitCompactionDone(this._bus, this._ctx, {
       sessionId: this._sessionId,
       strategy,
@@ -396,6 +441,7 @@ export class CompactionManager {
       tokensAfter: strategyOutput.tokensAfter,
       durationMs,
     });
+    work.assertCurrent();
 
     // ── Transition: done → idle ───────────────────────────────────────────────
     this._transition('idle');
@@ -441,25 +487,31 @@ export class CompactionManager {
     contextWindow?: number | undefined;
     /** Threshold (tokens) the session compared against; defaults to window x fraction. */
     threshold?: number | undefined;
-    execute: () => Promise<T>;
+    execute: (lifetime: { signal: AbortSignal; assertCurrent: () => void }) => Promise<T>;
     outcome: (result: T) => SessionCompactionOutcome | null;
   }): Promise<T> {
     if (this._disposed) {
       return Promise.reject(new Error(`CompactionManager for session ${this._sessionId} is disposed`));
     }
-    const run = this._runChain.then(() => this._runLifecycle(opts));
+    const run = this._runChain.then(() => {
+      if (this._disposed) throw new Error(`CompactionManager for session ${this._sessionId} is disposed`);
+      return this._runLifecycle(opts);
+    });
     this._runChain = run.catch(() => undefined);
     return run;
   }
 
   /**
    * Releases the manager with its session: no further run starts, a run still
-   * in flight finishes its compaction without emitting on the session's bus,
+   * in flight loses permission to read or publish on the session's behalf,
    * and the boundary commit chain is dropped.
    */
   dispose(): void {
+    if (this._disposed) return;
     this._disposed = true;
     this._lastCommit = null;
+    this._state = 'idle';
+    this._lifetime.abort(new Error(`CompactionManager for session ${this._sessionId} is disposed`));
   }
 
   private async _runLifecycle<T>(opts: {
@@ -469,7 +521,7 @@ export class CompactionManager {
     tokenCount: number;
     contextWindow?: number | undefined;
     threshold?: number | undefined;
-    execute: () => Promise<T>;
+    execute: (lifetime: { signal: AbortSignal; assertCurrent: () => void }) => Promise<T>;
     outcome: (result: T) => SessionCompactionOutcome | null;
   }): Promise<T> {
     const runStart = Date.now();
@@ -477,36 +529,46 @@ export class CompactionManager {
     const contextWindow = opts.contextWindow ?? this._contextWindow;
     const threshold = opts.threshold ?? Math.floor(contextWindow * this._thresholdFraction);
     const live = (): boolean => !this._disposed;
+    const assertCurrent = (): void => { this._lifetime.signal.throwIfAborted(); };
+    assertCurrent();
 
     if (this._state !== 'idle') this._state = 'idle';
     this._transition('checking_threshold');
     if (live()) {
       emitCompactionCheck(this._bus, this._ctx, { sessionId: this._sessionId, tokenCount, threshold });
     }
+    assertCurrent();
     this._transition(strategyToState(strategy));
 
     const fail = (error: string): void => {
+      if (!live()) return;
       this._transition('failed');
       if (live()) emitCompactionFailed(this._bus, this._ctx, { sessionId: this._sessionId, strategy, error });
       this._transition('idle');
+      if (!live()) return;
       logger.warn('[CompactionManager] session compaction failed', { sessionId: this._sessionId, strategy, trigger, error });
     };
 
     let result: T;
     try {
-      result = await opts.execute();
+      assertCurrent();
+      result = await opts.execute({ signal: this._lifetime.signal, assertCurrent });
     } catch (err) {
       fail(summarizeError(err));
       throw err;
     }
 
+    // The callback may already have applied messages. Preserve its truthful result.
+    if (!live()) return result;
     const applied = opts.outcome(result);
+    if (!live()) return result;
     if (applied === null) {
       fail('compaction applied no result');
       return result;
     }
 
-    if (live()) this._emitStrategyEvent(strategy, opts.messages.length, tokenCount, applied.tokensAfter, contextWindow);
+    this._emitStrategyEvent(strategy, opts.messages.length, tokenCount, applied.tokensAfter, contextWindow);
+    if (!live()) return result;
 
     this._transition('boundary_commit');
     const commit = createBoundaryCommit({
@@ -529,6 +591,7 @@ export class CompactionManager {
     }
     if (live()) {
       emitCompactionBoundaryCommit(this._bus, this._ctx, { sessionId: this._sessionId, checkpointId: commit.checkpointId });
+      if (!live()) return result;
       this._lastCommit = commit;
     }
 
@@ -554,6 +617,7 @@ export class CompactionManager {
     tokensAfter: number,
     contextWindow: number,
   ): void {
+    if (this._disposed) return;
     switch (strategy) {
       case 'microcompact':
         emitCompactionMicrocompact(this._bus, this._ctx, { sessionId: this._sessionId, turnCount: messageCount, tokensBefore, tokensAfter });
@@ -619,10 +683,11 @@ export class CompactionManager {
    * COMPACTION_FAILED event, back to idle, and null so no unscored output is
    * committed.
    */
-  private async _score(input: StrategyInput, output: StrategyOutput): Promise<CompactionQualityScore | null> {
+  private async _score(input: StrategyInput, output: StrategyOutput, work: OwnedJudgmentWork): Promise<CompactionQualityScore | null> {
     try {
-      return await computeQualityScore(input, output);
+      return await work.wait(() => computeQualityScore(input, output, work.options('runtime.compaction.quality-score')));
     } catch (err) {
+      work.assertCurrent();
       const error = summarizeError(err);
       this._transition('failed');
       emitCompactionFailed(this._bus, this._ctx, {
@@ -630,6 +695,7 @@ export class CompactionManager {
         strategy: input.strategy,
         error,
       });
+      work.assertCurrent();
       this._transition('idle');
       logger.error('[CompactionManager] quality scoring failed', {
         sessionId: this._sessionId,
@@ -646,11 +712,12 @@ export class CompactionManager {
   private async _runStrategy(
     strategy: CompactionStrategy,
     input: StrategyInput,
+    work: OwnedJudgmentWork,
   ): Promise<StrategyOutput> {
     let output: StrategyOutput;
     switch (strategy) {
       case 'microcompact': output = runMicrocompact(input); break;
-      case 'collapse': output = await runCollapse(input); break;
+      case 'collapse': output = await runCollapse(input, work.options('runtime.compaction.collapse')); break;
       case 'autocompact': output = runAutocompact(input); break;
       case 'reactive': output = runReactive(input); break;
       default: {
@@ -658,7 +725,9 @@ export class CompactionManager {
         throw new Error(`Unknown compaction strategy: ${_exhaustive}`);
       }
     }
+    work.assertCurrent();
     this._emitStrategyEvent(strategy, input.messages.length, input.tokensBefore, output.tokensAfter, this._contextWindow);
+    work.assertCurrent();
     return output;
   }
 
@@ -667,6 +736,7 @@ export class CompactionManager {
    * Invalid transitions are logged and treated as internal errors.
    */
   private _transition(target: CompactionLifecycleState): void {
+    if (this._disposed) return;
     const result = applyTransition(this._state, target);
     if (!result.ok) {
       logger.error('[CompactionManager] invalid state transition', {

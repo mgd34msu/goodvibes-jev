@@ -274,9 +274,9 @@ describe('surfaces that classify or subscribe', () => {
     expect(seen).toEqual([CTR]);
   });
 
-  test('[Contract] messages are the contract kind, and the transcript shows them as contract state', () => {
+  test('[Contract] messages are the contract kind, and the transcript shows them as contract state', async () => {
     expect(classifySystemMessageKind(`[Contract] ${CTR} started: Add a parser`)).toBe('contract');
-    const [event] = classifyTranscriptMessages([{ role: 'system', content: `[Contract] ${CTR} PASSED` } as never]);
+    const [event] = await classifyTranscriptMessages([{ role: 'system', content: `[Contract] ${CTR} PASSED` } as never]);
     expect(event?.kind).toBe('contract_state');
   });
 

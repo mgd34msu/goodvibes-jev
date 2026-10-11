@@ -1,3 +1,5 @@
+import { captureJudgmentFailure } from '../gate/failure-input.js';
+import { judgmentPort, readFailureTransience, type FailureReadOptions } from '@goodvibes-jev/engine/errors';
 /**
  * spine-intake.ts, how a hosted session reaches the SHARED session spine, and
  * how a steer reaches a hosted turn.
@@ -78,6 +80,8 @@ export interface HostedSessionSpine {
 /** What the intake needs from the engine that owns the sessions. */
 export interface HostedSessionSpineIntakeOptions {
   readonly spine?: HostedSessionSpine | undefined;
+  /** Captured composition owner for failure readings; no ambient port changes during retry. */
+  readonly failureReading?: FailureReadOptions | undefined;
   /** Non-terminated hosted sessions, read fresh on every tick. */
   readonly liveSessions: () => readonly HostedSessionRecord[];
   /** Attribute awaited registration/close callbacks to their session owner. */
@@ -106,8 +110,8 @@ const HOSTED_PARTICIPANT_SURFACE_ID = 'daemon:hosted-sessions';
  * Small on purpose. The failures worth retrying here are the transient ones,
  * a restored session's loop still being composed, a floor lease still being
  * acquired, and those clear within a tick or two. Anything that survives
- * three attempts is a condition retrying will not fix, and continuing to
- * retry it would keep a message in limbo instead of saying it did not land.
+ * the bounded attempt ceiling is failed observably rather than kept in limbo.
+ * The shared failure reader, not this count, determines retry eligibility.
  */
 const DEFAULT_MAX_DELIVERY_ATTEMPTS = 3;
 
@@ -119,6 +123,7 @@ interface PendingDelivery {
   /** The broker's input identity, retained through queued delivery and retry. */
   readonly correlationId?: string | undefined;
   readonly attempts: number;
+  readonly failure?: { readonly error: unknown; readonly detail: string; readonly blocked?: boolean; readonly reading?: FailureReadOptions } | undefined;
 }
 
 /**
@@ -143,6 +148,8 @@ export class HostedSessionSpineIntake {
   private timer: ReturnType<typeof setInterval> | null = null;
   private scheduling = false;
   private stopped = false;
+  private readonly lifetime = new AbortController();
+  private readonly sessionLifetimes = new Map<string, AbortController>();
   private readonly fenced = new Set<string>();
   private readonly callbackOwners = new Map<string, object>();
   private readonly registrations = new Map<string, Set<Promise<void>>>();
@@ -153,7 +160,10 @@ export class HostedSessionSpineIntake {
   /** One delivery lane per session with work outstanding. */
   private readonly lanes = new Map<string, SessionDeliveryLane>();
 
-  constructor(private readonly options: HostedSessionSpineIntakeOptions) {}
+  private readonly failureReading: FailureReadOptions | undefined;
+  constructor(private readonly options: HostedSessionSpineIntakeOptions) {
+    this.failureReading = options.failureReading ? { ...options.failureReading } : undefined;
+  }
 
   /** Begin collecting and heartbeating. A no-op without a spine. */
   start(): void {
@@ -166,6 +176,7 @@ export class HostedSessionSpineIntake {
 
   stop(): void {
     this.stopped = true;
+    this.lifetime.abort();
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
@@ -175,6 +186,7 @@ export class HostedSessionSpineIntake {
   /** Permanently stop registration admission for a terminated session. */
   fence(sessionId: string): void {
     this.fenced.add(sessionId);
+    this.sessionLifetimes.get(sessionId)?.abort();
   }
 
   /** Put (or refresh) this session on the shared spine. Never throws. */
@@ -338,7 +350,7 @@ export class HostedSessionSpineIntake {
     const key = pendingKey(pending.sessionId, pending.inputId);
     // Already queued or already being delivered: a tick that fires while a slow
     // turn is in flight must not hand the same message over a second time.
-    if (this.inFlight.has(key)) return;
+    if (this.stopped || this.fenced.has(pending.sessionId) || this.inFlight.has(key)) return;
     this.inFlight.add(key);
     const lane = this.lanes.get(pending.sessionId) ?? { queue: [], worker: null };
     this.lanes.set(pending.sessionId, lane);
@@ -365,9 +377,11 @@ export class HostedSessionSpineIntake {
           const key = pendingKey(next.sessionId, next.inputId);
           try {
             await this.attemptDelivery(spine, next);
-          } catch (error) {
-            logger.warn('[hosted-sessions] an intake pass failed; the next tick retries', {
-              error: summarizeError(error),
+          } catch {
+            // A reader/provider exception is untrusted too. Retain the input
+            // without echoing potentially credential-bearing exception text.
+            logger.warn('[hosted-sessions] delivery classification unavailable; input remains collected', {
+              sessionId: next.sessionId, inputId: next.inputId,
             });
           } finally {
             this.inFlight.delete(key);
@@ -397,35 +411,67 @@ export class HostedSessionSpineIntake {
    */
   private async attemptDelivery(spine: HostedSessionSpine, pending: PendingDelivery): Promise<void> {
     const key = pendingKey(pending.sessionId, pending.inputId);
+    const assertCurrent = () => {
+      this.lifetime.signal.throwIfAborted();
+      if (this.fenced.has(pending.sessionId)) throw new Error('Hosted delivery owner closed');
+    };
+    assertCurrent();
+    // A failed reading may be retried, but never by resending the input before
+    // its actual delivery failure has been classified.
+    if (pending.failure) {
+      await this.resolveFailure(spine, pending, assertCurrent);
+      return;
+    }
     try {
       await this.options.deliver(pending.sessionId, pending.body, pending.correlationId);
       this.pending.delete(key);
+      // A successfully completed turn stays delivered during shutdown drain.
       await spine.markInputDelivered(pending.sessionId, pending.inputId, { consumed: true }).catch(() => undefined);
-      return;
     } catch (error) {
-      const attempts = pending.attempts + 1;
-      const detail = summarizeError(error);
-      const cap = this.options.maxDeliveryAttempts ?? DEFAULT_MAX_DELIVERY_ATTEMPTS;
-      if (attempts < cap) {
-        this.pending.set(key, { ...pending, attempts });
-        logger.warn('[hosted-sessions] a collected input could not be delivered; it stays queued for the next tick', {
-          sessionId: pending.sessionId,
-          inputId: pending.inputId,
-          attempts,
-          error: detail,
-        });
-        return;
-      }
-      this.pending.delete(key);
-      logger.error('[hosted-sessions] a collected input could not be delivered and is now marked failed', {
-        sessionId: pending.sessionId,
-        inputId: pending.inputId,
-        attempts,
-        error: detail,
-      });
-      await spine.failInput?.(pending.sessionId, pending.inputId, detail).catch(() => undefined);
-      this.alertOwner(pending, attempts, detail);
+      // Keep the input collected even if the evidence is unsafe to read. It must
+      // never be retried merely because privacy admission failed.
+      const blocked: PendingDelivery = { ...pending, attempts: pending.attempts + 1,
+        failure: { error: undefined, blocked: true, detail: 'Delivery failed; failure evidence has not been admitted.' } };
+      this.pending.set(key, blocked);
+      const captured = captureJudgmentFailure(error);
+      const failed: PendingDelivery = { ...blocked,
+        failure: { error: captured, detail: summarizeError(captured), ...(this.failureReading ? { reading: this.failureReading } : {}) } };
+      this.pending.set(key, failed);
+      await this.resolveFailure(spine, failed, assertCurrent);
     }
+  }
+
+  private async resolveFailure(spine: HostedSessionSpine, pending: PendingDelivery, assertCurrent: () => void): Promise<void> {
+    assertCurrent();
+    const failure = pending.failure!;
+    if (failure.blocked) throw new Error('Hosted delivery failure evidence could not be admitted');
+    let owner = this.sessionLifetimes.get(pending.sessionId);
+    if (!owner) { owner = new AbortController(); this.sessionLifetimes.set(pending.sessionId, owner); }
+    const captured = failure.reading ?? { port: judgmentPort('engine.hosted-session.spine-delivery') };
+    const signal = AbortSignal.any([this.lifetime.signal, owner.signal, ...(captured.signal ? [captured.signal] : [])]);
+    const reading = { ...captured, signal, beforeAttempt: () => { assertCurrent(); const result = captured.beforeAttempt?.(); if (result !== undefined) return result; signal.throwIfAborted(); } };
+    // Retain the exact owner if a reader failure needs a later reading attempt.
+    this.pending.set(pendingKey(pending.sessionId, pending.inputId), { ...pending, failure: { ...failure, reading: captured } });
+    const transience = await readFailureTransience(failure.error, 'engine.hosted-session.spine-delivery', { reading });
+    assertCurrent(); signal.throwIfAborted();
+    const key = pendingKey(pending.sessionId, pending.inputId);
+    const cap = this.options.maxDeliveryAttempts ?? DEFAULT_MAX_DELIVERY_ATTEMPTS;
+    // A-F1540: the count is only the mechanical ceiling AFTER eligibility.
+    if (transience.failureClass === 'retryable' && pending.attempts < cap) {
+      this.pending.set(key, { ...pending, failure: undefined });
+      logger.warn('[hosted-sessions] a collected input could not be delivered; it stays queued for the next tick', {
+        sessionId: pending.sessionId, inputId: pending.inputId, attempts: pending.attempts, error: failure.detail,
+      });
+      return;
+    }
+    this.pending.delete(key);
+    logger.error('[hosted-sessions] a collected input could not be delivered and is now marked failed', {
+      sessionId: pending.sessionId, inputId: pending.inputId, attempts: pending.attempts, error: failure.detail,
+    });
+    assertCurrent(); signal.throwIfAborted();
+    await spine.failInput?.(pending.sessionId, pending.inputId, failure.detail).catch(() => undefined);
+    assertCurrent(); signal.throwIfAborted();
+    this.alertOwner(pending, pending.attempts, failure.detail);
   }
 
   /** Say it on a channel that still works. Never throws into the tick. */

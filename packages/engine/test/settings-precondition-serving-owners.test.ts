@@ -9,6 +9,7 @@ import { PairingTokenManager } from '../sdk/src/platform/pairing/pairing-token-s
 import { UserAuthManager } from '../sdk/src/platform/security/user-auth.js';
 import { createDaemonSystemRouteHandlers } from '../daemon-sdk/src/system-routes.js';
 import { DaemonServer } from '../sdk/src/platform/daemon/facade.js';
+import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.js';
 import { DaemonLifecycleRuntime } from '../sdk/src/platform/daemon/facade-lifecycle.js';
 import { DaemonHttpRouter } from '../sdk/src/platform/daemon/http/router.js';
 import { createServingSettingsPrecondition } from '../sdk/src/platform/daemon/http/settings-precondition.js';
@@ -88,7 +89,7 @@ test('actual protected-input boundary blocks raw credential capture and accepts 
   await expect(captureRemoteSettingsPrecondition(f.endpoint, { operation: 'set', key: 'surfaces.telegram.botToken', value: 'synthetic-inline-secret' }, { fetchImpl })).rejects.toThrow();
   expect(calls).toBe(0);
   const request = new Request('http://synthetic.invalid/config', { headers: { authorization: `Bearer ${f.endpoint.token}` } });
-  const result = f.service.handle(request, { settingsPrecondition: { version: 1, action: 'capture', operation: 'set', key: 'surfaces.telegram.botToken', value: 'synthetic-inline-secret' } }, f.service.lifetime());
+  const result = await f.service.handle(request, { settingsPrecondition: { version: 1, action: 'capture', operation: 'set', key: 'surfaces.telegram.botToken', value: 'synthetic-inline-secret' } }, f.service.lifetime());
   expect(result.status).toBe(409); expect(await result.text()).not.toContain('synthetic-inline-secret');
   const prepared = await captureRemoteSettingsPrecondition(f.endpoint, { operation: 'set', key: 'surfaces.telegram.botToken', value: 'goodvibes://secrets/telegram/bot' }, { fetchImpl });
   expect(inspectRemoteSettingsPrecondition(prepared).value).toBe('goodvibes://secrets/telegram/bot');
@@ -225,6 +226,8 @@ function stoppingFacade() {
   });
   const state = Object.assign(Object.create(DaemonServer.prototype) as object, {
     settingsLifetime: {} as object | null, tornDown: false, lifecycle,
+    // The real stop path owns proposal disposal and drain even without a socket.
+    workProposals: new WorkProposalStore(),
     server: { stop() { events.push('socket'); } },
     enabled: true, authToken: 'fixture-shared', host: '127.0.0.1', port: 0,
     _restarting: false,
@@ -274,9 +277,9 @@ for (const handover of [false, true]) test(`actual synchronous lifecycle abort c
     const request = new Request('http://synthetic.invalid/config', {
       headers: { authorization: `Bearer ${f.endpoint.token}` },
     });
-    captureStatus = f.service.handle(request, { settingsPrecondition: {
+    captureStatus = (f.service.handle(request, { settingsPrecondition: {
       version: 1, action: 'capture', operation: 'set', key: 'controlPlane.port', value: 4567,
-    } }, f.service.lifetime()).status;
+    } }, f.service.lifetime()) as Response).status;
   });
   await d.stop(handover);
   expect(lifetimeAfterEnable).toBeNull();
@@ -323,9 +326,9 @@ for (const handover of [false, true]) test(`failed actual updater stop handover=
   const request = new Request('http://synthetic.invalid/config', {
     headers: { authorization: `Bearer ${f.endpoint.token}` },
   });
-  const captureStatus = f.service.handle(request, { settingsPrecondition: {
+  const captureStatus = (f.service.handle(request, { settingsPrecondition: {
     version: 1, action: 'capture', operation: 'set', key: 'controlPlane.port', value: 4567,
-  } }, f.service.lifetime()).status;
+  } }, f.service.lifetime()) as Response).status;
   await d.stop(handover);
   expect(tornDownAfterFailure).toBe(false);
   expect(lifetimeAfterEnable).toBeNull(); expect(captureStatus).toBe(409);

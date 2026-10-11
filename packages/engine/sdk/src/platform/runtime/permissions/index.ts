@@ -100,7 +100,7 @@ export type {
 
 export {
   evaluatePrefixRule,
-  evaluateArgShapeRule,
+  evaluateArgShapeRule, evaluateArgShapeRuleAsync,
   evaluatePathScopeRule,
   evaluateNetworkScopeRule,
   evaluateModeConstraintRule,

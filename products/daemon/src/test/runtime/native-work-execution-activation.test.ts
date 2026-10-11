@@ -22,7 +22,7 @@ import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
 import { createOperatorNativeWorkExecutionClient } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { WorkspaceRegistrationStore } from '@goodvibes-jev/engine/sdk/platform/workspace';
-import type { NativePairedExecutionAuthority } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution';
+import { NativeWorkExecutionError, type NativePairedExecutionAuthority } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution';
 import { createDaemonNativeWorkExecutionActivation } from '../../runtime/native-work-execution-activation.js';
 import * as nativeComposition from '../../runtime/native-work-execution-composition.js';
 import * as activationComposition from '../../runtime/native-work-execution-activation.js';
@@ -531,15 +531,15 @@ test('cancelled foreground retains the existing owner fleet slot until actual pr
   } finally { release(); await stopping; await f.close(); factory.mockRestore(); identities.mockRestore(); benchmarks.mockRestore(); }
 }, 20000);
 
-test('cancel authority failure propagates only after the foreground it stopped drains', async () => {
+test('cancel authority failure is value-free and propagates only after the foreground it stopped drains', async () => {
   const benchmarks = spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue(undefined);
   const identities = spyOn(BenchmarkStore.prototype, 'readBenchmarks').mockResolvedValue(undefined);
   const f = await fixture(); const failure = new Error('Synthetic cancel authority failure');
   let release!: () => void; const cleanup = new Promise<void>(resolve => { release = resolve; });
-  let entered = false; let aborted = false; let ended = false;
+  let entered = false; let aborted = false; let ended = false; let cleaned = false;
   f.hold(async request => { entered = true;
     await new Promise<void>(resolve => { if (request.signal?.aborted) resolve(); else request.signal?.addEventListener('abort', () => resolve(), { once: true }); });
-    aborted = true; await cleanup; return answer('stopped provider cleanup finished');
+    aborted = true; await cleanup; cleaned = true; return answer('stopped provider cleanup finished');
   });
   let lock: ReturnType<typeof spyOn> | undefined;
   try {
@@ -549,8 +549,15 @@ test('cancel authority failure propagates only after the foreground it stopped d
     const result = execution.cancel(started.admission.key, f.authority, 'Owned failed-cancel probe').then(
       () => { ended = true; return undefined; }, error => { ended = true; return error; });
     await waitFor(() => aborted, 'foreground stopped despite authority failure');
-    expect(ended).toBe(false);
-    release(); expect(await result).toBe(failure); expect(ended).toBe(true);
+    expect({ ended, cleaned }).toEqual({ ended: false, cleaned: false });
+    release(); const observed = await result;
+    expect({ ended, cleaned }).toEqual({ ended: true, cleaned: true });
+    // Borrowed authority failures cross the public boundary only after draining,
+    // as a bounded native error, never the owner's raw message or causal object.
+    expect(observed).toBeInstanceOf(NativeWorkExecutionError);
+    expect(observed).toMatchObject({ code: 'unavailable', message: 'Native work execution: unavailable' });
+    expect(observed).not.toBe(failure); expect(observed.cause).toBeUndefined();
+    expect(String(observed)).not.toContain(failure.message);
   } finally { release(); lock?.mockRestore(); await f.close(); identities.mockRestore(); benchmarks.mockRestore(); }
 }, 20000);
 

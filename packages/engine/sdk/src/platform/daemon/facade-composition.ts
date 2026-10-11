@@ -1,10 +1,12 @@
+import { assertSynchronousCurrent } from './reading-lifetime.js';
+import { captureOwnedJson } from '../gate/judgment-input.js';
 import { createTelegramSourceAccountOwner } from '../channels/telegram/source-account.js';
 import { composeDelegatedTelegramIntake } from './facade-delegated-telegram.js';
 import { AgentManager } from '../tools/agent/index.js';
 import { resolveHostBinding } from './host-resolver.js';
 import { composeHostedSessionsForFacade } from './hosted-sessions-composition.js';
 import { createFacadeWorkProposalStore } from './facade-work-proposal-store.js';
-import type { ConversationGateConfigReader } from '../agents/conversation-gate.js';
+import { readConversationGateConfig, type ConversationGateConfigReader } from '../agents/conversation-gate.js';
 import { continuationContractOptions, decideContinuationEscalation } from '../agents/conversation-continuation.js';
 import { gateSurfaceSpawn, type SurfaceIngressOrigin } from './surface-conversation-gate.js';
 import { conversationalTurnConfigReaderFrom, conversationalTurnSpawnOptions } from '../personal-capture/spawn-contract.js';
@@ -753,63 +755,117 @@ export function configureDaemonSessionContinuation(options: {
   /** Reads `conversationGate.*` so both halves of the gate obey one configuration. */
   readonly configReader?: ConversationGateConfigReader | undefined;
 }): void {
+  const readingInputs = new Set<string>();
   options.sessionBroker.setContinuationRunner(async ({ sessionId, input, task, routeBinding }) => {
-    const spawnInput = {
-      mode: 'spawn' as const,
-      task,
-      ...buildSharedSessionAgentSpawnRoutingInput(input.routing, { modelCandidates: options.modelCandidates?.() }),
-      context: `shared-session:${sessionId}`,
-    };
-    // Classify the OWNER's words (`input.body`), never the enriched
-    // continuation task the broker builds from the transcript, that framing
-    // reads as work no matter what the owner actually said.
-    const origin: SurfaceIngressOrigin | null = input.surfaceKind
-      ? {
-          surface: input.surfaceKind,
-          text: input.body,
-          ...(input.userId ? { userId: input.userId } : {}),
-          ...(routeBinding?.channelId ?? input.externalId ? { channelId: routeBinding?.channelId ?? input.externalId } : {}),
-          ...(input.threadId ? { threadId: input.threadId } : {}),
+    const readingKey = JSON.stringify([sessionId, input.id]);
+    if (readingInputs.has(readingKey)) return { disposition: 'held', reason: 'continuation-reading-in-progress' };
+    readingInputs.add(readingKey);
+    try {
+      const spawnInput = {
+        mode: 'spawn' as const,
+        task,
+        ...buildSharedSessionAgentSpawnRoutingInput(input.routing, { modelCandidates: options.modelCandidates?.() }),
+        context: `shared-session:${sessionId}`,
+      };
+      // Classify the OWNER's words (`input.body`), never the enriched
+      // continuation task the broker builds from the transcript, that framing
+      // reads as work no matter what the owner actually said.
+      const origin: SurfaceIngressOrigin | null = input.surfaceKind
+        ? {
+            surface: input.surfaceKind,
+            text: input.body,
+            ...(input.userId ? { userId: input.userId } : {}),
+            ...(routeBinding?.channelId ?? input.externalId ? { channelId: routeBinding?.channelId ?? input.externalId } : {}),
+            // Session keys may synthesize channel-as-thread. Only a bound route
+            // carries the actual ingress thread identity used to answer proposals.
+            ...((routeBinding ? routeBinding.threadId : input.threadId) ? { threadId: routeBinding ? routeBinding.threadId : input.threadId } : {}),
+          }
+        : null;
+      // Work the owner already confirmed (an agreed proposal, a schedule, a
+      // trigger, an on-exit chain) carries the marker and must not be re-asked;
+      // a follow-up typed on a local surface starts its contract. Everything else is
+      // conversation and goes through the gate.
+      const escalation = decideContinuationEscalation(input, {
+        ...(options.configReader ? { configReader: options.configReader } : {}),
+      });
+      const label = 'DaemonServer.sharedSessionFollowUp';
+      let gateDeps = options.surfaceActionHelper?.conversationGateDeps();
+      if (gateDeps && !escalation.startsContract) {
+        const inputSnapshot = JSON.stringify(captureOwnedJson(input));
+        const session = options.sessionBroker.getSession(sessionId);
+        const routeSource = (binding: typeof routeBinding) => JSON.stringify(binding ? [binding.id, binding.surfaceKind, binding.surfaceId, binding.externalId, binding.channelId, binding.threadId, binding.sessionId] : null);
+        const routeSnapshot = routeSource(routeBinding);
+        const inherited = gateDeps.readingOptions.beforeAttempt;
+        const sourceCurrent = gateDeps.captureReadingSource(origin);
+        const gateConfig = JSON.stringify(readConversationGateConfig(gateDeps.configManager));
+        const boundGateDeps = gateDeps;
+        gateDeps = { ...gateDeps, readingOptions: { ...gateDeps.readingOptions, beforeAttempt: () => {
+          assertSynchronousCurrent(inherited);
+          assertSynchronousCurrent(sourceCurrent);
+          if (JSON.stringify(readConversationGateConfig(boundGateDeps.configManager)) !== gateConfig) throw new Error('Conversation continuation gate config changed');
+          const currentSession = options.sessionBroker.getSession(sessionId);
+          const currentInput = options.sessionBroker.getInputs(sessionId, Number.MAX_SAFE_INTEGER).find(entry => entry.id === input.id);
+          const currentRoute = input.routeId ? boundGateDeps.routeBindings.getBinding(input.routeId) : undefined;
+          if (!session || !currentSession || currentSession.status === 'closed'
+            || currentSession.createdAt !== session.createdAt || !currentInput || currentInput !== input || currentInput.state !== 'queued'
+            || JSON.stringify(currentInput) !== inputSnapshot || routeSource(currentRoute) !== routeSnapshot) {
+            throw new Error('Conversation continuation source is no longer current');
+          }
+        } } };
+      }
+      // Confirmed/local work keeps its original tools and task. Only conversation
+      // receives the restricted list, conversational instruction and bound capture.
+      const conversationalInput = escalation.startsContract ? spawnInput : {
+        ...spawnInput,
+        ...conversationalTurnSpawnOptions({ ...input, sessionId }, {
+          configReader: conversationalTurnConfigReaderFrom(options.configReader),
+          tools: input.routing?.tools,
+          channel: {
+            routed: true,
+            ...(input.surfaceKind ? { surfaceKind: input.surfaceKind } : {}),
+            ...(routeBinding?.channelId ?? input.externalId ? { address: routeBinding?.channelId ?? input.externalId } : {}),
+          },
+        }),
+      };
+      const spawned = escalation.startsContract
+        ? options.trySpawnAgent(spawnInput, label, sessionId)
+        : gateDeps
+          ? await gateSurfaceSpawn(gateDeps, origin, conversationalInput, label, sessionId)
+          : options.trySpawnAgent({ ...conversationalInput, ...continuationContractOptions(input) }, label, sessionId);
+      if (spawned instanceof Response) {
+        if (spawned.status === 202) {
+          const result: unknown = await spawned.clone().json();
+          if (result && typeof result === 'object' && 'outcome' in result && result.outcome === 'work-proposed'
+            && 'proposalId' in result && typeof result.proposalId === 'string') {
+            const proposal = gateDeps?.workProposals?.listPending().find(entry => entry.id === result.proposalId);
+            if (!proposal || !gateDeps) return { disposition: 'held', reason: 'work-proposal-unavailable' };
+            const transferDeps = gateDeps;
+            const assertTransferCurrent = () => {
+              transferDeps.readingOptions.signal?.throwIfAborted();
+              assertSynchronousCurrent(transferDeps.readingOptions.beforeAttempt);
+              if (!transferDeps.workProposals?.listPending().includes(proposal)) throw new Error('Work proposal transfer is no longer current');
+            };
+            try {
+              assertTransferCurrent();
+              const consumed = await options.sessionBroker.markInputDelivered(sessionId, input.id, { consumed: true, beforeApply: assertTransferCurrent });
+              if (!consumed || consumed.state !== 'completed') throw new Error('Work proposal source was not consumed');
+              return { disposition: 'transferred', requestId: result.proposalId, inputConsumed: true };
+            } catch (error) {
+              if (gateDeps.workProposals?.listPending().includes(proposal)) gateDeps.workProposals.resolve(proposal.id, 'declined');
+              throw error;
+            }
+          }
         }
-      : null;
-    // Work the owner already confirmed (an agreed proposal, a schedule, a
-    // trigger, an on-exit chain) carries the marker and must not be re-asked;
-    // a follow-up typed on a local surface starts its contract. Everything else is
-    // conversation and goes through the gate.
-    const escalation = decideContinuationEscalation(input, {
-      ...(options.configReader ? { configReader: options.configReader } : {}),
-    });
-    const label = 'DaemonServer.sharedSessionFollowUp';
-    const gateDeps = options.surfaceActionHelper?.conversationGateDeps();
-    // Confirmed/local work keeps its original tools and task. Only conversation
-    // receives the restricted list, conversational instruction and bound capture.
-    const conversationalInput = escalation.startsContract ? spawnInput : {
-      ...spawnInput,
-      ...conversationalTurnSpawnOptions({ ...input, sessionId }, {
-        configReader: conversationalTurnConfigReaderFrom(options.configReader),
-        tools: input.routing?.tools,
-        channel: {
-          routed: true,
-          ...(input.surfaceKind ? { surfaceKind: input.surfaceKind } : {}),
-          ...(routeBinding?.channelId ?? input.externalId ? { address: routeBinding?.channelId ?? input.externalId } : {}),
-        },
-      }),
-    };
-    const spawned = escalation.startsContract
-      ? options.trySpawnAgent(spawnInput, label, sessionId)
-      : gateDeps
-        ? gateSurfaceSpawn(gateDeps, origin, conversationalInput, label, sessionId)
-        : options.trySpawnAgent({ ...conversationalInput, ...continuationContractOptions(input) }, label, sessionId);
-    if (spawned instanceof Response) {
-      return null;
-    }
-    options.queueSurfaceReplyFromBinding(routeBinding, {
-      agentId: spawned.id,
-      task: input.body,
-      agentTask: task,
-      ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { contractId: spawned.contractId } : {}),
-      sessionId,
-    });
-    return { agentId: spawned.id };
+        return null;
+      }
+      options.queueSurfaceReplyFromBinding(routeBinding, {
+        agentId: spawned.id,
+        task: input.body,
+        agentTask: task,
+        ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { contractId: spawned.contractId } : {}),
+        sessionId,
+      });
+      return { agentId: spawned.id };
+    } finally { readingInputs.delete(readingKey); }
   });
 }

@@ -30,6 +30,8 @@ import {
   recordDetachedDaemonRuntime,
 } from '../sdk/src/platform/runtime/detached-daemon-runtime.js';
 import { preconfigureLocalVoiceKeys } from '../sdk/src/platform/voice/provisioning/config-preconfigure.js';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { proveVoiceRoundTrip } from '../sdk/src/platform/voice/provisioning/round-trip-proof.js';
 import { resolveWakeEnablementCompanion } from '../sdk/src/platform/voice/wake/settings.js';
 import { transcribeThroughBestRoute, SttRoutesExhaustedError } from '../sdk/src/platform/voice/stt-routing.js';
@@ -346,6 +348,8 @@ describe('a managed install supersedes a manual one and says which', () => {
 
 describe('provisioning ends by proving the round trip', () => {
   test('a phrase spoken and heard back is reported with the text that came back', async () => {
+    const previous = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    try {
     const proof = await proveVoiceRoundTrip({
       ttsEngine: 'piper',
       ttsBinary: '/managed/piper',
@@ -365,6 +369,7 @@ describe('provisioning ends by proving the round trip', () => {
     expect(proof.proved).toBe(true);
     expect(proof.transcript).toBe('The quick brown fox jumps over the lazy dog.');
     expect(proof.summary).toContain('heard it back');
+    } finally { installJudgmentPort(previous); }
   });
 
   test('a recogniser that returns something else is NOT reported as provisioned', async () => {

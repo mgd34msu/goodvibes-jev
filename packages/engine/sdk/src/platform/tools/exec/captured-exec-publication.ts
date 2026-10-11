@@ -17,6 +17,7 @@ export async function publishCapturedProjection(
   changes: ReadonlyMap<string, CapturedFileBytes>,
   signal?: AbortSignal,
   lease?: CapturedPublicationLease,
+  beforePublish?: () => void,
 ): Promise<void> {
   const publish = async (assertLeaseCurrent?: () => void): Promise<void> => {
     if (!contractInputAuthorityMutable(binding.authority)) throw new Error('immutable captured input cannot be published');
@@ -28,6 +29,7 @@ export async function publishCapturedProjection(
       await executePolicyCheck(() => authorizeContractInputPath(binding.authority, join(binding.root, path), binding.readAccessFilter, signal), signal);
     await executePolicyCheck(() => assertContractInputAuthority(binding.authority, binding.root, signal), signal);
 
+    beforePublish?.();
     assertLeaseCurrent?.();
     signal?.throwIfAborted();
     // No awaited callbacks between final comparison and publication. The shared

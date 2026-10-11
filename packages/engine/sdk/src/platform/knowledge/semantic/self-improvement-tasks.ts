@@ -23,13 +23,15 @@ export async function upsertRefinementTaskForGap(
   state: KnowledgeRefinementTaskState,
   message: string,
   data: Record<string, unknown> = {},
+  assertCurrent: () => void = () => {},
 ): Promise<KnowledgeRefinementTaskRecord> {
+  assertCurrent();
   const subject = context.linkedObjects[0]!;
   const id = `kref-${semanticHash(spaceId, context.gap.id)}`;
   const existing = store.getRefinementTask(id);
   if (existing && isTerminalRefinementState(existing.state)) return existing;
   const attemptCount = existing?.attemptCount ?? 0;
-  return store.upsertRefinementTask({
+  return store.upsertRefinementTask(guardKnowledgeRefinementTaskInput({
     id,
     spaceId,
     ...(subject ? {
@@ -56,7 +58,7 @@ export async function upsertRefinementTaskForGap(
       linkedObjectIds: context.linkedObjects.map((node) => node.id),
       policyVersion: 'knowledge-refinement-v2',
     }),
-  });
+  }, assertCurrent));
 }
 
 export async function updateRefinementTask(

@@ -91,6 +91,7 @@ function releaseFetch(assets: Record<string, Buffer>, options: { readonly manife
       return {
         ok: true,
         status: 302,
+        url,
         headers: { get: (name: string) => (name.toLowerCase() === 'location' ? 'https://github.com/mgd34msu/goodvibes-agent/releases/tag/v9.9.9' : null) },
       } as never;
     }

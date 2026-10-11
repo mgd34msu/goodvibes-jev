@@ -1,15 +1,19 @@
+import { createApprovalDerivedHandlers } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { FeatureAnnouncementStore, featureAnnouncementsPath } from '@goodvibes-jev/engine/sdk/platform/runtime/feature-announcements';
+import { createDaemonWorkspaceTrustResolver } from './workspace-trust-composition.js';
 import { installNativeHostedConversationOwner } from './native-hosted-conversation-composition.js';
 import { createNativeWorkSubmissionHost } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-submission';
 import { createNativeConversationIntakeHost, createNativeRequirementProposer, type NativeConversationContinuationOwner } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-intake';
 import { createLocalWorkLedgerReadBinding } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger';
-import { registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods, registerNativeWorkExecutionGatewayMethods, registerNativeWorkSubmissionGatewayMethods, registerNativeConversationIntakeGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
+import { prepareGatewayScopePolicyOwner, registerWorkLedgerGatewayMethods, registerWorkLedgerImportGatewayMethods, registerNativeWorkExecutionGatewayMethods, registerNativeWorkSubmissionGatewayMethods, registerNativeConversationIntakeGatewayMethods } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import { join } from 'node:path';
 import { ServiceRegistry, SubscriptionManager, ToolLLM, sharedSubscriptionsPath } from '@goodvibes-jev/engine/sdk/platform/config';
-import { AutomationDeliveryManager, AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
+import { AutomationDeliveryManager, AutomationManager, automationActionBinding } from '@goodvibes-jev/engine/sdk/platform/automation';
 import { ChannelPolicyManager } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { ApprovalBroker, GatewayMethodCatalog, SharedSessionBroker, buildSharedSessionAgentSpawnRoutingInput, controlPlaneStorePath } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { AcpHostService } from '@goodvibes-jev/engine/sdk/platform/acp';
+import { createMcpAutonomousElicitationHandler } from '@goodvibes-jev/engine/sdk/platform/mcp';
 import { continuationContractOptions } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { PersonalCaptureHolder, conversationalTurnSpawnOptions } from '@goodvibes-jev/engine/sdk/platform/personal-capture';
 import { resolvePairingWebOrigin } from '@goodvibes-jev/engine/sdk/platform/pairing';
@@ -28,8 +32,6 @@ import { MediaProviderRegistry, ensureBuiltinMediaProviders } from '@goodvibes-j
 import { MultimodalService } from '@goodvibes-jev/engine/sdk/platform/multimodal';
 import { OverflowHandler, ProcessManager, cancelAllAgentRuns, createWorkflowServices } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { FileStateCache, FileUndoManager, MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore, ModeManager, ProjectIndex, resolveCanonicalMemoryDbPath } from '@goodvibes-jev/engine/sdk/platform/state';
-import { buildExecPromptAnswerHandler } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/exec-prompt-wiring';
-import { buildLocalhostFetchApproval } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/localhost-fetch-approval';
 import { createBrokeredPermissionManager } from '@goodvibes-jev/engine/sdk/platform/runtime/client-services';
 import { wireMemoryPressureChannelNotice } from './notification-dispatch.js';
 import { operations } from '@goodvibes-jev/engine/sdk/platform/runtime';
@@ -82,17 +84,28 @@ export type { RuntimeServicesOptions, RuntimeServices } from './runtime-services
 /** Construct the daemon's base owners before the outer async handler boundary.
  * Adapted from pinned daemon 443e5ee; shared capabilities use canonical factories.
  */
-export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'>; closeWorkLedger: () => Promise<void>; closeBrowserJudgment: () => Promise<void> }> {
+export async function createRuntimeBaseServices(options: RuntimeServicesOptions): Promise<{ services: Omit<RuntimeServices, 'daemonHandlers'>; handlerOptions: Omit<DaemonHandlerCompositionOptions, 'distributedRuntimeReady'>; closeWorkLedger: () => Promise<void>; closeBrowserJudgment: () => Promise<void>; closeAutonomousPermissions: () => void; retireContinuationScope: () => void }> {
   // The SDK's disposal scope and its all-required poller list, plus the four
   // pollers only the daemon has, see disposal-wiring.ts.
   const disposalScope = createRuntimeAcquisitionScope('RuntimeServices');
   let fenceWorkLedger: (() => Promise<void>) | undefined;
   let fenceNativeWork: (() => Promise<void>) | undefined;
   let fenceBrowserJudgment: (() => Promise<void>) | undefined;
+  let continuationScopeOwner: ReturnType<GatewayMethodCatalog['attachScopePolicyOwner']> | undefined;
+  const retireContinuationScope = () => continuationScopeOwner?.close();
+  const autonomousLifetime = new AbortController();
+  let closeExternalProtocols: (() => Promise<void>) | undefined;
+  const closeAutonomousPermissions = (): void => {
+    retireContinuationScope();
+    autonomousLifetime.abort();
+    // Stop children before unrelated plugin/handler owners begin draining.
+    void closeExternalProtocols?.().catch(() => {});
+  };
   let nativeFleetOwnership: ReturnType<typeof createDaemonNativeWorkExecutionActivation>['fleetOwnership'] = () => [];
   let acpFleetOwnership: typeof nativeFleetOwnership = () => [];
   const close = (): Promise<void> => {
     // Fence immediately, before reverse-order drains can await other owners.
+    closeAutonomousPermissions();
     // The registered ledger owner reports any cleanup failure through the scope.
     void fenceWorkLedger?.().catch(() => {});
     void fenceBrowserJudgment?.().catch(() => {});
@@ -148,7 +161,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     });
     const judgment = composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(GOODVIBES_DAEMON_SURFACE_ROOT), disposal: disposalScope.registry });
     const browserJudgment = options.createBrowserJudgment ? options.createBrowserJudgment(judgment)
-      : composeBrowserJudgment({ judgment, config: configManager, secrets: secretsManager, methods: gatewayMethods, env: process.env, disposal: disposalScope.registry });
+      : composeBrowserJudgment({ judgment, providers: () => providerRegistry, config: configManager, secrets: secretsManager, methods: gatewayMethods, env: process.env, disposal: disposalScope.registry });
     let browserClosing: Promise<void> | undefined;
     fenceBrowserJudgment = () => browserClosing ??= browserJudgment.close();
     if (options.createBrowserJudgment) disposalScope.registry.add('browser judgment transport', fenceBrowserJudgment);
@@ -340,7 +353,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
           ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
           ...(input.toolAllowlist?.length ? { tools: [...input.toolAllowlist], restrictTools: true } : {}),
           ...(input.context ? { context: input.context } : {}),
-        });
+        }, automationActionBinding(input));
         return record.id;
       },
     });
@@ -368,7 +381,10 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     };
     registerWorkLedgerGatewayMethods(gatewayMethods, workLedgerReader);
     const voiceProviders = new VoiceProviderRegistry();
-    ensureBuiltinVoiceProviders(voiceProviders, { readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]) });
+    ensureBuiltinVoiceProviders(voiceProviders, {
+      readConfig: (key) => configManager.get(key as Parameters<typeof configManager.get>[0]),
+      readConfigIncarnation: () => configManager.getConfigurationIncarnation(),
+    });
     const voiceService = new VoiceService(voiceProviders);
     const webSearchProviders = new WebSearchProviderRegistry({
       env: process.env,
@@ -408,10 +424,14 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     // The paired-phone feature for this host, on the SAME runtime phones pair onto
     // and the SAME approval broker every other confirmation rides. Every `device.*`
     // setting is read live through this; see device-posture-composition.ts.
+    const deviceLifetime = new AbortController();
+    disposalScope.registry.add('device autonomous lifetime', async () => { deviceLifetime.abort(); await distributedRuntime.writes.drain(); });
     const { devicePosture } = createDevicePostureServices({
       configManager,
       distributedRuntime,
       approvals: approvalBroker,
+      judgmentPort: judgment.port,
+      signal: AbortSignal.any([deviceLifetime.signal, autonomousLifetime.signal]),
       stateDirectory: shellPaths.resolveProjectPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'devices'),
       gatewayMethods,
     });
@@ -440,6 +460,10 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       = createRemoteExecutionServices({
         agentManager, workingDirectory, hookDispatcher, configManager, runtimeBus: options.runtimeBus,
       });
+    let mcpClosing: Promise<void> | undefined;
+    const closeMcpConnections = (): Promise<void> => mcpClosing ??= mcpRegistry.disconnectAll();
+    closeExternalProtocols = closeMcpConnections;
+    disposalScope.registry.add('MCP connections', closeMcpConnections);
     // Advisory reporting only: `managed` is hardcoded false here, so excess-scope
     // and overdue tokens are reported and never blocked.
     const tokenAuditor = new ApiTokenAuditor({ managed: false, featureFlags });
@@ -488,17 +512,46 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       agentManager, processManager, sessionBroker,
     });
     disposalScope.ownUntilRegistered('trigger manager', () => triggerManager.shutdown());
-    // Hosted third-party coding agents (ACP): permission asks route through the
-    // SAME shared approval broker every other confirmation rides (approvals
-    // panel + push like any native ask), and each hosted agent maps onto a
-    // kind-'acp' shared session so it is attachable/steerable like any other.
-    // Mirrors the SDK's own createRuntimeServices composition (services.ts ~879).
+    // External protocols share the daemon's recorded owner and live policy.
+    const permissionManager = createBrokeredPermissionManager({
+      workspaceTrust: workspaceTrustManager,
+      requestApproval: trustGatedApprovalRaiser(
+        workspaceTrustManager,
+        (input) => approvalBroker.requestApproval(input),
+        createWorkspaceTrustDecisionAsk({
+          broker: approvalBroker,
+          workingDirectory,
+        }),
+      ),
+      configManager,
+      policyRuntimeState,
+      hookDispatcher,
+      featureFlags,
+      userRuleStore: userPermissionRuleStore,
+    });
+    disposalScope.registry.add('autonomous permission lifetime', closeAutonomousPermissions);
+    const autonomousHost = { port: judgment.port, permissionManager, config: configManager, signal: autonomousLifetime.signal, workspaceTrust: workspaceTrustManager,
+      workspaceRoot: workingDirectory, workspaceTrustFor: createDaemonWorkspaceTrustResolver({ workingDirectory, homeDirectory, workspaceTrustManager }) };
+    const { localhostFetchApproval, execPromptAnswerHandler, sandboxEscalationHandler } = createApprovalDerivedHandlers({
+      requestApproval: input => approvalBroker.requestApproval(input), configManager, featureFlags, autonomousHost,
+      announcementStore: new FeatureAnnouncementStore(featureAnnouncementsPath(configManager)),
+    });
+    mcpRegistry.setPermissionHost(autonomousHost);
+    mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler(autonomousHost));
+    // Child prose never replaces the original host prompt; absent origins refuse.
     const acpHost = new AcpHostService({
-      requestPermission: (request) => approvalBroker.requestApproval({ request }),
+      permissionHost: autonomousHost,
       registerSession: ({ id, title, agentTitle, cwd }) => void sessionBroker
         .register({ sessionId: id, kind: 'acp', title, project: cwd, participant: { surfaceKind: 'service', surfaceId: `acp-host:${agentTitle}`, lastSeenAt: Date.now() } })
         .catch(() => { /* best-effort; the fleet row is authoritative */ }),
     });
+    let acpClosing: Promise<void> | undefined;
+    const closeAcpAgents = (): Promise<void> => acpClosing ??= Promise.allSettled(acpHost.list().map(agent => acpHost.stop(agent.id))).then(results => {
+      const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+      if (failures.length) throw new AggregateError(failures, 'Hosted ACP shutdown failed');
+    });
+    closeExternalProtocols = async () => { await Promise.all([closeMcpConnections(), closeAcpAgents()]); };
+    disposalScope.registry.add('hosted ACP agents', closeAcpAgents);
     acpFleetOwnership = () => acpHost.list().map(session => ({ id: `acp:${session.id}`, active: true }));
     const contracts = createDaemonContractServices({ runtimeBus: options.runtimeBus, agentManager, agentMessageBus, configManager, providerRegistry, projectRoot: workingDirectory, acpHost, runtimeStore: options.runtimeStore, workPlanService: projectPlanningService, planManager,
       additionalFleetOwnership: () => nativeFleetOwnership() });
@@ -571,6 +624,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     // calendar.*/email.* are platform-served; these two let it register (mail-composition.ts).
     const { emailServiceDeps, describeEmailConfigProblem } = composeMailDeps({ configManager, secretsManager,
       registerDispose: (dispose) => { disposalScope.registry.add('mail reply subject sources', dispose); } });
+    let ciNativeContinuationRevocation: NonNullable<Parameters<typeof attachWsOnlyGatewayVerbHandlers>[1]['ciNativeContinuationRevocation']> | undefined;
+    let ciNativeContinuationOwner: NonNullable<Parameters<typeof attachWsOnlyGatewayVerbHandlers>[1]['ciNativeContinuationOwner']> | undefined;
+    let ciAutoWatchObserver: ((tool: string, args: Record<string, unknown>, success: boolean) => void) | undefined;
     attachWsOnlyGatewayVerbHandlers(gatewayMethods, {
       // The surface segment every control-plane store path is built from
       // (SDK control-plane-store-paths.ts). Required, not defaulted: a default
@@ -600,6 +656,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       // never echoes it back.
       credentialWrites: { config: configManager, secrets: secretsManager },
       watcherRegistry, userPermissionRuleStore, shellPaths, configManager, runtimeStore: options.runtimeStore,
+      ciNativeContinuationRevocation: watch => { if (!ciNativeContinuationRevocation) return Promise.reject(new Error('Native CI revocation is unavailable')); return ciNativeContinuationRevocation(watch); },
+      ciNativeContinuationOwner: watch => ciNativeContinuationOwner?.(watch) ?? Promise.resolve(undefined),
+      ciAutonomousHost: () => autonomousHost, onCiAutoWatch: observer => { ciAutoWatchObserver = observer; },
       channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker,
       workingDirectory, memoryRegistry, pairingTokens, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup,
       acpHost, // Registers acp.agents.list (discovery) and acp.sessions.create (spawn). See register-gateway-verb-groups.ts.
@@ -610,47 +669,14 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       ...wireFleetNeedsInputPush({ registry: processRegistry, runtimeBus: options.runtimeBus, sessionBroker }),
     });
     disposalScope.registry.add('browser checkout seam holder', () => browserCheckoutSeam.clear()); // newer than 'browser sessions' above, so runs first
-    // A loopback fetch that isn't allow-listed asks once through the approval
-    // broker; "allow for this project" persists and later fetches never ask. Built
-    // once and shared with the tool registry so both ask alike.
-    const localhostFetchApproval = buildLocalhostFetchApproval({ requestApproval: (input) => approvalBroker.requestApproval(input), configManager });
-    // Exec stuck on a terminal prompt rides the approval broker; the typed answer
-    // feeds the continuing run. Built once and shared (like localhostFetchApproval)
-    // so every setDependencies site installs the SAME handler; otherwise a
-    // wholesale replace drops it and prompts hang.
-    const execPromptAnswerHandler = buildExecPromptAnswerHandler({ requestApproval: (input) => approvalBroker.requestApproval(input) });
-    // Tool asks from the runs this daemon HOSTS. Without a manager here, the
-    // background permission gate short-circuits to approved and every hosted
-    // write, command and delegation ran ungated, the workspace trust decision
-    // was read by nobody in this process.
-    //
-    // The ask seam is the trust gate wrapping the approval broker: a workspace
-    // with no decision yet has the question raised as an approval record and
-    // answered by whichever surface is attached (trust-gated-approvals.ts),
-    // there is no screen here to show a modal on, so the raise replaces it. The
-    // manager's own layers, permission mode, policy, session cache, durable
-    // user rules, still run first and are unchanged.
-    const permissionManager = createBrokeredPermissionManager({
-      requestApproval: trustGatedApprovalRaiser(
-        workspaceTrustManager,
-        (input) => approvalBroker.requestApproval(input),
-        createWorkspaceTrustDecisionAsk({
-          broker: approvalBroker,
-          workingDirectory,
-        }),
-      ),
-      configManager,
-      policyRuntimeState,
-      hookDispatcher,
-      featureFlags,
-      userRuleStore: userPermissionRuleStore,
-    });
     const agentToolDependencies = {
+      toolExecutionObserver: (tool: string, args: Record<string, unknown>, success: boolean) => ciAutoWatchObserver?.(tool, args, success),
       contractRunner, contractHooks: contractRunner.hooks(),
       agentManager,
       surfaceRoot: surface.surfaceRoot,
       permissionManager,
       execPromptAnswerHandler,
+      sandboxEscalationHandler,
       localhostFetchApproval,
       fileCache,
       projectIndex,
@@ -720,11 +746,14 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       runtimeBus: options.runtimeBus, configManager, providerRegistry, runtimeStore: options.runtimeStore,
       projectRoot: workingDirectory, projectId: projectPlanningProjectId,
       sessionId: `native-work:${projectPlanningProjectId}`, acpHost, knowledgeStore,
-      nativeScopes,
+      nativeScopes, continuationGrants: pairingTokens,
+      continuationScopeOwner: { current: () => { if (!continuationScopeOwner) throw new Error('Native CI scope owner is unavailable'); return continuationScopeOwner.current(); } },
       judgmentPort: judgment.port, decisionLog: judgment.decisionLog,
       permissionManager, hookDispatcher, featureFlags, toolDependencies: agentToolDependencies,
       additionalFleetOwnership: () => agentManager.fleetOwnership(),
     });
+    ciNativeContinuationRevocation = async watch => (await nativeWork.acquire()).revokeCiWatch(watch);
+    ciNativeContinuationOwner = async watch => (await nativeWork.acquire()).recoverCiWatchOwner(watch);
     nativeFleetOwnership = nativeWork.fleetOwnership;
     fenceNativeWork = async () => { await Promise.all([nativeImport.close(), nativeSubmission.close(), nativeIntake.close(), nativeWork.close()]); };
     disposalScope.ownUntilRegistered('native work execution', nativeWork.close);
@@ -889,6 +918,12 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     disposalScope.registry.add('native work execution', nativeWork.close);
     // Drain plugin work before releasing the graph it can call into.
     disposalScope.registry.add('plugins', () => pluginManager.close());
+    // The facade still registers hosted/update/relay/mail handlers. Its constructor
+    // completes the facade phase. Where boot is configured, plugin acquisition
+    // must also settle before native continuation reads become available. Runtime
+    // catalog mutations thereafter revoke first, rather than counting startup work.
+    continuationScopeOwner = prepareGatewayScopePolicyOwner(gatewayMethods, () => configManager.invalidateExternalPolicy(), options.createBootOperations !== undefined);
+    disposalScope.registry.add('native CI gateway scope owner', retireContinuationScope);
     const handlerOptions = {
       gatewayMethods,
       secretsManager,
@@ -899,8 +934,9 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       distributedRuntime,
       clusterCoordinator,
       checkoutSeam: browserCheckoutSeam.get, channelDeliveryRouter, inboxFactory: options.inboxFactory,
+      triagePermissionHost: autonomousHost,
     };
-    return { services, handlerOptions, closeWorkLedger: fenceWorkLedger, closeBrowserJudgment: fenceBrowserJudgment };
+    return { services, handlerOptions, closeWorkLedger: () => { retireContinuationScope(); return fenceWorkLedger!(); }, closeBrowserJudgment: () => { retireContinuationScope(); return fenceBrowserJudgment!(); }, closeAutonomousPermissions, retireContinuationScope };
   } catch (startupError) {
     try { await close(); }
     catch (cleanupError) { throw new AggregateError([startupError, cleanupError], 'Runtime graph construction and cleanup failed'); }

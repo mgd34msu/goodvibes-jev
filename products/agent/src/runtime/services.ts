@@ -899,6 +899,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // (`localhostFetchApproval`, `onSandboxedRun`, `featureAnnouncementStore`)
   // that other code reads by name.
   const clientFloor = createClientRuntimeServices({
+    workspaceTrust: null, // Agent has no separate legacy workspace-trust policy.
     runtimeBus: options.runtimeBus,
     runtimeStore: options.runtimeStore,
     configManager,
@@ -1597,7 +1598,10 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // prompt or a localhost fetch ask is a permission ask, and a permission ask
   // leaves this process.
   const announcementStore = new FeatureAnnouncementStore(featureAnnouncementsPath(configManager));
-  const approvalHandlers = createApprovalDerivedHandlers({ requestApproval, configManager, featureFlags, announcementStore });
+  const promptLifetime = new AbortController();
+  disposalScope.registry.add('autonomous tool prompt lifetime', () => promptLifetime.abort());
+  const approvalHandlers = createApprovalDerivedHandlers({ requestApproval, configManager, featureFlags, announcementStore,
+    autonomousHost: { port: clientFloor.judgment.port, permissionManager, config: configManager, signal: promptLifetime.signal, workspaceTrust: null } });
   const { execPromptAnswerHandler, localhostFetchApproval, onSandboxedRun, sandboxEscalationHandler } = approvalHandlers;
   agentOrchestrator.setDependencies({
     ...approvalHandlers,

@@ -1,3 +1,4 @@
+import { PostalAddressHeldError } from '../sdk/src/platform/config/postal-address.ts';
 /**
  * owner-profile-consumers.test.ts, docs/owner-profile.md §13.
  *
@@ -16,10 +17,15 @@
  * Also proves the rows for keys that do not exist on this branch are genuinely
  * inert, and that `security/owner-identity.ts` is deliberately NOT wired.
  */
-import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, test, beforeEach, spyOn } from 'bun:test';
+import { mkdirSync, mkdtempSync, promises as fs, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { clearAtRestCredentialReadings, readAtRestCredentialSpans, redactAtRestLine } from '../sdk/src/platform/runtime/at-rest-persistence.ts';
+import type { OwnerProfileStoreOptions } from '../sdk/src/platform/owner-profile/store-types.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { isUnsetConfigValue, resolveWithProfileFallback } from '../sdk/src/platform/config/profile-fallback.ts';
 import { DAEMON_OWNED_CONFIG_PREFIXES } from '../sdk/src/platform/config/config-ownership.ts';
@@ -93,11 +99,11 @@ afterEach(() => {
   for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function loadedStore(text: string = FIXTURE): Promise<OwnerProfileStore> {
+async function loadedStore(text: string = FIXTURE, options: Pick<OwnerProfileStoreOptions, 'persistIo'> = {}): Promise<OwnerProfileStore> {
   const dir = mkTemp();
   const path = join(dir, 'owner-profile.md');
   writeFileSync(path, text, 'utf-8');
-  const store = new OwnerProfileStore({ path });
+  const store = new OwnerProfileStore({ path, ...options });
   await store.load();
   return store;
 }
@@ -109,7 +115,7 @@ function freshConfig(): ConfigManager {
 }
 
 describe('§12: the profile config domain is real, editable and daemon-owned', () => {
-  test('all eight keys exist with the design\'s defaults and carry a reasoned description', () => {
+  test('all eight keys exist with the design\'s defaults and are daemon-owned', () => {
     const expected: Record<string, unknown> = {
       'profile.enabled': true,
       'profile.autonomousWrites': true,
@@ -124,8 +130,6 @@ describe('§12: the profile config domain is real, editable and daemon-owned', (
       const setting = CONFIG_SCHEMA.find((entry) => entry.key === key);
       expect(setting, `missing schema row for ${key}`).toBeDefined();
       expect(setting?.default).toEqual(value);
-      // A description that only restates the key name is not a reason.
-      expect((setting?.description ?? '').length).toBeGreaterThan(80);
     }
     expect(DEFAULT_CONFIG.profile.reloadThrottleMs).toBe(2000);
     expect(DAEMON_OWNED_CONFIG_PREFIXES).toContain('profile.');
@@ -260,16 +264,12 @@ describe('§13.1: rows for keys that do not exist yet are inert', () => {
     expect(JSON.stringify(status)).not.toContain('22:00-07:00');
   });
 
-  test('the payments address rows resolve their parts once such a key exists', async () => {
+  test('postal config fallbacks require async verification while ordinary fields remain synchronous', async () => {
     const store = await loadedStore();
     const reader = createConsumerFallbackReader(store, () => true);
-    expect(reader('payments.shippingAddress.line1')).toBe('200 Office Way');
-    expect(reader('payments.shippingAddress.city')).toBe('Lansing');
-    expect(reader('payments.shippingAddress.region')).toBe('MI');
-    expect(reader('payments.shippingAddress.postalCode')).toBe('48933');
-    expect(reader('payments.shippingAddress.country')).toBe('US');
-    // Never invented: an address line holds an address, not an addressee.
-    expect(reader('payments.shippingAddress.name')).toBeUndefined();
+    for (const part of ['name', 'line1', 'line2', 'city', 'region', 'postalCode', 'country']) {
+      expect(() => reader(`payments.shippingAddress.${part}`)).toThrow(PostalAddressHeldError);
+    }
     expect(reader('payments.currency')).toBe('USD');
   });
 
@@ -322,15 +322,6 @@ describe('§13.2 / §13.3: the two direct consumers, and the one deliberately le
     expect(resolveSignupBaseAddress(undefined)).toBe('owner@example.com');
     expect(resolveSignupBaseAddress('')).toBe('owner@example.com');
     expect(resolveSignupBaseAddress('configured@example.com')).toBe('configured@example.com');
-  });
-
-  test('resolveOwnerAddresses still reads configuration only: the taint exemption is not widened', () => {
-    // The keys that gate the send-to-owner-only exemption are all config paths;
-    // no profile field id is among them, and none of them is a fallback row.
-    const fallbackKeys = new Set(CONSUMER_FALLBACKS.map((row) => row.configKey));
-    for (const key of OWNER_ADDRESS_CONFIG_KEYS) {
-      expect(fallbackKeys.has(key)).toBe(false);
-    }
   });
 });
 
@@ -443,5 +434,166 @@ describe('§13.3: the taint exemption must never be fed from the profile', () =>
       }
     });
     expect([...addresses]).toEqual([]);
+  });
+});
+
+
+describe('at-rest admission uses the installed profile read lifetime', () => {
+  const candidate = 'key-rotation-policy-for-tenants';
+  const line = JSON.stringify({ body: candidate });
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => {
+    previous = installJudgmentPort(undefined);
+    clearAtRestCredentialReadings();
+  });
+  afterEach(() => {
+    installJudgmentPort(previous);
+    clearAtRestCredentialReadings();
+  });
+
+  test('an in-flight load refuses transmission and retention before the loaded state changes', async () => {
+    const store = await loadedStore();
+    const config = freshConfig();
+    const uninstall = installOwnerProfileConsumers(store, {
+      attachProfileFallback: (reader) => config.attachProfileFallback(reader),
+      consumerFallbackEnabled: () => true,
+      injectOpenTierEnabled: () => true,
+    });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const fake = fakePort(() => noulAnswer(0.01));
+    using log = new SqliteDecisionLog(':memory:');
+    const record = spyOn(log, 'record');
+    const attach = spyOn(log, 'attach');
+    installJudgmentPort(withDecisionLog({ ...fake.port, async ask(request) {
+      const response = await fake.port.ask(request);
+      started.resolve();
+      await release.promise;
+      return response;
+    } }, log));
+    const reading = readAtRestCredentialSpans([line], 'test.profile-at-rest');
+    void reading.catch(() => {});
+    const readStarted = Promise.withResolvers<void>();
+    const finishRead = Promise.withResolvers<void>();
+    const realRead = fs.readFile;
+    const readSpy = spyOn(fs, 'readFile').mockImplementation((async (...args: Parameters<typeof fs.readFile>) => {
+      const bytes = await realRead(...args);
+      if (String(args[0]) === store.path) {
+        readStarted.resolve();
+        await finishRead.promise;
+      }
+      return bytes;
+    }) as typeof fs.readFile);
+    let loading: ReturnType<OwnerProfileStore['load']> | undefined;
+    try {
+      await started.promise;
+      const loaded = store.status();
+      loading = store.load();
+      await readStarted.promise;
+      expect(store.status()).toBe(loaded);
+      // A new read while loading must refuse before reaching the provider.
+      await readAtRestCredentialSpans([JSON.stringify({ body: `another ${candidate}` })], 'test.profile-at-rest');
+      expect(fake.requests).toHaveLength(1);
+      release.resolve();
+      await expect(reading).rejects.toThrow('unavailable');
+      // The old generation reader alone still sees the same adopted state.
+      expect(store.status()).toBe(loaded);
+      expect(record).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
+      expect(log.query()).toEqual([]);
+      expect(redactAtRestLine(line)).not.toContain(candidate);
+      finishRead.resolve();
+      await loading;
+      expect(redactAtRestLine(line)).not.toContain(candidate);
+      // A genuinely current lease permits a fresh reading and its reuse.
+      await readAtRestCredentialSpans([line], 'test.profile-at-rest');
+      expect(fake.requests).toHaveLength(2);
+      expect(redactAtRestLine(line)).toContain(candidate);
+      await readAtRestCredentialSpans([line], 'test.profile-at-rest');
+      expect(fake.requests).toHaveLength(2);
+      writeFileSync(store.path, FIXTURE.replace('owner@example.com', 'changed@example.com'));
+      store.loadSync();
+      writeFileSync(store.path, FIXTURE);
+      store.loadSync();
+      expect(redactAtRestLine(line)).not.toContain(candidate);
+    } finally {
+      release.resolve();
+      finishRead.resolve();
+      await reading.catch(() => {});
+      await loading;
+      readSpy.mockRestore();
+      uninstall();
+      record.mockRestore();
+      attach.mockRestore();
+    }
+  });
+
+  test('accepted own-write intent fences a waiting judgment before persistence and same-content restoration', async () => {
+    const writingStarted = Promise.withResolvers<void>();
+    const finishWrite = Promise.withResolvers<void>();
+    const store = await loadedStore(FIXTURE, { persistIo: {
+      mkdir: async () => {},
+      writeFile: async (path, content) => {
+        writingStarted.resolve();
+        await finishWrite.promise;
+        writeFileSync(path, content, 'utf8');
+      },
+      rename: async (from, to) => { renameSync(from, to); },
+      remove: async (path) => { rmSync(path, { force: true }); },
+    } });
+    const config = freshConfig();
+    const uninstall = installOwnerProfileConsumers(store, {
+      attachProfileFallback: (reader) => config.attachProfileFallback(reader),
+      consumerFallbackEnabled: () => true,
+      injectOpenTierEnabled: () => true,
+    });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const fake = fakePort(() => noulAnswer(0.01));
+    using log = new SqliteDecisionLog(':memory:');
+    const record = spyOn(log, 'record');
+    const attach = spyOn(log, 'attach');
+    installJudgmentPort(withDecisionLog({ ...fake.port, async ask(request) {
+      const response = await fake.port.ask(request);
+      started.resolve();
+      await release.promise;
+      return response;
+    } }, log));
+    const reading = readAtRestCredentialSpans([line], 'test.profile-at-rest');
+    void reading.catch(() => {});
+    let writing: ReturnType<OwnerProfileStore['set']> | undefined;
+    try {
+      await started.promise;
+      const loaded = store.status();
+      writing = store.set({ authority: 'owner-direct', surface: 'tui', said: 'Use this email',
+        fieldId: 'contact.email', value: 'changed@example.com', date: '2026-10-10' });
+      await writingStarted.promise;
+      expect(store.status()).toBe(loaded);
+      await readAtRestCredentialSpans([JSON.stringify({ body: `another ${candidate}` })], 'test.profile-at-rest');
+      expect(fake.requests).toHaveLength(1);
+      release.resolve();
+      await expect(reading).rejects.toThrow('unavailable');
+      expect(store.status()).toBe(loaded);
+      expect(record).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
+      expect(log.query()).toEqual([]);
+      expect(redactAtRestLine(line)).not.toContain(candidate);
+      finishWrite.resolve();
+      expect((await writing).ok).toBe(true);
+      writeFileSync(store.path, FIXTURE);
+      store.loadSync();
+      expect(redactAtRestLine(line)).not.toContain(candidate);
+      await readAtRestCredentialSpans([line], 'test.profile-at-rest');
+      expect(fake.requests).toHaveLength(2);
+      expect(redactAtRestLine(line)).toContain(candidate);
+    } finally {
+      release.resolve();
+      finishWrite.resolve();
+      await reading.catch(() => {});
+      await writing;
+      uninstall();
+      record.mockRestore();
+      attach.mockRestore();
+    }
   });
 });

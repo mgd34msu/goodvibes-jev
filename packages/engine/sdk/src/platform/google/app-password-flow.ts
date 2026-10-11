@@ -23,6 +23,9 @@
 
 import { APP_PASSWORD_LABEL, APP_PASSWORD_URL, TWO_STEP_URL } from './setup-plan.js';
 import { describeElements, findElement, looksLikeGoogleSignIn, requireElement } from './browser-elements.js';
+import { consumeGoogleElement } from './browser-elements.js';
+import { ownGoogleBrowser } from './browser-readings.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { GoogleBrowserElement, GoogleBrowserPort } from './types.js';
 
 export type AppPasswordReason =
@@ -54,7 +57,7 @@ export interface AppPasswordFailed {
 
 export type CreateAppPasswordResult = AppPasswordOk | AppPasswordNeedsHuman | AppPasswordFailed;
 
-export interface CreateAppPasswordOptions {
+export interface CreateAppPasswordOptions extends JudgmentReadingOptions {
   readonly label?: string;
   /**
    * Overrides the page navigated to. Defaults to Google's real app-password
@@ -138,6 +141,7 @@ export async function createAppPassword(
   browser: GoogleBrowserPort,
   options: CreateAppPasswordOptions = {},
 ): Promise<CreateAppPasswordResult> {
+  browser = ownGoogleBrowser(browser, options).browser;
   const label = options.label ?? APP_PASSWORD_LABEL;
   const pageUrl = options.pageUrl ?? APP_PASSWORD_URL;
 
@@ -145,7 +149,7 @@ export async function createAppPassword(
   const url = await browser.currentUrl();
   let elements = await browser.snapshot();
 
-  if (looksLikeGoogleSignIn(url, elements)) {
+  if (await looksLikeGoogleSignIn(url, elements, { browser })) {
     return signInNeeded(url);
   }
 
@@ -159,35 +163,21 @@ export async function createAppPassword(
     return alreadyExists(label, pageUrl);
   }
 
-  const nameFieldLookup = requireElement(elements, { role: 'textbox', nameIncludes: 'app name' });
-  const createButtonLookup = requireElement(elements, { role: 'button', nameIncludes: 'create' });
-
-  // No sign-in prompt, no two-step message, no existing entry, and yet the
-  // create form itself is missing, Google most likely disabled the form
-  // because 2-Step Verification is off, even though the page text did not
-  // match the patterns above.
-  if (!nameFieldLookup.found && !createButtonLookup.found) {
-    return twoStepNeeded();
-  }
+  const nameFieldLookup = await requireElement(elements, { role: 'textbox', purpose: 'Name the new Google app password', nameIncludes: 'app name' }, { browser });
   if (!nameFieldLookup.found) {
+    const createLookup = await requireElement(elements, { role: 'button', purpose: 'Create the app password using the completed app-name form' }, { browser });
+    if (!createLookup.found) return twoStepNeeded();
     return {
-      kind: 'failed',
-      reason: 'create-form-not-found',
-      problem: nameFieldLookup.message,
-      fix: `Open ${pageUrl} by hand, type "${label}" into the "App name" field, and click "Create".`,
-    };
-  }
-  if (!createButtonLookup.found) {
-    return {
-      kind: 'failed',
-      reason: 'create-form-not-found',
-      problem: createButtonLookup.message,
+      kind: 'failed', reason: 'create-form-not-found', problem: nameFieldLookup.message,
       fix: `Open ${pageUrl} by hand, type "${label}" into the "App name" field, and click "Create".`,
     };
   }
 
-  await browser.type(nameFieldLookup.element.ref, label);
-  await browser.click(createButtonLookup.element.ref);
+  await consumeGoogleElement(browser, nameFieldLookup.element, label);
+  elements = await browser.snapshot();
+  const createButtonLookup = await requireElement(elements, { role: 'button', purpose: 'Create the app password using the completed app-name form' }, { browser });
+  if (!createButtonLookup.found) return { kind: 'failed', reason: 'create-form-not-found', problem: createButtonLookup.message, fix: 'Review the app-password form by hand.' };
+  await consumeGoogleElement(browser, createButtonLookup.element);
 
   let passwordText: string | null = null;
   for (let attempt = 0; attempt < WAIT_ATTEMPTS && !passwordText; attempt += 1) {

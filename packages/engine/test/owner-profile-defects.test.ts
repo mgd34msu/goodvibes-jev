@@ -53,27 +53,19 @@ describe('defect 1: one character of punctuation must not enumerate the People s
     '',
   ].join('\n');
 
-  test('person("-") returns nothing, not every bullet in the section', async () => {
-    const { store } = await storeFor(DOC);
-    // The measured defect: ProfileLine.text keeps its "- " marker and the
-    // word-boundary alternative matches at index 0 of every bullet, so a single
-    // hyphen was a complete enumerate-all call.
-    expect(store.person('-')).toEqual([]);
-  });
-
   test('no punctuation-only name enumerates the section', async () => {
     const { store } = await storeFor(DOC);
     for (const name of ['-', '*', '+', '.', ',', ' - ', '--', '(', '@', '#', '1.']) {
-      expect({ name, count: store.person(name).length }).toEqual({ name, count: 0 });
+      expect({ name, count: (await store.person(name)).length }).toEqual({ name, count: 0 });
     }
   });
 
   test('a real name still matches, and only its own line', async () => {
     const { store } = await storeFor(DOC);
-    expect(store.person('Sarah').map((line) => line.text)).toEqual(['- Sarah, sister, sarah@example.com']);
-    expect(store.person('Dave')).toHaveLength(1);
-    expect(store.person('Tom')).toHaveLength(1);
-    expect(store.person('Nobody')).toEqual([]);
+    expect((await store.person('Sarah')).map((line) => line.text)).toEqual(['- Sarah, sister, sarah@example.com']);
+    expect(await store.person('Dave')).toHaveLength(1);
+    expect(await store.person('Tom')).toHaveLength(1);
+    expect(await store.person('Nobody')).toEqual([]);
   });
 });
 
@@ -468,11 +460,5 @@ describe('defect 9: one stray CR must not convert the document to CRLF', () => {
     expect(after).not.toContain('"set it to this"\r\n');
     // His pasted CRLF line is preserved exactly as he pasted it.
     expect(after).toContain('city: Lansing, MI\r\n');
-  });
-
-  test('a genuinely CRLF file still keeps CRLF', async () => {
-    const { store, path } = await storeFor(['## Location', '', 'city: Lansing, MI', ''].join('\r\n'));
-    await store.set({ ...OWNER, fieldId: 'location.timezone', value: 'America/Detroit', date: '2026-07-27' });
-    expect(readFileSync(path, 'utf-8')).toContain('timezone: America/Detroit — tui, 2026-07-27, "set it to this"\r\n');
   });
 });

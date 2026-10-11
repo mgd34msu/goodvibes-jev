@@ -1,3 +1,4 @@
+import type { PostalReadOptions } from '../config/postal-address.js';
 /**
  * address.ts, the address on the order is the one the owner stored.
  *
@@ -80,7 +81,11 @@ export interface AddressFieldTarget {
  * order carries the STORED value needs a store a test can control.
  */
 export interface AddressStore {
-  read(kind: AddressKind): Promise<PostalAddress | null>;
+  /** Prepare a purchase-local snapshot. Legacy injected stores remain synchronous-data sources. */
+  prepare?(kinds: readonly AddressKind[], options?: PostalReadOptions): Promise<AddressStore>;
+  /** A retained restriction; never permission to transmit the address. */
+  readonly assertCurrent?: (() => void) | undefined;
+  read(kind: AddressKind, options?: PostalReadOptions): Promise<PostalAddress | null>;
 }
 
 export interface AddressCheck {
@@ -147,14 +152,18 @@ export async function fillAddresses(
   const kinds = [...new Set(targets.map((entry) => entry.kind))];
   const resolved = new Map<AddressKind, PostalAddress>();
 
-  for (const kind of kinds) {
-    const address = await deps.store.read(kind);
-    const check = checkAddress(address, kind);
-    if (!check.ok || address === null) {
-      return { ok: false, filled: 0, failedField: `${kind}.${check.missing[0] ?? 'address'}`, reason: check.reason };
+  try {
+    for (const kind of kinds) {
+      deps.store.assertCurrent?.();
+      const address = await deps.store.read(kind);
+      deps.store.assertCurrent?.();
+      const check = checkAddress(address, kind);
+      if (!check.ok || address === null) {
+        return { ok: false, filled: 0, failedField: `${kind}.${check.missing[0] ?? 'address'}`, reason: check.reason };
+      }
+      resolved.set(kind, address);
     }
-    resolved.set(kind, address);
-  }
+  } catch { return { ok: false, filled: 0, failedField: 'address', reason: 'The stored address reading is unavailable or no longer current.' }; }
 
   let filled = 0;
   for (const entry of targets) {
@@ -165,7 +174,9 @@ export async function fillAddresses(
     // clear whatever the page had rather than leaving it alone.
     if (value.trim().length === 0 && entry.field === 'line2') continue;
     try {
+      deps.store.assertCurrent?.();
       await deps.fill(entry.target, value);
+      deps.store.assertCurrent?.();
     } catch {
       return {
         ok: false,

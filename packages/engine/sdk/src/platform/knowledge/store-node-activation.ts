@@ -1,3 +1,4 @@
+import { knowledgeDecisionStamp } from './store-record-representation.js';
 import { captureKnowledgeSourceReferences } from './source-structural-references.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -29,7 +30,7 @@ export interface NodeMutationDraft {
   readonly observation?: ReturnType<typeof resolveKnowledgeNodeObservation>;
 }
 interface PreparedNode extends NodeMutationDraft { readonly preserveObservation: boolean; readonly observationEvidence?: ObservedEvidence | undefined; readonly evidence: readonly ActivationEvidence[]; readonly evidenceHash: string; readonly subjects: readonly ActivationSubject[]; readonly observed: ReturnType<typeof getKnowledgeNodeObservation>; }
-interface PreparedPass { readonly store: KnowledgeStore; readonly scope: object; readonly nodes: readonly PreparedNode[]; readonly written: Set<number>; readonly committed: Map<string, KnowledgeNodeRecord>; readonly port: JudgmentPort | undefined; readonly model: string | undefined; readonly signal?: AbortSignal | undefined; readonly expires: number; readonly stage?: KnowledgeNodeActivationStage | undefined; }
+interface PreparedPass { readonly store: KnowledgeStore; readonly scope: object; readonly nodes: readonly PreparedNode[]; readonly written: Set<number>; readonly committed: Map<string, KnowledgeNodeRecord>; readonly port: JudgmentPort | undefined; readonly model: string | undefined; readonly assertCurrent?: (() => void) | undefined; readonly signal?: AbortSignal | undefined; readonly expires: number; readonly stage?: KnowledgeNodeActivationStage | undefined; }
 const retainedWrites = new WeakMap<KnowledgeNodeRecord, { readonly store: KnowledgeStore; readonly scope: object; readonly check: () => void }>();
 /** Only an exact locally committed object can authorize compensation, never a serialized receipt. */
 export function knowledgeNodeRestorationGuard(store: KnowledgeStore, record: KnowledgeNodeRecord, scope: object): (() => void) | undefined {
@@ -47,6 +48,8 @@ function unchanged(draft: NodeMutationDraft): boolean {
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
 export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: readonly NodeMutationDraft[], options: KnowledgeNodeActivationOptions, ownerConfidenceFloor: number | undefined, scope: object, stage?: KnowledgeNodeActivationStage): Promise<KnowledgePreparedNodeWrites> {
+  const assertCallerCurrent = options.assertCurrent;
+  assertCallerCurrent?.();
   stage?.assertCurrent();
   if (drafts.length > LIMITS.nodes) throw new Held('budget');
   const identities = new Map<string, string>();
@@ -83,14 +86,14 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
     if (observation && existing && (input.status ?? 'active') === existing.status && unchanged(draft)) return existing;
     if (observation) return retainKnowledgeNodeRecord({ ...record, status: input.status ?? 'active', metadata: { ...record.metadata, nodeActivation: undefined,
       nodeObservation: { version: 1, origin: observation.origin },
-      reviewProvenance: { state: 'explicit', reason: `Observed ${observation.origin} projection; untrusted origin retained; no synthesized claim or operator review`, decidedAt: draft.now } } });
+      reviewProvenance: knowledgeDecisionStamp(draft.now, { state: 'explicit', reason: `Observed ${observation.origin} projection; untrusted origin retained; no synthesized claim or operator review` }) } }, record);
     if (input.status === 'stale' || input.status === 'draft' || (existing?.status === 'stale' && input.status !== 'active')) {
       if (existing?.status === 'active' && supportHash(activationMeaning(existing)) !== supportHash(activationMeaning(record))) {
         throw new Held('replacement-requires-review');
       }
       if (existing?.status === record.status && unchanged(draft) && record.metadata.reviewProvenance !== undefined) return existing;
       return retainKnowledgeNodeRecord({ ...record, status: input.status ?? 'stale', metadata: { ...record.metadata, nodeActivation: undefined,
-        reviewProvenance: { state: input.status === 'draft' ? 'pending-review' : 'explicit', reason: `Explicit non-serving status '${input.status ?? 'stale'}'`, decidedAt: draft.now } } });
+        reviewProvenance: knowledgeDecisionStamp(draft.now, { state: input.status === 'draft' ? 'pending-review' : 'explicit', reason: `Explicit non-serving status '${input.status ?? 'stale'}'` }) } }, record);
     }
     const receipt = existing?.metadata.nodeActivation;
     if (existing?.status === 'active' && unchanged(draft) && draft.preserveObservation
@@ -116,19 +119,19 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
     const accepted = reading.outcome === 'accepted';
     const record = retainKnowledgeNodeRecord({ ...draft.record, status: accepted ? 'active' : 'draft', metadata: { ...draft.record.metadata,
       ...(!draft.preserveObservation ? { nodeObservation: undefined } : {}),
-      reviewProvenance: { state: accepted ? 'auto-accepted' : 'pending-review',
+      reviewProvenance: knowledgeDecisionStamp(draft.now, { state: accepted ? 'auto-accepted' : 'pending-review',
         reason: accepted ? 'Settled serving-without-review judgment; untrusted origin retained; not an operator review'
-          : `Pending review: serving judgment ${reading.reason ?? 'uncertain'}`, decidedAt: draft.now },
+          : `Pending review: serving judgment ${reading.reason ?? 'uncertain'}` }),
       nodeActivation: { battery: nodeServingWithoutReview.name, version: nodeServingWithoutReview.version, ...reading,
         ownerConfidenceFloor, candidateHash: supportHash(activationContent(draft.record)), evidenceHash: draft.evidenceHash,
         evidence: draft.evidence.map(({ id, source, extraction }) => ({ sourceId: id, sourceHash: supportHash(source),
           extractionId: extraction?.id, extractionHash: supportHash(extraction) })),
         subjects: draft.subjects.map(({ id, node }) => ({ nodeId: id, nodeHash: supportHash(node) })) },
-    } });
+    } }, draft.record);
     return { ...draft, record };
   });
   const token = Object.freeze({ count: resolved.length });
-  prepared.set(token, { store, scope, nodes: resolved, written: new Set(), committed: new Map(), port, model, signal: options.signal, expires: Date.now() + 30_000, stage });
+  prepared.set(token, { store, scope, nodes: resolved, written: new Set(), committed: new Map(), port, model, signal: options.signal, assertCurrent: assertCallerCurrent, expires: Date.now() + 30_000, stage });
   assertPreparedNodeWrites(store, token, scope);
   return token;
 }
@@ -139,6 +142,7 @@ export function assertPreparedNodeWrites(store: KnowledgeStore, token: Knowledge
   if (pass.signal?.aborted) throw new Held('aborted');
   if (Date.now() > pass.expires) throw new Held('stale');
   if (currentPort() !== pass.port || pass.port?.model !== pass.model) throw new Held('stale');
+  pass.assertCurrent?.();
   pass.stage?.assertCurrent();
   for (const [index, draft] of pass.nodes.entries()) {
     const sameSlug = store.getNodeByKindAndSlug(draft.record.kind, draft.record.slug);

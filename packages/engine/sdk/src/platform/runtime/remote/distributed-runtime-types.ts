@@ -203,6 +203,21 @@ interface StoredPairRequest extends DistributedRuntimePairRequest {
   readonly challengeHash: string;
 }
 
+/** Host-owned one-shot authority. Never written into a work record or accepted from a peer. */
+export interface DistributedWorkAdmission {
+  readonly signal: AbortSignal;
+  assertCurrent(): void;
+  claim(): void;
+}
+
+export interface DistributedWorkAdmissionOwner extends DistributedWorkAdmission {
+  readonly requestSignature: string;
+  readonly peerTokenId: string | undefined;
+  readonly peerRevision: number;
+  claimed: boolean;
+  detach(): void;
+}
+
 export interface DistributedRuntimeManagerState {
   readonly store: PersistentStore<DistributedRuntimeSnapshotStore>;
   /**
@@ -215,7 +230,10 @@ export interface DistributedRuntimeManagerState {
   readonly writes: StoreWriteQueue;
   readonly pairRequests: Map<string, StoredPairRequest>;
   readonly peers: Map<string, StoredPeerRecord>;
+  peerRevision(peerId: string): number;
+  peerMutationPending(peerId: string): boolean;
   readonly work: Map<string, DistributedPendingWork>;
+  readonly workAdmissions: Map<string, DistributedWorkAdmissionOwner>;
   readonly audit: DistributedRuntimeAuditRecord[];
   readonly waiters: Map<string, DistributedRuntimeWaiter[]>;
   sessionBridge: DistributedSessionBridge | null;

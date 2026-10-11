@@ -8,6 +8,7 @@ import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { captureAutonomousSource, type AutonomousToolSource } from './autonomous.js';
 import { awaitPermission } from './cancellation.js';
 import type { PermissionManager } from './manager.js';
+import type { WorkspaceTrustManager } from '../runtime/workspace-trust.js';
 
 /** Trusted transport-owned lifetime; never reconstructed from remote protocol params. */
 export interface ExternalRequestScope {
@@ -18,6 +19,11 @@ export interface ExternalRequestScope {
 }
 
 export interface ExternalPermissionHost {
+  /** Explicit null means this host has no separate workspace policy. Missing fails closed. */
+  readonly workspaceTrust?: Pick<WorkspaceTrustManager, 'prepareAutonomousConstraint'> | null | undefined;
+  readonly workspaceRoot?: string | undefined;
+  /** Trusted composition resolver for the actual process cwd, never peer supplied. */
+  readonly workspaceTrustFor?: ((cwd: string) => Pick<WorkspaceTrustManager, 'prepareAutonomousConstraint'> | null | undefined) | undefined;
   readonly port: JudgmentPort;
   readonly permissionManager: Pick<PermissionManager, 'admitAutonomous'>;
   readonly config: { onDidInvalidate(listener: () => void): () => void };

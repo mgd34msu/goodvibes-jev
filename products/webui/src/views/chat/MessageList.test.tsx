@@ -28,6 +28,7 @@ import type { ActiveToolCall } from './useChatStream';
 // and MessageList is imported dynamically AFTER this mock so the module graph never loads
 // the real goodvibes.ts first (mock.module only wins if it runs before the first import).
 mock.module('../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   sdk: {
     operator: {
       voice: { status: () => Promise.resolve({ ttsAvailable: false, sttAvailable: false }) },

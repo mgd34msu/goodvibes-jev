@@ -190,6 +190,9 @@ export class ProviderRegistry {
     return new Set([...this.runtimeCatalogSuppressedRegistryKeys.values()].flat());
   }
 
+  /** Value-free registration/catalog incarnation for owned asynchronous proposal work. */
+  getModelRegistryRevision(): number { return this._modelRegistryRevision; }
+
   private _invalidateModelRegistry(): void {
     this._cachedModelRegistry = null;
     this._modelRegistryRevision++;
@@ -456,6 +459,35 @@ export class ProviderRegistry {
     return this.getModelRegistry();
   }
 
+  /** Host-owned complete ID inventory for browser catalog alignment; no provider/model values leave this boundary. */
+  captureProviderCatalogIds(): {
+    readonly providerIds: readonly string[];
+    readonly catalogProviderIds: readonly string[];
+    readonly assertCurrent: () => void;
+  } {
+    const models = this.listModels();
+    const revision = this._modelRegistryRevision;
+    const providers = [...this.providers.entries()];
+    const readProviderId = (model: ModelDefinition): string => {
+      const descriptor = Object.getOwnPropertyDescriptor(model, 'provider');
+      if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'string') {
+        throw new Error('Provider catalog source unavailable.');
+      }
+      return descriptor.value;
+    };
+    const modelOwners = [...models];
+    const modelProviderIds = modelOwners.map(readProviderId);
+    const catalogProviderIds = Object.freeze([...new Set(modelProviderIds)]);
+    const providerIds = Object.freeze([...new Set([...providers.map(([id]) => id), ...catalogProviderIds])]);
+    return { providerIds, catalogProviderIds, assertCurrent: () => {
+      if (this._modelRegistryRevision !== revision || this.listModels() !== models || this.providers.size !== providers.length
+        || providers.some(([id, owner]) => this.providers.get(id) !== owner)
+        || models.length !== modelProviderIds.length || models.some((model, index) => model !== modelOwners[index] || readProviderId(model) !== modelProviderIds[index])) {
+        throw new Error('Provider catalog source changed.');
+      }
+    } };
+  }
+
   /** Legacy string-keyed catalog lookup, null when unpriced. Prefer resolveModelPricing. */
   getCostFromCatalog(modelId: string): CatalogModelPricing | null {
     return getCostFromPricingCatalog(modelId, this.pricingCatalog ?? { fetchedAt: Date.now(), models: this.catalogModels }, this.modelLimitsService);
@@ -553,7 +585,9 @@ export class ProviderRegistry {
 
   /** Currently active model definition. Follows a `provider.model` write made after startup. */
   getCurrentModel(): ModelDefinition {
-    this.currentModelRegistryKey = this.configuredModel.adopt(this.currentModelRegistryKey);
+    const previous = this.currentModelRegistryKey;
+    this.currentModelRegistryKey = this.configuredModel.adopt(previous);
+    if (previous !== this.currentModelRegistryKey) this._modelRegistryRevision += 1;
     const registry = this.getModelRegistry();
     const def = findModelDefinition(this.currentModelRegistryKey, registry);
     if (def) return def;
@@ -664,6 +698,8 @@ export class ProviderRegistry {
 
   /** Switch to a different model. Accepts a registryKey or a bare model id (resolved via the shared resolver). */
   setCurrentModel(modelReference: string): void {
+    // Intent invalidates retained proposal readers, including failed/no-op and ABA switches.
+    this._modelRegistryRevision += 1;
     const registryKey = resolveModelReference(modelReference, this.getModelRegistry());
     const def = findModelDefinition(registryKey, this.getModelRegistry());
     if (!def) throw new Error(`Model '${registryKey}' not found.`);

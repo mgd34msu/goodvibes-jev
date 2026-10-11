@@ -4,7 +4,7 @@
  * adoption of an unsupervised daemon, and the update receipt. Time,
  * network, filesystem, activity, service actions, and exit all mocked.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -25,6 +25,16 @@ import {
   type UpdateFileIo,
 } from '../sdk/src/platform/runtime/self-update.js';
 
+import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type Questions } from '@goodvibes-jev/judgment';
+import { installJudgmentPort, forgetFailureReadings } from '@goodvibes-jev/engine/errors';
+import { failureReadingsPort } from './_helpers/failure-readings.ts';
+let previousFailurePort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetFailureReadings();
+  previousFailurePort = installJudgmentPort(failureReadingsPort([['getaddrinfo ENOTFOUND github.com', { transientNetwork: true }], ['repository access revoked', { category: 'authorization' }]]).port);
+});
+afterEach(() => { installJudgmentPort(previousFailurePort); forgetFailureReadings(); });
+
 const LATEST_URL = 'https://example.test/releases/latest';
 const NEW_TAG = 'v2.0.0';
 const DAEMON_ASSET = 'goodvibes-daemon-linux-x64';
@@ -32,19 +42,27 @@ const NEW_DAEMON = Buffer.from('daemon-v2');
 
 function memoryIo(initial: Record<string, Buffer>) {
   const files = new Map<string, Buffer>(Object.entries(initial));
+  const mutations: string[] = [];
   const io: UpdateFileIo = {
-    writeFile: (path, data) => void files.set(path, data),
+    writeExclusive: (path, data) => {
+      mutations.push(`claim:${path}`);
+      if (files.has(path)) throw new Error(`file already exists: ${path}`);
+      files.set(path, data);
+    },
+    remove: (path) => { mutations.push(`remove:${path}`); files.delete(path); },
+    writeFile: (path, data) => { mutations.push(`write:${path}`); files.set(path, data); },
     rename: (from, to) => {
+      mutations.push(`rename:${from}:${to}`);
       const data = files.get(from);
       if (data === undefined) throw new Error(`rename source missing: ${from}`);
       files.delete(from);
       files.set(to, data);
     },
-    chmod: () => {},
+    chmod: (path) => { mutations.push(`chmod:${path}`); },
     exists: (path) => files.has(path),
-    mkdir: () => {},
+    mkdir: (path) => { mutations.push(`mkdir:${path}`); },
   };
-  return { files, io };
+  return { files, io, mutations };
 }
 
 function releaseFetch(overrides: { latestTag?: string; assetName?: string } = {}): { fetchImpl: UpdateFetchLike; requests: string[] } {
@@ -82,6 +100,8 @@ function releaseFetch(overrides: { latestTag?: string; assetName?: string } = {}
 interface Harness {
   updater: DaemonAutoUpdater;
   files: Map<string, Buffer>;
+  io: UpdateFileIo;
+  mutations: string[];
   receipts: DaemonReceiptStore;
   actions: { supervised: boolean; adopted: number; restarted: number };
   exits: number[];
@@ -105,6 +125,7 @@ function makeHarness(options: {
   /** Consecutive failed checks before the owner is told. */
   alertAfterFailedChecks?: number;
   alertWindowMs?: number;
+  updateTimeoutMs?: number;
   /** Replaces the release fetch entirely, used to make checks throw. */
   fetchOverride?: UpdateFetchLike;
   /** A movable clock, so the alert quiet window is provable without real time. */
@@ -114,7 +135,7 @@ function makeHarness(options: {
   stopGracefully?: () => void | Promise<void>;
 } ): Harness {
   const scratch = mkdtempSync(join(tmpdir(), 'auto-updater-'));
-  const { files, io } = memoryIo({ '/opt/gv/goodvibes-daemon': Buffer.from('daemon-v1') });
+  const { files, io, mutations } = memoryIo({ '/opt/gv/goodvibes-daemon': Buffer.from('daemon-v1') });
   const { fetchImpl, requests } = releaseFetch({ assetName: options.platform === 'darwin' ? 'goodvibes-daemon-macos-x64' : DAEMON_ASSET, ...(options.latestTag ? { latestTag: options.latestTag } : {}) });
   const receipts = new DaemonReceiptStore(join(scratch, 'receipts.json'), { now: () => new Date(2026, 6, 12, 14, 30).getTime() });
   const actions = { supervised: options.supervised ?? true, adopted: 0, restarted: 0 };
@@ -159,18 +180,19 @@ function makeHarness(options: {
     ...(options.rejectedVersion ? { rejectedVersion: options.rejectedVersion } : {}),
     ...(options.alertAfterFailedChecks !== undefined ? { alertAfterFailedChecks: options.alertAfterFailedChecks } : {}),
     ...(options.alertWindowMs !== undefined ? { alertWindowMs: options.alertWindowMs } : {}),
+    ...(options.updateTimeoutMs !== undefined ? { updateTimeoutMs: options.updateTimeoutMs } : {}),
     setTimer: (fn, ms) => {
       timers.push({ fn, ms });
       return 0 as unknown as ReturnType<typeof setTimeout>;
     },
     clearTimer: () => {},
   });
-  return { updater, files, receipts, actions, exits, timers, requests, sequence, scratch, alerts };
+  return { updater, files, io, mutations, receipts, actions, exits, timers, requests, sequence, scratch, alerts };
 }
 
 /** A fetch that always throws, a check that cannot complete at all. */
 const unreachableFetch: UpdateFetchLike = async () => {
-  throw new Error('getaddrinfo ENOTFOUND github.com');
+  throw Object.assign(new Error('getaddrinfo ENOTFOUND github.com'), { code: 'ENOTFOUND' });
 };
 
 describe('DaemonAutoUpdater', () => {
@@ -365,40 +387,40 @@ describe('a release that already crash looped here is not installed again', () =
   });
 });
 
+const persistentFetch: UpdateFetchLike = async () => { throw new Error('repository access revoked'); };
+
 /**
  * The other half of the same incident: an update path that has stopped working
  * must not stay a WARN line in a debug file. If it fails every hour for three
  * days, the owner hears about it.
  */
 describe('repeated update-check failures reach the owner', () => {
-  test('checks are counted before they are announced: two failures are quiet, the third is not', async () => {
-    const h = makeHarness({ idle: () => true, fetchOverride: unreachableFetch, alertAfterFailedChecks: 3 });
+  test('transient failures stay quiet regardless of their diagnostic count', async () => {
+    const h = makeHarness({ idle: () => true, fetchOverride: unreachableFetch, alertAfterFailedChecks: 1 });
+    try {
+      for (let i = 0; i < 6; i++) await h.updater.tick();
+      expect(h.updater.failedCheckCount).toBe(6);
+      expect(h.alerts).toEqual([]);
+      expect(h.updater.lastCheckFailure).toContain('getaddrinfo ENOTFOUND github.com');
+    } finally { rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  test('persistent failure alerts on the first check, regardless of the deprecated threshold', async () => {
+    const h = makeHarness({ idle: () => true, fetchOverride: persistentFetch, alertAfterFailedChecks: 100 });
     try {
       await h.updater.tick();
-      await h.updater.tick();
-      expect(h.updater.failedCheckCount).toBe(2);
-      expect(h.alerts).toEqual([]); // one bad network hour is not news
-
-      await h.updater.tick();
-      expect(h.updater.failedCheckCount).toBe(3);
+      expect(h.updater.failedCheckCount).toBe(1);
       expect(h.alerts).toHaveLength(1);
-      expect(h.alerts[0]).toContain('3 times in a row');
-      // It names the version the owner is actually still running, and why.
-      expect(h.alerts[0]).toContain('v1.0.0');
-      // The reason travels with the alert, in the summarized form the rest of
-      // the platform reports errors in.
-      expect(h.alerts[0]).toContain('getaddrinfo ENOTFOUND github.com');
-      expect(h.updater.lastCheckFailure).toContain('getaddrinfo ENOTFOUND github.com');
-    } finally {
-      rmSync(h.scratch, { recursive: true, force: true });
-    }
+      expect(h.alerts[0]).toContain('1 times in a row');
+      expect(h.alerts[0]).toContain('repository access revoked');
+    } finally { rmSync(h.scratch, { recursive: true, force: true }); }
   });
 
   test('a persistent failure is ONE message, not one an hour: the quiet window holds', async () => {
     let clock = new Date(2026, 6, 12, 14, 30).getTime();
     const h = makeHarness({
       idle: () => true,
-      fetchOverride: unreachableFetch,
+      fetchOverride: persistentFetch,
       alertAfterFailedChecks: 1,
       alertWindowMs: 12 * 60 * 60 * 1000,
       clock: () => clock,
@@ -430,7 +452,7 @@ describe('repeated update-check failures reach the owner', () => {
     const h = makeHarness({
       idle: () => true,
       alertAfterFailedChecks: 2,
-      fetchOverride: async (url) => (reachable ? working(url) : unreachableFetch(url)),
+      fetchOverride: async (url) => (reachable ? working(url) : persistentFetch(url)),
     });
     try {
       await h.updater.tick();
@@ -485,7 +507,7 @@ describe('repeated update-check failures reach the owner', () => {
     }
   });
 
-  test('a run of failures that recovers before the threshold never bothers the owner at all', async () => {
+  test('transient failures and their recovery never bother the owner', async () => {
     let reachable = false;
     const working = releaseFetch({ latestTag: 'v1.0.0' }).fetchImpl;
     const h = makeHarness({
@@ -512,6 +534,108 @@ describe('repeated update-check failures reach the owner', () => {
   });
 });
 
+describe('update failure reading lifecycle', () => {
+  function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    const promise = new Promise<T>(done => { resolve = done; });
+    return { promise, resolve };
+  }
+  test('identical wording is reread for each owned failure rather than borrowing another check', async () => {
+    const h = makeHarness({ idle: () => true, fetchOverride: persistentFetch });
+    const transient = failureReadingsPort([['repository access revoked', { transientNetwork: true }]]);
+    const persistent = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]);
+    try {
+      installJudgmentPort(transient.port); await h.updater.tick(); expect(h.alerts).toEqual([]);
+      installJudgmentPort(persistent.port); await h.updater.tick(); expect(h.alerts).toHaveLength(1);
+      expect(transient.requests).toHaveLength(1); expect(persistent.requests).toHaveLength(1);
+    } finally { rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+  test('actual structured status is retained and does not require a hosted reading', async () => {
+    installJudgmentPort(undefined);
+    const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw Object.assign(new Error('synthetic structured failure'), { status: 403 }); } });
+    try { await h.updater.tick(); expect(h.alerts).toHaveLength(1); expect(h.updater.failedCheckCount).toBe(1); }
+    finally { rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+  test('semantic errors never fall back to a failure-count alert', async () => {
+    let calls = 0;
+    const fake = failureReadingsPort([]).port;
+    installJudgmentPort({ model: fake.model, ask: async () => { calls++; throw new Error('synthetic terminal reading error'); } });
+    const h = makeHarness({ idle: () => true, fetchOverride: persistentFetch, alertAfterFailedChecks: 1 });
+    try {
+      await h.updater.tick(); expect(calls).toBe(1); expect(h.alerts).toEqual([]); expect(h.updater.failedCheckCount).toBe(1);
+      expect(h.timers).toHaveLength(1);
+    } finally { rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+  test('protected error wording and plain-object causes never reach judgment or owner notices', async () => {
+    const fake = failureReadingsPort([]); installJudgmentPort(fake.port);
+    for (const error of ['x'.repeat(300) + ' Authorization: Bearer synthetic-secret', new Error('Authorization: Bearer synthetic-secret'), new Error('lookup failed', { cause: { message: 'Authorization: Bearer synthetic-secret' } })]) {
+      const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw error; } });
+      try { await h.updater.tick(); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); expect(h.updater.lastCheckFailure).toBeNull(); }
+      finally { rmSync(h.scratch, { recursive: true, force: true }); }
+    }
+  });
+  test('failure capture refuses accessors and proxies without invoking them', async () => {
+    const fake = failureReadingsPort([]); installJudgmentPort(fake.port); let accessed = 0;
+    const accessor = new Error('placeholder'); Object.defineProperty(accessor, 'message', { get() { accessed++; return 'repository access revoked'; } });
+    const proxy = new Proxy(new Error('placeholder'), { get() { accessed++; return 'repository access revoked'; }, getPrototypeOf() { accessed++; return Error.prototype; } });
+    for (const error of [accessor, proxy]) {
+      const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw error; } });
+      try { await h.updater.tick(); expect(accessed).toBe(0); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); }
+      finally { rmSync(h.scratch, { recursive: true, force: true }); }
+    }
+  });
+  test('full primitive and serialized plain-object wording is screened before display truncation', async () => {
+    const fake = failureReadingsPort([]); installJudgmentPort(fake.port);
+    for (const error of [Symbol('x'.repeat(300) + ' Authorization: Bearer synthetic-secret'), { explanation: 'x'.repeat(300) + ' Authorization: Bearer synthetic-secret' }]) {
+      const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw error; } });
+      try { await h.updater.tick(); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); expect(h.updater.lastCheckFailure).toBeNull(); }
+      finally { rmSync(h.scratch, { recursive: true, force: true }); }
+    }
+  });
+  test('classification sees the complete admitted message rather than its bounded display summary', async () => {
+    const wording = 'ordinary diagnostic '.repeat(30) + 'repository access revoked';
+    const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]); installJudgmentPort(fake.port);
+    const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw { message: wording }; } });
+    try {
+      await h.updater.tick(); expect(fake.requests).toHaveLength(1); expect(String(fake.requests[0]!.state)).toContain(wording);
+      expect(h.updater.lastCheckFailure!.length).toBeLessThan(wording.length); expect(h.alerts).toHaveLength(1);
+    } finally { rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+  test('stop drains a noncooperative pending reading and no late result records or alerts', async () => {
+    const started = deferred<void>(); const finish = deferred<void>(); const log = new SqliteDecisionLog(':memory:');
+    const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]).port;
+    installJudgmentPort(withDecisionLog({ model: fake.model, async ask(request) {
+      started.resolve(); await finish.promise; return fake.ask(request);
+    } }, log));
+    const h = makeHarness({ idle: () => true, fetchOverride: persistentFetch });
+    try {
+      const tick = h.updater.tick(); await started.promise;
+      expect(h.alerts).toEqual([]); h.updater.stop();
+      await h.updater.drainHandover(); await tick; expect(h.alerts).toEqual([]);
+      finish.resolve(); await new Promise(resolve => setTimeout(resolve, 0));
+      expect(log.query({})).toHaveLength(0); expect(h.alerts).toEqual([]); expect(h.timers).toHaveLength(0);
+    } finally { finish.resolve(); log[Symbol.dispose](); rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+  test('availability retries remain within one updater check and alert only after recovery', async () => {
+    let calls = 0; let reads = 0;
+    const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]).port;
+    const h = makeHarness({ idle: () => true, fetchOverride: async () => { reads++; return persistentFetch('ignored'); } });
+    installJudgmentPort(createSystemOnePort({
+      endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: PINNED_MODEL,
+      timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
+      fetch: async (_url, init) => {
+        calls++; expect(h.alerts).toEqual([]); expect(h.updater.failedCheckCount).toBe(1);
+        if (calls <= 2) return Response.json({}, { status: 503 });
+        const body = JSON.parse(String(init?.body)) as { state: string; questions: Questions };
+        const result = await fake.ask(body);
+        return Response.json({ model: PINNED_MODEL, answers: result.answers, usage: { input_tokens: 1, output_tokens: 1 } });
+      },
+    }));
+    try { await h.updater.tick(); expect(calls).toBe(3); expect(reads).toBe(1); expect(h.alerts).toHaveLength(1); }
+    finally { rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+});
+
 describe('post-swap service handover', () => {
   function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -520,18 +644,18 @@ describe('post-swap service handover', () => {
     return { promise, resolve, reject };
   }
 
-  test('external stop drains scheduled release lookup and prevents download, disk swap, and handover', async () => {
+  test('external stop promptly drains a noncooperative scheduled release lookup', async () => {
     const lookupStarted = deferred<void>();
     const lookupFinished = deferred<void>();
     const release = releaseFetch();
+    let requestSignal: AbortSignal | undefined;
     const h = makeHarness({
       idle: () => true,
-      fetchOverride: async (url) => {
-        if (url === LATEST_URL) {
-          lookupStarted.resolve();
-          await lookupFinished.promise;
-        }
-        return release.fetchImpl(url);
+      fetchOverride: async (url, init) => {
+        requestSignal = init?.signal;
+        lookupStarted.resolve();
+        await lookupFinished.promise;
+        return release.fetchImpl(url, init);
       },
     });
     h.updater.start();
@@ -540,75 +664,351 @@ describe('post-swap service handover', () => {
     try {
       await lookupStarted.promise;
       h.updater.stop();
-      let drained = false;
-      const drain = h.updater.drainHandover().then(() => { drained = true; });
-      await Promise.resolve();
-      expect(drained).toBe(false);
-      lookupFinished.resolve();
-      await drain;
-      expect(drained).toBe(true);
+      await h.updater.drainHandover();
       await tick;
-      expect(release.requests).toEqual([LATEST_URL]);
-      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
-      expect(h.files.has(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)).toBe(false);
+      expect(requestSignal?.aborted).toBe(true);
+      expect(release.requests).toEqual([]);
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
       expect(h.sequence).toEqual([]);
       expect(h.receipts.list()).toHaveLength(0);
       expect(h.updater.snapshot().appliedVersion).toBeNull();
       expect(h.timers).toHaveLength(1);
+      lookupFinished.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(release.requests).toEqual([LATEST_URL]);
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
     } finally {
       lookupFinished.resolve();
       await tick;
       rmSync(h.scratch, { recursive: true, force: true });
     }
-  });
+  }, 2_000);
 
-  test('external stop during transactional apply preserves its completed swap but never starts handover', async () => {
-    const downloadStarted = deferred<void>();
-    const downloadFinished = deferred<void>();
+  for (const phase of ['manifest headers', 'manifest body', 'artifact headers', 'artifact body'] as const) {
+    for (const lateOutcome of ['resolve', 'reject'] as const) {
+      test(`stop drains noncooperative ${phase}; late ${lateOutcome} cannot write or hand over`, async () => {
+        const started = deferred<void>();
+        const finish = deferred<void>();
+        const release = releaseFetch();
+        let requestSignal: AbortSignal | undefined;
+        const wait = async () => { started.resolve(); await finish.promise; };
+        const h = makeHarness({
+          idle: () => true,
+          fetchOverride: async (url, init) => {
+            const matches = phase.startsWith('manifest') ? url.endsWith('/SHA256SUMS.txt') : url.endsWith(`/${DAEMON_ASSET}`);
+            if (matches) {
+              requestSignal = init?.signal;
+              if (phase.endsWith('headers')) await wait();
+            }
+            const response = await release.fetchImpl(url, init);
+            if (!matches || phase.endsWith('headers')) return response;
+            return {
+              ...response,
+              text: async () => { await wait(); return response.text(); },
+              arrayBuffer: async () => { await wait(); return response.arrayBuffer(); },
+            };
+          },
+        });
+        const tick = h.updater.tick();
+        try {
+          await started.promise;
+          h.updater.stop();
+          await h.updater.drainHandover();
+          await tick;
+          expect(requestSignal?.aborted).toBe(true);
+          expect([...h.files.entries()].map(([path, data]) => [path, data.toString()])).toEqual([['/opt/gv/goodvibes-daemon', 'daemon-v1']]);
+          expect(h.updater.snapshot().appliedVersion).toBeNull();
+          expect(h.updater.snapshot().pendingVersion).toBeNull();
+          expect(h.updater.failedCheckCount).toBe(0);
+          expect(h.mutations).toEqual([]);
+          expect(h.sequence).toEqual([]);
+          expect(h.receipts.list()).toHaveLength(0);
+          expect(h.alerts).toEqual([]);
+          if (lateOutcome === 'reject') finish.reject(new Error('late synthetic download failure'));
+          else finish.resolve();
+          await new Promise(resolve => setTimeout(resolve, 0));
+          expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+          expect(h.sequence).toEqual([]);
+          expect(h.alerts).toEqual([]);
+          expect(h.timers).toHaveLength(0);
+          expect(h.mutations).toEqual([]);
+        } finally {
+          h.updater.stop(); finish.resolve(); await tick;
+          rmSync(h.scratch, { recursive: true, force: true });
+        }
+      }, 2_000);
+    }
+  }
+
+  test('a stopped check cannot commit after start creates a new lifecycle', async () => {
+    const started = deferred<void>();
+    const finish = deferred<void>();
     const release = releaseFetch();
+    let hold = true;
     const h = makeHarness({
       idle: () => true,
-      fetchOverride: async (url) => {
-        if (url.endsWith(`/${DAEMON_ASSET}`)) {
-          downloadStarted.resolve();
-          await downloadFinished.promise;
-        }
-        return release.fetchImpl(url);
+      fetchOverride: async (url, init) => {
+        if (hold && url.endsWith(`/${DAEMON_ASSET}`)) { started.resolve(); await finish.promise; }
+        return release.fetchImpl(url, init);
       },
     });
     const tick = h.updater.tick();
     try {
-      await downloadStarted.promise;
-      h.updater.stop();
-      let drained = false;
-      const drain = h.updater.drainHandover().then(() => { drained = true; });
-      await Promise.resolve();
-      expect(drained).toBe(false);
-      downloadFinished.resolve();
-      await drain;
-      expect(drained).toBe(true);
-      expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
-      await tick;
-      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
-      expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+      await started.promise;
+      h.updater.stop(); h.updater.start();
+      await h.updater.drainHandover(); await tick;
+      finish.resolve(); await new Promise(resolve => setTimeout(resolve, 0));
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
       expect(h.sequence).toEqual([]);
-      expect(h.receipts.list()).toHaveLength(2);
-      expect(h.receipts.list()[0]!.text).toContain('on disk');
-      expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
-      expect(h.updater.snapshot().handover?.detail).toContain('updater stopped while applying the disk update');
-      expect(h.alerts).toHaveLength(1);
-      expect(h.timers).toHaveLength(0);
-      h.updater.start();
+      hold = false;
       await h.updater.tick();
-      expect(release.requests).toHaveLength(3);
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+      expect(h.actions.restarted).toBe(1);
     } finally {
-      downloadFinished.resolve();
-      await tick;
+      h.updater.stop(); finish.resolve(); await tick;
+      rmSync(h.scratch, { recursive: true, force: true });
+    }
+  }, 2_000);
+
+  test('becoming busy during download discards staged bytes and retries on the busy cadence', async () => {
+    const started = deferred<void>();
+    const finish = deferred<void>();
+    const release = releaseFetch();
+    let idle = true;
+    const h = makeHarness({
+      idle: () => idle,
+      fetchOverride: async (url, init) => {
+        if (url.endsWith(`/${DAEMON_ASSET}`)) { started.resolve(); await finish.promise; }
+        return release.fetchImpl(url, init);
+      },
+    });
+    const tick = h.updater.tick();
+    try {
+      await started.promise; idle = false; finish.resolve(); await tick;
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
+      expect(h.updater.snapshot().pendingVersion).toBe('2.0.0');
+      expect(h.updater.snapshot().appliedVersion).toBeNull();
+      expect(h.updater.failedCheckCount).toBe(0);
+      expect(h.sequence).toEqual([]);
+      expect(h.alerts).toEqual([]);
+      expect(h.timers.at(-1)?.ms).toBe(60_000);
+      idle = true; await h.updater.tick();
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+      expect(release.requests.filter(url => url === LATEST_URL)).toHaveLength(1);
+      expect(h.actions.restarted).toBe(1);
+    } finally {
+      h.updater.stop(); finish.resolve(); await tick;
       rmSync(h.scratch, { recursive: true, force: true });
     }
   });
 
-  test('draining a failed scheduled check waits for error recording without rejecting shutdown', async () => {
+  test('final admission detects a synchronous stop in staging and removes every owned file', async () => {
+    const h = makeHarness({ idle: () => true });
+    let renames = 0;
+    const rename = h.io.rename;
+    h.io.rename = (from, to) => { renames++; rename(from, to); };
+    h.io.chmod = () => h.updater.stop();
+    try {
+      await h.updater.tick(); await h.updater.drainHandover();
+      expect(renames).toBe(0);
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
+      expect(h.sequence).toEqual([]);
+      expect(h.receipts.list()).toHaveLength(0);
+      expect(h.alerts).toEqual([]);
+    } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  test('stop after the synchronous commit preserves its disk receipt and suppresses handover', async () => {
+    const h = makeHarness({ idle: () => true });
+    const rename = h.io.rename;
+    h.io.rename = (from, to) => {
+      rename(from, to);
+      if (from.endsWith('.update-download')) h.updater.stop();
+    };
+    try {
+      await h.updater.tick(); await h.updater.drainHandover();
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+      expect(h.files.get('/opt/gv/goodvibes-daemon.previous')?.toString()).toBe('daemon-v1');
+      expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+      expect(h.sequence).toEqual([]);
+      expect(h.receipts.list()).toHaveLength(2);
+      expect(h.receipts.list()[0]!.text).toContain('on disk');
+      expect(h.updater.snapshot().handover?.detail).toContain('updater stopped while applying');
+      const requests = h.requests.length;
+      h.updater.start(); await h.updater.tick();
+      expect(h.requests).toHaveLength(requests);
+      expect(h.alerts).toHaveLength(1);
+    } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  test('final admission checks lifecycle again after the activity probe', async () => {
+    let probes = 0;
+    let updater!: DaemonAutoUpdater;
+    const h = makeHarness({ idle: () => { if (++probes === 2) { updater.stop(); updater.start(); } return true; } });
+    updater = h.updater;
+    try {
+      await h.updater.tick();
+      expect(probes).toBe(2);
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect(h.sequence).toEqual([]);
+      expect(h.alerts).toEqual([]);
+    } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  for (const body of [false, true]) {
+    test(`deadline bounds noncooperative artifact ${body ? 'body' : 'headers'} and fences late bytes`, async () => {
+      const started = deferred<void>(); const finish = deferred<void>();
+      const fake = failureReadingsPort([['update timed out', { transientNetwork: true }]]);
+      installJudgmentPort(fake.port);
+      const release = releaseFetch();
+      let requestSignal: AbortSignal | undefined;
+      const wait = async () => { started.resolve(); await finish.promise; };
+      const h = makeHarness({
+        idle: () => true, updateTimeoutMs: 25,
+        fetchOverride: async (url, init) => {
+          if (!url.endsWith(`/${DAEMON_ASSET}`)) return release.fetchImpl(url, init);
+          requestSignal = init?.signal;
+          if (!body) await wait();
+          const response = await release.fetchImpl(url, init);
+          return body ? { ...response, arrayBuffer: async () => { await wait(); return response.arrayBuffer(); } } : response;
+        },
+      });
+      const tick = h.updater.tick();
+      try {
+        await started.promise; await tick; await h.updater.drainHandover();
+        expect(requestSignal?.aborted).toBe(true);
+        expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+        expect(h.updater.failedCheckCount).toBe(1);
+        expect(fake.requests).toHaveLength(1);
+        expect(h.alerts).toEqual([]);
+        finish.resolve(); await new Promise(resolve => setTimeout(resolve, 0));
+        expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+        expect(h.sequence).toEqual([]);
+        expect(h.timers.at(-1)?.ms).toBe(60 * 60 * 1_000);
+      } finally { h.updater.stop(); finish.resolve(); await tick; rmSync(h.scratch, { recursive: true, force: true }); }
+    }, 2_000);
+  }
+
+  test('a stop during staging cannot hide a failed cleanup or re-arm an unsafe transaction', async () => {
+    const h = makeHarness({ idle: () => true });
+    const remove = h.io.remove!;
+    h.io.chmod = () => h.updater.stop();
+    h.io.remove = (path) => {
+      if (path.endsWith('.update-download')) throw new Error('synthetic staged cleanup failure');
+      remove(path);
+    };
+    try {
+      await h.updater.tick(); await h.updater.drainHandover();
+      expect(h.updater.snapshot().recoveryRequired).toBe(true);
+      expect(h.updater.snapshot().appliedVersion).toBeNull();
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
+      expect(h.files.has('/opt/gv/goodvibes-daemon.update-transaction')).toBe(true);
+      expect(h.files.has('/opt/gv/goodvibes-daemon.update-download')).toBe(true);
+      expect(h.alerts).toHaveLength(1);
+      expect(h.alerts[0]).toContain('filesystem recovery');
+      expect(h.sequence).toEqual([]);
+      const requests = h.requests.length;
+      h.updater.start(); await h.updater.tick();
+      expect(h.requests).toHaveLength(requests);
+    } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  test('the monotonic deadline is checked after synchronous staging before any live rename', async () => {
+    installJudgmentPort(failureReadingsPort([['timed out before commit', { transientNetwork: true }], ['deadline exceeded', { transientNetwork: true }]]).port);
+    const h = makeHarness({ idle: () => true, updateTimeoutMs: 50 });
+    let renames = 0;
+    h.io.chmod = () => { const until = performance.now() + 55; while (performance.now() < until) { /* synthetic synchronous staging */ } };
+    h.io.rename = () => { renames++; };
+    try {
+      await h.updater.tick();
+      expect(renames).toBe(0);
+      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect(h.sequence).toEqual([]);
+      expect(h.updater.failedCheckCount).toBe(1);
+      expect(h.updater.lastCheckFailure).toMatch(/timed out before commit|deadline exceeded/);
+      expect(h.updater.snapshot().recoveryRequired).toBe(false);
+    } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  for (const fails of [false, true]) {
+    test(`completed ${fails ? 'failed' : 'successful'} request removes deadline timers and lifecycle listeners`, async () => {
+      const signals = new Map<AbortSignal, { events: number; reason?: unknown }>();
+      const release = releaseFetch();
+      const h = makeHarness({
+        idle: () => true, updateTimeoutMs: 40,
+        fetchOverride: async (url, init) => {
+          const signal = init?.signal;
+          if (signal && !signals.has(signal)) {
+            const observed = { events: 0, reason: undefined as unknown };
+            signals.set(signal, observed);
+            signal.addEventListener('abort', () => { observed.events++; observed.reason = signal.reason; });
+          }
+          if (fails) throw Object.assign(new Error('getaddrinfo ENOTFOUND github.com'), { code: 'ENOTFOUND' });
+          return release.fetchImpl(url, init);
+        },
+      });
+      try {
+        await h.updater.tick();
+        expect(signals.size).toBe(fails ? 1 : 2);
+        // Scope disposal aborts once to release any unconsumed response body.
+        // A later lifecycle stop or old deadline must not change that outcome.
+        for (const [signal, observed] of signals) {
+          expect(signal.aborted).toBe(true);
+          expect(observed.events).toBe(1);
+          expect(observed.reason).toBe(signal.reason);
+        }
+        h.updater.stop();
+        await new Promise(resolve => setTimeout(resolve, 60));
+        for (const [signal, observed] of signals) {
+          expect(observed.events).toBe(1);
+          expect(observed.reason).toBe(signal.reason);
+        }
+      } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+    });
+  }
+
+  for (const committed of [false, true]) {
+    test(`${committed ? 'committed cleanup' : 'incomplete undo'} recovery permanently fences this updater without handover`, async () => {
+      const h = makeHarness({ idle: () => true });
+      const remove = h.io.remove!;
+      const rename = h.io.rename;
+      if (committed) h.io.remove = (path) => { if (path.endsWith('.update-transaction')) throw new Error('synthetic claim cleanup failure'); remove(path); };
+      else h.io.rename = (from, to) => {
+        if (from.endsWith('.update-download') || from.endsWith('.previous')) throw new Error('synthetic commit and undo failure');
+        rename(from, to);
+      };
+      try {
+        await h.updater.tick();
+        expect(h.updater.snapshot().recoveryRequired).toBe(true);
+        expect(h.updater.snapshot().appliedVersion).toBe(committed ? '2.0.0' : null);
+        expect(h.updater.snapshot().transactionRecovery?.committed).toBe(committed);
+        expect(h.updater.snapshot().transactionRecovery?.recoveryPaths).toContain('/opt/gv/goodvibes-daemon.update-transaction');
+        expect(h.updater.snapshot().transactionRecovery?.phase).toBe(committed ? 'cleanup' : 'commit');
+        const evidence = h.updater.snapshot().transactionRecovery!;
+        const expected = { ...evidence, targets: [...evidence.targets], recoveryPaths: [...evidence.recoveryPaths], recoveryErrors: [...evidence.recoveryErrors] };
+        (evidence.targets as string[]).length = 0;
+        (evidence.recoveryPaths as string[]).length = 0;
+        (evidence.recoveryErrors as string[]).push('external mutation');
+        expect(h.updater.snapshot().transactionRecovery).toEqual(expected);
+        expect(h.updater.snapshot().recoveryRequired).toBe(true);
+        expect(h.files.has('/opt/gv/goodvibes-daemon.update-transaction')).toBe(true);
+        expect(h.sequence).toEqual([]);
+        expect(h.alerts).toHaveLength(1);
+        expect(h.alerts[0]).toContain('filesystem recovery');
+        expect(h.receipts.list()).toHaveLength(1);
+        expect(h.updater.failedCheckCount).toBe(1);
+        expect(h.updater.lastCheckFailure).toContain('filesystem recovery');
+        const requests = h.requests.length;
+        h.updater.start(); await h.updater.tick();
+        expect(h.requests).toHaveLength(requests);
+        expect(h.timers).toHaveLength(0);
+      } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+    });
+  }
+
+  test('draining a stopped check performs no new failure reading or alert', async () => {
     const fetchStarted = deferred<void>();
     const fetchFinished = deferred<void>();
     const h = makeHarness({
@@ -628,8 +1028,9 @@ describe('post-swap service handover', () => {
       const drain = h.updater.drainHandover();
       fetchFinished.resolve();
       await expect(drain).resolves.toBeUndefined();
-      expect(h.updater.failedCheckCount).toBe(1);
-      expect(h.updater.lastCheckFailure).toContain('lookup failed while stopping');
+      expect(h.updater.failedCheckCount).toBe(0);
+      expect(h.updater.lastCheckFailure).toBeNull();
+      expect(h.alerts).toEqual([]);
       expect(h.updater.snapshot().appliedVersion).toBeNull();
       expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
       expect(h.sequence).toEqual([]);
@@ -1070,3 +1471,94 @@ for (const restartOnFailure of [false, true]) {
     });
   }
 }
+
+describe('updater-owned effect references', () => {
+  test('lookup cannot redirect retained constructor options or replace handover/receipt callbacks', async () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'update-options-'));
+    const authorized = '/fixture/authorized';
+    const redirected = '/fixture/redirected';
+    const original = memoryIo({ [authorized]: Buffer.from('daemon-v1'), [redirected]: Buffer.from('leave-alone') });
+    const replacement = memoryIo({ [redirected]: Buffer.from('replacement-fs') });
+    const receipts = new DaemonReceiptStore(join(scratch, 'receipts.json'));
+    const release = releaseFetch();
+    let begin!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const paused = new Promise<void>(resolve => { finish = resolve; });
+    const sequence: string[] = [];
+    const actions = {
+      isSupervised: () => true,
+      adoptIntoService: () => { sequence.push('adopt'); return { status: 'accepted' as const }; },
+      restartService: () => { sequence.push('restart'); return { status: 'accepted' as const }; },
+    };
+    const options = {
+      currentVersion: '1.0.0', execPath: authorized, platform: 'linux' as NodeJS.Platform, arch: 'x64',
+      releasesLatestUrl: LATEST_URL, downloadBaseUrl: (tag: string) => defaultDownloadBaseUrl(LATEST_URL, tag),
+      isIdle: () => true, io: original.io, receipts, serviceActions: actions,
+      fetchImpl: (async (url, init) => {
+        if (url === LATEST_URL) { begin(); await paused; }
+        return release.fetchImpl(url, init);
+      }) as UpdateFetchLike,
+      stopGracefully: () => { sequence.push('stop'); },
+      exitProcess: (_code: number) => { sequence.push('exit'); },
+      setTimer: () => 0 as unknown as ReturnType<typeof setTimeout>, clearTimer: () => {},
+    };
+    const updater = new DaemonAutoUpdater(options);
+    const tick = updater.tick();
+    try {
+      await started;
+      options.execPath = redirected;
+      options.currentVersion = '999.0.0';
+      options.platform = 'win32'; options.arch = 'arm64';
+      options.releasesLatestUrl = 'https://redirected.invalid/releases/latest';
+      options.downloadBaseUrl = () => 'https://redirected.invalid/download';
+      options.io = replacement.io;
+      options.fetchImpl = async () => { throw new Error('replacement fetch must not run'); };
+      options.isIdle = () => false;
+      options.stopGracefully = () => { sequence.push('replacement-stop'); };
+      options.exitProcess = () => { sequence.push('replacement-exit'); };
+      actions.isSupervised = () => false;
+      actions.restartService = () => { sequence.push('replacement-restart'); return { status: 'accepted' }; };
+      actions.adoptIntoService = () => { sequence.push('replacement-adopt'); return { status: 'accepted' }; };
+      options.serviceActions = { ...actions };
+      receipts.record = () => { sequence.push('replacement-receipt'); return { id: 'replacement', at: 0, text: '' }; };
+      finish(); await tick;
+      expect(original.files.get(authorized)?.toString()).toBe('daemon-v2');
+      expect(original.files.get(`${authorized}.previous`)?.toString()).toBe('daemon-v1');
+      expect(original.files.get(redirected)?.toString()).toBe('leave-alone');
+      expect(replacement.mutations).toEqual([]);
+      expect(sequence).toEqual(['stop', 'restart']);
+      expect(receipts.list()).toHaveLength(1);
+      expect(updater.snapshot().currentVersion).toBe('1.0.0');
+      expect(updater.snapshot().releasesUrl).toBe(LATEST_URL);
+      expect(updater.snapshot().appliedVersion).toBe('2.0.0');
+      expect(release.requests).toHaveLength(3);
+    } finally { finish(); updater.stop(); await tick; rmSync(scratch, { recursive: true, force: true }); }
+  });
+
+  test('lookup cannot replace I/O members used by target resolution or commit', async () => {
+    const release = releaseFetch();
+    let begin!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const paused = new Promise<void>(resolve => { finish = resolve; });
+    let replacedCalls = 0;
+    const h = makeHarness({ idle: () => true, fetchOverride: async (url, init) => {
+      if (url === LATEST_URL) { begin(); await paused; }
+      return release.fetchImpl(url, init);
+    } });
+    const tick = h.updater.tick();
+    try {
+      await started;
+      const replacement = () => { replacedCalls++; throw new Error('replaced I/O must not run'); };
+      h.io.exists = replacement; h.io.mkdir = replacement; h.io.writeFile = replacement;
+      h.io.writeExclusive = replacement; h.io.rename = replacement; h.io.chmod = replacement; h.io.remove = replacement;
+      finish(); await tick;
+      expect(replacedCalls).toBe(0);
+      expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
+      expect(h.files.get('/opt/gv/goodvibes-daemon.previous')?.toString()).toBe('daemon-v1');
+      expect(h.sequence).toEqual(['stop', 'restart']);
+      expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
+    } finally { finish(); h.updater.stop(); await tick; rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+});

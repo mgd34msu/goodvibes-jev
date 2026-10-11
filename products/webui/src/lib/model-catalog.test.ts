@@ -13,7 +13,6 @@ import {
   providerIdsFromProvidersResponse,
   readTargetRouting,
   tierToCategoryFilter,
-  type CatalogModel,
 } from './model-catalog';
 
 const PROVIDERS_RESPONSE = {

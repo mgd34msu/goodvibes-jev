@@ -19,7 +19,9 @@
  *  - Occurrences between their two boundaries, which is most of them, most of
  *    the time.
  */
-import { composeConflictMessage, composeNudge, subjectFor } from './nudge.js';
+import { OccasionReadingWork } from './readings.js';
+import { composeConflictMessage, prepareNudge, subjectFor } from './nudge.js';
+import { storedAcknowledgementEvidence, storedOpenItemEvidence } from './stored-reading-evidence.js';
 import { daysBetween, type IsoDate } from './dates.js';
 import type {
   NudgeSubject,
@@ -71,18 +73,32 @@ export interface PendingInput {
  * ten days, which is the opposite of what the pull is for. Same day: do not say
  * it twice in one conversation. Any other day: of course it is listed.
  */
-export function composePending(input: PendingInput): PendingResult {
-  const byId = new Map(input.occasions.map((entry) => [entry.id, entry]));
+export async function composePending(input: PendingInput, work = new OccasionReadingWork()): Promise<PendingResult> {
+  input = work.snapshot(input);
+  const prepared = await preparePending(input, work);
+  work.assertCurrent();
+  return { ...prepared, nudge: prepared.nudge === null ? null : { ...prepared.nudge, id: `occasions-pending-${input.today}`, raisedAt: input.now } };
+}
+
+/** Internal service preparation keeps stored clocks local, retaining the original records. */
+export async function preparePending(input: Omit<PendingInput, 'now'>, work: OccasionReadingWork): Promise<Omit<PendingResult, 'nudge'> & { readonly nudge: Omit<OccasionNudge, 'id' | 'raisedAt'> | null }> {
+  const { openItems, acknowledgements, ...source } = input;
+  const admitted = work.snapshot({
+    ...source,
+    openItems: storedOpenItemEvidence(openItems, work),
+    acknowledgements: storedAcknowledgementEvidence(acknowledgements, work),
+  });
+  const byId = new Map(admitted.occasions.map((entry) => [entry.id, entry]));
   const ackByKey = new Map(
-    input.acknowledgements.map((entry) => [`${entry.occasionId}@${entry.occurrence}`, entry]),
+    admitted.acknowledgements.map((entry) => [`${entry.occasionId}@${entry.occurrence}`, entry]),
   );
 
   const open: NudgeSubject[] = [];
   const acknowledged: NudgeSubject[] = [];
 
-  for (const item of input.openItems) {
+  for (const item of admitted.openItems) {
     if (item.kind !== 'nudge') continue;
-    if (item.occurrence < input.today) continue;
+    if (item.occurrence < admitted.today) continue;
     const occasion = byId.get(item.occasionId);
     if (occasion === undefined) continue;
 
@@ -91,12 +107,12 @@ export function composePending(input: PendingInput): PendingResult {
     // is still an open question. Only an acknowledgement changes which list it
     // lands in.
     const isAcknowledged = answer?.answer === 'acknowledged';
-    if (!isAcknowledged && input.agentIsPushed && item.agentPushedOn === input.today) continue;
+    if (!isAcknowledged && admitted.agentIsPushed && item.agentPushedOn === admitted.today) continue;
 
-    const daysUntil = daysBetween(input.today, item.occurrence);
+    const daysUntil = daysBetween(admitted.today, item.occurrence);
     const subject = subjectFor(
       occasion,
-      Number.isFinite(daysUntil) ? daysUntil : input.leadDays,
+      Number.isFinite(daysUntil) ? daysUntil : admitted.leadDays,
       isAcknowledged,
     );
     if (isAcknowledged) acknowledged.push(subject);
@@ -104,16 +120,16 @@ export function composePending(input: PendingInput): PendingResult {
   }
 
   const openConflictIds = new Set(
-    input.openItems.filter((item) => item.kind === 'conflict').map((item) => item.occasionId),
+    admitted.openItems.filter((item) => item.kind === 'conflict').map((item) => item.occasionId),
   );
 
   return {
-    today: input.today,
+    today: admitted.today,
     nudge: open.length === 0
       ? null
-      : composeNudge({ id: `occasions-pending-${input.today}`, now: input.now, subjects: open }),
+      : await prepareNudge(open, work),
     acknowledged,
-    conflicts: input.conflicts
+    conflicts: admitted.conflicts
       .filter((conflict) => openConflictIds.has(conflict.occasionId))
       .map((conflict) => ({
         occasionId: conflict.occasionId,

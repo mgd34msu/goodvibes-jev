@@ -942,7 +942,7 @@ describe('product breadth commands', () => {
     const out: string[] = [];
     const ctx = makeContext(out);
     (ctx.session as { conversationManager: CommandContext['session']['conversationManager'] }).conversationManager = {
-      getTranscriptEventIndex: () => ({
+      getMessageSnapshot: () => [], getTranscriptEventIndex: () => ({
         events: [
           { kind: 'user_input', messageIndex: 0, title: 'User input', detail: 'review auth flow' },
           { kind: 'tool_call', messageIndex: 1, title: 'read', detail: '{\"path\":\"src/main.ts\"}' },

@@ -1,3 +1,4 @@
+import type { KnowledgeIngestOwnership } from './ingest-context.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotNodeInput } from './activation/projection.js';
 import {
@@ -479,9 +480,10 @@ export class KnowledgeService {
     readonly sessionId?: string | undefined;
     readonly score?: number | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
-  }): Promise<KnowledgeUsageRecord> {
+  }, assertCurrent?: () => void): Promise<KnowledgeUsageRecord> {
     await this.store.init();
-    return this.store.upsertUsageRecord(input);
+    assertCurrent?.();
+    return this.store.upsertUsageRecord(input, assertCurrent);
   }
 
   getNeighbors(
@@ -558,9 +560,9 @@ export class KnowledgeService {
     readonly connectorId?: string | undefined;
     readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
-  }): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
+  }, ownership: KnowledgeIngestOwnership = {}): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
     this.requireAdmission('knowledge artifact ingestion');
-    return ingestKnowledgeArtifact(this.getIngestContext(), input);
+    return ingestKnowledgeArtifact(this.getIngestContext(), input, ownership);
   }
 
   async importBookmarksFromFile(input: {

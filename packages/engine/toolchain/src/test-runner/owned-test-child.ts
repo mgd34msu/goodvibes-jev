@@ -52,9 +52,9 @@
  * of the file bun was working on, which is the first thing anyone reading the
  * failure wants.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, resolve } from 'node:path';
+import { delimiter, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Writable } from 'node:stream';
 
@@ -62,12 +62,15 @@ import type { Writable } from 'node:stream';
 // `bun:test` and registers a global `beforeEach`, and this runs in the PARENT.
 import { HEARTBEAT_PATH_ENV, PARENT_PID_ENV } from './test-child-watchdog-env.js';
 import { sweepStaleTmpDirs } from './stale-tmp-sweep.js';
+import { retainRunTmpDir, withRunTmpDir, RUNNER_ENV_FLAG, RUN_TMP_PREFIX, STALE_RUN_MS, testTmpEnv } from './test-run-tmp.js';
+import { OWNED_TMP_ENV } from './temp-registry.js';
 import { isolatedTestEnvironment, NETWORK_VIOLATIONS_ENV } from './test-isolation.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Bun workspace imports use source; normalized installed exports use emitted JS.
 const RUNTIME_EXTENSION = extname(fileURLToPath(import.meta.url));
 const CHILD_WATCHDOG = resolve(__dirname, `test-child-watchdog${RUNTIME_EXTENSION}`);
+const TEMP_PRELOAD = resolve(__dirname, `test-temp-cleanup${RUNTIME_EXTENSION}`);
 const NETWORK_PRELOAD = resolve(__dirname, `test-network-preload${RUNTIME_EXTENSION}`);
 
 /**
@@ -113,24 +116,12 @@ const KILL_GRACE_MS = 5_000;
 
 /** Additional bounded drain time after the direct child has exited. */
 const OUTPUT_DRAIN_GRACE_MS = 5_000;
+/** SIGKILL delivery is not proof that all group members have stopped. */
+const GROUP_SETTLE_MS = 5_000;
 
-/**
- * The heartbeat file lives under the REAL system temp dir, in a directory named
- * for this tool, and every run sweeps its own stale siblings before creating
- * one.
- *
- * It cannot live in the run temp tree: `scripts/test.ts` points the CHILD's
- * `tmpdir()` at that tree, and this file is written by the child and read by
- * the parent, which does not share it. So it gets the same treatment every
- * other direct-`os.tmpdir()` user in this repo gets, a signal kill skips the
- * `finally` that would have removed it, exactly as it skips an `afterAll`, and
- * an unreclaimed per-run directory is an inode leak on a tmpfs.
- *
- * An hour is far longer than any run, so a sibling that is genuinely still
- * going is never touched.
- */
+/** Heartbeat and isolated state belong to this run's parent-owned root.
+ * Old unmarked heartbeat siblings are deliberately not adopted or deleted. */
 const HEARTBEAT_PREFIX = 'goodvibes-test-heartbeat-';
-const STALE_HEARTBEAT_MS = 60 * 60 * 1000;
 
 /** Why this module ended a run itself, when it did. */
 export type OwnedTestChildStop = 'stalled' | 'ceiling' | 'parent-died' | 'interrupted' | 'output-drain';
@@ -263,11 +254,13 @@ export async function runOwnedTestChild(options: {
   /** Caller-owned output sinks remain open after this run. */
   readonly stdout?: Writable;
   readonly stderr?: Writable;
-  /** Opt in to a dedicated POSIX group, including non-detached descendants. */
+  /** Opt in to a dedicated POSIX group, including ordinary non-detached descendants. */
   readonly ownProcessGroup?: boolean;
   /** Preserve the owner captured before a worker is dispatched. */
   readonly expectedParentPid?: number;
 }): Promise<OwnedTestChildResult> {
+  sweepStaleTmpDirs(tmpdir(), RUN_TMP_PREFIX, STALE_RUN_MS);
+  return withRunTmpDir(tmpdir(), async (ownedRoot) => {
   const initialPpid = perCallMs('expectedParentPid', options.expectedParentPid, process.ppid);
   if (options.ownProcessGroup && process.platform === 'win32') throw new Error('ownProcessGroup requires POSIX process-group support');
   const ownProcessGroup = options.ownProcessGroup ?? false;
@@ -291,8 +284,7 @@ export async function runOwnedTestChild(options: {
   }
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
-  sweepStaleTmpDirs(tmpdir(), HEARTBEAT_PREFIX, STALE_HEARTBEAT_MS);
-  const heartbeatDir = mkdtempSync(join(tmpdir(), HEARTBEAT_PREFIX));
+  const heartbeatDir = mkdtempSync(join(ownedRoot, HEARTBEAT_PREFIX));
   const heartbeatPath = join(heartbeatDir, 'progress');
   const violationsPath = join(heartbeatDir, 'network-violations');
   const startedAt = Date.now();
@@ -300,7 +292,7 @@ export async function runOwnedTestChild(options: {
   const child = (() => {
     try {
       const childEnv = isolatedTestEnvironment(options.env, join(heartbeatDir, 'isolated'), options.fixtureEnv);
-      return Bun.spawn(['bun', '--no-env-file', 'test', '--preload', NETWORK_PRELOAD, '--preload', CHILD_WATCHDOG, ...options.argv], {
+      return Bun.spawn(['bun', '--no-env-file', 'test', '--preload', NETWORK_PRELOAD, '--preload', CHILD_WATCHDOG, '--preload', TEMP_PRELOAD, ...options.argv], {
         cwd: options.cwd,
         detached: ownProcessGroup,
         stdin: 'inherit',
@@ -318,13 +310,20 @@ export async function runOwnedTestChild(options: {
             ? { FORCE_COLOR: '1' }
             : {}),
           ...childEnv,
+          ...testTmpEnv(ownedRoot),
+          [RUNNER_ENV_FLAG]: '1',
+          [OWNED_TMP_ENV]: ownedRoot,
+          GOODVIBES_TEST_OWN_PROCESS_GROUP: ownProcessGroup ? '1' : '0',
+          // Keep the owned temp boundary and explicit fixture boundaries together.
+          // Product fixtures may live outside ownedRoot but inside a checkout;
+          // inherited host ceilings were already removed by isolation above.
+          GIT_CEILING_DIRECTORIES: [...new Set([ownedRoot, ...(childEnv.GIT_CEILING_DIRECTORIES?.split(delimiter) ?? [])].filter(Boolean))].join(delimiter),
           [NETWORK_VIOLATIONS_ENV]: violationsPath,
           [PARENT_PID_ENV]: String(process.pid),
           [HEARTBEAT_PATH_ENV]: heartbeatPath,
         },
       });
     } catch (error) {
-      rmSync(heartbeatDir, { recursive: true, force: true });
       throw error;
     }
   })();
@@ -385,24 +384,72 @@ export async function runOwnedTestChild(options: {
   const groupExists = (): boolean => {
     try { process.kill(-child.pid, 0); return true; }
     catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) { signallingError ??= error; rejectSignalling(error); }
-      return false;
+      if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false;
+      throw error;
     }
+  };
+  const groupHasLiveMembers = (): boolean => {
+    if (!groupExists()) return false;
+    if (process.platform !== 'linux') return true;
+    // Read only kernel process state and group membership, never cmdline or
+    // environment. Zombies cannot write but may await another parent's reap.
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue;
+      let record: string;
+      try { record = readFileSync(`/proc/${name}/stat`, 'utf8'); }
+      catch (error) {
+        if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ESRCH')) continue;
+        throw error;
+      }
+      // Skip the comm field (which may itself contain spaces/parentheses).
+      const fields = /^([A-Za-z])\s+\d+\s+(\d+)(?:\s|$)/.exec(record.slice(record.lastIndexOf(')') + 2));
+      if (!fields) throw new Error('Cannot establish process-group membership from kernel state');
+      if (Number(fields[2]) === child.pid && fields[1] !== 'Z' && fields[1] !== 'X') return true;
+    }
+    return false;
+  };
+  const retainUnsettledGroup = (error: unknown): Error => {
+    const reason = `Owned process-group settlement could not be established; retaining test root ${ownedRoot}`;
+    let failure = new Error(reason, { cause: error });
+    try { retainRunTmpDir(ownedRoot, reason); }
+    catch (markerError) { failure = new Error(`${reason}; evidence marker could not be fully written`, { cause: markerError }); }
+    signallingError ??= failure;
+    rejectSignalling(failure);
+    return failure;
   };
   const beginGroupTeardown = (signal: NodeJS.Signals): Promise<void> => {
     if (groupTeardown) return groupTeardown;
-    signalOwned(signal);
     groupTeardown = (async () => {
-      const deadline = Date.now() + killGraceMs;
-      while (groupExists()) {
-        if (Date.now() >= deadline) {
-          void report(`goodvibes: the owned process group still exists ${killGraceMs}ms after ${signal}; sending SIGKILL\n`);
-          signalOwned('SIGKILL');
-          return;
+      try {
+        signalOwned(signal);
+        if (signallingError !== undefined) throw signallingError;
+        const deadline = Date.now() + killGraceMs;
+        while (groupHasLiveMembers()) {
+          if (Date.now() >= deadline) {
+            void report(`goodvibes: the owned process group still exists ${killGraceMs}ms after ${signal}; sending SIGKILL\n`);
+            break;
+          }
+          await Bun.sleep(Math.min(25, Math.max(1, deadline - Date.now())));
         }
-        await Bun.sleep(Math.min(25, Math.max(1, deadline - Date.now())));
-      }
+        // A grace-period snapshot can miss a child forked just before its
+        // parent exits. Stop any remaining group, then observe settlement.
+        signalOwned('SIGKILL');
+        if (signallingError !== undefined) throw signallingError;
+        const settleDeadline = Date.now() + GROUP_SETTLE_MS;
+        let quietChecks = 0;
+        while (quietChecks < 2) {
+          quietChecks = groupHasLiveMembers() ? 0 : quietChecks + 1;
+          if (quietChecks === 2) return;
+          if (Date.now() >= settleDeadline) throw new Error(`Owned process group did not settle within ${GROUP_SETTLE_MS}ms after SIGKILL`);
+          signalOwned('SIGKILL');
+          if (signallingError !== undefined) throw signallingError;
+          await Bun.sleep(10);
+        }
+      } catch (error) { throw retainUnsettledGroup(error); }
     })();
+    // stop() may start teardown from a signal callback before the main await
+    // observes its failure through signallingFailed or childExited.
+    void groupTeardown.catch(() => undefined);
     return groupTeardown;
   };
   const childExited = child.exited.then(async (exitCode) => {
@@ -498,8 +545,19 @@ export async function runOwnedTestChild(options: {
     if (outputTruncated && exitCode === 0) exitCode = 1;
     return { exitCode, signalCode: child.signalCode, stopped, stopReason, outputTruncated };
   } finally {
-    if (ownProcessGroup) await beginGroupTeardown('SIGTERM');
+    let teardownError: unknown;
+    if (ownProcessGroup) {
+      try { await beginGroupTeardown('SIGTERM'); } catch (error) { teardownError = error; }
+    }
     signalOwned('SIGKILL');
+    if (ownProcessGroup && signallingError !== undefined) {
+      teardownError ??= retainUnsettledGroup(signallingError);
+      // Unknown group observation must not strand the direct child or its
+      // pipes. Reap that handle, abort bounded output, and preserve evidence.
+      try { child.kill('SIGKILL'); } catch { /* child may already be reaped */ }
+      outputAbortReason = teardownError instanceof Error ? teardownError : new Error('Owned group teardown failed');
+      outputAbort.abort(outputAbortReason);
+    }
     // Reaped, not merely signalled: returning while the child is still dying
     // would let the caller's temp-tree removal race its last writes.
     await childExited.catch(() => undefined);
@@ -511,7 +569,8 @@ export async function runOwnedTestChild(options: {
     process.off('SIGINT', onInterrupt);
     process.off('SIGTERM', onTerminate);
     process.off('SIGHUP', onHangup);
-    rmSync(heartbeatDir, { recursive: true, force: true });
+    if (teardownError !== undefined) throw teardownError;
     if (signallingError !== undefined) throw signallingError;
   }
+  });
 }

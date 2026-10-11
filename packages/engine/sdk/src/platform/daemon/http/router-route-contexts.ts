@@ -403,17 +403,19 @@ export function buildMediaRouteContext(input: {
     multimodalService: {
       getStatus: () => input.multimodalService.getStatus(),
       listProviders: () => input.multimodalService.listProviders(),
-      analyze: (body) => input.multimodalService.analyze(
+      analyze: (body, options) => input.multimodalService.analyze(
         body as Parameters<MultimodalService['analyze']>[0],
+        options,
       ),
       buildPacket: (analysis, detail, budgetLimit) => input.multimodalService.buildPacket(
         analysis as Parameters<MultimodalService['buildPacket']>[0],
         detail as Parameters<MultimodalService['buildPacket']>[1],
         budgetLimit,
       ),
-      writeBackAnalysis: (analysis, body) => input.multimodalService.writeBackAnalysis(
+      writeBackAnalysis: (analysis, body, options) => input.multimodalService.writeBackAnalysis(
         analysis as Parameters<MultimodalService['writeBackAnalysis']>[0],
         body as Parameters<MultimodalService['writeBackAnalysis']>[1],
+        options,
       ),
     },
     parseJsonBody: input.parseJsonBody,

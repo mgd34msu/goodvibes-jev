@@ -165,9 +165,11 @@ export class WorkProposalStore {
   private readonly now: () => number;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private sweepInterval = WORK_PROPOSAL_SWEEP_INTERVAL_MS;
+  private sweepEnabled = true;
   private lastReap: WorkProposalReapSummary = EMPTY_WORK_PROPOSAL_REAP_SUMMARY;
   private loadMalformed = 0;
   private writeChain: Promise<void> = Promise.resolve();
+  private initialization: Promise<WorkProposalReapSummary> | null = null;
 
   constructor(options: WorkProposalStoreOptions = {}) {
     this.storePath = options.storePath;
@@ -180,7 +182,11 @@ export class WorkProposalStore {
    * no pending proposals, never a crash, the worst case is that the owner
    * has to ask again, which is strictly better than answering a bad record.
    */
-  async init(): Promise<WorkProposalReapSummary> {
+  init(): Promise<WorkProposalReapSummary> {
+    return this.initialization ??= this.load();
+  }
+
+  private async load(): Promise<WorkProposalReapSummary> {
     if (this.storePath) {
       try {
         const text = await readFile(this.storePath, 'utf-8');
@@ -211,43 +217,46 @@ export class WorkProposalStore {
       }
     }
     const summary = this.reap();
-    this.startSweep();
+    this.ensureSweep();
     return summary;
   }
 
-  /**
-   * Begin the periodic expiry sweep. Idempotent, and only ever running while
-   * something is actually pending, a daemon with no open proposals carries no
-   * timer at all, and the sweep stops itself once the last one is resolved or
-   * expires. That is what lets the store need no external disposal hook.
-   */
+  /** Resume housekeeping explicitly, including after an owner's restart. */
   startSweep(intervalMs = WORK_PROPOSAL_SWEEP_INTERVAL_MS): void {
-    if (this.sweepTimer) return;
     this.sweepInterval = intervalMs;
-    if (!this.hasPending()) return;
+    this.sweepEnabled = true;
+    this.ensureSweep();
+  }
+
+  private ensureSweep(): void {
+    if (!this.sweepEnabled || this.sweepTimer || this.proposals.size === 0) return;
+    // Resolved records are retained until expiry too. Stopping when only
+    // resolved records remain would leave them in an idle store indefinitely.
     this.sweepTimer = setInterval(() => {
       const summary = this.reap();
       if (summary.total > 0) void this.persist();
-      if (!this.hasPending()) this.dispose();
-    }, intervalMs);
+      if (this.proposals.size === 0) this.clearSweep();
+    }, this.sweepInterval);
     this.sweepTimer.unref?.();
   }
 
-  private hasPending(): boolean {
-    for (const record of this.proposals.values()) {
-      if (record.status === 'pending') return true;
-    }
-    return false;
-  }
-
-  dispose(): void {
+  private clearSweep(): void {
     if (this.sweepTimer) {
       clearInterval(this.sweepTimer);
       this.sweepTimer = null;
     }
   }
 
+  dispose(): void {
+    // init() can still be reading disk. Its eventual completion and ordinary
+    // writes must not re-arm this stopped owner; only startSweep can.
+    // Mutations are fenced synchronously so flush() drains a closed write set.
+    this.sweepEnabled = false;
+    this.clearSweep();
+  }
+
   create(input: CreateWorkProposalInput): WorkProposalRecord {
+    if (!this.sweepEnabled) throw new Error('Work proposal store is stopped');
     this.reap();
     const createdAt = this.now();
     const record: WorkProposalRecord = {
@@ -269,7 +278,7 @@ export class WorkProposalStore {
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     };
     this.proposals.set(record.id, record);
-    this.startSweep(this.sweepInterval);
+    this.ensureSweep();
     const overCap = this.enforceCap();
     if (overCap > 0) {
       // Disclose the eviction: a proposal that vanished because the cap was
@@ -294,6 +303,7 @@ export class WorkProposalStore {
    * this does the proposal become answerable.
    */
   markDelivered(id: string): WorkProposalRecord | null {
+    if (!this.sweepEnabled) return null;
     const record = this.proposals.get(id);
     if (!record || record.status !== 'pending' || record.delivered) return null;
     const delivered: WorkProposalRecord = { ...record, delivered: true };
@@ -308,6 +318,7 @@ export class WorkProposalStore {
    * later unrelated message could be matched against.
    */
   markUndeliverable(id: string, reason: string): void {
+    if (!this.sweepEnabled) return;
     const record = this.proposals.get(id);
     if (!record) return;
     this.proposals.delete(id);
@@ -334,6 +345,7 @@ export class WorkProposalStore {
    * was never shown cannot be the thing their next message was answering.
    */
   listPending(filter: { readonly surfaceKind?: string | undefined; readonly userId?: string | undefined } = {}): WorkProposalRecord[] {
+    if (!this.sweepEnabled) return [];
     this.reap();
     return [...this.proposals.values()]
       .filter((record) => record.status === 'pending' && record.delivered)
@@ -348,6 +360,7 @@ export class WorkProposalStore {
    * answered a second time.
    */
   resolve(id: string, outcome: 'accepted' | 'declined'): WorkProposalRecord | null {
+    if (!this.sweepEnabled) return null;
     this.reap();
     const record = this.proposals.get(id);
     if (!record || record.status !== 'pending') return null;
@@ -437,12 +450,16 @@ export class WorkProposalStore {
   private persist(): Promise<void> {
     const path = this.storePath;
     if (!path) return Promise.resolve();
-    const snapshot: PersistedFile = {
-      version: WORK_PROPOSAL_SCHEMA_VERSION,
-      proposals: [...this.proposals.values()],
-    };
     this.writeChain = this.writeChain.then(async () => {
       try {
+        // Constructor-time loading and admitted mutations share this existing
+        // write chain. Never overwrite persisted proposals with a pre-load
+        // snapshot, and let flush() drain the read needed by accepted writes.
+        await this.initialization;
+        const snapshot: PersistedFile = {
+          version: WORK_PROPOSAL_SCHEMA_VERSION,
+          proposals: [...this.proposals.values()],
+        };
         await mkdir(dirname(path), { recursive: true });
         const temp = `${path}.tmp`;
         await writeFile(temp, JSON.stringify(snapshot, null, 2), 'utf-8');
@@ -454,7 +471,7 @@ export class WorkProposalStore {
     return this.writeChain;
   }
 
-  /** Test seam: await any in-flight write. */
+  /** Drain every write admitted before the caller closed this store. */
   async flush(): Promise<void> {
     await this.writeChain;
   }

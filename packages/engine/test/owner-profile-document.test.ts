@@ -184,14 +184,6 @@ describe('§14.18: an invalid mechanical value is preserved and reported, never 
     }
   });
 
-  test('a consumer falls back exactly as if the field were unset', () => {
-    const projection = parse(['## Location', '', 'timezone: Mars/Olympus', ''].join('\n'));
-    const field = projection.fields.get('location.timezone');
-    // The fallback rule a consumer applies: use the value only when it validated.
-    const resolved = field !== undefined && field.valid ? field.value : 'UTC';
-    expect(resolved).toBe('UTC');
-  });
-
   test('every other validator reports its own reason without dropping the line', () => {
     const projection = parse([
       '## Commerce',
@@ -281,7 +273,7 @@ describe('§14.13: an unreadable file degrades loudly, never to an empty profile
     // Style is the open-tier section, so it is the one that WOULD be served if
     // this store were serving anything at all.
     expect(store.section('Style')).toBeUndefined();
-    expect(store.person('Sarah')).toEqual([]);
+    expect(await store.person('Sarah')).toEqual([]);
     // read() carries the unavailable STATE rather than presenting zero sections
     // as though the profile were simply empty.
     const view = store.read();

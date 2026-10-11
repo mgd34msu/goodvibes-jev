@@ -6,9 +6,10 @@ import type { SplashOptions } from '../utils/splash-lines.ts';
 import type { ToolCall, ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ProviderMessage, ContentPart } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import type { TranscriptEventKind } from '@goodvibes-jev/engine/sdk/platform/core';
+import type { TranscriptEventKind, TranscriptReadingOptions } from '@goodvibes-jev/engine/sdk/platform/core';
 import {
   ConversationManager as SdkConversationManager,
+  TranscriptReadingLifetime,
   type BlockMeta as SdkBlockMeta,
 } from '@goodvibes-jev/engine/sdk/platform/core';
 import {
@@ -684,9 +685,12 @@ export class ConversationManager extends SdkConversationManager {
     return before ?? errors[errors.length - 1];
   }
 
-  public nextTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all'): number {
+  public async nextTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all', options: TranscriptReadingOptions = {}): Promise<number> {
     this.flushHistory();
-    const index = this.getTranscriptEventIndex();
+    const lifetime = options.lifetime ?? new TranscriptReadingLifetime();
+    const index = await this.getTranscriptEventIndex({ ...options, lifetime });
+    lifetime.assertCurrent();
+    this.flushHistory();
     const events = kind === 'all' ? index.events : index.events.filter((event) => event.kind === kind);
     if (events.length === 0) return -1;
     const lines = events
@@ -698,9 +702,12 @@ export class ConversationManager extends SdkConversationManager {
     return after ?? lines[0]!;
   }
 
-  public prevTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all'): number {
+  public async prevTranscriptEventLine(currentLine: number, kind: TranscriptEventKind | 'all' = 'all', options: TranscriptReadingOptions = {}): Promise<number> {
     this.flushHistory();
-    const index = this.getTranscriptEventIndex();
+    const lifetime = options.lifetime ?? new TranscriptReadingLifetime();
+    const index = await this.getTranscriptEventIndex({ ...options, lifetime });
+    lifetime.assertCurrent();
+    this.flushHistory();
     const events = kind === 'all' ? index.events : index.events.filter((event) => event.kind === kind);
     if (events.length === 0) return -1;
     const lines = events

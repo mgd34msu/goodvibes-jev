@@ -17,7 +17,7 @@
  * asserts the code that actually runs rather than a re-implementation of it.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -61,7 +61,7 @@ describe('withRunTmpDir: the lifecycle scripts/test.ts and scripts/leak-scan.ts 
     await withRunTmpDir(root, (runTmpDir) => {
       // Exactly what the suite does, and never cleans up.
       for (let i = 0; i < 5; i += 1) mkdtempSync(join(runTmpDir, 'leaky-'));
-      leakedInside = readdirSync(runTmpDir).length;
+      leakedInside = readdirSync(runTmpDir).filter((name) => name !== '.goodvibes-test-owner.json').length;
     });
     expect(leakedInside).toBe(5);
     expect(readdirSync(root)).toEqual([]);
@@ -127,6 +127,8 @@ describe('sweepStaleTmpDirs', () => {
     const path = join(root, name);
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, 'marker'), 'x');
+    const identity = lstatSync(path);
+    writeFileSync(join(path, '.goodvibes-test-owner.json'), JSON.stringify({ version: 1, pid: 2147483647, dev: identity.dev, ino: identity.ino }));
     const when = (Date.now() - ageMs) / 1000;
     utimesSync(path, when, when);
     return path;

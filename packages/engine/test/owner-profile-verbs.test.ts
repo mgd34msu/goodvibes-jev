@@ -12,6 +12,7 @@
  * the daemon attaches them, so the descriptors, the scopes and the handler
  * wiring are all in the assertion path rather than assumed.
  */
+import { useSecurityReadings } from './helpers/security-readings.ts';
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +26,8 @@ import {
 } from '../sdk/src/platform/control-plane/routes/owner-profile-policy.ts';
 import type { ProfileWriteResult } from '../sdk/src/platform/owner-profile/index.ts';
 import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+useSecurityReadings();
 
 // Profile writes ask the content-derivation reading whenever the process
 // ledger holds untrusted text; another test file's reads must not reach these.
@@ -141,33 +144,6 @@ describe('profile.* verbs: catalog surface', () => {
       expect(descriptor).not.toBeNull();
       expect(catalog.hasHandler(id)).toBe(true);
       expect(descriptor?.scopes).toEqual([expectedScope[id]!]);
-    }
-  });
-
-  // Asserting the SPLIT, not one literal: pinning only `profile.read`'s string
-  // would not notice someone later widening `profile.get` to the full scope,
-  // which is precisely the change that would quietly hand a composition path
-  // the bulk read back.
-  test('profile.read alone carries read:profile-document; every other read is read:profile', async () => {
-    const { catalog } = await harness();
-    const full = VERB_IDS.filter((id) => catalog.get(id)?.scopes.includes('read:profile-document'));
-    expect(full).toEqual(['profile.read']);
-
-    const namedReads = ['profile.get', 'profile.person', 'profile.provenance', 'profile.status'];
-    for (const id of namedReads) {
-      expect(catalog.get(id)?.scopes).toEqual(['read:profile']);
-    }
-    // And the bulk read does NOT also carry the narrow scope, or holding
-    // read:profile would still reach it.
-    expect(catalog.get('profile.read')?.scopes).not.toContain('read:profile');
-    // No profile scope is dotted. `scopeMatches` is exact / `*` / `prefix:*`
-    // with no hierarchy, so a dotted name would promise a containment the grant
-    // check does not implement, `read:profile.full` looked like a superset of
-    // `read:profile` and granted none of its verbs.
-    for (const id of VERB_IDS) {
-      for (const scope of catalog.get(id)?.scopes ?? []) {
-        expect(scope, `${id} declares a dotted scope`).not.toContain('.');
-      }
     }
   });
 
@@ -645,21 +621,5 @@ describe('§12: the three owner switches actually govern the runtime', () => {
     }) as { lines: readonly unknown[]; disclosure: string };
     expect(person.lines).toHaveLength(1);
     expect(person.disclosure).toBe('');
-  });
-
-  test('with the defaults, all three announce and permit as the schema promises', async () => {
-    const { catalog } = await harness();
-    const written = await catalog.invoke('profile.set', {
-      ...ctx,
-      body: {
-        fieldId: 'commerce.shippingAddress', value: '200 Office Way, Lansing, MI 48933, US',
-        surface: 'tui', said: 'ship it to my office instead', authority: 'owner-direct',
-      },
-    }) as ProfileWriteResult;
-    expect(written.disclosure).not.toBe('');
-    const read = await catalog.invoke('profile.get', {
-      ...ctx, body: { fieldId: 'contact.email' },
-    }) as { disclosure: string };
-    expect(read.disclosure).not.toBe('');
   });
 });

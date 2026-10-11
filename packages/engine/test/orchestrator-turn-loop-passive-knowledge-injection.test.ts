@@ -1,3 +1,6 @@
+import { installJudgmentPort } from '../errors/src/index.js';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { createCanonicalLiveCodeSource } from './_helpers/code-injection-readings.js';
 /**
  * Main-session integration: per-turn passive knowledge injection wiring
  * inside `executeOrchestratorTurnLoop` (core/orchestrator-turn-loop.ts).
@@ -700,4 +703,28 @@ test.each([false, true])('tool argument stream fragments wait for owned final pr
       expect(JSON.stringify(context.conversation.getMessageSnapshot())).not.toContain(secret);
     }
   } finally { stop(); }
+});
+
+test.each(['success', 'retry', 'continuation', 'policy-retry', 'file-continuation'] as const)('main loop retains per-reading authority for code %s', async mode => {
+  installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+  const live = await createCanonicalLiveCodeSource();
+  try {
+  let dispatched = 0;
+  const provider: LLMProvider = { name: 'fake', models: ['fake-model'], async chat(request) {
+    dispatched++;
+    expect(request.systemPrompt).toContain('backoff.ts');
+    expect(request.beforeAttempt).toBeDefined();
+    await request.beforeAttempt!();
+    if (mode === 'success') return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    if (mode === 'policy-retry') live.deny();
+    else if (mode === 'file-continuation') live.mutate();
+    else installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    if (mode === 'retry' || mode === 'policy-retry') await request.beforeAttempt!();
+    return { content: '', toolCalls: [{ id: 'next', name: 'nonexistent_tool', arguments: {} }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' };
+  } };
+  const { context } = makeContext({ text: 'backoff', provider, memoryRegistry: { getAll: () => [] } });
+  const work = executeOrchestratorTurnLoop({ ...context, codeIndex: live.store, codeReadAccessFilter: live.readAccessFilter, isPassiveCodeInjectionEnabled: () => true });
+  if (mode === 'success') await work; else await expect(work).rejects.toThrow();
+  expect(dispatched).toBe(1);
+  } finally { live.dispose(); }
 });

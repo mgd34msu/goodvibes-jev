@@ -22,6 +22,7 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 interface GhCheckRun {
   readonly id?: number;
+  readonly head_sha?: string;
   readonly name?: string;
   readonly status?: string;
   readonly conclusion?: string | null;
@@ -58,7 +59,10 @@ function toCiJob(run: GhCheckRun): CiJob {
   const status = run.status === 'completed' || run.status === 'in_progress' || run.status === 'queued'
     ? run.status
     : 'in_progress';
+  const identity = run.html_url?.match(/\/actions\/runs\/(\d+)\/job\/(\d+)(?:[?#/]|$)/);
   return {
+    ...(run.head_sha ? { headSha: run.head_sha } : {}),
+    ...(identity ? { runId: identity[1]!, jobId: identity[2]! } : {}),
     name: run.name ?? 'unnamed check',
     status,
     conclusion: run.conclusion ?? null,
@@ -102,7 +106,7 @@ export function createGhCliCiSource(options: GhCliCiSourceOptions = {}): CiStatu
       }
       return runs.map(toCiJob);
     },
-    fetchFailureLogs: async ({ repo, ref, prNumber, jobNames }): Promise<string> => {
+    fetchFailureLogs: async ({ repo, ref, prNumber, jobNames, jobs }): Promise<string> => {
       // Seed the fix-session with the ACTUAL failing logs, bounded: the
       // check-run id doubles as the Actions job id, whose log endpoint
       // (repos/{repo}/actions/jobs/{id}/logs) serves the raw text. Each log is
@@ -115,6 +119,17 @@ export function createGhCliCiSource(options: GhCliCiSourceOptions = {}): CiStatu
         `CI failed for ${repo} (${target}).`,
         `Failing jobs: ${jobNames.join(', ') || 'unknown'}.`,
       ];
+      if (jobs !== undefined) {
+        const sections: string[] = [];
+        for (const job of jobs.slice(0, MAX_LOG_JOBS)) {
+          if (!job.jobId || !/^[0-9]+$/.test(job.jobId)) { sections.push(`--- ${job.name}: exact Actions job identity unavailable ---`); continue; }
+          try { sections.push(`--- ${job.name} (job ${job.jobId}, log tail) ---\n${tailLog(await runGh(['api', `repos/${repo}/actions/jobs/${job.jobId}/logs`], timeoutMs))}`); }
+          catch (error) { sections.push(`--- ${job.name}: log fetch failed (${summarizeError(error)}) ---`); }
+        }
+        if (jobs.length > MAX_LOG_JOBS) sections.push(`(+${jobs.length - MAX_LOG_JOBS} more failing jobs, logs omitted)`);
+        return [...header, '', ...sections].join('\n');
+      }
+      // Historical direct callers without a captured status retain compatibility lookup.
       try {
         const resolvedRef = await resolveRef(repo, ref, prNumber);
         const out = await runGh(

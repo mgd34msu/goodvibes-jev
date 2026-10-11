@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
 import { JudgmentInputError, judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.js';
@@ -100,7 +100,11 @@ describe('repair operation generated-reference scope', () => {
     const profile = [['Input and output ports', 'AC-7 has four HDMI ports.']] as const;
     const graph = () => JSON.stringify({ facts: item.store.listNodes().filter((node) => node.kind === 'fact'), edges: item.store.listEdges() });
     let atHold = '';
-    const fake = fakePort((name, _question, state) => {
+    const fake = fakePort((name, question, state) => {
+      if (name === 'authority') {
+        if ((state as { source?: { title?: string } }).source?.title !== 'AC-7 reference') throw new Error('Unexpected authority fixture source');
+        return choiceAnswer(question, 'official-vendor', 0.99);
+      }
       const reading = repairProfileFixtureReading(name, state, profile);
       if (reading !== undefined) return noulAnswer(reading);
       if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, profile));

@@ -7,7 +7,7 @@
  * DIFFERENT vocabulary from fleet.snapshot's ProcessState (lib/fleet.ts):
  * this is the work item's own internal scheduling state ('pending' /
  * 'awaiting-capacity' / 'in-phase' / 'passed' / 'failed' / 'blocked-budget' /
- * 'blocked-dependency' / 'held-merge'), read as an open string for the same
+ * 'blocked-dependency' / 'blocked-bookkeeping' / 'held-merge'), read as an open string for the same
  * reason lib/fleet.ts reads ProcessState as one: this client is hand-mirrored
  * from the SDK source (contract-bridge-types.ts's generic bridge for
  * fleet.graph.get) rather than generated, so a daemon newer than this client
@@ -29,6 +29,7 @@ export const KNOWN_GRAPH_NODE_STATES = [
   'failed',
   'blocked-budget',
   'blocked-dependency',
+  'blocked-bookkeeping',
   'held-merge',
 ] as const;
 
@@ -48,6 +49,7 @@ export function graphNodeStateLabel(state: string): string {
     case 'failed': return 'Failed';
     case 'blocked-budget': return 'Blocked';
     case 'blocked-dependency': return 'Blocked';
+    case 'blocked-bookkeeping': return 'Held (repository condition unresolved)';
     case 'held-merge': return 'Held (attempts)';
     default: return state.trim() || 'unknown';
   }
@@ -62,6 +64,7 @@ export function graphNodeStateTone(state: string): BadgeTone {
     case 'failed': return 'bad';
     case 'blocked-budget': return 'warning';
     case 'blocked-dependency': return 'warning';
+    case 'blocked-bookkeeping': return 'warning';
     case 'held-merge': return 'warning';
     default: return 'warning'; // unknown-to-this-client state, honesty warning, same as lib/fleet.ts
   }

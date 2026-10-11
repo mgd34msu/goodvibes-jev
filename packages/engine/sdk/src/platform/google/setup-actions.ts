@@ -1,3 +1,4 @@
+import { ownGoogleSetupDeps, ownGoogleSetupRunners } from './setup-reading-scope.js';
 /**
  * The runners that make the Google setup flow do something.
  *
@@ -126,7 +127,7 @@ function signedInRunner(deps: GoogleSetupActionDeps): GoogleStepRunner {
     if (url !== undefined) await browser.navigate(url);
     const current = await browser.currentUrl();
     const elements = await browser.snapshot();
-    if (looksLikeGoogleSignIn(current, elements)) {
+    if (await looksLikeGoogleSignIn(current, elements, { browser })) {
       return needsHuman(
         'Google is asking for a sign-in.',
         `Google showed its sign-in page instead of the account page (currently at ${current}).`,
@@ -507,6 +508,7 @@ export function buildGoogleSetupRunners(
   path: GoogleSetupPath,
   deps: GoogleSetupActionDeps,
 ): ReadonlyMap<GoogleStepId, GoogleStepRunner> {
+  deps = ownGoogleSetupDeps(deps);
   const runners = new Map<GoogleStepId, GoogleStepRunner>();
 
   if (path === 'app-password') {
@@ -518,7 +520,7 @@ export function buildGoogleSetupRunners(
     runners.set('gmail-verify', gmailVerifyRunner(deps));
     runners.set('calendar-ics-address', calendarIcsRunner(deps));
     runners.set('calendar-verify', calendarVerifyRunner(deps));
-    return runners;
+    return ownGoogleSetupRunners(runners, deps);
   }
 
   // The existing-client path is two steps and no gcloud state, because a
@@ -528,7 +530,7 @@ export function buildGoogleSetupRunners(
   if (path === 'existing-client') {
     runners.set('oauth-authorize', oauthAuthorizeRunner(deps));
     runners.set('oauth-verify', oauthVerifyRunner(deps));
-    return runners;
+    return ownGoogleSetupRunners(runners, deps);
   }
 
   // The six project-and-console steps live in setup-actions-cloud-project.ts;
@@ -537,7 +539,7 @@ export function buildGoogleSetupRunners(
   runners.set('oauth-client', oauthClientRunner(deps));
   runners.set('oauth-authorize', oauthAuthorizeRunner(deps));
   runners.set('oauth-verify', oauthVerifyRunner(deps));
-  return runners;
+  return ownGoogleSetupRunners(runners, deps);
 }
 
 export type { GoogleClientCredentials };

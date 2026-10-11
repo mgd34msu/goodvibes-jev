@@ -39,10 +39,10 @@ import {
   type ConfigSchemaEntry,
   type FeatureSettingMeta,
 } from './generated/config-schema';
-import { categoryLabelForKey, CATEGORY_LABELS, isSecretConfigKey } from './config-redaction';
+import { categoryLabelForKey, CATEGORY_LABELS, isSecretConfigKey, isUnresolvedConfigKey, SECRET_CONFIG_KEYS } from './config-redaction';
 import { isDaemonOwnedConfigKey } from './config-ownership';
 import { isSecretStoreOnlyConfigKey } from './secret-store-only-config-keys';
-import { isCardMaterialKey } from './card-material';
+import { isDeclaredCardMaterialKey as isCardMaterialKey } from './card-material';
 import { asRecord } from './object';
 
 /** A single typed, editable config field: schema metadata merged with its live value. */
@@ -78,6 +78,8 @@ export interface RawRowModel {
   readonly key: string;
   readonly value: unknown;
   readonly isSecret: boolean;
+  /** Set only for an unresolved key with a current, acted negative reading. */
+  readonly displayCleared?: boolean;
   readonly daemonOwned: boolean;
 }
 
@@ -274,7 +276,7 @@ function buildFeatureUnit(feature: FeatureSettingMeta, liveConfig: unknown): Fea
  * feature domains the schema does not cover, then live-only namespaces the
  * schema does not know.
  */
-export function buildSettingsModel(liveConfig: unknown): SettingsGroupModel[] {
+export function buildSettingsModel(liveConfig: unknown, clearedKeys: ReadonlySet<string> = new Set(), nonCardKeys: ReadonlySet<string> = new Set()): SettingsGroupModel[] {
   // 1. Ordered namespace list from the schema (first appearance wins).
   const orderedNamespaces: string[] = [];
   const seen = new Set<string>();
@@ -303,7 +305,9 @@ export function buildSettingsModel(liveConfig: unknown): SettingsGroupModel[] {
   // 3. Live-only namespaces the schema does not cover. Object-typed schema
   // keys are leaves here: their live entries belong to the key's own typed
   // editor, not to the unschema'd raw-row table.
-  const liveKeys = liveLeafKeys(liveConfig, '', OBJECT_TYPED_CONFIG_KEYS);
+  // A malformed object under a declared secret remains one masked row. Never
+  // descend into it and ask a reading to clear its otherwise-unknown children.
+  const liveKeys = liveLeafKeys(liveConfig, '', new Set([...OBJECT_TYPED_CONFIG_KEYS, ...SECRET_CONFIG_KEYS]));
   for (const key of liveKeys) {
     const ns = namespaceOf(key);
     if (!seen.has(ns)) {
@@ -325,12 +329,13 @@ export function buildSettingsModel(liveConfig: unknown): SettingsGroupModel[] {
 
     const rawRows: RawRowModel[] = liveKeys
       .filter(
-        (k) => namespaceOf(k) === ns && !schemaKeySet.has(k) && !OWNED_CONFIG_KEYS.has(k) && !isCardMaterialKey(k),
+        (k) => namespaceOf(k) === ns && !schemaKeySet.has(k) && !OWNED_CONFIG_KEYS.has(k) && !isCardMaterialKey(k) && nonCardKeys.has(k),
       )
       .map((k) => ({
         key: k,
         value: readConfigPath(liveConfig, k).value,
-        isSecret: isSecretConfigKey(k),
+        isSecret: isSecretConfigKey(k) && !(isUnresolvedConfigKey(k) && clearedKeys.has(k)),
+        displayCleared: isUnresolvedConfigKey(k) && clearedKeys.has(k),
         daemonOwned: isDaemonOwnedConfigKey(k),
       }));
 

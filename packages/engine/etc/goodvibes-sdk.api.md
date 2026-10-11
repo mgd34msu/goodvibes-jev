@@ -5,6 +5,7 @@
 ```ts
 
 import { Battery } from '@goodvibes-jev/judgment';
+import { Battery as Battery_2 } from '@goodvibes-jev/judgment/decisions';
 import type { CallOptions } from '@goodvibes-jev/judgment';
 import { ChoiceItem } from '@goodvibes-jev/judgment';
 import { ChoiceReading } from '@goodvibes-jev/judgment/decisions';
@@ -12,6 +13,7 @@ import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentPort as JudgmentPort_2 } from '@goodvibes-jev/judgment';
 import { YesNoItem } from '@goodvibes-jev/judgment';
+import { YesNoItem as YesNoItem_2 } from '@goodvibes-jev/judgment/decisions';
 import { YesNoReading } from '@goodvibes-jev/judgment/decisions';
 import { z } from 'zod/v4';
 import type { ZodType } from 'zod/v4';
@@ -99,6 +101,26 @@ export const AccountsSnapshotResponseSchema: z.ZodObject<{
     configuredCount: z.ZodNumber;
     issueCount: z.ZodNumber;
 }, z.core.$strict>;
+
+// @public
+export function admitRegex(source: string, flags: string, options: RegexAdmissionOptions): Promise<AdmittedRegex>;
+
+// @public
+export interface AdmittedRegex extends AsyncDisposable {
+    // (undocumented)
+    assertCurrent(): void;
+    // (undocumented)
+    exec(input: string, lastIndex?: number, maxInputChars?: number): Promise<RegexMatch | null>;
+    // (undocumented)
+    positions(input: string, maxInputChars?: number): Promise<readonly {
+        start: number;
+        end: number;
+    }[]>;
+    // (undocumented)
+    replace(input: string, replacement: string, maxInputChars?: number): Promise<string>;
+    // (undocumented)
+    test(input: string, maxInputChars?: number): Promise<boolean>;
+}
 
 // @public (undocumented)
 export type AgentEvent =
@@ -402,6 +424,9 @@ export interface BackpressureInfo {
 }
 
 // @public
+export function bindJudgmentPortAuthority(port: JudgmentPort, capture: () => JudgmentAuthorityFrame): void;
+
+// @public
 export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> {
     // (undocumented)
     readonly baseUrl?: string | undefined;
@@ -427,6 +452,9 @@ export function buildUrl(baseUrl: string, path: string): string;
 
 // @public (undocumented)
 export function buildWebSocketUrl(baseUrl: string, domains: readonly RuntimeEventDomain[]): string;
+
+// @public
+export function captureJudgmentPort(site: string, options?: JudgmentReadingOptions): JudgmentPortCapture;
 
 // @public
 export function categoryDependsOnWording(fixed: DaemonErrorCategory | undefined, status: number | undefined, fromProvider: boolean): boolean;
@@ -697,6 +725,9 @@ export type CompanionChatSessionsListTotals = {
 
 // @public (undocumented)
 export type CompanionChatSessionStatus = "active" | "closed";
+
+// @public
+export function compileLegacyRegex(source: string, flags: string, options: RegexAdmissionOptions, schema?: boolean): RegExp;
 
 // @public
 export function composeMiddleware(middleware: readonly TransportMiddleware[], innerFetch: (ctx: TransportContext) => Promise<Response>): (ctx: TransportContext) => Promise<void>;
@@ -1125,6 +1156,23 @@ export interface ContractPlanProblem {
     // (undocumented)
     readonly targetId?: string | undefined;
 }
+
+// @public (undocumented)
+export interface ContractRegexReadingContext {
+    // (undocumented)
+    readonly assertCurrent: () => void;
+    // (undocumented)
+    readonly kind: 'operator' | 'peer';
+    // (undocumented)
+    readonly methodId: string;
+    // (undocumented)
+    readonly outputSchema: Readonly<Record<string, unknown>>;
+    // (undocumented)
+    readonly signal?: AbortSignal | undefined;
+}
+
+// @public (undocumented)
+export type ContractRegexReadingFactory = (context: ContractRegexReadingContext) => RegexReadingCapability;
 
 // @public
 export interface ContractResult {
@@ -1829,8 +1877,11 @@ export interface FieldSpec {
     readonly values?: readonly string[] | undefined;
 }
 
-// @public (undocumented)
+// @public @deprecated (undocumented)
 export function firstJsonSchemaFailure(schema: Record<string, unknown>, value: unknown, path?: string, root?: Record<string, unknown>, _depth?: number): JsonSchemaValidationFailure | undefined;
+
+// @public
+export function firstJsonSchemaFailureAsync(schema: Record<string, unknown>, value: unknown, options?: Omit<RegexAdmissionOptions, 'operation'>): Promise<JsonSchemaValidationFailure | undefined>;
 
 // @public
 export type ForensicsEvent =
@@ -2537,11 +2588,51 @@ export type JsonValue = JsonPrimitive | {
 } | readonly JsonValue[];
 
 // @public
+export interface JudgmentAuthorityFrame {
+    // (undocumented)
+    readonly assertCurrent: () => void;
+    // (undocumented)
+    readonly identity: object;
+    // (undocumented)
+    readonly signal?: AbortSignal | undefined;
+}
+
+// @public (undocumented)
+export class JudgmentAuthorityRetiredError extends Error {
+    constructor();
+}
+
+// @public (undocumented)
+export interface JudgmentEffectRestriction {
+    readonly assertCurrent: () => void;
+}
+
+// @public
 export function judgmentPort(site: string): JudgmentPort;
+
+// @public (undocumented)
+export interface JudgmentPortCapture {
+    // (undocumented)
+    readonly assertCurrent: () => void;
+    readonly consumeObservation: () => JudgmentEffectRestriction;
+    readonly identity: object;
+    // (undocumented)
+    readonly port: JudgmentPort;
+    // (undocumented)
+    readonly signal: AbortSignal;
+}
 
 // @public (undocumented)
 export class JudgmentPortMissingError extends Error {
     constructor(site: string);
+}
+
+// @public (undocumented)
+export interface JudgmentReadingOptions {
+    // (undocumented)
+    readonly assertCurrent?: (() => void) | undefined;
+    // (undocumented)
+    readonly signal?: AbortSignal | undefined;
 }
 
 // @public
@@ -5232,6 +5323,19 @@ export interface OperatorMethodInputMap {
     "judgment.battery.run": {
         protocolVersion: 1;
         requestId: string;
+        battery: "webui.voice.speech-seams";
+        batteryVersion: 1;
+        input: {
+            sessionId: string;
+            messageId: string;
+            start: number;
+            end: number;
+            contentDigest: string;
+            cursor: number;
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
         battery: "webui.errors.daemon-refusal";
         batteryVersion: 1;
         input: {
@@ -5281,6 +5385,62 @@ export interface OperatorMethodInputMap {
         batteryVersion: 1;
         input: {
             subjectRef: string;
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.pwa.install-platform";
+        batteryVersion: 1;
+        input: {
+            userAgent: string;
+            platform: string;
+            maxTouchPoints: number;
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.models.catalog-provider-match";
+        batteryVersion: 1;
+        input: {
+            providerId: string;
+            keys: readonly string[];
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.credentials.provider-key";
+        batteryVersion: 1;
+        input: {
+            providerId: string;
+            keys: readonly string[];
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.settings.card-material-key";
+        batteryVersion: 1;
+        input: {
+            keys: readonly string[];
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.config.credential-key";
+        batteryVersion: 1;
+        input: {
+            keys: readonly string[];
+        };
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.code.language";
+        batteryVersion: 1;
+        input: {
+            sessionId: string;
+            messageId: string;
+            start: number;
+            end: number;
+            contentDigest: string;
         };
     };
     // (undocumented)
@@ -12200,6 +12360,9 @@ export interface OperatorMethodOutputMap {
             prNumber?: number;
             overall: "failed" | "passed" | "pending" | "unknown";
             jobs: readonly ({
+                headSha?: string;
+                runId?: string;
+                jobId?: string;
                 name: string;
                 status: "completed" | "in_progress" | "queued";
                 conclusion: null | string;
@@ -12251,6 +12414,9 @@ export interface OperatorMethodOutputMap {
             prNumber?: number;
             overall: "failed" | "passed" | "pending" | "unknown";
             jobs: readonly ({
+                headSha?: string;
+                runId?: string;
+                jobId?: string;
                 name: string;
                 status: "completed" | "in_progress" | "queued";
                 conclusion: null | string;
@@ -12560,6 +12726,40 @@ export interface OperatorMethodOutputMap {
     };
     // (undocumented)
     "contracts.get": {
+        originalSource?: {
+            goal: string;
+            criteria: readonly string[];
+            conversationContext?: readonly ({
+                role: "assistant" | "system" | "tool" | "user";
+                content: string;
+            })[];
+            selectedDiffContext?: {
+                kind: "session";
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "session";
+                    sessionId: string;
+                    baselineCheckpointId: string;
+                    latestCheckpointId: string;
+                };
+            } | {
+                kind: "workspace";
+                baselineId: string;
+                revision: string;
+                fileIndex: number;
+                hunkIndex: number;
+                unifiedDiff: string;
+                provenance: {
+                    kind: "workspace";
+                    baselineId: string;
+                    to: "WORKING";
+                };
+            };
+        };
+        taskEvidence?: string;
         nativeSource?: {
             sourceId: string;
             sourceRevision: string;
@@ -13630,6 +13830,40 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "contracts.list": {
         contracts: readonly ({
+            originalSource?: {
+                goal: string;
+                criteria: readonly string[];
+                conversationContext?: readonly ({
+                    role: "assistant" | "system" | "tool" | "user";
+                    content: string;
+                })[];
+                selectedDiffContext?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                    unifiedDiff: string;
+                    provenance: {
+                        kind: "session";
+                        sessionId: string;
+                        baselineCheckpointId: string;
+                        latestCheckpointId: string;
+                    };
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                    unifiedDiff: string;
+                    provenance: {
+                        kind: "workspace";
+                        baselineId: string;
+                        to: "WORKING";
+                    };
+                };
+            };
+            taskEvidence?: string;
             nativeSource?: {
                 sourceId: string;
                 sourceRevision: string;
@@ -14709,6 +14943,40 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "contracts.start": {
         contract: {
+            originalSource?: {
+                goal: string;
+                criteria: readonly string[];
+                conversationContext?: readonly ({
+                    role: "assistant" | "system" | "tool" | "user";
+                    content: string;
+                })[];
+                selectedDiffContext?: {
+                    kind: "session";
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                    unifiedDiff: string;
+                    provenance: {
+                        kind: "session";
+                        sessionId: string;
+                        baselineCheckpointId: string;
+                        latestCheckpointId: string;
+                    };
+                } | {
+                    kind: "workspace";
+                    baselineId: string;
+                    revision: string;
+                    fileIndex: number;
+                    hunkIndex: number;
+                    unifiedDiff: string;
+                    provenance: {
+                        kind: "workspace";
+                        baselineId: string;
+                        to: "WORKING";
+                    };
+                };
+            };
+            taskEvidence?: string;
             nativeSource?: {
                 sourceId: string;
                 sourceRevision: string;
@@ -16790,6 +17058,15 @@ export interface OperatorMethodOutputMap {
                     stat: string;
                 };
             })[];
+            attemptCount?: number;
+            selectableCandidateCount?: number;
+            unresolved?: readonly ({
+                itemId: string;
+                attemptIndex: number;
+                title: string;
+                state: string;
+                reason: null | string;
+            })[];
             autoAccept: boolean;
             judgment: null | {
                 proposedWinnerItemId: null | string;
@@ -16839,6 +17116,15 @@ export interface OperatorMethodOutputMap {
                     unifiedDiff: string;
                     stat: string;
                 };
+            })[];
+            attemptCount?: number;
+            selectableCandidateCount?: number;
+            unresolved?: readonly ({
+                itemId: string;
+                attemptIndex: number;
+                title: string;
+                state: string;
+                reason: null | string;
             })[];
             autoAccept: boolean;
             judgment: null | {
@@ -19324,6 +19610,77 @@ export interface OperatorMethodOutputMap {
     "judgment.battery.run": {
         protocolVersion: 1;
         requestId: string;
+        battery: "webui.voice.speech-seams";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            endOffsets: readonly number[];
+            nextCursor: null | number;
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.voice.speech-seams";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
         battery: "webui.errors.daemon-refusal";
         batteryVersion: 1;
         status: "settled";
@@ -19590,6 +19947,426 @@ export interface OperatorMethodOutputMap {
         protocolVersion: 1;
         requestId: string;
         battery: "webui.mail.reply-subject";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.pwa.install-platform";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            platform: "ios-share-menu" | "other";
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.pwa.install-platform";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.models.catalog-provider-match";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            matches: readonly boolean[];
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.models.catalog-provider-match";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.credentials.provider-key";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            matches: readonly boolean[];
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.credentials.provider-key";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.settings.card-material-key";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            matches: readonly boolean[];
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.settings.card-material-key";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.config.credential-key";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            matches: readonly boolean[];
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.config.credential-key";
+        batteryVersion: 1;
+        status: "held";
+        reason: "uncertain";
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.code.language";
+        batteryVersion: 1;
+        status: "settled";
+        value: {
+            language: "bash" | "c" | "cpp" | "csharp" | "css" | "diff" | "dockerfile" | "go" | "ini" | "java" | "javascript" | "json" | "markdown" | "php" | "plaintext" | "python" | "ruby" | "rust" | "shell" | "sql" | "typescript" | "wasm" | "xml" | "yaml";
+        };
+        readings: ({} & {
+            readonly [key: string]: {
+                kind: "yes-no";
+                probability: number;
+                verdict: "no" | "uncertain" | "yes";
+                outcome: "act" | "confirm" | "escalate";
+            } | {
+                kind: "choice";
+                choice: string;
+                confidence: number;
+                probabilities: ({} & {
+                    readonly [key: string]: number;
+                });
+                outcome: "act" | "confirm" | "escalate";
+            };
+        });
+        outcome: "act" | "confirm" | "escalate";
+        evidence: readonly ({
+            decisionId: string;
+            model: string;
+            requestedModel: string;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+            };
+            latencyMs: number;
+        })[];
+    } | {
+        protocolVersion: 1;
+        requestId: string;
+        battery: "webui.code.language";
         batteryVersion: 1;
         status: "held";
         reason: "uncertain";
@@ -32607,7 +33384,9 @@ export interface OperatorRemoteClientInvokeOptions extends ContractInvokeOptions
 
 // @public
 export interface OperatorRemoteClientOptions {
+    readonly getRegexReading?: ContractRegexReadingFactory | undefined;
     readonly getResponseSchema?: ((methodId: string) => ContractInvokeOptions['responseSchema']) | undefined;
+    readonly regexReading?: RegexReadingCapability | undefined;
     readonly validateResponses?: boolean | undefined;
 }
 
@@ -32640,7 +33419,7 @@ export type OperatorSdk = Omit<OperatorRemoteClient, 'getOperation'> & {
 };
 
 // @public
-export interface OperatorSdkOptions extends HttpTransportOptions {
+export interface OperatorSdkOptions extends HttpTransportOptions, Pick<OperatorRemoteClientOptions, 'regexReading' | 'getRegexReading'> {
     readonly validateResponses?: boolean | undefined;
 }
 
@@ -33581,6 +34360,8 @@ export interface PeerRemoteClientInvokeOptions extends ContractInvokeOptions {
 
 // @public
 export interface PeerRemoteClientOptions {
+    readonly getRegexReading?: ContractRegexReadingFactory | undefined;
+    readonly regexReading?: RegexReadingCapability | undefined;
     readonly validateResponses?: boolean | undefined;
 }
 
@@ -33595,7 +34376,7 @@ export type PeerSdk = Omit<PeerRemoteClient, 'getOperation'> & {
 };
 
 // @public
-export interface PeerSdkBehaviorOptions {
+export interface PeerSdkBehaviorOptions extends Pick<PeerRemoteClientOptions, 'regexReading' | 'getRegexReading'> {
     readonly validateResponses?: boolean | undefined;
 }
 
@@ -33977,6 +34758,52 @@ export interface ReconnectAttemptInfo {
 }
 
 // @public (undocumented)
+export class RegexAdmissionError extends Error {
+    constructor(operation: string, reason: string);
+}
+
+// @public (undocumented)
+export interface RegexAdmissionOptions extends JudgmentReadingOptions {
+    // (undocumented)
+    readonly maxInputChars?: number | undefined;
+    // (undocumented)
+    readonly maxPatternChars?: number | undefined;
+    // (undocumented)
+    readonly operation: string;
+    // (undocumented)
+    readonly reading?: RegexReadingCapability | undefined;
+}
+
+// @public (undocumented)
+export const regexBacktracking: Battery_2<    {
+readonly backtracking: YesNoItem_2;
+}>;
+
+// @public (undocumented)
+export interface RegexMatch {
+    // (undocumented)
+    readonly captures: readonly (string | undefined)[];
+    // (undocumented)
+    readonly groups?: Readonly<Record<string, string | undefined>> | undefined;
+    // (undocumented)
+    readonly index: number;
+    // (undocumented)
+    readonly indices?: readonly (readonly [number, number] | undefined)[] | undefined;
+    // (undocumented)
+    readonly lastIndex: number;
+}
+
+// @public
+export interface RegexReadingCapability {
+    // (undocumented)
+    readonly assertCurrent: () => void;
+    // (undocumented)
+    readonly read: (source: string, flags: string, maxInputChars: number, signal: AbortSignal) => Promise<YesNoReading>;
+    // (undocumented)
+    readonly signal: AbortSignal;
+}
+
+// @public (undocumented)
 export function registeredEventTypes(): readonly string[];
 
 // @public
@@ -34086,6 +34913,9 @@ export function resolveHeaders(headers: HeadersInit | undefined, getHeaders?: He
 
 // @public (undocumented)
 export function resolveHttpRetryPolicy(defaultPolicy?: HttpRetryPolicy, override?: false | HttpRetryPolicy): ResolvedHttpRetryPolicy;
+
+// @public
+export function restoreJudgmentPort(owner: JudgmentPort, previous: JudgmentPort | undefined): void;
 
 // @public
 export const RETRYABLE_STATUS_CODES: readonly number[];
@@ -35025,6 +35855,7 @@ export function transienceFromReading(failure: FailureConclusions): FailureTrans
 export interface TransienceOptions {
     readonly describe?: (error: unknown) => string;
     readonly fromProvider?: boolean;
+    readonly reading?: FailureReadOptions;
 }
 
 // @public

@@ -171,11 +171,11 @@ export function registerOccasionsGatewayMethods(
     if (descriptor) catalog.register(descriptor, handler, { replace: true });
   };
 
-  attach('occasions.list', () => service.list());
+  attach('occasions.list', invocation => service.list(readingOptions(invocation, catalog.get('occasions.list')?.scopes)));
   attach('occasions.plans.list', () => service.listPlans());
   attach('occasions.state', () => service.disclose());
-  attach('occasions.pending', () => service.pending());
-  attach('occasions.sweep', () => service.sweep());
+  attach('occasions.pending', invocation => service.pending(readingOptions(invocation, catalog.get('occasions.pending')?.scopes)));
+  attach('occasions.sweep', invocation => service.sweep(readingOptions(invocation, catalog.get('occasions.sweep')?.scopes)));
 
   attach('occasions.propose', (invocation: GatewayMethodInvocation) => {
     const params = readInvocationParams(invocation);
@@ -223,7 +223,7 @@ export function registerOccasionsGatewayMethods(
       ...(optionalString(params.occurrence) === undefined
         ? {}
         : { occurrence: optionalString(params.occurrence) }),
-    });
+    }, readingOptions(invocation, catalog.get('occasions.answer')?.scopes));
   });
 
   attach('occasions.acknowledge', (invocation: GatewayMethodInvocation) => {
@@ -235,7 +235,7 @@ export function registerOccasionsGatewayMethods(
       ...(optionalString(params.occurrence) === undefined
         ? {}
         : { occurrence: optionalString(params.occurrence) }),
-    });
+    }, readingOptions(invocation, catalog.get('occasions.acknowledge')?.scopes));
   });
 
   attach('occasions.interview.get', async (invocation: GatewayMethodInvocation) => {
@@ -301,4 +301,12 @@ export function registerOccasionsGatewayMethods(
       authority: readAuthority(params.authority),
     });
   });
+}
+
+/** Transport scope/lifetime restriction remains independent of semantic observations. */
+function readingOptions(invocation: GatewayMethodInvocation, requiredScopes?: readonly string[]) {
+  return { signal: invocation.signal, assertCurrent: () => {
+    invocation.signal?.throwIfAborted();
+    if (invocation.isAuthorized?.(requiredScopes) === false) throw new Error('Occasion request is no longer authorized.');
+  } };
 }

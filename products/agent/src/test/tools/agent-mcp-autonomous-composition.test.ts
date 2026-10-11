@@ -13,7 +13,7 @@ import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { installAgentMcpCallRoute, resetAgentMcpCallRouteForTests } from '../../tools/agent-mcp-call-route.ts';
 
-for (const outcome of ['act', 'reject', 'abort']) test(`real Agent route and facade reach canonical HTTP ${outcome}`, async () => {
+for (const outcome of ['act', 'reject', 'abort', 'missing-workspace-owner']) test(`real Agent route and facade reach canonical HTTP ${outcome}`, async () => {
   using log = new SqliteDecisionLog(':memory:');
   const gate = fakePort((name, question) => question.type === 'noul'
     ? noulAnswer(name === 'mutates' || name === 'outward' ? 0.97 : 0.03)
@@ -53,7 +53,8 @@ for (const outcome of ['act', 'reject', 'abort']) test(`real Agent route and fac
     const registry = new McpRegistry({ hookDispatcher: { fire: async event => {
       if (event.phase === 'Pre' && outcome === 'abort') controller.abort(); return { ok: true };
     } }, sandboxSessions: {} as never });
-    registry.setPermissionHost({ port, permissionManager: manager, config: { onDidInvalidate: () => () => {} }, signal: new AbortController().signal });
+    // This synthetic host has no separate workspace policy. Omission must fail closed.
+    registry.setPermissionHost({ workspaceTrust: outcome === 'missing-workspace-owner' ? undefined : null, port, permissionManager: manager, config: { onDidInvalidate: () => () => {} }, signal: new AbortController().signal });
     const internal = registry as unknown as { clients: Map<string, McpClient>; permissions: { registerServer(name: string): void } };
     internal.clients.set('synthetic', client); internal.permissions.registerServer('synthetic');
     const api = createRuntimeMcpApi(registry);
@@ -68,7 +69,9 @@ for (const outcome of ['act', 'reject', 'abort']) test(`real Agent route and fac
     const result = await executeToolCalls(deps, 'synthetic-turn', [{ id: 'synthetic-call', name: 'mcp',
       arguments: { mode: 'call', qualifiedName: 'mcp:synthetic:write', input: { text: 'requested' } } }])
       .then(results => results[0], (error: unknown) => ({ success: false, error }));
-    expect(result?.success).toBe(outcome === 'act'); expect(registryDispositions).toBe(1);
+    expect(result?.success).toBe(outcome === 'act'); expect(registryDispositions).toBe(outcome === 'missing-workspace-owner' ? 0 : 1);
+    if (outcome === 'missing-workspace-owner') expect(String(result?.error)).toContain('no workspace trust owner');
+    if (outcome === 'abort') expect(controller.signal.aborted).toBe(true);
     expect(writes).toBe(outcome === 'act' ? 1 : 0); expect(humans).toBe(0);
   } finally { await client.disconnect(); installJudgmentPort(prior); resetAgentMcpCallRouteForTests(); }
 });

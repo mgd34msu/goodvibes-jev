@@ -171,6 +171,11 @@
       "types": "./daemon-sdk/dist/automation.d.ts",
       "import": "./daemon-sdk/dist/automation.js"
     },
+    "./daemon-sdk/browser-judgment-contract": {
+      "bun": "./daemon-sdk/src/browser-judgment-contract.ts",
+      "types": "./daemon-sdk/dist/browser-judgment-contract.d.ts",
+      "import": "./daemon-sdk/dist/browser-judgment-contract.js"
+    },
     "./daemon-sdk/channel-route-types": {
       "bun": "./daemon-sdk/src/channel-route-types.ts",
       "types": "./daemon-sdk/dist/channel-route-types.d.ts",
@@ -1418,6 +1423,11 @@
       "bun": "./sdk/src/platform/workflow/work-ledger/native-submission.ts",
       "types": "./sdk/dist/platform/workflow/work-ledger/native-submission.d.ts",
       "import": "./sdk/dist/platform/workflow/work-ledger/native-submission.js"
+    },
+    "./sdk/platform/ci-watch": {
+      "bun": "./sdk/src/platform/ci-watch/index.ts",
+      "types": "./sdk/dist/platform/ci-watch/index.d.ts",
+      "import": "./sdk/dist/platform/ci-watch/index.js"
     }
   },
   "publishConfig": {
@@ -1459,7 +1469,7 @@
     "playwright-core": "1.62.0",
     "pyright": "1.1.409",
     "simple-git": "4.0.2",
-    "sql.js": "1.14.1",
+    "sql.js": "1.14.2",
     "sqlite-vec": "0.1.9",
     "tree-sitter-css": "0.25.0",
     "tree-sitter-javascript": "0.25.0",

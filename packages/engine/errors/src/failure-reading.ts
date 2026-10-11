@@ -8,7 +8,7 @@ import {
 } from '@goodvibes-jev/judgment/decisions';
 import type { DaemonErrorCategory } from './daemon-error-contract.js';
 import type { CallOptions, JudgmentPort } from '@goodvibes-jev/judgment';
-import { judgmentPort } from './judgment-port.js';
+import { captureJudgmentPort } from './judgment-authority.js';
 
 /**
  * What an error's wording says about the failure, read by Jev in place of the
@@ -256,12 +256,12 @@ const holds = (reading: YesNoReading): boolean => reading.verdict === 'yes' && r
 
 /** Readings of the same error wording, so the retry and display paths of one failure ask once. */
 const MEMO_LIMIT = 256;
-const memo = new Map<string, Promise<FailureConclusions>>();
+let memos = new WeakMap<object, Map<string, Promise<FailureConclusions>>>();
 
-function remember(state: string, reading: Promise<FailureConclusions>): Promise<FailureConclusions> {
+function remember(memo: Map<string, Promise<FailureConclusions>>, state: string, reading: Promise<FailureConclusions>): Promise<FailureConclusions> {
   if (memo.size >= MEMO_LIMIT) memo.delete(memo.keys().next().value!);
   memo.set(state, reading);
-  reading.catch(() => memo.delete(state));
+  void reading.catch(() => { if (memo.get(state) === reading) memo.delete(state); });
   return reading;
 }
 
@@ -270,16 +270,21 @@ function remember(state: string, reading: Promise<FailureConclusions>): Promise<
  * request. `site` names the decision site for the decision log. Explicit owned
  * options keep their port/lifetime and bypass the cross-caller wording memo.
  */
-export function readFailure(evidence: FailureEvidence, site: string, options?: FailureReadOptions): Promise<FailureConclusions> {
+export async function readFailure(evidence: FailureEvidence, site: string, options?: FailureReadOptions): Promise<FailureConclusions> {
+  const source = options === undefined ? captureJudgmentPort(site) : undefined;
   const state = failureState(evidence);
-  const known = options === undefined ? memo.get(state) : undefined;
-  if (known !== undefined) return known;
+  source?.assertCurrent();
+  let memo = source && memos.get(source.identity);
+  if (source && !memo) { memo = new Map(); memos.set(source.identity, memo); }
+  const known = memo?.get(state);
+  if (known !== undefined) { const result = await known; source?.assertCurrent(); return result; }
   const reading = (async () => {
-    const run = await failureReading.run(options?.port ?? judgmentPort(site), state, { site,
+    const run = await failureReading.run(options?.port ?? source!.port, state, { site,
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       ...(options?.beforeAttempt === undefined ? {} : { beforeAttempt: options.beforeAttempt }),
       ...(options?.onRetry === undefined ? {} : { onRetry: options.onRetry }),
     });
+    source?.assertCurrent();
     const r = run.readings;
     const category = r.category.outcome === 'act' ? r.category.choice : 'unknown';
     return {
@@ -295,7 +300,7 @@ export function readFailure(evidence: FailureEvidence, site: string, options?: F
       ...(run.result.decisionId === undefined ? {} : { decisionId: run.result.decisionId }),
     };
   })();
-  return options === undefined ? remember(state, reading) : reading;
+  return memo ? remember(memo, state, reading) : reading;
 }
 
 /**
@@ -409,5 +414,5 @@ export function settleCategory(
 
 /** Forgets remembered readings; for tests that swap the judgment port. */
 export function forgetFailureReadings(): void {
-  memo.clear();
+  memos = new WeakMap();
 }

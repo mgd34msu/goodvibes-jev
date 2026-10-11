@@ -18,6 +18,9 @@
 
 import { AUTH_AUDIENCE_URL, AUTH_CLIENTS_URL } from './setup-plan.js';
 import { findElement, looksLikeGoogleSignIn, requireElement } from './browser-elements.js';
+import { consumeGoogleElement } from './browser-elements.js';
+import { ownGoogleBrowser } from './browser-readings.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { GoogleBrowserPort } from './types.js';
 
 export type PublishingStatus = 'testing' | 'in-production' | 'unknown';
@@ -67,7 +70,7 @@ export interface PublishAppOk {
 
 export type PublishAppResult = PublishAppOk | ConsoleNeedsHuman | ConsoleFailed;
 
-export interface CreateDesktopOAuthClientOptions {
+export interface CreateDesktopOAuthClientOptions extends JudgmentReadingOptions {
   readonly name: string;
 }
 
@@ -107,7 +110,7 @@ function detectPublishingStatus(text: string): PublishingStatus {
   return 'unknown';
 }
 
-export interface ReadPublishingStatusOptions {
+export interface ReadPublishingStatusOptions extends JudgmentReadingOptions {
   /**
    * Overrides the page navigated to. Defaults to the real Google Auth
    * Platform audience page. The only legitimate reason to override it is a
@@ -125,12 +128,13 @@ export async function readPublishingStatus(
   browser: GoogleBrowserPort,
   options: ReadPublishingStatusOptions = {},
 ): Promise<ReadPublishingStatusResult> {
+  browser = ownGoogleBrowser(browser, options).browser;
   const pageUrl = options.pageUrl ?? AUTH_AUDIENCE_URL;
   await browser.navigate(pageUrl);
   const url = await browser.currentUrl();
   const elements = await browser.snapshot();
 
-  if (looksLikeGoogleSignIn(url, elements)) {
+  if (await looksLikeGoogleSignIn(url, elements, { browser })) {
     return signInNeeded(url);
   }
 
@@ -165,6 +169,7 @@ export async function publishApp(
   browser: GoogleBrowserPort,
   options: ReadPublishingStatusOptions = {},
 ): Promise<PublishAppResult> {
+  browser = ownGoogleBrowser(browser, options).browser;
   const pageUrl = options.pageUrl ?? AUTH_AUDIENCE_URL;
   const before = await readPublishingStatus(browser, options);
   if (before.kind !== 'ok') return before;
@@ -173,7 +178,7 @@ export async function publishApp(
   }
 
   const elements = await browser.snapshot();
-  const publishLookup = requireElement(elements, { role: 'button', nameIncludes: 'publish app' });
+  const publishLookup = await requireElement(elements, { role: 'button', purpose: 'Publish this OAuth app to production', nameIncludes: 'publish app' }, { browser });
   if (!publishLookup.found) {
     return {
       kind: 'failed',
@@ -182,10 +187,10 @@ export async function publishApp(
       fix: `Open ${pageUrl} by hand and click "PUBLISH APP".`,
     };
   }
-  await browser.click(publishLookup.element.ref);
+  await consumeGoogleElement(browser, publishLookup.element);
 
   const confirmElements = await browser.snapshot();
-  const confirmLookup = requireElement(confirmElements, { role: 'button', nameIncludes: 'confirm' });
+  const confirmLookup = await requireElement(confirmElements, { role: 'button', purpose: 'Confirm publishing this OAuth app to production in the confirmation dialog', nameIncludes: 'confirm' }, { browser });
   if (!confirmLookup.found) {
     return {
       kind: 'failed',
@@ -194,7 +199,7 @@ export async function publishApp(
       fix: 'Click "PUBLISH APP" by hand and confirm the dialog that asks to push the app to production.',
     };
   }
-  await browser.click(confirmLookup.element.ref);
+  await consumeGoogleElement(browser, confirmLookup.element);
 
   const after = await readPublishingStatus(browser, options);
   if (after.kind === 'ok' && after.status === 'in-production') {
@@ -248,25 +253,27 @@ export async function createDesktopOAuthClient(
   browser: GoogleBrowserPort,
   options: CreateDesktopOAuthClientOptions,
 ): Promise<CreateDesktopOAuthClientResult> {
+  browser = ownGoogleBrowser(browser, options).browser;
+  const name = options.name;
   await browser.navigate(AUTH_CLIENTS_URL);
   const url = await browser.currentUrl();
   let elements = await browser.snapshot();
 
-  if (looksLikeGoogleSignIn(url, elements)) {
+  if (await looksLikeGoogleSignIn(url, elements, { browser })) {
     return signInNeeded(url);
   }
 
-  const existing = findElement(elements, { nameIncludes: options.name });
+  const existing = await findElement(elements, { purpose: `Find an existing OAuth client named exactly ${name}`, nameIncludes: name }, { browser });
   if (existing) {
     return {
       kind: 'needs-human',
       reason: 'client-already-exists',
-      problem: `An OAuth client named "${options.name}" is already listed on the clients page.`,
+      problem: `An OAuth client named "${name}" is already listed on the clients page.`,
       fix: 'Reuse the client id and secret already stored for it, or delete that client on the clients page and re-run this step.',
     };
   }
 
-  const createClientLookup = requireElement(elements, { role: 'button', nameIncludes: 'create client' });
+  const createClientLookup = await requireElement(elements, { role: 'button', purpose: 'Open the new OAuth client creation form', nameIncludes: 'create client' }, { browser });
   if (!createClientLookup.found) {
     return {
       kind: 'failed',
@@ -275,10 +282,10 @@ export async function createDesktopOAuthClient(
       fix: `Open ${AUTH_CLIENTS_URL} by hand and click "CREATE CLIENT".`,
     };
   }
-  await browser.click(createClientLookup.element.ref);
+  await consumeGoogleElement(browser, createClientLookup.element);
 
   elements = await browser.snapshot();
-  const typeLookup = requireElement(elements, { nameIncludes: 'application type' });
+  const typeLookup = await requireElement(elements, { purpose: 'Open the application type selector for the new OAuth client', nameIncludes: 'application type' }, { browser });
   if (!typeLookup.found) {
     return {
       kind: 'failed',
@@ -287,10 +294,10 @@ export async function createDesktopOAuthClient(
       fix: 'Click "CREATE CLIENT" by hand and choose "Desktop app" as the application type.',
     };
   }
-  await browser.click(typeLookup.element.ref);
+  await consumeGoogleElement(browser, typeLookup.element);
 
   elements = await browser.snapshot();
-  const desktopOptionLookup = requireElement(elements, { nameIncludes: 'desktop app' });
+  const desktopOptionLookup = await requireElement(elements, { purpose: 'Choose Desktop app as the OAuth application type', nameIncludes: 'desktop app' }, { browser });
   if (!desktopOptionLookup.found) {
     return {
       kind: 'failed',
@@ -299,22 +306,22 @@ export async function createDesktopOAuthClient(
       fix: 'Open the "Application type" dropdown by hand and choose "Desktop app".',
     };
   }
-  await browser.click(desktopOptionLookup.element.ref);
+  await consumeGoogleElement(browser, desktopOptionLookup.element);
 
   elements = await browser.snapshot();
-  const nameLookup = requireElement(elements, { role: 'textbox', nameIncludes: 'name' });
+  const nameLookup = await requireElement(elements, { role: 'textbox', purpose: 'Name the new Desktop OAuth client', nameIncludes: 'name' }, { browser });
   if (!nameLookup.found) {
     return {
       kind: 'failed',
       reason: 'name-field-not-found',
       problem: nameLookup.message,
-      fix: `Type "${options.name}" into the client "Name" field by hand.`,
+      fix: `Type "${name}" into the client "Name" field by hand.`,
     };
   }
-  await browser.type(nameLookup.element.ref, options.name);
+  await consumeGoogleElement(browser, nameLookup.element, name);
 
   elements = await browser.snapshot();
-  const createButtonLookup = requireElement(elements, { role: 'button', nameIncludes: 'create' });
+  const createButtonLookup = await requireElement(elements, { role: 'button', purpose: 'Submit the completed Desktop OAuth client creation form', nameIncludes: 'create' }, { browser });
   if (!createButtonLookup.found) {
     return {
       kind: 'failed',
@@ -323,7 +330,7 @@ export async function createDesktopOAuthClient(
       fix: 'Click "Create" by hand to finish creating the OAuth client.',
     };
   }
-  await browser.click(createButtonLookup.element.ref);
+  await consumeGoogleElement(browser, createButtonLookup.element);
 
   const resultText = await browser.readText();
   const credentials = extractClientCredentials(resultText);
@@ -338,7 +345,7 @@ export async function createDesktopOAuthClient(
 
   return {
     kind: 'ok',
-    detail: `Created a Desktop app OAuth client named "${options.name}".`,
+    detail: `Created a Desktop app OAuth client named "${name}".`,
     clientId: credentials.clientId,
     clientSecret: credentials.clientSecret,
   };

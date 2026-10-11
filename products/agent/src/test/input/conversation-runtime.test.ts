@@ -1,9 +1,21 @@
-import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { CommandRegistry } from '../../input/command-registry.ts';
 import { registerBuiltinCommands } from '../../input/commands.ts';
 import { ConversationManager } from '../../core/conversation';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
 import { createStaticUiReadModel } from '../helpers/ui-read-models.ts';
+
+let previous: ReturnType<typeof installJudgmentPort>;
+let probability = 0.99;
+let pause: (() => Promise<void>) | undefined;
+beforeEach(() => {
+  probability = 0.99; pause = undefined;
+  const fake = fakePort(() => noulAnswer(probability));
+  previous = installJudgmentPort({ model: fake.port.model, async ask(request) { request.beforeAttempt?.(); await pause?.(); request.beforeAttempt?.(); return fake.port.ask(request); } });
+});
+afterEach(() => installJudgmentPort(previous));
 
 describe('conversation runtime command', () => {
   function makeContext(out: string[]) {
@@ -102,4 +114,32 @@ describe('conversation runtime command', () => {
     expect(out.join('\n')).toContain('[scroll:');
     expect(out.join('\n')).toContain('Jumped to tool_result event');
   });
+  for (const failure of ['unsettled', 'unavailable']) test(`${failure} displays recoverable unavailability and leaves composer operational`, async () => {
+    const registry = new CommandRegistry(); registerBuiltinCommands(registry);
+    const out: string[] = []; const ctx = makeContext(out);
+    if (failure === 'unsettled') probability = 0.5;
+    else pause = async () => { throw new Error('SYNTHETIC_PRIVATE_PROVIDER_FAILURE'); };
+    await registry.get('conversation')!.handler(['events'], ctx as never);
+    expect(out.join(' ')).toContain('Transcript index is unavailable');
+    expect(out.join(' ')).not.toContain('SYNTHETIC_PRIVATE');
+    expect(ctx.session.conversationManager.getMessageCount()).toBe(4);
+    out.length = 0;
+    await registry.get('conversation')!.handler(['composer'], ctx as never);
+    expect(out.join(' ')).toContain('Composer Review');
+  });
+  for (const change of ['session', 'messages']) test(`${change} supersession suppresses late transcript UI output and navigation`, async () => {
+    const registry = new CommandRegistry(); registerBuiltinCommands(registry);
+    const out: string[] = []; const ctx = makeContext(out);
+    pause = async () => { if (change === 'session') ctx.session.runtime.sessionId = 'replacement'; else ctx.session.conversationManager.resetAll(); };
+    await registry.get('conversation')!.handler(['next', 'approval_request'], ctx as never);
+    expect(out).toEqual([]);
+  });
+  test('display clearing during a reading cannot navigate to stale line coordinates', async () => {
+    const registry = new CommandRegistry(); registerBuiltinCommands(registry);
+    const out: string[] = []; const ctx = makeContext(out);
+    pause = async () => { ctx.session.conversationManager.clearDisplay(); };
+    await registry.get('conversation')!.handler(['next', 'approval_request'], ctx as never);
+    expect(out.join(' ')).not.toContain('[scroll:');
+  });
+
 });

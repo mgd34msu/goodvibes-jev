@@ -1,6 +1,16 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { ConfigKey, ConfigSetting, ConfigValue, EffectiveConfigView } from '@goodvibes-jev/engine/sdk/platform/config';
-import { resolveHarnessSetting, type HarnessSettingLookupArgs, type HarnessSettingResolvedBy } from '../../agent/harness-control.ts';
+import { resolveHarnessSetting, resolveHarnessSettingAsync, type HarnessSettingLookupArgs, type HarnessSettingResolvedBy } from '../../agent/harness-control.ts';
+
+let probability = 0.99;
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { probability = 0.99; previous = installJudgmentPort(fakePort(() => noulAnswer(probability)).port); });
+afterEach(() => { installJudgmentPort(previous); });
+afterAll(cleanupResearchScreeningFixtures);
+const reading = () => ({ sourceOwner: ordinaryResearchOwner() });
 
 const KEY = 'surfaces.telegram.botUsername';
 const REMOTE_VALUE = 'synthetic_remote_owner';
@@ -41,9 +51,9 @@ const lookups: Array<[HarnessSettingResolvedBy, HarnessSettingLookupArgs]> = [
 ];
 
 describe('harness lookup keeps its owning-runtime view at every resolution', () => {
-  test.each(lookups)('%s returns the remote owner value rather than the local mirror', (resolvedBy, args) => {
+  test.each(lookups)('%s returns the remote owner value rather than the local mirror', async (resolvedBy, args) => {
     const { config, view, get, describe } = fixture();
-    const result = resolveHarnessSetting(config, args, view);
+    const result = await resolveHarnessSettingAsync(config, args, view, reading());
 
     expect(result?.status).toBe('found');
     if (result?.status !== 'found') throw new Error('expected a setting');
@@ -58,9 +68,9 @@ describe('harness lookup keeps its owning-runtime view at every resolution', () 
     expect(describe).toHaveBeenCalledWith(KEY);
   });
 
-  test.each(lookups)('%s preserves unavailable ownership rather than reporting a stale value', (resolvedBy, args) => {
+  test.each(lookups)('%s preserves unavailable ownership rather than reporting a stale value', async (resolvedBy, args) => {
     const { config, view, get } = fixture([row()], true);
-    const result = resolveHarnessSetting(config, args, view);
+    const result = await resolveHarnessSettingAsync(config, args, view, reading());
 
     expect(result?.status).toBe('found');
     if (result?.status !== 'found') throw new Error('expected a setting');
@@ -73,9 +83,9 @@ describe('harness lookup keeps its owning-runtime view at every resolution', () 
     expect(get).not.toHaveBeenCalled();
   });
 
-  test.each(lookups)('%s keeps the manual no-view lookup compatible', (_resolvedBy, args) => {
+  test.each(lookups)('%s keeps the manual no-view lookup compatible', async (_resolvedBy, args) => {
     const { config, get } = fixture();
-    const result = resolveHarnessSetting(config, args);
+    const result = await resolveHarnessSettingAsync(config, args, undefined, reading());
     expect(result?.status).toBe('found');
     if (result?.status !== 'found') throw new Error('expected a setting');
     expect(result.setting.value).toBe(LOCAL_VALUE);
@@ -93,9 +103,9 @@ describe('harness lookup keeps its owning-runtime view at every resolution', () 
     expect(describe).not.toHaveBeenCalled();
   });
 
-  test('multiple strict search matches stay ambiguous without reading values', () => {
+  test('multiple positive readings stay ambiguous without reading values', async () => {
     const { config, view, get, describe } = fixture([row(), row('surfaces.discord.botToken')]);
-    const result = resolveHarnessSetting(config, { query: 'synthetic unique owner lookup' }, view);
+    const result = await resolveHarnessSettingAsync(config, { query: 'synthetic unique owner lookup' }, view, reading());
     expect(result?.status).toBe('ambiguous');
     if (result?.status !== 'ambiguous') throw new Error('expected candidates');
     expect(result.candidates.map((entry) => entry.key)).toEqual([KEY, 'surfaces.discord.botToken']);
@@ -103,13 +113,16 @@ describe('harness lookup keeps its owning-runtime view at every resolution', () 
     expect(describe).not.toHaveBeenCalled();
   });
 
-  test('a single relaxed match stays a candidate and absent input stays unresolved', () => {
+  test('an uncertain reading stays a candidate and negative evidence stays unresolved', async () => {
+    probability = 0.5;
     const { config, view, get, describe } = fixture();
-    const result = resolveHarnessSetting(config, { query: 'synthetic nonexistentword' }, view);
+    const result = await resolveHarnessSettingAsync(config, { query: 'synthetic nonexistentword' }, view, reading());
     expect(result?.status).toBe('ambiguous');
     if (result?.status !== 'ambiguous') throw new Error('expected candidate');
     expect(result.candidates.map((entry) => entry.key)).toEqual([KEY]);
-    expect(resolveHarnessSetting(config, { query: 'nonexistentword' }, view)).toBeNull();
+    probability = 0.01;
+    expect(await resolveHarnessSettingAsync(config, { query: 'nonexistentword' }, view, reading())).toBeNull();
+    expect(() => resolveHarnessSetting(config, { query: 'synthetic unique owner lookup' }, view)).toThrow('asynchronous protected settings reader');
     expect(resolveHarnessSetting(config, {}, view)).toBeNull();
     expect(get).not.toHaveBeenCalled();
     expect(describe).not.toHaveBeenCalled();

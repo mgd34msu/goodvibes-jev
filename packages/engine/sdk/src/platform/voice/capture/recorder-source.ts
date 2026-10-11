@@ -13,6 +13,7 @@
  * be able to drive the byte path, a partial chunk, a mid-frame exit, a
  * non-zero code, without a real microphone or a real recorder installed.
  */
+import { ownRecorderFailure, readRecorderFailure } from './recorder-failure-reading.js';
 import { AudioFrameSlicer, pcm16ToFloatSamples } from './frames.js';
 import {
   resolveRecorderCommand,
@@ -73,33 +74,11 @@ export interface RecorderCaptureOptions {
 const RECORDER_TERM_GRACE_MS = 750;
 
 /**
- * Recorder stderr worth surfacing. A recorder writes progress and warnings to
- * stderr in normal operation, so it is not treated as failure, but it IS the
- * only place the reason a device did not open is written, so it is kept for the
- * error message rather than discarded.
+ * Keep complete diagnostic evidence, not a display prefix. Recorders also write
+ * harmless progress to stderr, so wording is read only after the process closes.
+ * Overflow explicitly holds classification; raw stderr is never a UI message.
  */
-const STDERR_KEEP_CHARS = 400;
-
-function classifyRecorderFailure(stderrText: string): AudioCaptureError | null {
-  const text = stderrText.toLowerCase();
-  if (text.includes('permission denied') || text.includes('access denied')) {
-    return new AudioCaptureError('permission-denied', `the recorder was denied microphone access: ${stderrText.trim()}`);
-  }
-  if (
-    text.includes('no such device')
-    || text.includes('no target node available')
-    || text.includes('unknown pcm')
-  ) {
-    return new AudioCaptureError('device-missing', `the capture device could not be opened: ${stderrText.trim()}`);
-  }
-  if (
-    text.includes('device or resource busy')
-    || text.includes('audio open error')
-  ) {
-    return new AudioCaptureError('device-unavailable', `the capture device could not be opened: ${stderrText.trim()}`);
-  }
-  return null;
-}
+const STDERR_KEEP_CHARS = 64 * 1024;
 
 /**
  * Build a capture opener over a recorder subprocess.
@@ -154,7 +133,17 @@ function startRecorderStream(
   options: RecorderCaptureOptions,
 ): AudioCaptureStream {
   const slicer = new AudioFrameSlicer(request.frameSamples);
+  const onFrame = handlers.onFrame.bind(handlers);
+  const onStopped = handlers.onStopped.bind(handlers);
   let stderrText = '';
+  let stderrOverflow = false;
+  const decoder = new TextDecoder();
+  let processClosed = false;
+  const lifetime = new AbortController();
+  const configuration = Object.freeze({ command: resolved.command, args: Object.freeze([...resolved.args]),
+    backend: resolved.backend, device: request.device, frameSamples: request.frameSamples,
+    noiseSuppression: request.noiseSuppression, sampleRate: options.sampleRate ?? CAPTURE_SAMPLE_RATE });
+  const owner = ownRecorderFailure(configuration, lifetime.signal);
   let stopped = false;
   let stopRequested = false;
   const exited: Array<() => void> = [];
@@ -163,45 +152,74 @@ function startRecorderStream(
   const finish = (reason: 'requested' | 'stream-ended' | 'failed', error?: AudioCaptureError): void => {
     if (stopped) return;
     stopped = true;
-    if (error !== undefined) handlers.onStopped(reason, error);
-    else handlers.onStopped(reason);
+    lifetime.abort();
+    // Drain shutdown before invoking a possibly reentrant consumer.
     for (const resolve of exited.splice(0)) resolve();
+    if (error !== undefined) onStopped(reason, error);
+    else onStopped(reason);
   };
 
   child.stdout?.on('data', (chunk: Uint8Array) => {
-    if (stopped) return;
-    for (const frame of slicer.push(pcm16ToFloatSamples(chunk))) handlers.onFrame(frame);
+    if (stopped || processClosed || stopRequested) return;
+    for (const frame of slicer.push(pcm16ToFloatSamples(chunk))) onFrame(frame);
   });
+  const appendStderr = (text: string): void => {
+    if (stderrOverflow) return;
+    if (stderrText.length + text.length > STDERR_KEEP_CHARS) {
+      // An incomplete diagnostic is never evidence for a semantic decision.
+      stderrOverflow = true;
+      stderrText = '';
+      return;
+    }
+    stderrText += text;
+  };
   child.stderr?.on('data', (chunk: Uint8Array) => {
-    if (stderrText.length >= STDERR_KEEP_CHARS) return;
-    stderrText += new TextDecoder().decode(chunk);
+    if (stopped || processClosed || stderrOverflow) return;
+    appendStderr(decoder.decode(chunk, { stream: true }));
   });
   child.on('error', (error: Error) => {
-    finish('failed', new AudioCaptureError('device-unavailable', `the recorder could not be started: ${error.message}`));
+    if (stopped || processClosed) return;
+    finish(stopRequested ? 'requested' : 'failed', stopRequested ? undefined
+      : new AudioCaptureError('device-unavailable', `the recorder could not be started: ${error.message}`));
   });
-  child.on('close', (code: number | null) => {
-    if (stopRequested) {
-      finish('requested');
-      return;
-    }
-    const classified = classifyRecorderFailure(stderrText);
-    if (classified !== null) {
-      finish('failed', classified);
-      return;
-    }
-    if (code !== null && code !== 0) {
-      finish(
-        'failed',
-        new AudioCaptureError(
-          'stream-ended',
-          `the recorder ${resolved.command} exited with code ${code}${stderrText.trim().length > 0 ? `: ${stderrText.trim()}` : ''}`,
-        ),
-      );
-      return;
-    }
-    // A clean exit nobody asked for is still the stream ending underneath the
-    // detector, the restart policy, not a silent stop, is what handles it.
-    finish('failed', new AudioCaptureError('stream-ended', `the recorder ${resolved.command} exited on its own`));
+  child.on('close', (code: number | null, signal: string | null) => {
+    if (stopped || processClosed) return;
+    processClosed = true;
+    for (const resolve of exited.splice(0)) resolve();
+    if (stopRequested) { finish('requested'); return; }
+    appendStderr(decoder.decode());
+    const evidence = Object.freeze({ ...configuration, stderr: stderrText, code, signal });
+    const exit = code !== null && code !== 0 ? `exited with code ${code}${signal ? ` on signal ${signal}` : ''}`
+      : signal ? `exited on signal ${signal}` : 'exited on its own';
+    const complete = async (): Promise<void> => {
+      let cause: Awaited<ReturnType<typeof readRecorderFailure>> = stderrOverflow ? 'unavailable' : stderrText.length === 0 ? 'none'
+        : await readRecorderFailure(evidence, owner);
+      if (stopped || stopRequested || lifetime.signal.aborted) return;
+      // The async return is another ownership boundary: the installation may
+      // retire after the reader's final check but before this continuation.
+      if (cause !== 'unavailable' && stderrText.length > 0) {
+        try {
+          if (!owner.capture) throw new Error('Recorder failure reader is unavailable.');
+          owner.capture.assertCurrent();
+        } catch { cause = 'unavailable'; }
+      }
+      if (stopped || stopRequested || lifetime.signal.aborted) return;
+      if (cause === 'unavailable') {
+        finish('failed', new AudioCaptureError('failure-reading-unavailable',
+          `The recorder ${resolved.command} ${exit}, but its failure could not be safely determined. Capture is paused; retry after checking the recorder and judgment service.`));
+        return;
+      }
+      if (cause !== 'none') {
+        finish('failed', new AudioCaptureError(cause, `the recorder ${resolved.command} ${exit}: ${cause}`));
+        return;
+      }
+      // Exit code and signal remain exact process facts, never prose guesses.
+      finish('failed', new AudioCaptureError('stream-ended', `the recorder ${resolved.command} ${exit}`));
+    };
+    // Always drain the task, including a consumer callback that throws.
+    void complete().catch(() => {
+      if (!stopped && !stopRequested) finish('failed', new AudioCaptureError('failure-reading-unavailable', 'The recorder failure reading is unavailable.'));
+    });
   });
 
   if (!resolved.deviceSelectable && request.device.trim().length > 0) {
@@ -211,28 +229,30 @@ function startRecorderStream(
     });
   }
 
+  let stopTask: Promise<void> | undefined;
+  const stopRecorder = async (): Promise<void> => {
+    stopRequested = true;
+    lifetime.abort();
+    if (stopped) return;
+    if (processClosed) { finish('requested'); return; }
+    try { child.kill('SIGTERM'); } catch { /* Escalation below still has a bounded deadline. */ }
+    if (stopped || processClosed) { finish('requested'); return; }
+    // Wait for the process to actually go, but never for its pending judgment.
+    await new Promise<void>((resolve) => {
+      const done = (): void => { clearTimeout(timer); resolve(); };
+      exited.push(done);
+      const timer = setTimeout(() => {
+        try { if (!stopped && !processClosed) child.kill('SIGKILL'); }
+        catch { /* A host kill failure must not leave stop waiting forever. */ }
+        finally { resolve(); }
+      }, RECORDER_TERM_GRACE_MS);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+    finish('requested');
+  };
   return {
     label: resolved.label,
     deviceSelectable: resolved.deviceSelectable,
-    stop: async (): Promise<void> => {
-      if (stopRequested) return;
-      stopRequested = true;
-      if (stopped) return;
-      child.kill('SIGTERM');
-      // Wait for the process to actually go, but only for a bounded moment: a
-      // recorder still holding the microphone blocks the next start, so a
-      // process that ignores SIGTERM is escalated rather than waited on.
-      await new Promise<void>((resolve) => {
-        exited.push(resolve);
-        const timer = setTimeout(() => {
-          if (!stopped) child.kill('SIGKILL');
-          resolve();
-        }, RECORDER_TERM_GRACE_MS);
-        // Unref where the host supports it, so a pending grace timer never holds
-        // a process open at exit.
-        (timer as unknown as { unref?: () => void }).unref?.();
-      });
-      finish('requested');
-    },
+    stop: (): Promise<void> => stopTask ??= stopRecorder(),
   };
 }

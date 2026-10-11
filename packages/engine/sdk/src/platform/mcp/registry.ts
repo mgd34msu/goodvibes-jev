@@ -1,3 +1,4 @@
+import { prepareExternalExecution, prepareExternalWorkspaceRevision } from '../permissions/external-execution.js';
 import { autonomousSourceRevision } from '../permissions/autonomous-protocol-binding.js';
 import { captureExternalRequestEvidence } from '../permissions/external-request-evidence.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
@@ -88,13 +89,21 @@ export interface McpReloadResult {
   readonly servers: readonly McpReloadServerResult[];
 }
 
+interface PendingMcpConnection {
+  readonly lifetime: AbortController;
+  done: Promise<void>;
+  readonly cleanupErrors: unknown[];
+}
+
 function sameServerConfig(a: McpServerConfig | undefined, b: McpServerConfig | undefined): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
 export class McpRegistry {
   private clients = new Map<string, McpClient>();
+  private readonly executionByClient = new WeakMap<McpClient, { assertCurrent: () => void; close: () => void }>();
   private serverConfigs = new Map<string, McpServerConfig>();
+  private readonly pendingConnections = new Map<string, PendingMcpConnection>();
   private permissions = new McpPermissionManager();
   private readonly policyLifetimes = new Map<string, AbortController>();
   private policyLifetime(serverName: string): AbortController {
@@ -103,6 +112,7 @@ export class McpRegistry {
     return lifetime;
   }
   private invalidatePolicyLifetime(serverName: string): void {
+    this.pendingConnections.get(serverName)?.lifetime.abort();
     this.policyLifetimes.get(serverName)?.abort();
     this.policyLifetimes.set(serverName, new AbortController());
   }
@@ -114,7 +124,8 @@ export class McpRegistry {
   private readonly hookDispatcher: Pick<HookDispatcher, 'fire'>;
   private permissionHost: ExternalPermissionHost | undefined;
   setPermissionHost(host: ExternalPermissionHost): void {
-    for (const name of this.clients.keys()) this.invalidatePolicyLifetime(name);
+    for (const pending of this.pendingConnections.values()) pending.lifetime.abort();
+    for (const [name, client] of this.clients) { this.executionByClient.get(client)?.close(); this.invalidatePolicyLifetime(name); }
     this.permissionHost = host;
   }
   private elicitationHandler: McpElicitationHandler | null = null;
@@ -138,6 +149,7 @@ export class McpRegistry {
    * them. Set once at composition; applies to servers connected afterwards.
    */
   setElicitationHandler(handler: McpElicitationHandler | null): void {
+    for (const pending of this.pendingConnections.values()) pending.lifetime.abort();
     for (const name of this.clients.keys()) this.invalidatePolicyLifetime(name);
     this.elicitationHandler = handler;
   }
@@ -160,7 +172,11 @@ export class McpRegistry {
    * Exposed for programmatic use (testing, dynamic registration).
    */
   async connectServer(serverConfig: McpServerConfig): Promise<void> {
+    this.permissionHost?.signal.throwIfAborted();
+    serverConfig = structuredClone(serverConfig);
+    const previous = this.serverConfigs.get(serverConfig.name);
     this.serverConfigs.set(serverConfig.name, serverConfig);
+    if (previous && !sameServerConfig(previous, serverConfig)) await this.disconnectServer(serverConfig.name, 'config-changed');
     await this._connectServer(serverConfig);
   }
 
@@ -192,23 +208,37 @@ export class McpRegistry {
   }
 
   async applyConfig(serverConfigs: readonly McpServerConfig[]): Promise<McpReloadResult> {
-    const next = new Map(serverConfigs.map((serverConfig) => [serverConfig.name, serverConfig] as const));
+    this.permissionHost?.signal.throwIfAborted();
+    const next = new Map(serverConfigs.map((serverConfig) => [serverConfig.name, structuredClone(serverConfig)] as const));
+    const previousConfigs = this.serverConfigs;
+    // Publish the complete new intent before any drain. An older reload may
+    // never delete or reconnect a destination installed while it was awaiting.
+    this.serverConfigs = new Map(next);
+    const disconnecting: Promise<boolean>[] = [];
+    for (const [name, previous] of previousConfigs) {
+      if (!sameServerConfig(previous, next.get(name))) disconnecting.push(this.disconnectServer(name, next.has(name) ? 'config-changed' : 'config-removed'));
+    }
+    // Revoke every changed/removed transport synchronously before waiting for
+    // any one server's drain; no other old intent gets an admission window.
+    for (const pending of this.pendingConnections.values()) pending.lifetime.abort();
+    const disconnected = await Promise.allSettled(disconnecting);
+    const cleanupErrors = disconnected.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'MCP configuration cleanup failed');
     const results: McpReloadServerResult[] = [];
     let added = 0;
     let changed = 0;
     let removed = 0;
     let unchanged = 0;
 
-    for (const name of [...this.serverConfigs.keys()]) {
+    for (const name of previousConfigs.keys()) {
       if (next.has(name)) continue;
-      await this.disconnectServer(name, 'config-removed');
-      this.serverConfigs.delete(name);
       removed += 1;
       results.push({ name, action: 'removed', connected: false });
     }
 
     for (const [name, serverConfig] of next) {
-      const previous = this.serverConfigs.get(name);
+      if (this.serverConfigs.get(name) !== serverConfig) throw new Error('MCP configuration intent changed');
+      const previous = previousConfigs.get(name);
       if (previous && sameServerConfig(previous, serverConfig)) {
         unchanged += 1;
         const client = this.clients.get(name);
@@ -219,12 +249,10 @@ export class McpRegistry {
         continue;
       }
       if (previous) {
-        await this.disconnectServer(name, 'config-changed');
         changed += 1;
       } else {
         added += 1;
       }
-      this.serverConfigs.set(name, serverConfig);
       await this._connectServer(serverConfig);
       results.push({
         name,
@@ -310,8 +338,10 @@ export class McpRegistry {
     const policyRevision = () => autonomousRevision(policySnapshot());
     const revision = autonomousRevision(serverPolicy);
     const externalRequestEvidence = captureExternalRequestEvidence({ destination: transport.destination, serverPolicy });
+    let assertWorkspaceCurrent: (() => void) | undefined;
     const assertCurrent = () => {
-      signal.throwIfAborted(); transport.assertCurrent(); source?.assertCurrent();
+      signal.throwIfAborted(); transport.assertCurrent(); source?.assertCurrent(); assertWorkspaceCurrent?.();
+      this.executionByClient.get(client)?.assertCurrent();
       if (source && autonomousSourceRevision(source.sourceOf()) !== sourceRevision) throw new Error('MCP original operation source changed');
       if (policyRevision() !== revision || this.permissionHost !== host) throw new Error('MCP server policy changed');
       if (this.clients.get(parsed.serverName) !== client || this.freshness.isQuarantined(parsed.serverName)) throw new Error('MCP operation authority changed');
@@ -321,6 +351,9 @@ export class McpRegistry {
     let admission: Awaited<ReturnType<typeof admitExternalRequest>> | undefined;
     const unsubscribe = host?.config.onDidInvalidate(() => configLife.abort());
     try {
+      assertCurrent();
+      if (host && !operation) throw new Error(`MCP call '${qualifiedName}' has unresolved permission: original operation source is unavailable`);
+      if (host) assertWorkspaceCurrent = await prepareExternalWorkspaceRevision(host, signal);
       assertCurrent();
       if (this.freshness.isQuarantined(parsed.serverName)) {
         const record = this.freshness.getRecord(parsed.serverName);
@@ -343,9 +376,11 @@ export class McpRegistry {
       if (permission.verdict === 'deny') {
         throw new Error(`MCP call '${qualifiedName}' denied: ${permission.reason}`);
       }
-      if (permission.verdict === 'ask') {
-        if (permission.causes?.length !== 1 || permission.causes[0] !== 'risk-policy' || !host || !operation)
-          throw new Error(`MCP call '${qualifiedName}' has unresolved permission: ${permission.reason}`);
+      if (permission.verdict === 'ask' && (permission.causes?.length !== 1 || permission.causes[0] !== 'risk-policy' || !host || !operation))
+        throw new Error(`MCP call '${qualifiedName}' has unresolved permission: ${permission.reason}`);
+      // Deterministic server allows constrain policy; they never replace the
+      // canonical recorded admission of an actual autonomous caller's source.
+      if (host && operation) {
         admission = await admitExternalRequest(host, { ...transport, signal, assertCurrent }, operation, {
           tool: qualifiedName, args, serverPolicy, supportingDecisionIds: permission.judgmentDecisionIds ?? [],
         });
@@ -410,40 +445,35 @@ export class McpRegistry {
    * disconnectAll, Stop all connected MCP server processes.
    */
   async disconnectAll(): Promise<void> {
-    for (const name of this.clients.keys()) this.invalidatePolicyLifetime(name);
-    // Lifecycle:mcp:disconnected hooks (fire-and-forget for each server)
-    const dispatcher = this.hookDispatcher;
-    for (const name of this.clients.keys()) {
-      const disconnectedEvent: HookEvent = {
-        path: 'Lifecycle:mcp:disconnected',
-        phase: 'Lifecycle',
-        category: 'mcp',
-        specific: 'disconnected',
-        sessionId: '', timestamp: Date.now(),
-        payload: { server: name },
-      };
-      dispatcher.fire(disconnectedEvent).catch((err: unknown) => { logger.warn('Lifecycle:mcp:disconnected hook error', { error: summarizeError(err) }); });
-    }
-    await Promise.allSettled(
-      Array.from(this.clients.values()).map((client) => client.disconnect()),
-    );
-    this.clients.clear();
-    for (const sessionId of this.sandboxSessionByServer.values()) {
-      this.sandboxSessions.stop(sessionId);
-    }
-    this.sandboxSessionByServer.clear();
+    const names = new Set([...this.clients.keys(), ...this.pendingConnections.keys()]);
+    // Each disconnect synchronously revokes admission, then owns both the
+    // published transport and any still-negotiating transport until cleanup.
+    const outcomes = await Promise.allSettled([...names].map(name => this.disconnectServer(name)));
+    const errors = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'MCP connection cleanup failed');
   }
 
   async disconnectServer(serverName: string, reason = 'manual'): Promise<boolean> {
-    this.invalidatePolicyLifetime(serverName);
+    const pending = this.pendingConnections.get(serverName);
     const client = this.clients.get(serverName);
-    if (!client) return false;
+    this.invalidatePolicyLifetime(serverName);
+    const outcomes = await Promise.allSettled([
+      pending?.done.catch(() => {}),
+      client ? this.disconnectClient(serverName, client, reason) : undefined,
+    ]);
+    const errors = [...(pending?.cleanupErrors ?? []), ...outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : [])];
+    if (errors.length) throw new AggregateError(errors, 'MCP server cleanup failed');
+    return !!pending || !!client;
+  }
+
+  private async disconnectClient(serverName: string, client: McpClient, reason: string): Promise<void> {
+    const sessionId = this.sandboxSessionByServer.get(serverName);
+    this.executionByClient.get(client)?.close();
     await client.disconnect();
     if (this.clients.get(serverName) === client) this.clients.delete(serverName);
-    const sessionId = this.sandboxSessionByServer.get(serverName);
     if (sessionId) {
       this.sandboxSessions.stop(sessionId);
-      this.sandboxSessionByServer.delete(serverName);
+      if (this.sandboxSessionByServer.get(serverName) === sessionId) this.sandboxSessionByServer.delete(serverName);
     }
     if (this.runtimeBus) {
       emitMcpDisconnected(this.runtimeBus, {
@@ -464,7 +494,6 @@ export class McpRegistry {
     this.hookDispatcher.fire(disconnectedEvent).catch((err: unknown) => {
       logger.warn('Lifecycle:mcp:disconnected hook error', { error: summarizeError(err) });
     });
-    return true;
   }
 
   /**
@@ -608,7 +637,40 @@ export class McpRegistry {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private async _connectServer(serverConfig: McpServerConfig): Promise<void> {
+  private _connectServer(serverConfig: McpServerConfig): Promise<void> {
+    if (this.serverConfigs.get(serverConfig.name) !== serverConfig) return Promise.reject(new Error('MCP configuration intent changed'));
+    const previous = this.pendingConnections.get(serverConfig.name);
+    previous?.lifetime.abort();
+    const pending: PendingMcpConnection = { lifetime: new AbortController(), done: Promise.resolve(), cleanupErrors: [] };
+    this.pendingConnections.set(serverConfig.name, pending);
+    pending.done = Promise.resolve().then(async () => {
+      await previous?.done.catch(() => {});
+      if (previous?.cleanupErrors.length) {
+        pending.cleanupErrors.push(...previous.cleanupErrors);
+        throw new AggregateError(previous.cleanupErrors, 'Previous MCP connection cleanup failed');
+      }
+      await this.connectAttempt(serverConfig, pending);
+    }).finally(() => {
+      // A failed cleanup remains owned and blocks replacement; later close
+      // must report it even when the original registration caller is gone.
+      if (!pending.cleanupErrors.length && this.pendingConnections.get(serverConfig.name) === pending) this.pendingConnections.delete(serverConfig.name);
+    });
+    return pending.done;
+  }
+
+  private async connectAttempt(serverConfig: McpServerConfig, pending: PendingMcpConnection): Promise<void> {
+    const host = this.permissionHost;
+    const configuration = new AbortController();
+    let releaseConfiguration = host?.config.onDidInvalidate(() => configuration.abort()) ?? (() => {});
+    const signal = AbortSignal.any([pending.lifetime.signal, configuration.signal, ...(host ? [host.signal] : [])]);
+    try {
+    const assertHostCurrent = (): void => {
+      signal.throwIfAborted();
+      if (this.permissionHost !== host) throw new Error('MCP connection owner changed');
+      if (this.serverConfigs.get(serverConfig.name) !== serverConfig || this.pendingConnections.get(serverConfig.name) !== pending)
+        throw new Error('MCP configuration intent changed');
+    };
+    assertHostCurrent();
     const { name } = serverConfig;
     const existing = this.clients.get(name);
     if (existing?.isConnected) {
@@ -616,18 +678,52 @@ export class McpRegistry {
       return;
     }
     if (existing) {
-      await this.disconnectServer(name, 'reconnect');
+      try { await this.disconnectClient(name, existing, 'reconnect'); }
+      catch (error) { pending.cleanupErrors.push(error); throw error; }
+      assertHostCurrent();
     }
     let sandboxSessionId: string | null = null;
     let processSpec: McpProcessSpec | undefined;
+    let assertExecutionCurrent: (() => void) | undefined;
+    const isolated = !!serverConfig.command && !!this.sandboxConfigManager
+      && getSandboxConfigSnapshot(this.sandboxConfigManager).mcpIsolation !== 'disabled';
+    const processCwd = host && isolated ? this.sandboxSessions.getWorkspaceRoot() : process.cwd();
+    if (host && serverConfig.command) {
+      assertExecutionCurrent = await prepareExternalExecution(host, processCwd, signal);
+      assertHostCurrent(); assertExecutionCurrent();
+    }
     if (this.sandboxConfigManager) {
-      const resolved = await this._resolveSandboxProcessSpec(serverConfig);
+      const resolved = await this._resolveSandboxProcessSpec(serverConfig, assertExecutionCurrent);
       sandboxSessionId = resolved?.sessionId ?? null;
       processSpec = resolved?.processSpec;
+      try { assertHostCurrent(); }
+      catch (error) {
+        if (sandboxSessionId) {
+          try { this.sandboxSessions.stop(sandboxSessionId); }
+          catch (cleanupError) { pending.cleanupErrors.push(cleanupError); }
+        }
+        throw error;
+      }
     }
+    if (host && serverConfig.command && processSpec?.cwd && processSpec.cwd !== processCwd) {
+      try { assertExecutionCurrent = await prepareExternalExecution(host, processSpec.cwd, signal); assertHostCurrent(); }
+      catch (error) {
+        if (sandboxSessionId) {
+          try { this.sandboxSessions.stop(sandboxSessionId); }
+          catch (cleanupError) { pending.cleanupErrors.push(cleanupError); }
+        }
+        throw error;
+      }
+    }
+    const assertProcessCurrent = () => {
+      signal.throwIfAborted(); assertExecutionCurrent?.();
+      if (this.permissionHost !== host || !sameServerConfig(this.serverConfigs.get(name), serverConfig))
+        throw new Error('MCP process owner or configuration changed');
+    };
     const elicitationHandler = this.elicitationHandler;
     const client = new McpClient(serverConfig, {
       ...(processSpec ? { processSpec } : {}),
+      ...(host && serverConfig.command ? { beforeProcessStart: assertProcessCurrent } : {}),
       onNotification: (notification) => this._handleClientNotification(notification),
       onServerRequest: (request) => this._handleClientServerRequest(request),
       onUnhandledResponse: (response) => this._handleClientUnhandledResponse(response),
@@ -648,7 +744,9 @@ export class McpRegistry {
     });
     this.freshness.registerServer(name);
     try {
-      await client.connect();
+      assertHostCurrent();
+      await awaitPermission(() => client.connect(), signal);
+      assertHostCurrent(); assertProcessCurrent();
       this.permissions.registerServer(name, 'standard', {
         role: serverConfig.role ?? 'general',
         mode: serverConfig.trustMode ?? 'ask-on-risk',
@@ -656,6 +754,11 @@ export class McpRegistry {
         allowedHosts: serverConfig.allowedHosts ?? [],
       });
       this.clients.set(name, client);
+      if (host && serverConfig.command) {
+        const unsubscribe = releaseConfiguration;
+        this.executionByClient.set(client, { assertCurrent: assertProcessCurrent, close: () => { configuration.abort(); unsubscribe(); } });
+        releaseConfiguration = () => {};
+      }
       if (sandboxSessionId) {
         this.sandboxSessionByServer.set(name, sandboxSessionId);
       }
@@ -690,19 +793,28 @@ export class McpRegistry {
       // Kill any half-started process so a failed handshake does not leak an
       // orphan server. intentionalClose (set inside disconnect) suppresses the
       // client's auto-restart, so this teardown does not resurrect the process.
-      await client.disconnect().catch((e) => logger.warn('McpRegistry: failed to clean up half-connected client', { name, err: summarizeError(e) }));
+      await client.disconnect().catch((e: unknown) => {
+        pending.cleanupErrors.push(e);
+        logger.warn('McpRegistry: failed to clean up half-connected client', { name, err: summarizeError(e) });
+      });
       if (sandboxSessionId) {
-        this.sandboxSessions.stop(sandboxSessionId);
-        this.sandboxSessionByServer.delete(name);
+        try { this.sandboxSessions.stop(sandboxSessionId); }
+        catch (error) { pending.cleanupErrors.push(error); }
+        if (this.sandboxSessionByServer.get(name) === sandboxSessionId) this.sandboxSessionByServer.delete(name);
       }
       this.freshness.markFailed(name, summarizeError(err));
       logger.error('McpRegistry: failed to connect server', { name, err: summarizeError(err) });
-      // Don't register the client, it's not usable
+      if (pending.cleanupErrors.length) throw new AggregateError([err, ...pending.cleanupErrors], 'MCP connection cleanup failed');
+      // Don't register the client, it's not usable. A revoked owner is an
+      // explicit cancellation, not a successful registration with an empty row.
+      assertHostCurrent(); assertProcessCurrent();
     }
+    } finally { releaseConfiguration(); }
   }
 
   private async _resolveSandboxProcessSpec(
     serverConfig: McpServerConfig,
+    assertCurrent?: () => void,
   ): Promise<{ sessionId: string; processSpec: McpProcessSpec } | null> {
     const configManager = this.sandboxConfigManager;
     if (!configManager) return null;
@@ -713,6 +825,7 @@ export class McpRegistry {
 
     const profileId = this._selectSandboxProfile(serverConfig);
     const label = `${serverConfig.name} MCP`;
+    assertCurrent?.();
     const session = await this.sandboxSessions.start(profileId, label, configManager);
     if (!session.launchPlan) {
       throw new Error(`Sandbox session ${session.id} for MCP server '${serverConfig.name}' is missing a launch plan.`);

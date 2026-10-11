@@ -21,6 +21,7 @@
  * path with no branch of its own.
  */
 import { join } from 'node:path';
+import type { DeviceAutonomousOwner, DeviceAdmission } from './device-autonomous.js';
 import {
   DEVICE_CAPABILITY_CONTRACT_VERSION,
   resolveDeviceNodeProfile,
@@ -83,8 +84,11 @@ export interface DeviceWorkView {
  */
 export interface DevicePeerTransport {
   listPeers(kind?: string): readonly DevicePeerView[];
+  peerRevision?(nodeId: string): number;
+  peerMutationPending?(nodeId: string): boolean;
   invokePeer(input: {
     readonly peerId: string;
+    readonly admission?: DeviceAdmission | undefined;
     readonly command: string;
     readonly type?: string | undefined;
     readonly payload?: unknown | undefined;
@@ -106,6 +110,7 @@ export interface DeviceApprovalBridge {
 
 export interface DevicePostureRuntimeOptions {
   readonly transport: DevicePeerTransport;
+  readonly autonomous?: DeviceAutonomousOwner | undefined;
   readonly approvals: DeviceApprovalBridge;
   readonly config: DevicePostureConfigReader;
   /** Directory the grants ledger, captures, and disclosure log live under. */
@@ -193,6 +198,7 @@ function createDispatcher(transport: DevicePeerTransport, actor: string): Device
         actor,
         waitMs: input.timeoutMs,
         timeoutMs: input.timeoutMs,
+        ...(input.admission ? { admission: input.admission } : {}),
       });
       if (!completed || work.status !== 'completed') {
         return {
@@ -323,6 +329,10 @@ export function createDevicePostureRuntime(options: DevicePostureRuntimeOptions)
     artifacts,
     dispatcher: createDispatcher(transport, actor),
     confirm: createConfirmationHandler(options),
+    ...(options.autonomous ? { autonomous: { ...options.autonomous,
+      peerRevision: transport.peerRevision?.bind(transport),
+      peerMutationPending: transport.peerMutationPending?.bind(transport),
+    } } : {}),
     listNodes,
     policy: () => readDeviceCapabilityPolicy(config),
   });

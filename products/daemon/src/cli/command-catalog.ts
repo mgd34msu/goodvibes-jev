@@ -35,6 +35,7 @@ import {
   type RejectedFlagSpec,
 } from '@goodvibes-jev/engine/terminal-shell';
 import type { DaemonCliFlags } from './types.ts';
+import { WEBUI_BINDING_QUERY } from './machine-contracts.ts';
 
 /** Every command this binary has. There is no other. */
 export type DaemonCommand =
@@ -109,6 +110,17 @@ export type DaemonCommandFlagSpec = CommandFlagSpec<DaemonCliFlagField> & {
   readonly summary: string;
 };
 
+/** A producer-declared read-only invocation and the versioned receipt it emits. */
+export interface DaemonMachineQuery {
+  readonly args: readonly string[];
+  readonly result: {
+    readonly schema: string;
+    readonly schemaVersion: number;
+    readonly source: string;
+    readonly endpoint: string;
+  };
+}
+
 /**
  * A command entry, narrowed the same way.
  *
@@ -121,6 +133,7 @@ export type DaemonCommandSpec = CommandSpec<DaemonCommand, DaemonCliFlagField> &
   readonly usage: string;
   readonly detail: readonly string[];
   readonly flags: readonly DaemonCommandFlagSpec[];
+  readonly machineQueries?: readonly DaemonMachineQuery[];
 };
 
 // ---------------------------------------------------------------------------
@@ -555,16 +568,16 @@ export const DAEMON_COMMANDS: readonly DaemonCommandSpec[] = [
       'whether a rollback is currently in force.',
       '',
       '--check is honest about a gap: the control plane publishes no verb to trigger',
-      'an update check early, so it says so plainly and names the two things that do',
-      'work: waiting for the hourly check, or restarting the service, which checks on',
-      'the way up.',
+      'an update check early. It reads status without requesting a check. Automatic',
+      'checks require a configured update artifact and host policy; these receipts',
+      'do not establish an hourly or restart-triggered schedule.',
       '',
       'The rollback and receipt lines are read from files the daemon writes on its own',
       'host, so they are reported for a local daemon and named as unavailable for a',
       'remote one.',
     ],
     flags: [
-      { tokens: ['--check'], field: 'check', kind: 'boolean', summary: 'Explain that no early-check verb exists, and name the two paths that work.' },
+      { tokens: ['--check'], field: 'check', kind: 'boolean', summary: 'Read status and explain the unavailable early-check operation.' },
       JSON_FLAG,
       ...REMOTE_TARGET_FLAGS,
     ],
@@ -635,6 +648,8 @@ export const DAEMON_COMMANDS: readonly DaemonCommandSpec[] = [
       '  enable [--bundle-dir <dir>]  serve the bundle at that directory',
       '  disable                      stop serving it; the bundle stays on disk',
       '  status                       what is served, from where, and who can reach it',
+      '  status --json                configured web.* binding for development clients',
+      '                               (not proof that a listener is running)',
       '',
       '`enable` changes no network exposure on its own: a daemon bound to loopback',
       'keeps serving to this machine only. --lan binds every interface, --loopback',
@@ -643,6 +658,7 @@ export const DAEMON_COMMANDS: readonly DaemonCommandSpec[] = [
     flags: [],
     passthrough: true,
     subcommands: ['enable', 'disable', 'status'],
+    machineQueries: [WEBUI_BINDING_QUERY],
   },
   {
     name: 'provision-wake-model',
@@ -685,12 +701,14 @@ export const DAEMON_COMMANDS: readonly DaemonCommandSpec[] = [
     name: 'help',
     aliases: [],
     summary: 'Print help for the binary, or for one command.',
-    usage: 'goodvibes-daemon help [command]',
+    usage: 'goodvibes-daemon help [command] [--json]',
     detail: [
       'With no argument, print the command list and the global options.',
       'With a command name, print that command\'s arguments, flags and behaviour.',
+      'help --json (also --help --json) prints the versioned machine command catalog.',
+      'The machine catalog is top-level only; it never starts or contacts a daemon.',
     ],
-    flags: [],
+    flags: [JSON_FLAG],
     passthrough: false,
     subcommands: [],
   },

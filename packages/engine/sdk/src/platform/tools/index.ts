@@ -1,3 +1,4 @@
+import type { LocalhostFetchApproval } from '../runtime/permissions/localhost-fetch-approval.js';
 import { createCapturedAutoHealBackend } from './shared/captured-auto-heal.js';
 import { createCapturedValidatorRunner } from './shared/captured-validators.js';
 import { join } from 'node:path';
@@ -88,10 +89,10 @@ export type {
   UnavailableConfigRead,
 } from './goodvibes-runtime/config-routing.js';
 
-export { ToolRegistry, assertCurrentToolExecution } from './registry.js';
-export { ToolInputProjectionError } from './input-projection.js';
+export { ToolRegistry, assertCurrentToolExecution, assertCurrentToolInvocation, commitCurrentToolSettingsPlan, currentToolSettingsPresentation, claimCurrentToolSettingsDispatch } from './registry.js';
+export { ToolInputProjectionError, assertProjectionExecution } from './input-projection.js';
 export type {
-  ProjectedToolCall, ToolAdmissionEvidence, ToolInputProjectionProblem, ToolInputProjectionRequest,
+  ToolPreparedSettingsMutation, ProjectedToolCall, ToolAdmissionEvidence, ToolInputProjectionProblem, ToolInputProjectionRequest,
   ToolInputProjectionResult, ToolInputProjector, ToolRegistrationOptions, ToolInputProjectionOptions,
 } from './input-projection.js';
 export { ProcessManager } from './shared/process-manager.js';
@@ -352,15 +353,7 @@ export function registerAllTools(
      * runs. Wired at the composition root to the sandbox-escalation seam.
      * Omitted → escalations are not asked (today's behavior).
      */
-    sandboxEscalationHandler?:
-      | ((input: {
-          readonly command: string;
-          readonly escalations: readonly string[];
-          readonly boundary: string;
-          readonly policyReasons: readonly string[];
-          readonly workingDirectory?: string | undefined;
-        }) => Promise<boolean>)
-      | undefined;
+    sandboxEscalationHandler?: import('../runtime/permissions/sandbox-escalation-wiring.js').ExecSandboxEscalationHandler | undefined;
     /**
      * Broker the one-tap "allow localhost fetches for this project" ask through
      * the approval broker. Wired at the composition root (see
@@ -368,7 +361,7 @@ export function registerAllTools(
      * localhost fetches are refused with an honest reason naming
      * fetch.allowLocalhost.
      */
-    localhostFetchApproval?: ((input: { url: string; host: string }) => Promise<boolean>) | undefined;
+    localhostFetchApproval?: LocalhostFetchApproval | undefined;
     /**
      * Reports each contained (sandboxed) command run; the composition root
      * wires it to the announce-once containment receipt.

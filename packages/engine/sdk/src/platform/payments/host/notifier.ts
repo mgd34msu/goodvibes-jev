@@ -48,6 +48,8 @@ function daemonNoticeRouter(router: Pick<ChannelDeliveryRouter, 'deliver'>): Pay
         jobId: PAYMENTS_NOTICE_JOB_ID,
         runId: `${PAYMENTS_NOTICE_JOB_ID}-${String(Date.now())}`,
         includeLinks: false,
+        assertCurrent: merged['assertCurrent'] as (() => void) | undefined,
+        signal: merged['signal'] as AbortSignal | undefined,
       });
     },
   };

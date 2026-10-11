@@ -55,3 +55,22 @@ for (const timedOut of [false, true]) {
     expect(result.lines.join('\n')).toContain('daemon-reload did not report success');
   });
 }
+
+test('startup cancellation during endpoint probe fences all retirement writes', async () => {
+  const f = fixture(false); const abort = new AbortController();
+  let release!: (value: boolean) => void;
+  const result = reconcileRedundantLegacyUnit({ ...f.input, signal: abort.signal,
+    endpointProbe: () => new Promise<boolean>((resolve) => { release = resolve; }),
+  });
+  abort.abort(); release(true);
+  expect(await result).toEqual({ action: 'noop', reason: 'aborted', lines: [] });
+  expect(f.calls).not.toContain('disable'); expect(f.removed).toEqual([]);
+});
+
+test('pre-aborted startup does not inspect the filesystem or service', async () => {
+  const f = fixture(false); const abort = new AbortController(); abort.abort();
+  const result = await reconcileRedundantLegacyUnit({ ...f.input, signal: abort.signal,
+    legacyUnitFileExists: () => { throw new Error('must not inspect'); },
+  });
+  expect(result.reason).toBe('aborted'); expect(f.calls).toEqual([]);
+});

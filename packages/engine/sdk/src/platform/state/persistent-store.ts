@@ -242,9 +242,11 @@ export class PersistentStore<T extends Record<string, unknown>> {
    * failures propagate, and file plus full path ancestry are confirmed after
    * publication. Rejection may follow rename; new bytes are never rolled back.
    */
-  async persist(data: T, options: { readonly durable?: boolean } = {}): Promise<void> {
+  async persist(data: T, options: { readonly durable?: boolean; readonly beforePublish?: (() => void) | undefined; readonly afterPublish?: (() => void) | undefined } = {}): Promise<void> {
     if (this.inMemory) {
+      options.beforePublish?.();
       this.memoryData = structuredClone(data);
+      options.afterPublish?.();
       return;
     }
     await fs.mkdir(this.dir, { recursive: true, mode: DIR_MODE });
@@ -261,7 +263,9 @@ export class PersistentStore<T extends Record<string, unknown>> {
       } finally {
         await handle.close();
       }
+      options.beforePublish?.();
       await fs.rename(tmpPath, this.filePath);
+      options.afterPublish?.();
       await syncDirectory(this.dir, options.durable === true);
       if (options.durable === true) confirmFileDurable(this.filePath);
     } catch (error) {

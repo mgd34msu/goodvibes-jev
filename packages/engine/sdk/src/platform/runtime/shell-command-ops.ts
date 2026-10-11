@@ -1,3 +1,4 @@
+import type { ExternalOperationSource } from '../permissions/external-request.js';
 import { handlePlanCommand } from '../core/plan-command-handler.js';
 import type { AdaptivePlanner } from '../core/adaptive-planner.js';
 import type { SubagentTask } from '../acp/protocol.js';
@@ -44,7 +45,7 @@ export interface ShellAgentManagerService {
 }
 
 export interface ShellAcpManagerService {
-  spawn(task: SubagentTask): Promise<string>;
+  spawn(task: SubagentTask, operation?: ExternalOperationSource): Promise<string>;
   cancel(agentId: string): Promise<void>;
 }
 

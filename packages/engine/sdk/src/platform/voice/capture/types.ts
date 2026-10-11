@@ -119,7 +119,9 @@ export type AudioCaptureFailureReason =
    */
   | 'no-audio'
   /** The stream ended on its own, recorder exited, or the track was revoked. */
-  | 'stream-ended';
+  | 'stream-ended'
+  /** Complete failure evidence could not be admitted or read; pause rather than guess a device cause. */
+  | 'failure-reading-unavailable';
 
 /** A capture failure carrying a machine-readable reason beside its message. */
 export class AudioCaptureError extends Error {

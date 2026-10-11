@@ -313,3 +313,90 @@ test('default configured browser policy admits only the issued mail-subject purp
     expect(calls).toHaveLength(1);
   } finally { for (const dispose of cleanup.reverse()) await dispose(); }
 });
+
+test.each(['webui.config.credential-key', 'webui.settings.card-material-key'] as const)('%s uses the product config incarnation and never its values', async battery => {
+  using log = new SqliteDecisionLog(':memory:');
+  const entered = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  const calls: unknown[] = []; const cleanup: (() => void | Promise<void>)[] = [];
+  const config = configuration().configManager;
+  const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
+    calls.push(input.state); entered.resolve(); await release.promise;
+    return { requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', requestId: undefined, usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
+      answers: { [battery === 'webui.config.credential-key' ? 'credential' : 'material']: { type: 'noul', noul: 0.001 } } as never };
+  } };
+  const service = composeBrowserJudgment({ judgment: { port: withDecisionLog(inner, log), decisionLog: log }, env: {},
+    methods: new GatewayMethodCatalog(), config, secrets: { onDidChange: () => () => {} },
+    disposal: { add(_label, dispose) { cleanup.push(dispose); } },
+  });
+  const request = () => ({ protocolVersion: 1, batteryVersion: 1, requestId: crypto.randomUUID(), battery, input: { keys: ['display.stream'] } });
+  try {
+    const pending = service.execute(request(), principal, new AbortController().signal, () => principal);
+    const observed = pending.then(() => 'unexpected-settled', () => 'held');
+    await entered.promise;
+    config.set('display.stream', !config.get('display.stream'));
+    release.resolve(); expect(await observed).toBe('held'); expect(log.query()).toEqual([]);
+    expect(await service.execute(request(), principal, new AbortController().signal, () => principal)).toMatchObject({ status: 'settled', value: { matches: [false] } });
+    expect(calls).toEqual([{ key: 'display.stream', description: 'Stream LLM tokens as they arrive' }, { key: 'display.stream', description: 'Stream LLM tokens as they arrive' }]);
+    expect(log.query()).toHaveLength(1);
+  } finally { release.resolve(); for (const dispose of cleanup.reverse()) await dispose(); }
+});
+
+test('daemon composition explicitly authorizes canonical chat speech seams on the configured judgment route', async () => {
+  using log = new SqliteDecisionLog(':memory:');
+  const content = 'Dr. Rivera paused. Next came silence.'; const calls: unknown[] = [];
+  const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
+    calls.push(input.state);
+    return { requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', requestId: undefined, usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
+      answers: Object.fromEntries(Object.keys(input.questions).map(name => [name, { type: 'noul', noul: 0.999 }])) as never };
+  } };
+  const cleanup: (() => void | Promise<void>)[] = [];
+  const service = composeBrowserJudgment({ judgment: { port: withDecisionLog(inner, log), decisionLog: log },
+    env: { TYPESAFE_BASE_URL: 'http://127.0.0.1:9876', TYPESAFE_API_KEY: 'synthetic-speech-key', TYPESAFE_DEFAULT_MODEL: 'jev-1.13.0' },
+    methods: new GatewayMethodCatalog(), config: configuration().configManager, secrets: { onDidChange: () => () => {} },
+    disposal: { add(_label, dispose) { cleanup.push(dispose); } },
+  });
+  const session = { id: 'speech-chat', title: 'Synthetic', createdAt: 1, updatedAt: 2 };
+  const message = { id: 'speech-message', sessionId: session.id, content, createdAt: 3 };
+  const release = service.bindChatSessions({ getSession: id => id === session.id ? session : null, getMessages: () => [message] });
+  try {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content)));
+    const contentDigest = [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    const result = await service.execute({ protocolVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.voice.speech-seams', batteryVersion: 1,
+      input: { sessionId: session.id, messageId: message.id, start: 0, end: content.length, cursor: 0, contentDigest } }, principal, new AbortController().signal, () => principal);
+    expect(result).toMatchObject({ status: 'settled', battery: 'webui.voice.speech-seams' }); expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ paragraph: content });
+  } finally { release(); for (const dispose of cleanup.reverse()) await dispose(); }
+});
+
+test.each(['config', 'credentials', 'registry'] as const)('catalog browser composition retires the actual %s owner before publishing', async kind => {
+  using log = new SqliteDecisionLog(':memory:');
+  const entered = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+  const calls: unknown[] = []; const cleanup: (() => void | Promise<void>)[] = [];
+  const config = configuration().configManager;
+  let generation = 0; let changed: (key: string) => void = () => {};
+  const registry = { captureProviderCatalogIds() {
+    const epoch = generation;
+    return { providerIds: ['inception'], catalogProviderIds: ['inceptionlabs'], assertCurrent() { if (epoch !== generation) throw new Error('Changed source'); } };
+  } };
+  const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
+    calls.push(input.state); entered.resolve(); await release.promise;
+    return { requestedModel: 'jev-1.13.0', model: 'jev-1.13.0', requestId: undefined, usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1,
+      answers: { matches: { type: 'noul', noul: 0.999 } } } as never;
+  } };
+  const service = composeBrowserJudgment({ judgment: { port: withDecisionLog(inner, log), decisionLog: log }, env: {},
+    methods: new GatewayMethodCatalog(), config, providers: () => registry,
+    secrets: { onDidChange(listener) { changed = listener; return () => {}; } },
+    disposal: { add(_label, dispose) { cleanup.push(dispose); } },
+  });
+  const request = () => ({ protocolVersion: 1, batteryVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.models.catalog-provider-match', input: { providerId: 'inception', keys: ['inceptionlabs'] } });
+  try {
+    const result = service.execute(request(), principal, new AbortController().signal, () => principal).then(() => 'published', () => 'held');
+    await entered.promise;
+    if (kind === 'config') config.set('display.stream', !config.get('display.stream'));
+    if (kind === 'credentials') changed('fixture-key');
+    if (kind === 'registry') generation++;
+    release.resolve(); expect(await result).toBe('held'); expect(log.query()).toEqual([]);
+    expect(await service.execute(request(), principal, new AbortController().signal, () => principal)).toMatchObject({ status: 'settled', value: { matches: [true] } });
+    expect(calls).toEqual([{ providerId: 'inception', key: 'inceptionlabs' }, { providerId: 'inception', key: 'inceptionlabs' }]);
+  } finally { release.resolve(); for (const dispose of cleanup.reverse()) await dispose(); }
+});

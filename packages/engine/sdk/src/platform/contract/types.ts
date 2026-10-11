@@ -150,6 +150,8 @@ export interface NativeContractSource {
 }
 
 export interface StartContractInput {
+  /** Untrusted CI context; never original requirements or authority. */
+  readonly taskEvidence?: string | undefined;
   /** Native callers supply the complete immutable source. Absence explicitly retains legacy ask-derived planning. */
   readonly nativeSource?: NativeContractSource | undefined;
   /** Legacy request words verbatim; native runs retain this display request separately from authoritative nativeSource. */
@@ -224,9 +226,9 @@ export interface Criterion {
   readonly id: string;
   text: string;
   readonly origin: CriterionOrigin;
-  /** 'stated' only: the user's words, verbatim. */
+  /** Verbatim source words: stated requirements, or provenance for goal-derived acceptance checks. */
   readonly quote?: string | undefined;
-  /** Ids of the criteria this one serves; empty for 'stated'. */
+  /** Ids of the criteria this one serves; empty for contract roots (including goal-derived checks). */
   readonly serves: readonly string[];
   /** 'excluded' only for topology-only criteria the plan cannot satisfy; 'met-by-structure' when the plan's shape meets it. */
   disposition: CriterionDisposition;
@@ -418,6 +420,9 @@ export interface JudgmentUsage {
 }
 
 export interface Contract {
+  /** Original live source evidence; serialized data cannot recreate its owner. */
+  readonly originalSource?: import('../permissions/autonomous.js').AutonomousToolSource | undefined;
+  readonly taskEvidence?: string | undefined;
   /** Versioned native semantic receipts/counters, separate from transport waiting progress. */
   nativeDecisions?: NativeContractDecisionState | undefined;
   nativeProgress?: NativeContractProgress | undefined;

@@ -103,10 +103,11 @@ export function bunCompileCompatibilityFiles(root: string): Record<string, strin
       const sqlWasmBinary = join(directory, 'dist', 'sql-wasm.wasm');
       if (existsSync(sqlWasmBinary)) {
         const sqlWasmBase64 = readFileSync(sqlWasmBinary).toString('base64');
+        // sql.js 1.14.2's released loader and WASM must be embedded together.
         patches.push({
           file: sqlWasmJs,
-          from: `k.noExitRuntime&&(Ya=k.noExitRuntime);k.print&&(Da=k.print);k.printErr&&(B=k.printErr);k.wasmBinary&&(Ea=k.wasmBinary);k.thisProgram&&(wa=k.thisProgram);\n`,
-          to: `k.noExitRuntime&&(Ya=k.noExitRuntime);k.print&&(Da=k.print);k.printErr&&(B=k.printErr);k.wasmBinary&&(Ea=k.wasmBinary);if(!Ea&&typeof Buffer!=="undefined"){Ea=new Uint8Array(Buffer.from("${sqlWasmBase64}","base64"));}k.thisProgram&&(wa=k.thisProgram);\n`,
+          from: `k.noExitRuntime&&(Ya=k.noExitRuntime);k.print&&(Ea=k.print);k.printErr&&(B=k.printErr);k.wasmBinary&&(Fa=k.wasmBinary);k.thisProgram&&(xa=k.thisProgram);\n`,
+          to: `k.noExitRuntime&&(Ya=k.noExitRuntime);k.print&&(Ea=k.print);k.printErr&&(B=k.printErr);k.wasmBinary&&(Fa=k.wasmBinary);if(!Fa&&typeof Buffer!=="undefined"){Fa=new Uint8Array(Buffer.from("${sqlWasmBase64}","base64"));}k.thisProgram&&(xa=k.thisProgram);\n`,
         });
       }
 

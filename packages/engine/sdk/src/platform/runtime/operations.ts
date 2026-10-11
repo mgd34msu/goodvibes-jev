@@ -254,6 +254,7 @@ export { composeContractRunner, resumeContracts } from './contract-composition.j
 export type { ContractRunnerCompositionOptions, ComposedContractRunner, NativeContractCompositionOwner } from './contract-composition.js';
 export { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 export { composeJudgment } from './judgment-services.js';
+export { createJudgmentSourceLifetime } from './judgment-source-lifetime.js';
 export type { JudgmentServices, JudgmentServicesInput, JudgmentSettingsSource } from './judgment-services.js';
 
 export { createChannelComposition } from './channel-composition.js';

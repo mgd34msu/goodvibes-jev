@@ -5,7 +5,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sdk } from '../lib/goodvibes';
 import { asRecord, bestId, bestTitle, firstString } from '../lib/object';
 import { queryKeys } from '../lib/queries';
-import { modelOptionsForProvider, providerOptionsFromResponse, reasoningOptionsForModel, sortProvidersConfiguredFirst } from '../lib/provider-models';
+import { useProviderModelOptions } from '../lib/use-provider-model-options';
+import { providerOptionsFromResponse, reasoningOptionsForModel, sortProvidersConfiguredFirst } from '../lib/provider-models';
 import { shouldSteerComposerKey, shouldSubmitComposerKey } from '../lib/composer-keys';
 import { isSessionNotFoundError, formatError } from '../lib/errors';
 import {
@@ -141,10 +142,11 @@ export function ChatView({
     || firstString(asRecord(asRecord(modelCatalog.data).currentModel), ['provider', 'providerId', 'runtimeProviderId'])
     || '';
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId)?.value ?? providerOptions[0]?.value;
-  const providerModelOptions = useMemo(
-    () => selectedProvider ? modelOptionsForProvider(selectedProvider, catalogProviderOptions.map((provider) => provider.value)) : [],
-    [catalogProviderOptions, selectedProvider],
-  );
+  const catalogProviders = useMemo(() => catalogProviderOptions.map(provider => provider.value), [catalogProviderOptions]);
+  const providerModels = useProviderModelOptions(selectedProvider, catalogProviders,
+    `${activeSessionId}:${providers.dataUpdatedAt}:${modelCatalog.dataUpdatedAt}`,
+    providers.isSuccess && modelCatalog.isSuccess && !providers.isFetching && !modelCatalog.isFetching);
+  const providerModelOptions = providerModels.models;
   const selectedModelRegistryKey = providerModelOptions.some((model) => model.registryKey === currentRegistryKey) ? currentRegistryKey : '';
   // The effort ladder for the CURRENT model, from its own models.list entry.
   // Null on daemons predating the field, no control renders.
@@ -183,7 +185,10 @@ export function ChatView({
   });
 
   const selectModel = useMutation({
-    mutationFn: (registryKey: string) => sdk.operator.models.current.set(registryKey),
+    mutationFn: (registryKey: string) => {
+      if (!providerModels.hasCurrentModel(registryKey)) throw new Error('Model options changed. Choose a current model.');
+      return sdk.operator.models.current.set(registryKey);
+    },
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['models'] }),

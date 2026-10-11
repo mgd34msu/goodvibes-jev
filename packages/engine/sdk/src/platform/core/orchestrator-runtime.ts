@@ -29,7 +29,7 @@ export type OrchestratorCoreServices = {
     | 'toMarkdown'
     | 'create'
     | 'save'
-    | 'parseFromMarkdown'
+    | 'getIncarnation' | 'parseFromMarkdown'
     | 'replaceItems'
     | 'load'
     | 'updateItem'

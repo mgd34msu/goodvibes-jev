@@ -57,19 +57,16 @@ afterEach(() => { installJudgmentPort(previous); });
 afterAll(cleanupResearchScreeningFixtures);
 
 describe('agent_harness mode catalog', () => {
-  test('stays in sync with the public tool schema and keeps effect modes confirmation-gated', () => {
+  test('stays in sync with the schema and names the adopted settings admission exception', () => {
     const schemaModes = [...AGENT_HARNESS_MODES].sort();
     const catalogModes = HARNESS_MODE_DESCRIPTORS.map((descriptor) => descriptor.id).sort();
 
     expect(new Set(catalogModes).size).toBe(catalogModes.length);
     expect(catalogModes).toEqual(schemaModes);
 
-    // Every effect mode must be confirmation-gated: it declares
-    // requiresConfirmation and exposes the confirm + explicitUserRequest
-    // parameters. There are no carve-outs, the learning promotion pass is gated
-    // like the rest because it creates and deletes memory, personas, and routines.
+    // Settings have an authentic owner plan instead of model-authored confirmation.
     const unsafeEffects = HARNESS_MODE_DESCRIPTORS
-      .filter((descriptor) => descriptor.kind === 'effect')
+      .filter((descriptor) => descriptor.kind === 'effect' && descriptor.family !== 'settings')
       .filter((descriptor) => (
         descriptor.requiresConfirmation !== true
         || !descriptor.parameters?.includes('confirm')

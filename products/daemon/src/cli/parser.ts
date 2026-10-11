@@ -37,7 +37,12 @@ export function parseDaemonCli(
   argv: readonly string[],
   binary = 'goodvibes-daemon',
 ): DaemonCliParseResult {
-  return parseWithCatalog(argv, DAEMON_CLI_CATALOG, binary);
+  // Keep --help first in the discovery protocol: legacy installed binaries can
+  // start serving on an unknown first command. This exact alias reaches the
+  // catalog-owned help flags without making --json a serving/global flag.
+  const tokens = argv.length === 2 && argv[0] === '--help' && argv[1] === '--json'
+    ? ['help', '--json'] : argv;
+  return parseWithCatalog(tokens, DAEMON_CLI_CATALOG, binary);
 }
 
 /**

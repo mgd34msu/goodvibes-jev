@@ -1,3 +1,4 @@
+import { readJsonErrorResponse } from '@goodvibes-jev/engine/daemon-sdk';
 import { logger } from '../../utils/logger.js';
 import { SlackIntegration } from '../../integrations/index.js';
 import { slackMentionedUserIds } from '../../integrations/slack.js';
@@ -50,7 +51,13 @@ export async function handleSlackSurfaceWebhook(req: Request, context: SurfaceAd
     return Response.json({ challenge: bodyRecord.challenge });
   }
 
-  return handleSlackSurfacePayload(bodyRecord, context, slack, req);
+  try {
+    return await handleSlackSurfacePayload(bodyRecord, context, slack, req);
+  } catch (error) {
+    // A signed callback is not an owner capability. Keep exact-owner and
+    // other domain refusals structured instead of leaking Bun's HTML 500.
+    return await readJsonErrorResponse(error);
+  }
 }
 
 export async function handleSlackSurfacePayload(
@@ -103,7 +110,7 @@ export async function handleSlackSurfacePayload(
       });
     }
 
-    const controlCommand = context.parseSurfaceControlCommand(task);
+    const controlCommand = await context.parseSurfaceControlCommand(task, { signal: req.signal });
     if (controlCommand) {
       const message = await context.performSurfaceControlCommand(controlCommand);
       return Response.json({
@@ -150,7 +157,7 @@ export async function handleSlackSurfacePayload(
           return;
         }
 
-        const spawnResult = context.trySpawnAgent(
+        const spawnResult = await context.trySpawnAgent(
           { mode: 'spawn', task: submission.task! },
           'handleSlackSurfaceWebhook',
           submission.session.id,
@@ -281,7 +288,7 @@ export async function handleSlackSurfacePayload(
         agentId: submission.activeAgentId,
       });
     }
-    const spawnResult = context.trySpawnAgent(
+    const spawnResult = await context.trySpawnAgent(
       { mode: 'spawn', task: submission.task! },
       'handleSlackSurfacePayload',
       submission.session.id,

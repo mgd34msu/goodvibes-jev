@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { KnowledgeStore, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
+import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -11,11 +11,12 @@ async function fixture() {
   const path = join(root, 'knowledge.sqlite');
   const first = new KnowledgeStore({ dbPath: path });
   const firstService = new ProjectPlanningService(first);
-  await firstService.upsertState({ projectId: 'fixture', state: { goal: 'Original goal', executionApproved: false, tasks: [{ id: 'original', title: 'Original work' }] } });
+  const authored: ProjectPlanningStateUpsertInput['state'] = { goal: 'Original goal', executionApproved: false, tasks: [{ id: 'original', title: 'Original work' }] };
+  await firstService.upsertState({ projectId: 'fixture', state: authored });
   const selected = await firstService.getState({ projectId: 'fixture' });
   const second = new KnowledgeStore({ dbPath: path }); await second.init();
   const secondService = new ProjectPlanningService(second);
-  return { path, first, second, firstService, secondService, selected };
+  return { path, first, second, firstService, secondService, selected, authored };
 }
 async function reopen(path: string) {
   const store = new KnowledgeStore({ dbPath: path }); await store.init();
@@ -24,7 +25,7 @@ async function reopen(path: string) {
 
 test('a stale planning handle cannot approve over another handle’s persisted replacement', async () => {
   const f = await fixture();
-  await f.secondService.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'Second owner replacement', tasks: [{ id: 'second', title: 'Second owner work' }] } });
+  await f.secondService.upsertState({ projectId: 'fixture', state: { ...f.authored, goal: 'Second owner replacement', tasks: [{ id: 'second', title: 'Second owner work' }] } });
   const before = readFileSync(f.path);
   const result = await f.firstService.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } });
   const third = await reopen(f.path);

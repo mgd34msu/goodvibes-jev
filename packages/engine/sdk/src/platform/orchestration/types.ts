@@ -104,6 +104,8 @@ export type WorkItemState =
    * terminal), so a mid-pipeline item is never re-gated.
    */
   | 'blocked-dependency'
+  /** Repository failure reading is unresolved; no pass, advance, merge or automatic retry. */
+  | 'blocked-bookkeeping'
   /**
    * A best-of-N attempt sibling that has PASSED every phase but is parked
    * pending the winner pick (see attempts.ts). Its worktree is KEPT (not merged,
@@ -257,7 +259,7 @@ export interface WorkItem extends WorkItemContractFields {
   readonly createdAt: number;
   completedAt?: number | undefined;
   failureReason?: string | undefined;
-  /** Set only while state === 'blocked-budget'; cleared the instant the item reclaims a slot. See the 'blocked-budget' state doc for recovery semantics. */
+  /** Why budget, dependency or repository bookkeeping is blocking this item. */
   blockedReason?: string | undefined;
   /**
    * Non-fatal bookkeeping notes accrued while the item PASSED its phases, e.g.
@@ -556,14 +558,10 @@ export interface PhaseCommitOutcome {
   readonly hash?: string | undefined;
   /** Human-readable detail for 'skipped'/'failed', plus any gitignored-path note on 'committed'. */
   readonly reason?: string | undefined;
-  /**
-   * True ONLY for a 'failed' commit whose failure belongs to the NEGATING SET,
-   * a bookkeeping failure (workspace/index corruption) that genuinely
-   * invalidates the phase's passed work. A negating commit failure is the one
-   * post-gate condition that DOES fail the item; every other commit failure is
-   * a non-fatal warning on a passed item. See bookkeeping.ts for the set.
-   */
+  /** A settled semantic yes/no only. Missing for an unresolved held reading. */
   readonly negating?: boolean | undefined;
+  /** Unresolved reading is held, never equivalent to non-negating. */
+  readonly classification?: import('./bookkeeping.js').BookkeepingFailureClass | undefined;
 }
 
 /**
@@ -654,6 +652,17 @@ export interface HeldMergeGroup {
   /** True once every sibling is terminal (held-merge or failed), a winner may be picked. */
   readonly ready: boolean;
   readonly candidates: readonly AttemptCandidate[];
+  /** Actual sibling count, independent of selectable/terminal candidates. Optional for older snapshots/clients. */
+  readonly attemptCount?: number | undefined;
+  readonly selectableCandidateCount?: number | undefined;
+  /** Nonterminal siblings are visible without misrepresenting them as passed candidates. */
+  readonly unresolved?: readonly {
+    readonly itemId: string;
+    readonly attemptIndex: number;
+    readonly title: string;
+    readonly state: WorkItemState;
+    readonly reason: string | null;
+  }[] | undefined;
   /** Whether this group opted into judge auto-accept. */
   readonly autoAccept: boolean;
   /** The most recent judge proposal for this group, if judged; always PROPOSED, never a silent auto-pick unless autoAccept. */

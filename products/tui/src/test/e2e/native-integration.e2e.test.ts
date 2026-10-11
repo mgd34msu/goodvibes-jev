@@ -1,4 +1,4 @@
-/** Exact compiled TUI artifact, real tmux PTY, and the engine-owned native HTTP fixture. */
+/** Exact compiled TUI artifact, real native PTY, and the engine-owned native HTTP fixture. */
 import { expect, test } from 'bun:test';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -133,7 +133,7 @@ async function fixture(withoutInspection = false) {
       },
       async restart() {
         const current = tui!;
-        try { assertPrivate(); } finally { current.stop(); tui = undefined; }
+        try { assertPrivate(); } finally { await current.stop(); tui = undefined; }
         return start();
       },
       async stop(primaryError?: unknown) {

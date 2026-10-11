@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { assertProvisionCurrent, ownProvisionLifetime, programNotInstalled, type BrowserProvisionLifetime } from './browser-failure-reading.js';
 import { spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -249,8 +251,9 @@ function directoryWritable(path: string): boolean {
 export function runCommand(
   command: string,
   args: readonly string[],
-  options: { readonly timeoutMs: number; readonly env?: Readonly<Record<string, string>>; readonly cwd?: string },
+  options: { readonly timeoutMs: number; readonly env?: Readonly<Record<string, string>>; readonly cwd?: string; readonly signal?: AbortSignal | undefined },
 ): Promise<CommandOutcome> {
+  options.signal?.throwIfAborted();
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
@@ -260,6 +263,7 @@ export function runCommand(
       env: { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -278,7 +282,7 @@ export function runCommand(
       stderr += chunk.toString();
     });
     child.on('error', (error) => {
-      settle({ code: null, stdout, stderr, timedOut, spawnError: error.message });
+      settle({ code: null, stdout, stderr, timedOut, spawnError: error.message, spawnCode: (error as NodeJS.ErrnoException).code });
     });
     child.on('close', (code) => {
       settle({ code, stdout, stderr, timedOut, spawnError: null });
@@ -320,16 +324,20 @@ const DRIVER_DOWNLOAD_TIMEOUT_MS = 180_000;
  * dies halfway can never leave a directory that resolves as a driver but fails
  * on first use.
  */
-async function downloadDriverPackage(targetRoot: string): Promise<CommandOutcome> {
+async function downloadDriverPackage(targetRoot: string, lifetime: BrowserProvisionLifetime): Promise<CommandOutcome> {
   const finalDirectory = join(targetRoot, 'node_modules', DRIVER_PACKAGE);
-  const staging = join(targetRoot, `.${DRIVER_PACKAGE}-incoming`);
+  const staging = join(targetRoot, `.${DRIVER_PACKAGE}-incoming-${randomUUID()}`);
   const url = driverTarballUrl();
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(DRIVER_DOWNLOAD_TIMEOUT_MS) });
+    assertProvisionCurrent(lifetime);
+    const timeout = AbortSignal.timeout(DRIVER_DOWNLOAD_TIMEOUT_MS);
+    const response = await fetch(url, { signal: lifetime.signal ? AbortSignal.any([timeout, lifetime.signal]) : timeout });
+    assertProvisionCurrent(lifetime);
     if (!response.ok) {
       return { code: 1, stdout: '', stderr: `download failed (${response.status}) for ${url}`, timedOut: false, spawnError: null };
     }
     const archive = Buffer.from(await response.arrayBuffer());
+    assertProvisionCurrent(lifetime);
     rmSync(staging, { recursive: true, force: true });
     // npm tarballs put everything under `package/`; dropping that component
     // lands the driver's own files directly in the directory that gets moved.
@@ -357,6 +365,7 @@ async function downloadDriverPackage(targetRoot: string): Promise<CommandOutcome
       spawnError: null,
     };
   } catch (error) {
+    assertProvisionCurrent(lifetime);
     rmSync(staging, { recursive: true, force: true });
     const message = error instanceof Error ? error.message : String(error);
     return { code: 1, stdout: '', stderr: `${url}: ${message}`, timedOut: false, spawnError: null };
@@ -383,10 +392,12 @@ async function downloadDriverPackage(targetRoot: string): Promise<CommandOutcome
  * The failure returned is the LAST route's, with every route's reason in stderr,
  * so a caller reports what actually stopped it rather than "no package manager".
  */
-async function installDriverPackage(targetRoot: string): Promise<CommandOutcome> {
+async function installDriverPackage(targetRoot: string, lifetime: BrowserProvisionLifetime = {}): Promise<CommandOutcome> {
+  lifetime = ownProvisionLifetime(lifetime);
+  assertProvisionCurrent(lifetime);
   mkdirSync(targetRoot, { recursive: true });
   const specifier = `${DRIVER_PACKAGE}@${DRIVER_VERSION}`;
-  const download = await downloadDriverPackage(targetRoot);
+  const download = await downloadDriverPackage(targetRoot, lifetime);
   if (download.code === 0) return download;
   const reasons: string[] = [`registry download: ${download.stderr.trim() || 'failed'}`];
   const attempts: readonly (readonly [string, readonly string[]])[] = [
@@ -394,15 +405,13 @@ async function installDriverPackage(targetRoot: string): Promise<CommandOutcome>
     ['npm', ['install', '--no-save', '--prefix', targetRoot, specifier]],
   ];
   for (const [command, args] of attempts) {
-    const outcome = await runCommand(command, args, { timeoutMs: 300_000, cwd: targetRoot });
+    assertProvisionCurrent(lifetime);
+    const outcome = await runCommand(command, args, { timeoutMs: 300_000, cwd: targetRoot, signal: lifetime.signal });
+    assertProvisionCurrent(lifetime);
     if (outcome.code === 0) {
       return { ...outcome, stdout: outcome.stdout || `installed ${specifier} with ${command}` };
     }
-    // Bun reports a missing program as `Executable not found in $PATH: "npm"`,
-    // not as ENOENT, so matching ENOENT alone handed back that raw string
-    // instead of the plain "not installed on this machine" this is meant to say.
-    const missing = outcome.spawnError !== null
-      && (/ENOENT/i.test(outcome.spawnError) || /not found in \$PATH/i.test(outcome.spawnError));
+    const missing = await programNotInstalled(command, outcome, lifetime);
     reasons.push(missing
       ? `${command}: not installed on this machine`
       : `${command}: ${(outcome.spawnError ?? (outcome.stderr.trim() || `exited with code ${String(outcome.code)}`)).split('\n')[0] ?? 'failed'}`);
@@ -440,7 +449,7 @@ export function createBrowserProvisionIo(options: BrowserProvisionIoOptions): Br
     homeDirectory: options.homeDirectory,
   };
   return {
-    installDriver: (targetRoot) => installDriverPackage(targetRoot),
+    installDriver: (targetRoot, lifetime) => installDriverPackage(targetRoot, lifetime),
     managedDriverRoot: () => managedDriverRoot(options.homeDirectory, options.surfaceRoot),
     // Injected rather than imported by the provisioning policy, so the policy
     // stays free of any surface's install layout and still reports a fix that

@@ -1,3 +1,4 @@
+import { useBrowserProvisionReadings } from './_helpers/browser-provision-readings.js';
 import { describe, expect, test } from 'bun:test';
 import { ensureBrowserBinary } from '../sdk/src/platform/browser/browser-provisioning.js';
 import type { BrowserProvisionIo, CommandOutcome } from '../sdk/src/platform/browser/browser-types.js';
@@ -222,3 +223,5 @@ describe('browser provisioning', () => {
     expect(report.ok).toBe(false);
   });
 });
+
+useBrowserProvisionReadings();

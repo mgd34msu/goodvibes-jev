@@ -31,7 +31,7 @@ beforeEach(() => {
     getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
     getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: '/synthetic/project' }),
   } as PermissionConfigReader;
-  host = { port, permissionManager: new PermissionManager(async () => { humans++; throw new Error('No human'); }, config, new PolicyRuntimeState()),
+  host = { port, workspaceTrust: null, permissionManager: new PermissionManager(async () => { humans++; throw new Error('No human'); }, config, new PolicyRuntimeState()),
     signal: new AbortController().signal, config: { onDidInvalidate(listener) { invalidations.add(listener); return () => { invalidations.delete(listener); }; } } };
 });
 afterEach(() => { installJudgmentPort(restore); log[Symbol.dispose](); forgetGateReadings(); });

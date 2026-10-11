@@ -563,7 +563,7 @@ retaining the original question, subject and configuration bindings. Without a
 semantic service, the literal renderer reuses the completed search selection;
 its confidence and legacy score fields remain zero (unknown/not computed).
 Extraction-repair candidate selection remains separate policy. See
-[the retrieval audit](../../../docs/audit/knowledge-home-graph-search.md).
+[the retrieval contract](../../../docs/contracts/knowledge-judgment-and-persistence.md#home-graph-semantic-retrieval).
 
 Object anchoring is limited to Home Assistant graph objects; generated semantic
 pages and extracted fact nodes never become anchors for another ask query. This
@@ -746,8 +746,8 @@ The legacy `score` field is zero because no retrieval points were computed;
 shared relevance probabilities order accepted rows internally and are not
 answer confidence. Exact selected spans retain their qualifications. Detail
 changes layout, while whole-item limits and token budgets report omissions.
-See [the public retrieval audit](../../../docs/audit/knowledge-public-retrieval.md)
-for lifecycle, API migration and calibration status.
+See [the public retrieval contract](../../../docs/contracts/knowledge-judgment-and-persistence.md#public-search-and-prepared-packets)
+for lifecycle, API migration and packet semantics.
 
 ## Projections and wiki output
 

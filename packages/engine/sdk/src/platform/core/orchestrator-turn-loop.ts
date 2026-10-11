@@ -1,3 +1,4 @@
+import { ProviderAttemptDeniedError, revalidateProviderAttempt } from '../providers/attempt-guard.js';
 import { captureAutonomousSource, type AutonomousToolSource } from '../permissions/autonomous.js';
 import { nativeSelectedDiffEvidence } from '../workflow/work-ledger/native-diff-evidence.js';
 import { isNativeConversationTurn, markNativeConversationTurnEffectsPossible, readNativeConversationTurnActionSource, readNativeConversationTurnSelectedDiffContext, revalidateNativeConversationTurnScope } from './native-turn-scope.js';
@@ -132,6 +133,7 @@ interface HookDispatcherLike {
 type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 
 export interface OrchestratorTurnLoopContext {
+  readonly assertPostTurnCurrent?: (() => void) | undefined;
   /** Close the cancellation boundary before publishing a terminal outcome. */
   readonly onTurnTerminal?: ((publish: () => void) => void) | undefined;
   readonly conversation: ConversationManager;
@@ -151,7 +153,7 @@ export interface OrchestratorTurnLoopContext {
   readonly preTurnPlan: ExecutionPlan | null;
   readonly planManager: Pick<
     ExecutionPlanManager,
-    'getActive' | 'getSummary' | 'getNextItems' | 'toMarkdown' | 'create' | 'save' | 'parseFromMarkdown' | 'replaceItems' | 'load' | 'updateItem'
+    'getActive' | 'getSummary' | 'getNextItems' | 'toMarkdown' | 'create' | 'save' | 'getIncarnation' | 'parseFromMarkdown' | 'replaceItems' | 'load' | 'updateItem'
   > | null;
   readonly text: string;
   readonly content?: ContentPart[] | undefined;
@@ -212,6 +214,7 @@ export interface OrchestratorTurnLoopContext {
    * both it and the source must be present for code hits to be considered this turn.
    */
   readonly codeIndex?: TurnCodeIndexSource | undefined;
+  readonly codeReadAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   readonly isPassiveCodeInjectionEnabled: () => boolean;
   /**
    * The main session has no spawn-time `AgentRecord.knowledgeInjections` baseline, so this
@@ -272,6 +275,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   // cannot compound. Reset implicitly to null on every NEW executeOrchestratorTurnLoop()
   // call (a fresh runTurn() always recomputes from scratch on its own iteration 1).
   let turnKnowledgeBlock: string | null = null;
+  let assertCodeInjectionCurrent: (() => Promise<void>) | undefined;
   const nativeTurn = isNativeConversationTurn();
   const contractSession = nativeTurn ? undefined : bindContractSession(context.contractHooks, context.sessionId, context.turnId);
 
@@ -451,7 +455,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         // (default-off) code-injection flag AND the embedder's storage.codeIndexEnabled
         // setting, both folded into isPassiveCodeInjectionEnabled by the orchestrator.
         const codeInjectionEnabled = !!context.codeIndex && context.isPassiveCodeInjectionEnabled();
-        const { block, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
+        const { block, assertCodeCurrent, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
           memoryRegistry: context.memoryRegistry,
           // The main session has no frozen "task" distinct from the live conversation,
           // context.text (this call's originating human message) IS this turn's task, and
@@ -466,11 +470,13 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           alreadyInjectedIds: context.getAlreadyInjectedKnowledgeIds(),
           turn: context.nextTurnKnowledgeSequence(),
           codeIndex: context.codeIndex,
+          codeAuthority: { readAccessFilter: context.codeReadAccessFilter, signal },
           codeInjectionEnabled,
           codeLimit: context.configManager.get('agents.passiveInjection.codeLimit'),
         });
         assertActiveTurn();
         turnKnowledgeBlock = block;
+        assertCodeInjectionCurrent = assertCodeCurrent;
         if (turnInjectionRecord.injectedIds.length > 0) {
           context.addInjectedKnowledgeIds(turnInjectionRecord.injectedIds);
           // Memory provenance: only 'memory'-sourced ids reach the wire chip.
@@ -485,6 +491,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         // earlier iteration that no longer fits, clear it so composeTurnSystemPrompt
         // falls back to the base prompt exactly (mirrors the agent-runner's identical branch).
         turnKnowledgeBlock = null;
+        assertCodeInjectionCurrent = undefined;
       }
     }
     // Composed fresh at the call site (never a hoisted `const` reused across calls) so the
@@ -537,7 +544,9 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       if (!current || JSON.stringify(captureAutonomousSource(current)) !== JSON.stringify(capturedProviderSource))
         throw new Error('Native session source changed before provider attempt');
     };
+    const codeAuthorityForAttempt = assertCodeInjectionCurrent;
     try {
+      if (codeAuthorityForAttempt) await revalidateProviderAttempt(codeAuthorityForAttempt);
       response = await provider.chat({
         model: model.id,
         messages: context.conversation.getMessagesForLLM(),
@@ -551,7 +560,8 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         ),
         signal,
         onDelta,
-        ...(capturedProviderSource || nativeTurn ? { beforeAttempt: async () => {
+        ...(codeAuthorityForAttempt || capturedProviderSource || nativeTurn ? { beforeAttempt: async () => {
+          if (codeAuthorityForAttempt) await revalidateProviderAttempt(codeAuthorityForAttempt);
           assertActiveTurn();
           if (capturedProviderSource) assertNativeProviderSource();
           if (nativeTurn) await revalidateNativeConversationTurnScope();
@@ -581,6 +591,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       if (streamSessionStarted && context.runtimeBus) {
         emitStreamEnd(context.runtimeBus, context.emitterContext(context.turnId), { turnId: context.turnId });
       }
+      if (chatErr instanceof ProviderAttemptDeniedError) throw chatErr;
       if (!contextOverflowRetried && await isContextSizeExceededError(chatErr, 'core.turn-loop.context-exceeded')) {
         // The provider rejected the request as exceeding the model's context
         // window (e.g. openai-codex 'context_length_exceeded'). This is the
@@ -845,7 +856,10 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     };
     // A session-mode unit's turn is held where it would complete; a nudge keeps the turn going.
     if (contractSession && await holdSessionFinalResponse({ ...context, emitterContext: (id) => context.emitterContext(id) }, contractSession, enrichedResponse)) continue;
-    continueLoop = handleFinalResponseOutcome({
+    continueLoop = await handleFinalResponseOutcome({
+      signal,
+      assertCurrent: assertActiveTurn,
+      assertPostTurnCurrent: context.assertPostTurnCurrent,
       conversation: context.conversation,
       agentManager: context.agentManager,
       planManager: context.planManager,

@@ -1,8 +1,26 @@
-import { describe, expect, test } from 'bun:test';
+import { isProxy } from 'node:util/types';
+import { bundleBrowserEntrypoint } from './_helpers/browser-bundle.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { TurnEvent } from '../sdk/src/events/turn.js';
 import type { VoiceAudioChunk, VoiceSynthesisRequest, VoiceSynthesisStreamResult } from '../sdk/src/platform/voice/types.js';
 import { SpokenTurnController } from '../sdk/src/platform/voice/spoken-turn/controller.js';
 import type { AudioSink } from '../sdk/src/platform/voice/spoken-turn/audio-sink.js';
+
+import { bindJudgmentPortAuthority, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+
+function failurePort(category = 'rate_limit', yes: readonly string[] = []) {
+  return fakePort((name, question) => {
+    if (name.startsWith('seam_')) return noulAnswer(0.99);
+    if (name === 'category') return choiceAnswer(question, category, 0.99);
+    if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
+    return noulAnswer(yes.includes(name) ? 0.99 : 0.01);
+  });
+}
+let previousPort: JudgmentPort | undefined;
+beforeEach(() => { previousPort = installJudgmentPort(failurePort().port); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 function turn(event: TurnEvent): TurnEvent {
   return event;
@@ -52,6 +70,7 @@ function makeHarness() {
   };
   const controller = new SpokenTurnController({
     voiceService,
+    rejectFailureObject: isProxy,
     configManager: configManager as never,
     sink,
     notify: (message) => messages.push(message),
@@ -72,10 +91,12 @@ async function drain(): Promise<void> {
  * its audio buffer. Used to pin the exit-path (bounded drain) and preemption
  * (instant cut) semantics.
  */
-function makeDrainHarness() {
+function makeDrainHarness(options: { rejectOnStop?: boolean } = {}) {
+  const messages: string[] = [];
   const played: string[] = [];
   const stopCalls: string[] = [];
   let finishActive: (() => void) | null = null;
+  let rejectActive: (() => void) | null = null;
   const drainWaiters: (() => void)[] = [];
   const release = () => {
     const finish = finishActive;
@@ -90,10 +111,13 @@ function makeDrainHarness() {
       for await (const chunk of chunks) {
         played.push(new TextDecoder().decode(chunk.data));
       }
-      await new Promise<void>((resolve) => { finishActive = resolve; });
+      await new Promise<void>((resolve, reject) => {
+        finishActive = resolve; rejectActive = () => reject(new Error('late old sink failure'));
+      });
     },
     stop() {
       stopCalls.push('stop');
+      if (options.rejectOnStop) rejectActive?.();
       release();
     },
     waitForDrain(timeoutMs) {
@@ -117,14 +141,17 @@ function makeDrainHarness() {
   };
   const controller = new SpokenTurnController({
     voiceService,
+    rejectFailureObject: isProxy,
     configManager: { get: () => '' } as never,
     sink,
+    notify: (message) => messages.push(message),
     setInterval: (() => 1) as never,
     clearInterval: (() => {}) as never,
   });
   return {
     controller,
     played,
+    messages,
     stopCalls,
     playing: () => finishActive !== null,
     finishActivePlay: release,
@@ -139,6 +166,7 @@ function makeDrainHarness() {
  */
 function makePipelineHarness(behavior: {
   failWhen?: (text: string, attempt: number) => boolean;
+  error?: unknown;
   deferred?: boolean;
   setTimeout?: typeof setTimeout;
   clearTimeout?: typeof clearTimeout;
@@ -163,7 +191,7 @@ function makePipelineHarness(behavior: {
           await new Promise<void>((resolve) => pendingSynth.push(resolve));
         }
         if (behavior.failWhen?.(request.text, attempt)) {
-          throw new Error('ElevenLabs streaming synthesis failed: HTTP 429: {"detail":{"status":"too_many_concurrent_requests","message":"maximum of 3 concurrent requests"}}');
+          throw behavior.error ?? new Error('ElevenLabs streaming synthesis failed: HTTP 429: {"detail":{"status":"too_many_concurrent_requests","message":"maximum of 3 concurrent requests"}}');
         }
         synthesized.push(request.text);
         return {
@@ -191,6 +219,7 @@ function makePipelineHarness(behavior: {
   };
   const controller = new SpokenTurnController({
     voiceService,
+    rejectFailureObject: isProxy,
     configManager: { get: () => '' } as never,
     sink,
     notify: (message) => messages.push(message),
@@ -518,4 +547,280 @@ describe('SpokenTurnController', () => {
 
     expect(seenSources).toEqual(['goodvibes-webui']);
   });
+});
+
+function speak(controller: SpokenTurnController, id = 'semantic', content = 'An audible answer.') {
+  controller.submitNextTurn(id);
+  controller.handleTurnEvent(turn({ type: 'TURN_SUBMITTED', turnId: id, prompt: id }));
+  controller.handleTurnEvent(turn({ type: 'STREAM_DELTA', turnId: id, content, accumulated: content }));
+  controller.handleTurnEvent(turn({ type: 'TURN_COMPLETED', turnId: id, response: content, stopReason: 'completed' }));
+}
+
+function retryClock() {
+  const delays: number[] = [];
+  const timers = new Map<number, () => void>();
+  let id = 0;
+  return {
+    delays, timers,
+    setTimeout: ((callback: () => void, ms: number) => {
+      delays.push(ms); timers.set(++id, callback); return id;
+    }) as unknown as typeof setTimeout,
+    clearTimeout: ((handle: number) => { timers.delete(handle); }) as unknown as typeof clearTimeout,
+    fire() { const pending = [...timers.values()]; timers.clear(); for (const callback of pending) callback(); },
+  };
+}
+
+describe('SpokenTurnController canonical failure reading', () => {
+  test.each([
+    [Object.assign(new Error('invalid credentials'), { status: 503 }), true],
+    [Object.assign(new Error('network timeout'), { statusCode: 401 }), false],
+    [Object.assign(new Error('invalid credentials'), { code: 'ECONNRESET' }), true],
+    [new Error('invalid credentials', { cause: { code: 'ETIMEDOUT' } }), true],
+  ] as const)('structured status and errno decide without a reader %#', async (error, retry) => {
+    installJudgmentPort(undefined);
+    const clock = retryClock();
+    const h = makePipelineHarness({ error, failWhen: (_text, attempt) => attempt === 1, ...clock });
+    speak(h.controller); await drain();
+    expect(clock.delays).toEqual(retry ? [1000] : []);
+    clock.fire(); await drain();
+    expect(h.requests()).toBe(retry ? 2 : 1);
+    expect(h.played).toHaveLength(retry ? 1 : 0);
+  });
+
+  test.each([
+    ['billing', ['billing'], false],
+    ['rate_limit', ['rate_limited'], true],
+  ] as const)('provider 429 is read as %s before retry', async (category, yes, retry) => {
+    const fake = failurePort(category, yes); installJudgmentPort(fake.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ error: Object.assign(new Error('429 concurrent request quota'), { status: 429 }), failWhen: (_text, attempt) => attempt === 1, ...clock });
+    speak(h.controller); await drain();
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]?.state).toContain('HTTP status: 429');
+    expect(fake.requests[0]?.signal).toBeDefined();
+    expect(fake.requests[0]?.beforeAttempt).toBeDefined();
+    expect(clock.delays).toEqual(retry ? [1000] : []);
+    clock.fire(); await drain();
+    expect(h.requests()).toBe(retry ? 2 : 1);
+    expect(h.played).toHaveLength(retry ? 1 : 0);
+  });
+
+  test.each([
+    ['authentication', 'network timeout socket rate_limit 429 concurrent', false],
+    ['service', 'The blue lantern is resting.', true],
+    ['unknown', 'The blue lantern is resting.', true],
+  ] as const)('semantic %s defeats keyword guesses', async (category, message, retry) => {
+    const fake = failurePort(category); installJudgmentPort(fake.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ error: new Error(message), failWhen: (_text, attempt) => attempt === 1, ...clock });
+    speak(h.controller); await drain();
+    expect(fake.requests).toHaveLength(1);
+    expect(clock.delays).toEqual(retry ? [1000] : []);
+    clock.fire(); await drain();
+    expect(h.requests()).toBe(retry ? 2 : 1);
+  });
+
+  test.each(['missing', 'unavailable'] as const)('%s reader causes one honest failure, no heuristic retry', async (kind) => {
+    installJudgmentPort(kind === 'missing' ? undefined : { model: 'fake', ask: async () => { throw new Error('reader unavailable'); } });
+    const clock = retryClock();
+    const h = makePipelineHarness({ failWhen: () => true, ...clock });
+    speak(h.controller); await drain();
+    expect(h.requests()).toBe(1); expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
+  });
+
+  test.each(['stop', 'cancel', 'replacement', 'owner'] as const)('%s during classification fences late readings and effects', async (mode) => {
+    const fake = failurePort();
+    let release = () => {};
+    let requestSignal: AbortSignal | undefined;
+    installJudgmentPort({ ...fake.port, async ask(request) {
+      requestSignal = request.signal;
+      await new Promise<void>((resolve) => { release = resolve; });
+      return fake.port.ask(request);
+    } });
+    const clock = retryClock();
+    const h = makePipelineHarness({ failWhen: (text) => text === 'Old answer.', ...clock });
+    speak(h.controller, 'old', 'Old answer.'); await drain();
+    expect(requestSignal).toBeDefined();
+    if (mode === 'stop') h.controller.stop();
+    if (mode === 'cancel') h.controller.handleTurnEvent(turn({ type: 'TURN_CANCEL', turnId: 'old', reason: 'user', stopReason: 'cancelled' }));
+    if (mode === 'replacement') speak(h.controller, 'new', 'New answer.');
+    if (mode === 'owner') installJudgmentPort(failurePort().port);
+    expect(requestSignal?.aborted).toBe(true);
+    await drain(); release(); await drain(); clock.fire(); await drain();
+    expect(h.requests()).toBe(mode === 'replacement' ? 2 : 1);
+    expect(h.played).toEqual(mode === 'replacement' ? ['New answer.'] : []);
+    expect(clock.delays).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping') || message.includes('Live playback stopped'))).toEqual([]);
+  });
+
+  test.each(['stop', 'replacement', 'owner'] as const)('%s during backoff clears retry and cannot replay', async (mode) => {
+    const clock = retryClock();
+    const h = makePipelineHarness({ failWhen: (text) => text === 'Old answer.', ...clock });
+    speak(h.controller, 'old', 'Old answer.'); await drain();
+    expect(clock.timers.size).toBe(1);
+    const lateTimer = [...clock.timers.values()][0]!;
+    if (mode === 'stop') h.controller.stop();
+    if (mode === 'replacement') speak(h.controller, 'new', 'New answer.');
+    if (mode === 'owner') installJudgmentPort(failurePort().port);
+    expect(clock.timers.size).toBe(0);
+    lateTimer(); await drain();
+    expect(h.requests()).toBe(mode === 'replacement' ? 2 : 1);
+    expect(h.played).toEqual(mode === 'replacement' ? ['New answer.'] : []);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toEqual([]);
+  });
+
+  test('unknown semantic failures consume exactly two retries, and no reading after budget exhaustion', async () => {
+    const fake = failurePort('unknown'); installJudgmentPort(fake.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ error: new Error('An unsettled answer.'), failWhen: () => true, ...clock });
+    speak(h.controller); await drain(); clock.fire(); await drain(); clock.fire(); await drain();
+    expect(h.requests()).toBe(3); expect(fake.requests).toHaveLength(2);
+    expect(clock.delays).toEqual([1000, 2500]); expect(clock.timers.size).toBe(0);
+    expect(h.played).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
+  });
+});
+
+describe('SpokenTurnController original authority and late synthesis', () => {
+  test('replacement owner during synthesis cannot supply its reading or play old audio', async () => {
+    const original = failurePort(); installJudgmentPort(original.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ deferred: true, failWhen: () => true, ...clock });
+    speak(h.controller); await drain();
+    const replacement = failurePort(); installJudgmentPort(replacement.port);
+    h.releaseSynth(); await drain();
+    expect(original.requests).toHaveLength(0); expect(replacement.requests).toHaveLength(0);
+    expect(h.requests()).toBe(1); expect(h.played).toEqual([]); expect(clock.delays).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toEqual([]);
+  });
+
+  test('a missing original reader is not repaired by borrowing a later installation', async () => {
+    installJudgmentPort(undefined);
+    const clock = retryClock();
+    const h = makePipelineHarness({ deferred: true, failWhen: () => true, ...clock });
+    speak(h.controller); await drain();
+    const replacement = failurePort(); installJudgmentPort(replacement.port);
+    h.releaseSynth(); await drain();
+    expect(replacement.requests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
+  });
+
+  test('new turn rejects late successful synthesis and keeps its own playback', async () => {
+    const h = makePipelineHarness({ deferred: true });
+    speak(h.controller, 'old', 'Old answer.'); await drain();
+    speak(h.controller, 'new', 'New answer.'); await drain();
+    h.releaseSynth(); await drain(); h.releaseSynth(); await drain();
+    expect(h.requests()).toBe(2); expect(h.played).toEqual(['New answer.']);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toEqual([]);
+  });
+});
+
+describe('SpokenTurnController retired authority and queued playback', () => {
+  test('retired composition at dispatch never synthesizes, retries, plays, or reports stale failure', async () => {
+    const fake = failurePort();
+    bindJudgmentPortAuthority(fake.port, () => ({ identity: {}, assertCurrent() { throw new Error('retired'); } }));
+    installJudgmentPort(fake.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ failWhen: () => true, ...clock });
+    speak(h.controller); await drain();
+    expect(h.requests()).toBe(0); expect(fake.requests).toHaveLength(0);
+    expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping') || message.includes('Live playback stopped'))).toEqual([]);
+  });
+
+  test('successful second chunk queued behind a draining sink cannot play after owner replacement', async () => {
+    const h = makeDrainHarness();
+    h.controller.submitNextTurn('queued');
+    h.controller.handleTurnEvent(turn({ type: 'TURN_SUBMITTED', turnId: 'queued', prompt: 'queued' }));
+    h.controller.handleTurnEvent(turn({ type: 'STREAM_DELTA', turnId: 'queued', content: 'The first sentence is already playing. ', accumulated: '' }));
+    await drain();
+    h.controller.handleTurnEvent(turn({ type: 'STREAM_DELTA', turnId: 'queued', content: 'The second sentence must remain silent. ', accumulated: '' }));
+    h.controller.handleTurnEvent(turn({ type: 'TURN_COMPLETED', turnId: 'queued', response: '', stopReason: 'completed' }));
+    await drain();
+    expect(h.played).toEqual(['The first sentence is already playing.']);
+    installJudgmentPort(failurePort().port);
+    h.finishActivePlay(); await drain();
+    expect(h.played).toEqual(['The first sentence is already playing.']);
+    expect(h.messages.filter((message) => message.includes('Skipping') || message.includes('Live playback stopped'))).toEqual([]);
+    h.controller.stop();
+  });
+
+  test('an old sink rejection after replacement cannot stop the new turn or report its error', async () => {
+    const h = makeDrainHarness({ rejectOnStop: true });
+    speak(h.controller, 'old', 'Old answer.'); await drain();
+    speak(h.controller, 'new', 'New answer.'); await drain();
+    expect(h.played).toEqual(['Old answer.', 'New answer.']);
+    expect(h.messages.filter((message) => message.includes('Live playback stopped'))).toEqual([]);
+    expect(h.stopCalls).toHaveLength(2);
+    h.finishActivePlay(); await drain(); h.controller.stop();
+  });
+});
+
+describe('SpokenTurnController complete failure admission', () => {
+  test.each([
+    new Error('Authorization: Bearer synthetic-private-value'),
+    new Error(`${'ordinary '.repeat(300)} Authorization: Bearer synthetic-private-value`),
+    new Error('ordinary', { cause: new Error('api_key=synthetic-private-value') }),
+    { message: 'ordinary', details: { password: 'synthetic-private-value' } },
+    new Error('cardNumber=4111111111111111'),
+  ])('screens complete raw failure before semantic transmission %#', async (error) => {
+    const fake = failurePort(); installJudgmentPort(fake.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ error, failWhen: () => true, ...clock });
+    speak(h.controller); await drain();
+    expect(fake.requests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
+    expect(h.messages.join(' ')).not.toContain('synthetic-private-value');
+    expect(h.messages.join(' ')).not.toContain('4111111111111111');
+  });
+
+  test.each([
+    new Error(`${'Rate limit. '.repeat(200)} Correction: credentials are permanently invalid.`),
+    Object.assign(new Error(`${'Rate limit. '.repeat(200)} Correction: the account cannot pay.`), { status: 429 }),
+    new Error('Rate limit.', { cause: new Error(`${'ordinary '.repeat(250)} Permanently invalid.`) }),
+  ])('refuses over-limit evidence instead of reading a misleading prefix %#', async (error) => {
+    const fake = failurePort(); installJudgmentPort(fake.port);
+    const clock = retryClock();
+    const h = makePipelineHarness({ error, failWhen: () => true, ...clock });
+    speak(h.controller); await drain();
+    expect(fake.requests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
+    expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
+  });
+
+  test.each([
+    { status: 503 }, { code: 'ECONNRESET' },
+  ])('local structured facts survive unrelated secret/over-limit wording %#', async (facts) => {
+    installJudgmentPort(undefined);
+    const clock = retryClock();
+    const error = Object.assign(new Error(`${'ordinary '.repeat(300)} Authorization: Bearer synthetic-private-value`), facts);
+    const h = makePipelineHarness({ error, failWhen: (_text, attempt) => attempt === 1, ...clock });
+    speak(h.controller); await drain(); expect(clock.delays).toEqual([1000]);
+    clock.fire(); await drain(); expect(h.requests()).toBe(2); expect(h.played).toEqual(['An audible answer.']);
+  });
+
+  test('hostile message/status getters and proxies never execute or authorize a retry', async () => {
+    const fake = failurePort(); installJudgmentPort(fake.port);
+    let reads = 0;
+    const hostile = Object.defineProperty(new Error('network'), 'status', { get() { reads++; return 503; } });
+    const message = Object.defineProperty(new Error('network'), 'message', { get() { reads++; return 'network'; } });
+    const proxy = new Proxy(new Error('network'), { get() { reads++; return 'network'; } });
+    for (const error of [hostile, message, proxy]) {
+      const clock = retryClock(); const h = makePipelineHarness({ error, failWhen: () => true, ...clock });
+      speak(h.controller); await drain();
+      expect(h.requests()).toBe(1); expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
+    }
+    expect(reads).toBe(0); expect(fake.requests).toHaveLength(0);
+  });
+});
+
+test('shared spoken controller still bundles for browsers without Node admission imports', async () => {
+  const output = await bundleBrowserEntrypoint(
+    `${import.meta.dir}/../sdk/src/platform/voice/spoken-turn/controller.ts`, { conditions: ['bun'] },
+  );
+  expect(output).not.toContain('node:util/types');
+  expect(output).not.toContain('require("node:');
 });

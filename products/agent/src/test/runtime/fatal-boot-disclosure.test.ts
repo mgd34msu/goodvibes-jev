@@ -77,6 +77,7 @@ function compileEntry(entry: string, name: string): CompiledEntry {
     { cwd: REPO_ROOT, encoding: 'utf-8', timeout: COMPILE_TIMEOUT_MS },
   );
   if (built.status !== 0) {
+    rmSync(dir, { recursive: true, force: true });
     throw new Error(`compiling ${entry} failed (${String(built.status)}): ${built.stderr ?? ''}`);
   }
   return { binary, dir };
@@ -125,7 +126,7 @@ function homeWithCorruptSettings(label: string): { readonly home: string; readon
 describe('the compiled Agent binary says why it will not start', () => {
   let entry: CompiledEntry;
   beforeAll(() => { entry = compileEntry('src/main.ts', 'agent'); });
-  afterAll(() => { rmSync(entry.dir, { recursive: true, force: true }); });
+  afterAll(() => { if (entry) rmSync(entry.dir, { recursive: true, force: true }); });
 
   test('an unparseable settings file names the file and the parse error on stderr', () => {
     const { home, settingsPath } = homeWithCorruptSettings('corrupt-home');
@@ -177,7 +178,7 @@ describe('the compiled Agent binary says why it will not start', () => {
 describe('the shape that shipped writes NOTHING once the output guard is on', () => {
   let entry: CompiledEntry;
   beforeAll(() => { entry = compileEntry('src/test/fixtures/fatal-boot-guarded-legacy-entry.ts', 'agent-legacy'); });
-  afterAll(() => { rmSync(entry.dir, { recursive: true, force: true }); });
+  afterAll(() => { if (entry) rmSync(entry.dir, { recursive: true, force: true }); });
 
   test('exit 1, zero bytes on stdout, zero bytes on stderr: the baseline', () => {
     // Not an assumption about how a compiled binary flushes. The reporter runs,
@@ -202,7 +203,7 @@ describe('the shape that shipped writes NOTHING once the output guard is on', ()
 describe('the descriptor sink survives the output guard', () => {
   let entry: CompiledEntry;
   beforeAll(() => { entry = compileEntry('src/test/fixtures/fatal-boot-guarded-entry.ts', 'agent-fixed'); });
-  afterAll(() => { rmSync(entry.dir, { recursive: true, force: true }); });
+  afterAll(() => { if (entry) rmSync(entry.dir, { recursive: true, force: true }); });
 
   test('the same failure, the same guard, and the reason reaches stderr', () => {
     const home = makeHomeDir('fixed-home');

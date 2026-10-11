@@ -125,7 +125,7 @@ describe('the daemon serves browser.* with no surface attached', () => {
     expect(calls[0]?.args[0]).toEqual({ sessionId: 's1', pageId: 'p2' });
     expect(calls[0]?.args[1]).toEqual({
       url: 'https://example.com/a',
-      launch: { profileName: 'work', headless: true },
+      launch: { profileName: 'work', headless: true, signal: undefined, assertCurrent: expect.any(Function) },
       waitUntil: 'networkidle',
       timeoutMs: 5_000,
     });

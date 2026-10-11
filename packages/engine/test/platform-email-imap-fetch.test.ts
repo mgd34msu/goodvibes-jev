@@ -11,7 +11,13 @@
  * against directly rather than inferred.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { imapFixturePort } from './_helpers/imap-semantic-port.ts';
+import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
+
+let previousImapPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousImapPort = installJudgmentPort(imapFixturePort().port); });
+afterEach(() => { installJudgmentPort(previousImapPort); });
 import { createServer, connect, type Server, type Socket } from 'node:net';
 import { ImapClient } from '../sdk/src/platform/email/imap-client.ts';
 import {
@@ -474,18 +480,17 @@ describe('ImapClient.appendDraft', () => {
     expect(append).not.toContain('APPEND Drafts');
   });
 
-  test('falls back to Drafts when the server describes no folders', async () => {
+  test('refuses APPEND when the server describes no folders', async () => {
     fake = await startFakeImap(draftServer({ list: [], appendUid: null }));
 
     const client = await openClient(fake.port);
-    const result = await client.appendDraft({
+    await expect(client.appendDraft({
       to: 'bob@example.test',
       from: 'owner@example.test',
       subject: 'Hello',
       body: 'Hi there',
-    });
-
-    expect(result.mailbox).toBe('Drafts');
+    })).rejects.toThrow('semantic reading');
+    expect(fake.state.commands.some(command => command.includes(' APPEND '))).toBe(false);
   });
 
   test('an explicit mailbox overrides discovery entirely', async () => {
@@ -637,29 +642,29 @@ describe('BODYSTRUCTURE parsing is defensive', () => {
 });
 
 describe('Drafts discovery', () => {
-  test('prefers \\Drafts, then an exact name, then a trailing segment', () => {
-    expect(selectDraftsMailbox(GMAIL_LIST)).toBe('[Gmail]/Drafts');
-    expect(selectDraftsMailbox([
+  test('prefers \\Drafts, otherwise uses the injected candidate reading', async () => {
+    expect(await selectDraftsMailbox(GMAIL_LIST)).toBe('[Gmail]/Drafts');
+    expect(await selectDraftsMailbox([
       '* LIST (\\HasNoChildren) "/" "INBOX"',
       '* LIST (\\HasNoChildren) "/" "DRAFTS"',
       '* LIST (\\HasNoChildren) "/" "[Gmail]/Drafts"',
     ])).toBe('DRAFTS');
-    expect(selectDraftsMailbox([
+    expect(await selectDraftsMailbox([
       '* LIST (\\HasNoChildren) "/" "[Gmail]/Drafts"',
     ])).toBe('[Gmail]/Drafts');
-    expect(selectDraftsMailbox(['* LIST (\\HasNoChildren) "/" "INBOX"'])).toBeNull();
-    expect(selectDraftsMailbox([])).toBeNull();
+    expect(await selectDraftsMailbox(['* LIST (\\HasNoChildren) "/" "INBOX"'])).toBeNull();
+    expect(await selectDraftsMailbox([])).toBeNull();
   });
 
-  test('a \\Noselect path node is never chosen', () => {
-    expect(selectDraftsMailbox([
+  test('a \\Noselect path node is never chosen', async () => {
+    expect(await selectDraftsMailbox([
       '* LIST (\\Noselect \\Drafts) "/" "[Gmail]"',
       '* LIST (\\HasNoChildren) "/" "Drafts"',
     ])).toBe('Drafts');
   });
 
-  test('unparseable LIST lines are skipped, not thrown on', () => {
-    expect(() => selectDraftsMailbox(['garbage', '* LIST', '* LIST () NIL'])).not.toThrow();
+  test('unparseable LIST lines are skipped, not thrown on', async () => {
+    expect(await selectDraftsMailbox(['garbage', '* LIST', '* LIST () NIL'])).toBeNull();
   });
 });
 
@@ -986,7 +991,7 @@ describe('probeMailboxBody', () => {
     expect(notice?.terminal).toBe(true);
     // The server's own words are carried, and the remedy names access rights
     // rather than sending the owner to change a password that works.
-    expect(notice?.serverMessage).toContain('Not permitted');
+    expect(notice?.serverMessage).toBe('');
     expect(notice?.ownerMessage).toContain('access');
   });
 
@@ -1005,7 +1010,7 @@ describe('probeMailboxBody', () => {
       .then(() => null, (thrown: unknown) => thrown);
 
     expect(error).not.toBeInstanceOf(ImapBodyCapabilityError);
-    expect(describeEmailCapabilityFailure(error)).toBeNull();
+    expect(describeEmailCapabilityFailure(error)?.reason).toBe('server-unavailable');
   });
 
   test('a timeout is a reconnect, not a verdict about the account', async () => {

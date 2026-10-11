@@ -1,3 +1,5 @@
+import { knowledgeClockNumber, knowledgeNodeMetadataView, knowledgeSourceMetadataView, retainKnowledgeRepresentation } from './store-record-representation.js';
+import { createNativeCiContinuationTable } from './store-native-ci-continuation.js';
 import { createNativeConversationCaptureTable } from './store-native-intake.js';
 import { createNativeWorkSettlementTable, createNativeWorkExecutionTable, createNativeWorkExecutionIntentTable } from './store-native-work-execution.js';
 import { createWorkLedgerTable } from './store-work-ledger.js';
@@ -80,6 +82,7 @@ export function createSchema(db: { run(sql: string): void }): void {
   createNativeWorkExecutionTable(db);
   createNativeWorkExecutionIntentTable(db);
   createNativeWorkSettlementTable(db);
+  createNativeCiContinuationTable(db);
   db.run(`
     CREATE TABLE IF NOT EXISTS knowledge_sources (
       id TEXT PRIMARY KEY,
@@ -341,7 +344,7 @@ function rowObject(columns: string[], values: unknown[]): Record<string, unknown
 
 export function mapSourceRow(columns: string[], values: unknown[]): KnowledgeSourceRecord {
   const row = rowObject(columns, values);
-  return {
+  const record = {
     id: String(row.id),
     connectorId: String(row.connector_id),
     sourceType: String(row.source_type) as KnowledgeSourceRecord['sourceType'],
@@ -355,18 +358,19 @@ export function mapSourceRow(columns: string[], values: unknown[]): KnowledgeSou
     status: String(row.status) as KnowledgeSourceStatus,
     ...(stableText(row.artifact_id as string | undefined) ? { artifactId: String(row.artifact_id) } : {}),
     ...(stableText(row.content_hash as string | undefined) ? { contentHash: String(row.content_hash) } : {}),
-    ...(typeof row.last_crawled_at === 'number' ? { lastCrawledAt: Number(row.last_crawled_at) } : {}),
+    ...(row.last_crawled_at !== null && row.last_crawled_at !== undefined ? { lastCrawledAt: knowledgeClockNumber(row.last_crawled_at) } : {}),
     ...(stableText(row.crawl_error as string | undefined) ? { crawlError: String(row.crawl_error) } : {}),
     ...(stableText(row.session_id as string | undefined) ? { sessionId: String(row.session_id) } : {}),
-    metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}),
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
+    metadata: knowledgeSourceMetadataView(parseJsonValue<Record<string, unknown>>(row.metadata, {})),
+    createdAt: knowledgeClockNumber(row.created_at),
+    updatedAt: knowledgeClockNumber(row.updated_at),
   };
+  return retainKnowledgeRepresentation(record, { ...record, metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}), createdAt: row.created_at, updatedAt: row.updated_at, ...(row.last_crawled_at !== null && row.last_crawled_at !== undefined ? { lastCrawledAt: row.last_crawled_at } : {}) });
 }
 
 export function mapNodeRow(columns: string[], values: unknown[]): KnowledgeNodeRecord {
   const row = rowObject(columns, values);
-  return {
+  const record = {
     id: String(row.id),
     kind: String(row.kind) as KnowledgeNodeRecord['kind'],
     slug: String(row.slug),
@@ -376,10 +380,11 @@ export function mapNodeRow(columns: string[], values: unknown[]): KnowledgeNodeR
     status: String(row.status) as KnowledgeNodeStatus,
     confidence: Number(row.confidence),
     ...(stableText(row.source_id as string | undefined) ? { sourceId: String(row.source_id) } : {}),
-    metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}),
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
+    metadata: knowledgeNodeMetadataView(parseJsonValue<Record<string, unknown>>(row.metadata, {})),
+    createdAt: knowledgeClockNumber(row.created_at),
+    updatedAt: knowledgeClockNumber(row.updated_at),
   };
+  return retainKnowledgeRepresentation(record, { ...record, metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}), createdAt: row.created_at, updatedAt: row.updated_at });
 }
 
 export function mapEdgeRow(columns: string[], values: unknown[]): KnowledgeEdgeRecord {
@@ -416,7 +421,7 @@ export function mapIssueRow(columns: string[], values: unknown[]): KnowledgeIssu
 
 export function mapExtractionRow(columns: string[], values: unknown[]): KnowledgeExtractionRecord {
   const row = rowObject(columns, values);
-  return {
+  const record = {
     id: String(row.id),
     sourceId: String(row.source_id),
     ...(stableText(row.artifact_id as string | undefined) ? { artifactId: String(row.artifact_id) } : {}),
@@ -430,9 +435,10 @@ export function mapExtractionRow(columns: string[], values: unknown[]): Knowledg
     estimatedTokens: Number(row.estimated_tokens),
     structure: parseJsonValue<Record<string, unknown>>(row.structure, {}),
     metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}),
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
+    createdAt: knowledgeClockNumber(row.created_at),
+    updatedAt: knowledgeClockNumber(row.updated_at),
   };
+  return retainKnowledgeRepresentation(record, { ...record, metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}), createdAt: row.created_at, updatedAt: row.updated_at });
 }
 
 export function mapJobRunRow(columns: string[], values: unknown[]): KnowledgeJobRunRecord {
@@ -567,7 +573,7 @@ export function mapReportRow(columns: string[], values: unknown[]): KnowledgeCon
 
 export function mapNodeRevisionRow(columns: string[], values: unknown[]): KnowledgeNodeRevisionRecord {
   const row = rowObject(columns, values);
-  return {
+  const record = {
     id: String(row.id),
     nodeId: String(row.node_id),
     revision: Number(row.revision),
@@ -581,11 +587,12 @@ export function mapNodeRevisionRow(columns: string[], values: unknown[]): Knowle
     status: String(row.status) as KnowledgeNodeStatus,
     confidence: Number(row.confidence),
     ...(stableText(row.source_id as string | undefined) ? { sourceId: String(row.source_id) } : {}),
-    metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}),
-    nodeCreatedAt: Number(row.node_created_at),
-    nodeUpdatedAt: Number(row.node_updated_at),
-    recordedAt: Number(row.recorded_at),
+    metadata: knowledgeNodeMetadataView(parseJsonValue<Record<string, unknown>>(row.metadata, {})),
+    nodeCreatedAt: knowledgeClockNumber(row.node_created_at),
+    nodeUpdatedAt: knowledgeClockNumber(row.node_updated_at),
+    recordedAt: knowledgeClockNumber(row.recorded_at),
   };
+  return retainKnowledgeRepresentation(record, { ...record, metadata: parseJsonValue<Record<string, unknown>>(row.metadata, {}), nodeCreatedAt: row.node_created_at, nodeUpdatedAt: row.node_updated_at, recordedAt: row.recorded_at });
 }
 
 export function mapSemanticEnrichmentStateRow(columns: string[], values: unknown[]): KnowledgeSemanticEnrichmentStateRecord {

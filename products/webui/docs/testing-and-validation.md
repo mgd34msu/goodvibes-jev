@@ -5,6 +5,10 @@ monorepo root, then the commands below from `products/webui`. Its source and
 browser harness originate at upstream `dadf57700668fe4500b17b0b0b4520715ab25ef4`.
 No standalone release workflows are installed by this port.
 
+The [runtime ownership and verification boundaries](runtime-boundaries.md)
+identify the behavior, privacy constraints and meaningful regressions these checks
+must preserve; accounting cleanup does not retire those requirements.
+
 ## Required product checks
 
 | Command | Evidence |
@@ -18,7 +22,7 @@ No standalone release workflows are installed by this port.
 | `bun run e2e --project=phone --project=desktop` | Real Chromium over the built app with stateful synthetic daemon responses |
 | `bun run e2e --project=lan-origin` | Actual private-network HTTP origin posture where the host provides that interface |
 
-The product checks do not replace the monorepo's architecture, source accounting,
+The product checks do not replace the monorepo's architecture,
 contract, judgment, typecheck or release gates. A successful mock browser run does
 not prove real daemon composition or complete the remaining JEV obligations.
 
@@ -66,8 +70,6 @@ release alongside the other monorepo checks.
 in both viewports. CI always uploads available HTML reports, failure traces,
 screenshots, and the console log as `webui-browser-proof`, retained for seven
 days. Setup or launch failures are failures; they are not browser assertions.
-The restricted local environment has executed no app assertions, so ordinary
-CI must supply that evidence before browser parity can be claimed.
 
 `bun run test:live` remains a separate opt-in local-daemon smoke. Review its boot
 configuration and dependencies before running; it does not submit model turns,
@@ -85,3 +87,27 @@ to match the former independently published SDK.
 `bun run pack:bundle` packs the real `dist/` into the deterministic static archive
 layout understood by the daemon installer. The monorepo owns release versioning,
 CI topology, tags, publication and the final release acceptance decision.
+
+## Workspace and runner integrity
+
+Use declared public engine exports and the workspace engine dependency; relative
+engine-source imports and cross-worktree dependency links are not substitutes.
+Build-time configuration, ownership and presentation generators consume public
+subpaths. Preserve the production bundler's Node-only module and outside-checkout
+engine guards. The root owns installation, versions and publication; product
+preparation only regenerates artifacts and versioned icon/manifest cache stamps.
+
+When public contracts change, validate declarations and public-consumer types,
+API/subpath extraction, generated operator/OpenAPI/facade documentation,
+declared/export coverage, browser compatibility, metadata, credential scope,
+no-any, test-temp architecture, bundle references and registered judgments.
+Retain product source/scripts/browser type-program coverage, real production
+bundles and relevant compiled/native consumer smoke checks.
+
+Validate happy-dom, guarded fetch, isolated home and the network-violation ledger
+together under the official isolated-module runner. Discovery is not execution:
+requested LAN coverage must report unsupported when no readable private interface
+exists, rather than counting skipped assertions as success. Production-app tests
+with scripted HTTP/model/mailbox fixtures do not prove a connected deployed
+daemon, real account authentication, external mail delivery or live-provider
+calibration. Setup/launch failures must remain failures.

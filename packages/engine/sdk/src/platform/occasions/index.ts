@@ -182,3 +182,5 @@ export type {
   OccasionProposal,
   OccasionWriteOutcome,
 } from './capture.js';
+
+export { OccasionReadingWork, OccasionReadingHeldError } from './readings.js';

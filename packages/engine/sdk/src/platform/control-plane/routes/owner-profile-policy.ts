@@ -96,7 +96,25 @@ export function applyOwnerProfilePolicy(
   return {
     read: () => service.read(),
     get: (fieldId) => service.get(fieldId),
-    person: (name) => service.person(name),
+    person: async (name, options = {}) => {
+      const person = service.person;
+      const callerCurrent = options.assertCurrent;
+      const sourceCurrent = () => {
+        if (service.person !== person) throw new Error('The profile person source is no longer current.');
+      };
+      const retained: unknown = options.retain?.(sourceCurrent);
+      if (retained !== undefined) { void Promise.resolve(retained).catch(() => {}); throw new Error('The profile person caller is no longer current.'); }
+      const assertCurrent = () => {
+        sourceCurrent();
+        const checked: unknown = callerCurrent?.();
+        if (checked !== undefined) { void Promise.resolve(checked).catch(() => {}); throw new Error('The profile person caller is no longer current.'); }
+        sourceCurrent();
+      };
+      assertCurrent();
+      const result = await person.call(service, name, { ...options, assertCurrent });
+      assertCurrent();
+      return result;
+    },
     provenance: (fieldId) => service.provenance(fieldId),
     status: () => service.status(),
     forget: (input) => service.forget(input),

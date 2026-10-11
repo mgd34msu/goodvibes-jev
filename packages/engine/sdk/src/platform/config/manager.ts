@@ -1,3 +1,5 @@
+import { postalConfigKey, POSTAL_PARTS, PostalAddressHeldError, type ProfilePostalReader, type PostalKind, type PostalReadOptions, type PreparedPostalAddress, type PostalParts } from './postal-address.js';
+import { DurablePolicyEpochOwner } from './durable-policy-epoch.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
@@ -130,6 +132,8 @@ export type ConfigUnsubscribe = () => void;
  * API keys are never persisted, loaded from env vars only.
  */
 export class ConfigManager {
+  private profilePostalReader: ProfilePostalReader | null = null;
+  private profilePostalEpoch = 0;
   private readonly readOnly: boolean;
   private readonly diagnosticMode: 'default' | 'structural';
   private readonly hostSettings: HostSettings;
@@ -159,6 +163,9 @@ export class ConfigManager {
   private profileFallback: ConfigProfileFallbackReader | null = null;
   private readonly invalidationListeners = new Set<() => void>();
   private permissionIncarnation = 0;
+  private durablePolicy: DurablePolicyEpochOwner | undefined;
+  private hydrating = true;
+  private readonly incarnationListeners = new Set<() => void>();
   // Private identities contain no authority grant and cannot be copied or forged.
   readonly #preparedMutations = new WeakMap<PreparedConfigMutation, PreparedMutationRecord>();
   readonly #preparedTransitions = new WeakMap<PreparedConfigMutationTransition, PreparedConfigMutation>();
@@ -220,7 +227,9 @@ export class ConfigManager {
     // Set BEFORE load(): that load is where the daemon-tier migration asks.
     this.daemonTierOwner = !this.readOnly && overrides.ownsDaemonTier === true;
 
-    this.load();
+    this.durablePolicy = new DurablePolicyEpochOwner([this.configPath, this.projectConfigPath, this.sharedTierPath, this.daemonTierPath, join(this.configDir, 'settings-sync.json')]
+      .filter((path): path is string => path !== null), !this.readOnly);
+    try { this.load(); } finally { this.hydrating = false; }
 
     // Apply constructor overrides (CLI args, etc.) after load
     if (overrides.model !== undefined) {
@@ -273,6 +282,37 @@ export class ConfigManager {
     this.profileFallback = reader;
   }
 
+  /** Owned async seam; a previous composition cannot clear its replacement. */
+  attachProfilePostalFallback(reader: ProfilePostalReader): () => void {
+    const epoch = ++this.profilePostalEpoch;
+    this.profilePostalReader = reader;
+    return () => { if (this.profilePostalEpoch === epoch) { this.profilePostalEpoch += 1; this.profilePostalReader = null; } };
+  }
+
+  /** One named address only. Never used by a dump/category/listing. */
+  async preparePostalAddress(kind: PostalKind, options: PostalReadOptions = {}): Promise<PreparedPostalAddress> {
+    const revision = this.getConfigurationIncarnation();
+    const reader = this.profilePostalReader;
+    const installation = this.profilePostalEpoch;
+    const stored = Object.fromEntries(POSTAL_PARTS.map(part => {
+      const { parent, field } = this.resolvePath(`payments.${kind}Address.${part}` as ConfigKey);
+      return [part, typeof parent[field] === 'string' ? (parent[field] as string).trim() : ''];
+    })) as Record<typeof POSTAL_PARTS[number], string>;
+    const check = () => {
+      options.signal?.throwIfAborted();
+      const result: unknown = options.assertCurrent?.();
+      if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new PostalAddressHeldError(); }
+      if (this.getConfigurationIncarnation() !== revision || this.profilePostalReader !== reader || this.profilePostalEpoch !== installation) throw new PostalAddressHeldError();
+    };
+    check();
+    const fallback = reader && POSTAL_PARTS.some(part => stored[part] === '')
+      ? await reader(kind, { ...options, assertCurrent: check }) : null;
+    check(); fallback?.assertCurrent();
+    const value = Object.freeze(Object.fromEntries(POSTAL_PARTS.map(part => [part, stored[part] || fallback?.value?.[part] || ''])) as unknown as PostalParts);
+    return Object.freeze({ value: POSTAL_PARTS.some(part => value[part] !== '') ? value : null,
+      assertCurrent: () => { check(); fallback?.assertCurrent(); } });
+  }
+
   private resolvePath(
     key: DaemonOwnedConfigPath,
     config: GoodVibesConfig = this.config,
@@ -310,6 +350,12 @@ export class ConfigManager {
     return detachedConfigValue(resolveWithProfileFallback(key, parent[field], this.profileFallback)) as ConfigValue<K>;
   }
 
+  /** Explicit stored value for settings edit/clear receipts, without profile disclosure. */
+  getStored<K extends ConfigKey>(key: K): ConfigValue<K> {
+    const { parent, field } = this.resolvePath(key);
+    return detachedConfigValue(parent[field]) as ConfigValue<K>;
+  }
+
   /** Validate registration and return an immutable, manager-bound boolean handle. */
   getHostBooleanSetting(key: string): HostBooleanSettingHandle {
     if (!this.hostSettings.has(key)) throw new ConfigError(`Host boolean setting ${key} is not registered on this manager.`);
@@ -339,12 +385,57 @@ export class ConfigManager {
     return () => { this.invalidationListeners.delete(listener); };
   }
 
+  /** Value-free owner revision, including save and failed/no-op mutation intent. */
+  getConfigurationIncarnation(): number { return this.permissionIncarnation; }
+
+  /** Actual persisted policy owners, safe to compare after restart. Never a permission grant. */
+  getDurableConfigurationIncarnation(): string {
+    if (!this.durablePolicy) throw new Error('Durable configuration policy ownership is unavailable');
+    return this.durablePolicy.current(this.config);
+  }
+
+  /** Establish durable owner history for a live new source, never for recovery. */
+  captureDurableConfigurationIncarnation(): string {
+    if (!this.durablePolicy) throw new Error('Durable configuration policy ownership is unavailable');
+    return this.durablePolicy.capture(this.config);
+  }
+
+  /** Actual host policy owners call this synchronously before runtime policy effects. */
+  invalidateExternalPolicy(): void { this.invalidateLifetimes(); }
+
+  /** Observe every revision without changing existing setting/invalidation subscriptions. */
+  onDidChangeIncarnation(listener: () => void): () => void {
+    this.incarnationListeners.add(listener);
+    return () => { this.incarnationListeners.delete(listener); };
+  }
+
+  private advanceConfigurationIncarnation(): void {
+    let durableFailure: unknown;
+    let durableFailed = false;
+    try { if (!this.hydrating) this.durablePolicy?.advance(); }
+    catch (error) { durableFailed = true; durableFailure = error; }
+    this.permissionIncarnation++;
+    for (const listener of [...this.incarnationListeners]) {
+      try { listener(); } catch { /* A lifetime observer cannot defeat revocation. */ }
+    }
+    if (durableFailed) {
+      // A failed durable intent cannot leave an in-memory permission source
+      // live, or bypass the host settings' existing restrictive projection.
+      // No requested config value or persistent write has been applied.
+      try { this.applyHostValues(this.hostSettings.defaults(), this.hostSettings.snapshot(this.config), true, new Set(this.hostSettings.keys())); }
+      catch { /* Preserve the durable failure even if a subscriber throws. */ }
+      throw durableFailure;
+    }
+  }
+
   private invalidateLifetimes(): void {
     // Publish before observers run, even if a mutation subsequently restores
     // the same value. Outstanding admission cannot survive an A -> B -> A turn.
-    this.permissionIncarnation++;
-    for (const listener of [...this.invalidationListeners]) {
-      try { listener(); } catch { /* One subscriber must not defeat revocation. */ }
+    try { this.advanceConfigurationIncarnation(); }
+    finally {
+      for (const listener of [...this.invalidationListeners]) {
+        try { listener(); } catch { /* One subscriber must not defeat revocation. */ }
+      }
     }
   }
 
@@ -377,6 +468,22 @@ export class ConfigManager {
     return handle;
   }
 
+  /** Capture every companion before admission; never re-prepare after an earlier effect. */
+  prepareSettingMutationPlan(requests: readonly PreparedConfigMutationRequest[]): PreparedConfigMutation {
+    if (requests.length < 1 || requests.length > 16 || new Set(requests.map(request => request.key)).size !== requests.length) {
+      throw new ConfigError('Invalid prepared settings plan.');
+    }
+    if (requests.length === 1) return this.prepareSettingMutation(requests[0]!);
+    const steps = Object.freeze(requests.map(request => this.prepareSettingMutation(request)));
+    const first = this.preparedRecord(steps[0]!);
+    const effects = steps.map(step => this.inspectPreparedMutation(step));
+    const handle = Object.freeze({}) as PreparedConfigMutation;
+    this.#preparedMutations.set(handle, { ...first, steps,
+      facts: freezePreparedData({ ...first.facts, effects, destinations: effects.flatMap(effect => [...effect.destinations]) }) });
+    this.assertPreparedMutation(handle);
+    return handle;
+  }
+
   /** Detached proposed values are private substrate data, not redacted evidence. */
   inspectPreparedMutation(handle: PreparedConfigMutation): PreparedConfigMutationFacts {
     return freezePreparedData(structuredClone(this.preparedRecord(handle).facts));
@@ -397,10 +504,11 @@ export class ConfigManager {
       this.assertPreparedCurrent(record, record.facts.incarnation);
       this.invalidateLifetimes();
       this.assertPreparedCurrent(record, record.facts.incarnation + 1);
-      const { schema } = this.preparedSchema(record.facts.key);
-      // Validate again after invalidation subscribers, using a detached copy.
-      const next = normalizePreparedValue(record.facts.key, schema, record.facts.value);
-      if (JSON.stringify(next) !== record.normalizedJson) throw new ConfigError('Prepared value changed.');
+      for (const current of record.steps ? record.steps.map(step => this.preparedRecord(step)) : [record]) {
+        const { schema } = this.preparedSchema(current.facts.key);
+        const next = normalizePreparedValue(current.facts.key, schema, current.facts.value);
+        if (JSON.stringify(next) !== current.normalizedJson) throw new ConfigError('Prepared value changed.');
+      }
       this.assertPreparedCurrent(record, record.facts.incarnation + 1);
       for (const destination of record.facts.destinations) readHostSettingsFile(destination.path);
       this.assertPreparedCurrent(record, record.facts.incarnation + 1);
@@ -419,7 +527,7 @@ export class ConfigManager {
 
   assertPreparedMutationTransition(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition): void {
     const record = this.preparedRecord(handle);
-    if (record.phase !== 'begun' || record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
+    if ((record.phase !== 'begun' && !(record.steps && record.phase === 'committing')) || record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
       throw new ConfigError('Prepared mutation transition is not authentic or has been spent.');
     }
     this.assertPreparedCurrent(record, record.facts.incarnation + 1);
@@ -430,11 +538,40 @@ export class ConfigManager {
    * validator, invalidation subscriber or notification in the publication tail.
    * Existing whole-file last-writer-wins semantics remain; this is not file CAS.
    */
-  finishPreparedMutation(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition): PreparedConfigMutationReceipt {
+  finishPreparedMutation(handle: PreparedConfigMutation, transition: PreparedConfigMutationTransition, beforeEffect?: () => void): PreparedConfigMutationReceipt {
     const record = this.preparedRecord(handle);
     // A forged transition cannot consume a different authentic operation.
     if (record.transition !== transition || this.#preparedTransitions.get(transition) !== handle) {
       throw new ConfigError('Prepared mutation transition is not authentic.');
+    }
+    if (record.steps) {
+      if (record.phase !== 'begun') throw new ConfigError('Prepared settings plan is already committing.');
+      this.assertPreparedMutationTransition(handle, transition);
+      // Only the transition guard remains usable while committing. Reentrant
+      // finish calls cannot repeat a step; unrelated mutation stops the tail.
+      record.phase = 'committing';
+      const completedPaths: string[] = [];
+      for (const step of record.steps) {
+        const child = this.preparedRecord(step);
+        let receipt: PreparedConfigMutationReceipt;
+        try {
+          beforeEffect?.();
+          this.assertPreparedCurrent(child, record.facts.incarnation + 1);
+          const childTransition = Object.freeze({}) as PreparedConfigMutationTransition;
+          child.phase = 'begun'; child.transition = childTransition;
+          this.#preparedTransitions.set(childTransition, step);
+          receipt = this.finishPreparedMutation(step, childTransition);
+        } catch {
+          record.phase = 'spent';
+          return freezePreparedData({ status: completedPaths.length ? 'partial' : 'unknown', completedPaths,
+            ...(child.facts.destinations[0] ? { uncertainPath: child.facts.destinations[0].path } : {}) });
+        }
+        completedPaths.push(...receipt.completedPaths);
+        if (receipt.status !== 'committed') { record.phase = 'spent'; return freezePreparedData({ ...receipt,
+          status: completedPaths.length ? 'partial' : 'unknown', completedPaths }); }
+      }
+      record.phase = 'spent';
+      return freezePreparedData({ status: 'committed', completedPaths });
     }
     let stores: Map<string, Record<string, unknown>>;
     try {
@@ -548,6 +685,10 @@ export class ConfigManager {
 
   private assertPreparedCurrent(record: PreparedMutationRecord, incarnation: number): void {
     this.requireWritable();
+    if (record.steps) {
+      for (const step of record.steps) this.assertPreparedCurrent(this.#preparedMutations.get(step)!, incarnation);
+      return;
+    }
     const { key, operation } = record.facts;
     const { schema, identity } = this.preparedSchema(key);
     // Host validators are freshly allocated by the legacy accessor; the frozen
@@ -597,6 +738,7 @@ export class ConfigManager {
 
   /** Publish every part of a staged mutation before any observer can run. */
   private publishState(staged: ConfigRuntimeState, effective: GoodVibesConfig): void {
+    this.durablePolicy?.reconcile();
     this.runtimeState = staged;
     this.config = effective;
     this.sharedKeysPresent.clear();
@@ -795,6 +937,11 @@ export class ConfigManager {
     return () => this.stopWatchingConfigFiles();
   }
 
+  /** Drain disk generations already visible to the live watcher before readiness. */
+  flushConfigFileChanges(): void {
+    this._fileWatch?.poll();
+  }
+
   /** Stop watching all config files opened by watchConfigFiles(). */
   stopWatchingConfigFiles(): void {
     this._fileWatch?.stop();
@@ -910,7 +1057,7 @@ export class ConfigManager {
    */
   save(): void {
     this.requireWritable();
-    this.permissionIncarnation++;
+    this.advanceConfigurationIncarnation();
     const minimal = this.runtimeState.bulkSnapshot();
     this.preserveHostSettingsForBulkSave(minimal, this.configPath);
     const staged = this.runtimeState.fork();
@@ -935,7 +1082,7 @@ export class ConfigManager {
   /** Persist the non-runtime working view to project settings. Runtime maps survive. */
   saveProject(): void {
     this.requireWritable();
-    this.permissionIncarnation++;
+    this.advanceConfigurationIncarnation();
     if (!this.projectConfigPath) {
       throw new Error('ConfigManager.saveProject requires an explicit workingDir.');
     }
@@ -1044,7 +1191,7 @@ export class ConfigManager {
     try {
       const stored = this.ingest(readDaemonTierFile(this.daemonTierPath), this.daemonTierPath,
         raw => runDaemonTierMigrationPasses(raw, this.daemonTierPath!,
-          (id, text) => this.migrationReceipt(id, text), { ownsFile: this.daemonTierOwner }));
+          (id, text) => this.migrationReceipt(id, text), { ownsFile: this.daemonTierOwner, beforeWrite: () => this.beforeMigrationWrite() }));
       const applied = overlayDaemonTierFrom(stored, (key, value) => {
         const { parent, field } = resolveOrCreateDaemonPath(staged.nonRuntime as unknown as Record<string, unknown>, key);
         parent[field] = value;
@@ -1090,7 +1237,7 @@ export class ConfigManager {
   describeConfigKeySource(key: ConfigKey): ConfigKeySource {
     return describeKeySource({
       key,
-      value: this.get(key),
+      value: postalConfigKey(key) ? (() => { const { parent, field } = this.resolvePath(key); return parent[field]; })() : this.get(key),
       shareable: isSharedConfigKey(key),
       daemonOwned: isDaemonOwnedConfigKey(key),
       sharedTierPath: this.sharedTierPath,
@@ -1109,7 +1256,13 @@ export class ConfigManager {
 
   /** Apply the canonical migration order, persisting only for a writable reader. */
   private applyLoadMigrations(parsed: Record<string, unknown>, sourcePath: string): Record<string, unknown> {
-    return runLoadMigrationPasses(parsed, sourcePath, (id, text) => this.migrationReceipt(id, text), { ownsFile: !this.readOnly });
+    return runLoadMigrationPasses(parsed, sourcePath, (id, text) => this.migrationReceipt(id, text), { ownsFile: !this.readOnly, beforeWrite: () => this.beforeMigrationWrite() });
+  }
+  /** Hydration itself is read-only; a real migration must own intent before its first write. */
+  private beforeMigrationWrite(): boolean {
+    if (!this.hydrating) return true; // Explicit load() already committed mutation intent.
+    try { this.durablePolicy?.advance(); return true; }
+    catch { return false; } // Preserve ordinary in-memory recovery without persistence or a write receipt.
   }
   private requireWritable(): void {
     if (this.readOnly) throw new ConfigError('ConfigManager is read-only.');

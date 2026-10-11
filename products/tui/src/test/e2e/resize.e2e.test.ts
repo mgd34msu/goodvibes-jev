@@ -4,6 +4,7 @@
  * from before the resizes are still on screen after each one.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
+import { startE2ENativeHost } from './native-host-fixture.ts';
 import { inputAreaVisible, lastUserText, launchTui, makeHome, screenText, startStubModel, type TuiSession } from './harness.ts';
 
 const PROMPT = 'describe the lighthouse keeper routine';
@@ -13,7 +14,8 @@ const model = startStubModel((request) => (
   lastUserText(request).includes('lighthouse keeper') ? { text: REPLY } : { text: 'E2E side request' }
 ));
 let tui: TuiSession | null = null;
-afterAll(() => { tui?.stop(); model.stop(); });
+let host: Awaited<ReturnType<typeof startE2ENativeHost>> | null = null;
+afterAll(async () => { try { await tui?.stop(); } finally { try { await host?.stop(); } finally { model.stop(); } } });
 
 /** Width of the composer's top bar (the ▄ run), which spans the screen minus its gutters. */
 function composerBarWidth(screen: string): number {
@@ -24,7 +26,8 @@ function composerBarWidth(screen: string): number {
 describe('resize', () => {
   test('80 -> 120 -> 200 columns redraws at each width without losing the transcript', async () => {
     const home = await makeHome(model);
-    tui = launchTui(home, { cols: 80, rows: 30 });
+    host = await startE2ENativeHost(home);
+    tui = launchTui(home, { cols: 80, rows: 30, env: host.env });
     await tui.waitForScreen('the input area', inputAreaVisible, 45_000);
     tui.type(PROMPT);
     tui.key('Enter');
@@ -47,5 +50,11 @@ describe('resize', () => {
       expect(screen.split('\n').every((line) => [...line].length <= cols)).toBe(true);
     }
     expect(tui.alive()).toBe(true);
+    expect(host.judgments.accepted).toContain('native-route');
+    expect(host.judgments.accepted).toContain('native-turn');
+    expect(host.judgments.accepted).not.toContain('route');
+    expect(host.judgments.accepted).not.toContain('turn');
+    expect(host.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
+    expect(host.daemon.services.agentManager.list()).toHaveLength(0);
   }, 120_000);
 });

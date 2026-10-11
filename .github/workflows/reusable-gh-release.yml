@@ -1,3 +1,5 @@
+name: Reusable GitHub release
+
 # Reusable: GitHub Release (notes-file or changelog excerpt + SHA256SUMS + assets)
 #
 # Consumer contract

@@ -45,7 +45,7 @@ products/daemon     composition root, verbs, CLI, packaging
 products/tui        the terminal UI over the engine
 products/agent      the agent over the engine
 products/webui      the web UI over the daemon contract
-docs/inventory      every old module and what happened to it
+docs/contracts      runtime and integration contracts
 docs/design         designs for new subsystems (the contract runner)
 docs/audit          audits of what the judgment foundation covers
 ```
@@ -71,7 +71,7 @@ upstream targets and implementation sequence are recorded in
 
 ## How each old module is handled
 
-Every module in the old repositories gets exactly one disposition, recorded in `docs/inventory/`:
+Per-module source dispositions and migration decisions are recorded in [Linear](https://linear.app/the-artificery/issue/TA-14/port-daemon-tui-agent-and-webui-with-preserved-parity). The disposition vocabulary is:
 
 | Disposition | Meaning |
 |---|---|

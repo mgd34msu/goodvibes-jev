@@ -1,3 +1,4 @@
+import { postalConfigKey } from './postal-address.js';
 /**
  * daemon-config-route.ts, where a config write goes, and what happens when the
  * owning runtime cannot be reached.
@@ -454,7 +455,7 @@ function writeLocally(
     scope: route.scope,
     appliedBy: 'local',
     persistedTo,
-    value: local.get(key),
+    value: postalConfigKey(key) ? value : local.get(key),
     reason: route.reason,
   };
 }

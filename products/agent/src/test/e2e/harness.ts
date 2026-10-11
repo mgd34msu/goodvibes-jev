@@ -2,10 +2,9 @@
  * End-to-end harness: the BUILT goodvibes-agent binary in a real terminal.
  *
  * Every test here drives the compiled artifact (`bun run build:binary`, or
- * GOODVIBES_E2E_BINARY), never the source. The terminal is a tmux server this
- * harness owns (a private `-L` socket per session, killed on stop), which gives
- * a real pty, keystrokes, the rendered screen (capture-pane) and the raw byte
- * stream the program wrote (pipe-pane).
+ * GOODVIBES_E2E_BINARY), never the source. The harness owns a Bun.Terminal
+ * PTY and its child, including awaited shutdown. Agent's existing TerminalFrame
+ * projects the current rendered screen separately from the raw byte stream.
  *
  * Isolation: a fresh temp home per session (HOME points at it), a scratch git
  * workspace, a PATH with nothing extra, launch self-update off, and the daemon
@@ -16,6 +15,7 @@
 import { AgentConfigManager } from '../../config/host-settings.ts';
 import { seedProviderMetadataCacheFixture, seedProviderModelListCacheFixture } from '../helpers/provider-metadata-cache-fixture.ts';
 import { startE2EJudgments } from './judgment-fixture.ts';
+import { TerminalFrame } from './terminal-frame.ts';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -57,10 +57,6 @@ export function binaryVersion(): string {
   const match = /goodvibes-agent\s+(\S+)/.exec(out.stdout);
   if (!match) throw new Error(`E2E: --version printed no version: ${out.stdout}${out.stderr}`);
   return match[1]!;
-}
-
-function tmuxAvailable(): boolean {
-  return spawnSync('tmux', ['-V'], { encoding: 'utf8' }).status === 0;
 }
 
 /** A TCP port nothing is listening on right now. */
@@ -326,61 +322,67 @@ export interface AgentSession {
   type(text: string): void;
   key(name: string): void;
   waitForScreen(what: string, predicate: (screen: string) => boolean, timeoutMs?: number): Promise<string>;
-  /** True while the binary is still running in the pane. */
+  /** Resize the real PTY and the current-screen projection together. */
+  resize(cols: number, rows: number): void;
+  /** True while the owned binary is still running. */
   alive(): boolean;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
-/** Launch the built binary in a private tmux server at `cols` x `rows`. */
+/** Launch the built binary in an owned real PTY at `cols` x `rows`. */
 export function launchAgent(e2eHome: E2EHome, options: { cols?: number; rows?: number; env?: Record<string, string> } = {}): AgentSession {
-  if (!tmuxAvailable()) throw new Error('E2E: tmux is required (apt-get install tmux)');
   const binary = resolveBinary();
   mkdirSync(join(e2eHome.root, 'tmp'), { recursive: true });
-  const socket = `gv-agent-e2e-${process.pid}-${++sessionCounter}`;
-  const rawPath = join(e2eHome.root, `${socket}.raw`);
-  const stderrPath = join(e2eHome.root, `${socket}.stderr`);
-  writeFileSync(rawPath, '');
-  const env = isolatedEnv(e2eHome, options.env);
-  const envArgs = Object.entries(env).map(([k, v]) => `${k}=${v}`);
-  const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, ...args], { encoding: 'utf8', env: { PATH: process.env['PATH'] ?? '/usr/bin:/bin', HOME: e2eHome.home, TMUX_TMPDIR: '/tmp' } });
-
-  // `env -i` so nothing from this process (NODE_ENV=test, a desktop bus, real
-  // credentials) reaches the binary; `exec` so the pane's process IS the binary.
-  const command = ['exec', 'env', '-i', ...envArgs.map(shellQuote), shellQuote(binary), `2>${shellQuote(stderrPath)}`].join(' ');
-  const started = tmux('new-session', '-d', '-s', 'main', '-x', String(options.cols ?? 100), '-y', String(options.rows ?? 30), '-c', e2eHome.workspace, command);
-  if (started.status !== 0) throw new Error(`E2E: tmux new-session failed: ${started.stderr}`);
-  tmux('set-option', '-t', 'main', 'remain-on-exit', 'on');
-  tmux('pipe-pane', '-o', '-t', 'main', `cat >> ${shellQuote(rawPath)}`);
-
+  const stderrPath = join(e2eHome.root, `agent-${++sessionCounter}.stderr`);
+  const frame = new TerminalFrame(options.cols ?? 100, options.rows ?? 30);
+  const decoder = new TextDecoder();
+  let output = '';
+  let stopped: Promise<void> | undefined;
+  // The shell immediately execs the actual artifact. Redirect stderr separately
+  // so the existing stderr assertions retain their meaning with a PTY.
+  const child = Bun.spawn(['/bin/sh', '-c', 'exec "$1" 2>"$2"', 'agent-e2e', binary, stderrPath], {
+    cwd: e2eHome.workspace,
+    env: isolatedEnv(e2eHome, options.env),
+    terminal: { cols: options.cols ?? 100, rows: options.rows ?? 30,
+      data(terminal, bytes) {
+        const chunk = decoder.decode(bytes, { stream: true });
+        output += chunk;
+        frame.write(chunk, reply => terminal.write(reply));
+      },
+    },
+  });
   const readStderr = (): string => (existsSync(stderrPath) ? readFileSync(stderrPath, 'utf8') : '');
+  const keys: Record<string, string> = { Enter: '\r', Up: '\x1b[A', Down: '\x1b[B', Escape: '\x1b', 'C-u': '\x15', 'C-c': '\x03' };
   const session: AgentSession = {
-    screen: () => tmux('capture-pane', '-p', '-t', 'main').stdout,
-    rawOutput: () => readFileSync(rawPath, 'utf8'),
+    screen: () => frame.text(),
+    rawOutput: () => output,
     stderr: readStderr,
-    type: (text) => { tmux('send-keys', '-t', 'main', '-l', '--', text); },
-    key: (name) => { tmux('send-keys', '-t', 'main', name); },
+    type: text => { child.terminal!.write(text); },
+    key: name => {
+      const bytes = keys[name];
+      if (bytes === undefined) throw new Error(`E2E: unsupported terminal key ${name}`);
+      child.terminal!.write(bytes);
+    },
+    resize: (cols, rows) => { frame.resize(cols, rows); child.terminal!.resize(cols, rows); },
     waitForScreen: async (what, predicate, timeoutMs = 30_000) => {
       try {
         return await waitFor(what, () => {
           const screen = session.screen();
           return predicate(screen) ? screen : false;
-        }, timeoutMs);
+        }, timeoutMs, 30);
       } catch (error) {
         throw new Error(`${String(error)}\n--- screen ---\n${session.screen()}\n--- stderr ---\n${readStderr().slice(-2000)}`);
       }
     },
-    alive: () => tmux('display-message', '-p', '-t', 'main', '#{pane_dead}').stdout.trim() === '0',
-    stop: () => {
-      tmux('kill-server');
-      // kill-server can leave the socket file behind; it is this session's own.
-      rmSync(join('/tmp', `tmux-${process.getuid?.() ?? 0}`, socket), { force: true });
-    },
+    alive: () => child.exitCode === null && child.signalCode === null,
+    stop: () => stopped ??= (async () => {
+      try {
+        if (session.alive()) child.kill('SIGKILL');
+        await child.exited;
+      } finally { child.terminal?.close(); }
+    })(),
   };
   return session;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The input area is on screen: its placeholder text. */
@@ -401,6 +403,15 @@ export async function answerWorkspaceQuestion(session: AgentSession, answer: 'de
   if (answer === 'register') session.key('Up');
   session.key('Enter');
   await session.waitForScreen('the question answered', (s) => !screenText(s).includes(WORKSPACE_QUESTION) && inputAreaVisible(s), 15_000);
+  // First paint can precede stdin subscription. Prove the real composer echoes
+  // unsent input before giving it the owner's first prompt, then clear it.
+  await session.waitForScreen('live composer input', s => {
+    if (s.includes('┃  x')) return true;
+    session.key('C-u'); session.type('x');
+    return false;
+  }, 10_000);
+  session.key('C-u');
+  await session.waitForScreen('empty live composer', s => inputAreaVisible(s) && !s.includes('┃  x') && !s.includes(WORKSPACE_QUESTION), 10_000);
   return asked;
 }
 

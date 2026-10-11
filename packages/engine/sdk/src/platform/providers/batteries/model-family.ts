@@ -7,8 +7,8 @@
  * which filed any model with "command" in its name under Cohere and a
  * gpt-oss derivative served under another name under Other.
  *
- * One choice per model, read once per exact model evidence and installed port for the life of the
- * process; state: `{ id, displayName, provider }`.
+ * One choice per model, read once per exact model evidence and installed source
+ * incarnation; state: `{ id, displayName, provider }`.
  *
  * Band: low stakes. The family only files the model under a filter in the
  * picker; nothing is selected or routed on it.

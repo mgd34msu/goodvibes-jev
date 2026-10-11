@@ -1,7 +1,10 @@
 import type { Frame, FrameLocator, Locator, Page } from 'playwright-core';
+import { types as nodeTypes } from 'node:util';
+import { captureOwnedJson } from '../gate/judgment-input.js';
 import { mapLimit } from '@goodvibes-jev/judgment';
 import { isCardFieldDescriptor } from '../security/card-fields.js';
 
+import { BrowserControlIdentityWork } from './browser-control-identity.js';
 import type { BrowserElementRef, BrowserSnapshot, CardFieldGuard } from './browser-types.js';
 
 /** How many card-field readings a snapshot runs at once. */
@@ -20,6 +23,7 @@ const MAX_ELEMENTS = 400;
 const MAX_NAME_LENGTH = 160;
 
 interface RawElement {
+  readonly documentUrl?: string;
   readonly tag: string;
   readonly role: string;
   readonly name: string;
@@ -224,9 +228,10 @@ function collectElements(limit: number): RawElement[] {
     const isFormControl = tag === 'input' || tag === 'textarea' || tag === 'select';
     const type = (element.getAttribute('type') ?? '').toLowerCase();
     results.push({
+      documentUrl: element.ownerDocument.URL,
       tag,
       role: roleFor(element),
-      name: nameFor(element).slice(0, 160),
+      name: nameFor(element),
       selector: selectorFor(element),
       value: isFormControl && type !== 'password' ? String(input.value ?? '') : null,
       disabled: isFormControl ? Boolean(input.disabled) : false,
@@ -240,7 +245,7 @@ function collectElements(limit: number): RawElement[] {
         id: element.getAttribute('id') ?? '',
         placeholder: element.getAttribute('placeholder') ?? '',
         ariaLabel: element.getAttribute('aria-label') ?? '',
-        label: isFormControl ? (input.labels?.[0]?.textContent ?? '').slice(0, 160) : '',
+        label: isFormControl ? (input.labels?.[0]?.textContent ?? '') : '',
       },
     });
   }
@@ -248,27 +253,52 @@ function collectElements(limit: number): RawElement[] {
 }
 
 /** Reads back one element's identity so a ref can be re-verified before use. */
-function describeElement(element: Element): { readonly tag: string; readonly name: string } {
-  const labelled = element.getAttribute('aria-label')
-    ?? element.getAttribute('alt')
-    ?? element.getAttribute('placeholder')
-    ?? element.getAttribute('title');
-  if (element.tagName === 'INPUT') {
+function describeElement(element: Element) {
+  const tag = element.tagName.toLowerCase();
+  const type = (element.getAttribute('type') ?? '').toLowerCase();
+  const submits = tag === 'input' ? type === 'submit' || type === 'image'
+    : tag === 'button' && (type === 'submit' || (type === '' && element.closest('form') !== null));
+  const labelled = element.getAttribute('aria-label') ?? element.getAttribute('alt')
+    ?? element.getAttribute('placeholder') ?? element.getAttribute('title');
+  const labelledBy = element.getAttribute('aria-labelledby');
+  const labelText = (labelledBy ? element.ownerDocument.getElementById(labelledBy)?.textContent?.trim() : '') ?? '';
+  let name = labelled?.trim() || labelText || '';
+  if (!name && tag === 'input') {
     const input = element as HTMLInputElement;
-    const type = (input.getAttribute('type') ?? 'text').toLowerCase();
-    const buttonName = type === 'submit' || type === 'button' || type === 'reset' ? input.value : '';
-    return {
-      tag: element.tagName.toLowerCase(),
-      name: (labelled ?? buttonName ?? input.labels?.[0]?.textContent ?? input.getAttribute('name') ?? '').trim().slice(0, 160),
-    };
-  }
-  if (labelled && labelled.trim()) {
-    return { tag: element.tagName.toLowerCase(), name: labelled.trim().slice(0, 160) };
-  }
-  const text = (element as HTMLElement).innerText ?? element.textContent ?? '';
-  return { tag: element.tagName.toLowerCase(), name: text.replace(/\s+/g, ' ').trim().slice(0, 160) };
+    name = type === 'submit' || type === 'button' || type === 'reset' ? input.value
+      : input.labels?.[0]?.textContent?.trim() || input.getAttribute('name') || '';
+  } else if (!name) name = ((element as HTMLElement).innerText ?? element.textContent ?? '').replace(/\s+/g, ' ').trim();
+  return { tag, name, submits, type, documentUrl: element.ownerDocument.URL,
+    role: element.getAttribute('role'),
+    disabled: element.hasAttribute('disabled'),
+    // Complete identity attributes, never the control's entered value.
+    attributes: { name: element.getAttribute('name'), id: element.id, autocomplete: element.getAttribute('autocomplete'),
+      ariaLabel: element.getAttribute('aria-label'), labelledBy, labelText, placeholder: element.getAttribute('placeholder'), title: element.getAttribute('title') },
+  };
 }
 
+/** Missing descriptor fields cannot silently bypass submit or credential guards. */
+function admitLiveDescriptor(value: unknown): ReturnType<typeof describeElement> {
+  const descriptor = captureOwnedJson(value, nodeTypes.isProxy) as ReturnType<typeof describeElement> | null;
+  if (!descriptor || typeof descriptor !== 'object'
+    || Object.keys(descriptor).length !== 8 || Object.keys(descriptor).some(key => !['tag', 'name', 'submits', 'type', 'documentUrl', 'role', 'disabled', 'attributes'].includes(key))
+    || ['tag', 'name', 'type', 'documentUrl'].some(key => typeof (descriptor as unknown as Record<string, unknown>)[key] !== 'string')
+    || typeof descriptor.submits !== 'boolean' || typeof descriptor.disabled !== 'boolean'
+    || (descriptor.role !== null && typeof descriptor.role !== 'string')
+    || !descriptor.attributes || typeof descriptor.attributes !== 'object'
+    || Object.keys(descriptor.attributes).length !== 8 || Object.keys(descriptor.attributes).some(key => !['name', 'id', 'autocomplete', 'ariaLabel', 'labelledBy', 'labelText', 'placeholder', 'title'].includes(key))
+    || typeof descriptor.attributes.id !== 'string' || typeof descriptor.attributes.labelText !== 'string'
+    || ['name', 'autocomplete', 'ariaLabel', 'labelledBy', 'placeholder', 'title'].some(key => {
+      const field = (descriptor.attributes as unknown as Record<string, unknown>)[key];
+      return field !== null && typeof field !== 'string';
+    })) throw new StaleElementError('The current control descriptor is incomplete or malformed.', 'Call action:"snapshot" again.');
+  return descriptor;
+}
+
+// Private complete metadata is retained without changing the public snapshot or
+// retaining any entered field values. A copied snapshot cannot acquire this data.
+const assertIdentityReadingAllowed = new WeakMap<BrowserElementRef, () => void>();
+const identityMetadata = new WeakMap<BrowserElementRef, { readonly name: string; readonly documentUrl?: string | undefined; readonly control?: RawElement['control'] | undefined }>();
 let snapshotCounter = 0;
 
 export class StaleElementError extends Error {
@@ -353,20 +383,32 @@ async function frameChainFor(frame: Frame): Promise<readonly string[] | null> {
  * a page that misnames its fields, and the value matching only exists when a
  * guard is installed, which is why the fill refuses to run without one.
  */
+/** Internal full-control admission, before any truncation or model reading. */
+export interface BrowserControlAdmission {
+  /** Re-read only if this exact offered snapshot still owns the page. */
+  readonly verifySnapshotId?: string | undefined;
+  readonly admit: (elements: readonly { readonly ref: string; readonly role: string; readonly name: string; readonly tag: string; readonly disabled: boolean; readonly control?: RawElement['control'] }[]) => void;
+}
+
 export async function takeSnapshot(
   page: Page,
   sessionId: string,
   pageId: string,
-  options: { readonly limit?: number | undefined; readonly guard?: CardFieldGuard | undefined } = {},
+  options: { readonly limit?: number | undefined; readonly guard?: CardFieldGuard | undefined; readonly controls?: BrowserControlAdmission | undefined } = {},
 ): Promise<BrowserSnapshot> {
   const limit = Math.max(1, Math.min(MAX_ELEMENTS, options.limit ?? MAX_ELEMENTS));
   const raw: (RawElement & { readonly frameChain: readonly string[] })[] = [];
   for (const frame of page.frames()) {
-    if (raw.length >= limit) break;
+    if (!options.controls && raw.length >= limit) break;
     const chain = frame === page.mainFrame() ? [] : await frameChainFor(frame);
-    if (chain === null) continue;
-    const collected = await frame.evaluate(collectElements, limit - raw.length).catch(() => [] as RawElement[]);
+    if (chain === null) { if (options.controls) throw new Error('Complete browser controls unavailable'); continue; }
+    const collected = captureOwnedJson(await frame.evaluate(collectElements, options.controls ? Number.MAX_SAFE_INTEGER : limit - raw.length)
+      .catch(error => { if (options.controls) throw error; return [] as RawElement[]; }), nodeTypes.isProxy) as RawElement[];
     raw.push(...collected.map((element) => ({ ...element, frameChain: chain })));
+  }
+  if (options.controls) {
+    options.controls.admit(raw.map((element, index) => ({ ref: `e${String(index + 1)}`, role: element.role, name: element.name, tag: element.tag, disabled: element.disabled, ...(element.control ? { control: element.control } : {}) })));
+    if (raw.length > MAX_ELEMENTS) throw new Error('The complete browser control snapshot exceeds its limit.');
   }
   snapshotCounter += 1;
   const scrub = (text: string): string =>
@@ -398,13 +440,13 @@ export async function takeSnapshot(
     // out EVERY snapshot, not just the payment case it was added for.
     const cardField = cardFields[index] === true;
     const value = cardField || element.value === null ? undefined : scrub(element.value);
-    return {
+    const recorded: BrowserElementRef = {
       ref: `e${String(index + 1)}`,
       role: element.role,
       // The name is scrubbed too: a page is free to copy what was typed into a
       // label, an aria-label or a placeholder, and every one of those becomes
       // this field.
-      name: scrub(element.name).slice(0, MAX_NAME_LENGTH),
+      name: options.controls ? scrub(element.name) : scrub(element.name).slice(0, MAX_NAME_LENGTH),
       tag: element.tag,
       selector: element.selector,
       value,
@@ -415,6 +457,15 @@ export async function takeSnapshot(
       frameChain: element.frameChain,
       ...(cardField ? { cardField: true } : {}),
     };
+    if (options.guard) {
+      const guard = options.guard;
+      assertIdentityReadingAllowed.set(recorded, () => {
+        if (guard.hasLiveMaterial(sessionId, pageId)) throw new StaleElementError('Cannot read changed control identity while payment material is live.', 'Use an unchanged control or finish the authorized payment flow first.');
+      });
+    }
+    identityMetadata.set(recorded, captureOwnedJson({ name: scrub(element.name), documentUrl: element.documentUrl,
+      ...(element.control ? { control: Object.fromEntries((['type', 'autocomplete', 'name', 'id', 'placeholder', 'ariaLabel', 'label'] as const).map(key => [key, scrub(element.control![key])])) } : {}) }, nodeTypes.isProxy) as NonNullable<ReturnType<typeof identityMetadata.get>>);
+    return recorded;
   });
   return {
     sessionId,
@@ -423,7 +474,7 @@ export async function takeSnapshot(
     title: await page.title().catch(() => ''),
     snapshotId: `s${String(snapshotCounter)}`,
     elements,
-    truncated: raw.length >= limit,
+    truncated: !options.controls && raw.length >= limit,
   };
 }
 
@@ -434,13 +485,6 @@ function frameScope(page: Page, frameChain: readonly string[]): Page | FrameLoca
     scope = scope.frameLocator(selector);
   }
   return scope;
-}
-
-function namesAgree(expected: string, actual: string): boolean {
-  const left = expected.trim().toLowerCase();
-  const right = actual.trim().toLowerCase();
-  if (!left || !right) return true;
-  return left === right || left.includes(right) || right.includes(left);
 }
 
 /**
@@ -454,7 +498,11 @@ export async function resolveRef(
   page: Page,
   snapshot: BrowserSnapshot | null,
   ref: string,
-): Promise<{ readonly locator: Locator; readonly element: BrowserElementRef }> {
+  work = new BrowserControlIdentityWork(),
+  assertSnapshotCurrent: () => void = () => {},
+  assertReadingAllowed: () => void = () => {},
+): Promise<{ readonly locator: Locator; readonly element: BrowserElementRef; readonly revalidate: () => Promise<void>; readonly assertCurrent: () => void }> {
+  work.assertCurrent();
   if (!snapshot) {
     throw new StaleElementError(
       `No snapshot has been taken for this page, so ref ${ref} means nothing yet.`,
@@ -474,21 +522,63 @@ export async function resolveRef(
       'Call action:"snapshot" for the current page, then act on a ref from that snapshot.',
     );
   }
-  const scope = frameScope(page, element.frameChain);
+  const recorded = captureOwnedJson(element, nodeTypes.isProxy) as BrowserElementRef;
+  const metadata = identityMetadata.get(element);
+  const recordedJson = JSON.stringify(recorded);
+  const url = snapshot.url;
+  const snapshotIdentity = JSON.stringify([snapshot.sessionId, snapshot.pageId, snapshot.snapshotId, snapshot.url]);
+  const current = () => {
+    work.assertCurrent(); assertSnapshotCurrent();
+    if (page.url() !== url || JSON.stringify([snapshot.sessionId, snapshot.pageId, snapshot.snapshotId, snapshot.url]) !== snapshotIdentity || snapshot.elements.find(candidate => candidate.ref === ref) !== element
+      || JSON.stringify(captureOwnedJson(element, nodeTypes.isProxy)) !== recordedJson) {
+      throw new StaleElementError('The selected browser snapshot is no longer current.', 'Call action:"snapshot" again.');
+    }
+  };
+  current();
+  const scope = frameScope(page, recorded.frameChain);
   const locator = scope.locator(element.selector).first();
-  const count = await scope.locator(element.selector).count();
-  if (count === 0) {
+  const count = await work.wait(() => scope.locator(recorded.selector).count());
+  current();
+  if (count !== 1) {
     throw new StaleElementError(
       `Ref ${ref} (${element.role} "${element.name}") is no longer present on ${page.url()}.`,
       'Call action:"snapshot" to get current refs, then retry.',
     );
   }
-  const actual = await locator.evaluate(describeElement);
-  if (actual.tag !== element.tag || !namesAgree(element.name, actual.name)) {
+  const actual = admitLiveDescriptor(await work.wait(() => locator.evaluate(describeElement)));
+  current();
+  let agrees = false;
+  if (actual.tag === recorded.tag && actual.submits === recorded.submits
+    && (actual.role === null || actual.role === recorded.role)
+    && actual.type !== 'password' && actual.disabled !== true
+    && (metadata?.documentUrl === undefined || actual.documentUrl === metadata.documentUrl)) {
+    const left = (metadata?.name ?? recorded.name).trim().toLowerCase(), right = actual.name.trim().toLowerCase();
+    agrees = left.length > 0 && right.length > 0 && left === right;
+    if (!agrees) {
+      try {
+        assertIdentityReadingAllowed.get(element)?.(); assertReadingAllowed(); current();
+        agrees = await work.sameControl({ recorded: { ref: recorded.ref, tag: recorded.tag, role: recorded.role, name: recorded.name, selector: recorded.selector, frameChain: recorded.frameChain, submits: recorded.submits, disabled: recorded.disabled, cardField: recorded.cardField, ...(metadata ? { metadata } : {}) }, current: actual });
+      }
+      catch { current(); agrees = false; }
+      current();
+    }
+  }
+  if (!agrees) {
     throw new StaleElementError(
-      `Ref ${ref} now points at a different element (snapshot recorded ${element.tag} "${element.name}", the page currently has ${actual.tag} "${actual.name}").`,
+      `Ref ${ref} now points at a different element, or its identity could not be established.`,
       'Call action:"snapshot" to get current refs, then retry.',
     );
   }
-  return { locator, element };
+  const approved = JSON.stringify(actual);
+  const revalidate = async () => {
+    current();
+    const count = await work.wait(() => scope.locator(recorded.selector).count());
+    current();
+    if (count !== 1) throw new StaleElementError('The selected control is no longer unique.', 'Call action:"snapshot" again.');
+    const latest = admitLiveDescriptor(await work.wait(() => locator.evaluate(describeElement)));
+    current();
+    if (JSON.stringify(latest) !== approved) throw new StaleElementError('The selected control changed after its identity reading.', 'Call action:"snapshot" again.');
+  };
+  await revalidate(); current();
+  return { locator, element: recorded, revalidate, assertCurrent: current };
 }

@@ -24,6 +24,8 @@ export async function readEmailMessage(
     socket,
     username: config.username,
     password,
+    signal: sourceRead?.signal,
+    assertCurrent: () => sourceRead?.assertCurrent(),
     ...(config.mailbox.length > 0 ? { mailbox: config.mailbox } : {}),
   });
   try {

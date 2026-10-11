@@ -1,8 +1,9 @@
 /** Pinned built-in membership with explicit account/authority admission. */
 import type { OwnedInboxSource, ProviderStatus } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { createMultiOwnerDaemonInboxFactory, type DaemonInboxSourceFactory } from './multiowner-inbox-composition.js';
-import { createSlackDaemonInboxSourceFactory, type SlackDaemonInboxOptions } from './slack-inbox-composition.js';
-import { createEmailDaemonInboxSourceFactory, type EmailDaemonInboxOptions } from './email-inbox-composition.js';
+import { createSlackDaemonInboxSourceFactory, type SlackDaemonInboxOptions, type SlackDaemonInboxSourceFactories } from './slack-inbox-composition.js';
+import { createEmailDaemonInboxSourceFactory, type EmailDaemonInboxOptions, type EmailDaemonInboxSourceFactories } from './email-inbox-composition.js';
+import { createDiscordDaemonInboxSourceFactory, type DiscordDaemonInboxOptions, type DiscordDaemonInboxSourceFactories } from './discord-inbox-composition.js';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
 /** Original254699bf inbox/index.ts registers precisely these three providers. */
@@ -11,6 +12,7 @@ type Provider = typeof BUILTIN_DAEMON_INBOX_PROVIDERS[number];
 export interface ProductionDaemonInboxOptions {
   /** Established trusted-local services and expected account, never message/config-derived authority. */
   readonly slack?: SlackDaemonInboxOptions;
+  readonly discord?: DiscordDaemonInboxOptions;
   readonly email?: EmailDaemonInboxOptions;
 }
 
@@ -100,11 +102,13 @@ function unconfiguredSource(provider: Provider): DaemonInboxSourceFactory {
   };
 }
 
-/** One canonical registration; no inferred grants, unsupported Discord catalog or missing-provider omission. */
-export function createProductionDaemonInboxFactory(options: ProductionDaemonInboxOptions = {}): DaemonInboxFactory {
+/** One canonical registration; no inferred grants, historical-DM discovery claims or missing-provider omission. */
+export function createProductionDaemonInboxFactory(options: ProductionDaemonInboxOptions = {},
+  factories: { readonly slack?: SlackDaemonInboxSourceFactories; readonly email?: EmailDaemonInboxSourceFactories; readonly discord?: DiscordDaemonInboxSourceFactories } = {},
+): DaemonInboxFactory {
   return createMultiOwnerDaemonInboxFactory([
-    options.slack ? createSlackDaemonInboxSourceFactory(options.slack) : unconfiguredSource('slack'),
-    unconfiguredSource('discord'),
-    options.email ? createEmailDaemonInboxSourceFactory(options.email) : unconfiguredSource('email'),
+    options.slack ? createSlackDaemonInboxSourceFactory(options.slack, factories.slack) : unconfiguredSource('slack'),
+    options.discord ? createDiscordDaemonInboxSourceFactory(options.discord, factories.discord) : unconfiguredSource('discord'),
+    options.email ? createEmailDaemonInboxSourceFactory(options.email, factories.email) : unconfiguredSource('email'),
   ]);
 }

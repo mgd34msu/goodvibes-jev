@@ -33,6 +33,7 @@ export class SQLiteStorePersistence {
   readonly path: string;
   private baseline: string | null = null;
   private established = false;
+  private readonly absentObservation = `absent:${randomUUID()}`;
 
   constructor(path: string, private readonly io: SQLitePublicationIO = nativePublicationIO) {
     const absolute = resolve(path);
@@ -54,6 +55,24 @@ export class SQLiteStorePersistence {
       return data;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !this.established) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Whole-image publication identity, including identical-byte replacements.
+   * A fresh store intentionally has no file until its first save. The supported
+   * coordinated protocol never deletes a published canonical database: once
+   * observed, absence is an error, not a resurrection of the initial lifetime.
+   */
+  observationIdentity(): string {
+    try {
+      const info = statSync(this.path, { bigint: true });
+      if (!info.isFile() || info.nlink > 1n) throw new Error('SQLiteStore: unsupported coordinated file identity');
+      this.established = true;
+      return [info.dev, info.ino, info.size, info.ctimeNs, info.mtimeNs, info.birthtimeNs].join(':');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !this.established) return this.absentObservation;
       throw error;
     }
   }

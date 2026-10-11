@@ -7,7 +7,7 @@
 export { evaluatePrefixRule } from './prefix.js';
 export type { PrefixRuleResult } from './prefix.js';
 
-export { evaluateArgShapeRule } from './arg-shape.js';
+export { evaluateArgShapeRule, evaluateArgShapeRuleAsync } from './arg-shape.js';
 export type { ArgShapeRuleResult } from './arg-shape.js';
 
 export { evaluatePathScopeRule } from './path-scope.js';

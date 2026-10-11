@@ -14,7 +14,13 @@
  *  - a disabled feature never opens a device at all, no spawn, no permission
  *    prompt, whether it is off globally or off for this surface.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+const previousPorts: Array<JudgmentPort | undefined> = [];
+function installRecorderPort(port: JudgmentPort | undefined): void { previousPorts.push(installJudgmentPort(port)); }
+afterEach(() => { while (previousPorts.length) installJudgmentPort(previousPorts.pop()); });
 import fixture from './fixtures/wake-word-front-end.json' with { type: 'json' };
 import { WakeWordEngine } from '../sdk/src/platform/voice/wake/engine.js';
 import { WakeListener } from '../sdk/src/platform/voice/wake/listener.js';
@@ -421,6 +427,7 @@ describe('a stream that dies is a restart decision, not a silent stop', () => {
   });
 
   test('a machine with no capture device pauses and re-probes; it never crash-latches', async () => {
+    installRecorderPort(fakePort((_name, question) => choiceAnswer(question, 'device-missing', 0.99)).port);
     // The shipped failure: pipewire answers "no target node available" because
     // the machine has no microphone at all. That is an environment state, not
     // a detector crash: announced once, retried gently, never latched.
@@ -566,4 +573,70 @@ describe('a capture writes down what its endpointing decided from', () => {
     expect(ends).toHaveLength(1);
     expect(ends[0]?.detail).toContain('stopped on stream-ended');
   });
+});
+
+
+describe('recorder reading lifetime at the wake consumer', () => {
+  test('unavailable diagnostic holds without device-wait or crash-budget consumption', async () => {
+    installRecorderPort(undefined);
+    const h = harness({ 'voice.wake.enabled': true });
+    await h.listener.start();
+    h.child.emitStderr('no target node available'); h.child.close(1); await settle();
+    expect(h.listener.state().phase).toBe('idle');
+    expect(h.listener.state().restarts).toBe(0);
+    expect(h.failures).toHaveLength(1);
+    expect(h.failures[0]?.reason).toBe('failure-reading-unavailable');
+    expect(h.failures[0]?.restarting).toBe(false);
+    expect(h.timers.some(timer => timer.ms === 60_000)).toBe(false);
+    await h.listener.stop();
+  });
+  test('stop during a close reading cannot move a replacement listener into device wait', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'device-missing', 0.99));
+    let calls = 0;
+    installRecorderPort({ ...fixture.port, async ask(request) { ++calls; await blocked; return fixture.port.ask(request); } });
+    const children = [fakeProcess(), fakeProcess()];
+    const h = harness({ 'voice.wake.enabled': true }, { children });
+    await h.listener.start();
+    children[0]!.emitStderr('no target node available'); children[0]!.close(1); await settle();
+    expect(calls).toBe(1);
+    await h.listener.stop(); await h.listener.start();
+    release(); await settle();
+    expect(h.listener.state().phase).toBe('listening');
+    expect(h.failures).toHaveLength(0);
+    expect(h.timers.some(timer => timer.ms === 60_000)).toBe(false);
+    const stopping = h.listener.stop(); children[1]!.close(0); await stopping;
+  });
+});
+
+
+test('authority retirement after the reader returns cannot publish stale device wait through WakeListener', async () => {
+  const fixture = fakePort((_name, question) => choiceAnswer(question, 'device-missing', 0.99));
+  let actions = 0;
+  let retired = false;
+  installRecorderPort({ ...fixture.port,
+    async ask(request) { return { ...await fixture.port.ask(request), decisionId: 'recorder-return-edge' }; },
+    recorder: {
+      recordReadings() {},
+      recordAction() {
+        ++actions;
+        // The reader and its scoped recorder perform their final synchronous
+        // checks before this microtask. Its caller continuation runs after it.
+        queueMicrotask(() => { retired = true; installRecorderPort(undefined); });
+      },
+    },
+  });
+  const h = harness({ 'voice.wake.enabled': true });
+  await h.listener.start();
+  h.child.emitStderr('The selected microphone is absent.'); h.child.close(1);
+  await settle();
+  expect(actions).toBe(1); expect(retired).toBe(true);
+  expect(h.failures).toHaveLength(1);
+  expect(h.failures[0]?.reason).toBe('failure-reading-unavailable');
+  expect(h.failures[0]?.restarting).toBe(false);
+  expect(h.listener.state().phase).toBe('idle');
+  expect(h.listener.state().restarts).toBe(0);
+  expect(h.timers.some(timer => timer.ms === 60_000)).toBe(false);
+  await h.listener.stop();
 });

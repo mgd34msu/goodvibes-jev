@@ -17,6 +17,7 @@ let mailProbe: MailProbeImpl = () => Promise.resolve({ messages: [], total: 0 })
 let calendarProbe: CalendarProbeImpl = () => Promise.resolve({ events: [] });
 
 mock.module('../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No semantic reading in this display fixture.')),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   sdk: {

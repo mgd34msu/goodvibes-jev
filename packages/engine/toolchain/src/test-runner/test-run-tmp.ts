@@ -16,14 +16,43 @@
  * an age-based sweep for whatever a signal-killed run could not remove.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 export const TEST_TMP_ROOT = tmpdir();
 export const RUN_TMP_PREFIX = 'goodvibes-sdk-testrun-';
+export const RETAIN_RUN_MARKER = '.keep-proof-output';
+const activeRoots = new Map<string, { readonly dev: number; readonly ino: number; retained: boolean }>();
+
+/** Retain only a root created by this process; propagate evidence to known run ancestors. */
+export function retainRunTmpDir(root: string, reason: string): void {
+  const owned = activeRoots.get(root);
+  if (!owned) throw new Error('Cannot retain an unowned test root');
+  // In-memory retention survives even a failed evidence-marker write.
+  owned.retained = true;
+  let first = true;
+  for (let path = root; ; path = dirname(path)) {
+    if (first || basename(path).startsWith(RUN_TMP_PREFIX)) {
+      let record: { version?: number; pid?: number; dev?: number; ino?: number };
+      try { record = JSON.parse(readFileSync(join(path, '.goodvibes-test-owner.json'), 'utf8')); }
+      catch (error) { if (first) throw error; record = {}; }
+      const stat = lstatSync(path);
+      const active = activeRoots.get(path);
+      const identityMatches = !active || (active.dev === stat.dev && active.ino === stat.ino);
+      if (identityMatches && !stat.isSymbolicLink() && realpathSync(path) === path && record.version === 1 && record.dev === stat.dev && record.ino === stat.ino && Number.isSafeInteger(record.pid) && record.pid! > 0) {
+        if (active) active.retained = true;
+        writeFileSync(join(path, RETAIN_RUN_MARKER), reason + '\n');
+      } else if (first) throw new Error('Cannot mark a replaced owned test root');
+    }
+    first = false;
+    if (dirname(path) === path) break;
+  }
+}
+
 /**
- * Entries older than this are from a run that is long gone. Generous on
+ * Age is necessary but never sufficient: sweep admission also requires a
+ * matching ownership record and a dead owner. Unknown/live roots are retained. Generous on
  * purpose relative to how long a single `bun test` invocation of this suite
  * actually takes (well under an hour, per-test ceiling of 60s notwithstanding
  *, see scripts/test.ts's resolveTimeoutMs): several checkouts of this
@@ -59,13 +88,22 @@ export async function withRunTmpDir<T>(
   fn: (runTmpDir: string) => T | Promise<T>,
   dirName: string = makeRunTmpDirName(),
 ): Promise<T> {
-  const runTmpDir = join(tmpRoot, dirName);
-  rmSync(runTmpDir, { recursive: true, force: true });
-  mkdirSync(runTmpDir, { recursive: true });
+  if (basename(dirName) !== dirName || dirName === '.' || dirName === '..' || /[\\/\0]/.test(dirName)) throw new Error('Invalid owned test directory name');
+  const runTmpDir = join(realpathSync(tmpRoot), dirName);
+  mkdirSync(runTmpDir, { mode: 0o700 });
+  const identity = lstatSync(runTmpDir);
+  const ownership = { dev: identity.dev, ino: identity.ino, retained: false };
+  activeRoots.set(runTmpDir, ownership);
   try {
+    writeFileSync(join(runTmpDir, '.goodvibes-test-owner.json'), JSON.stringify({ version: 1, pid: process.pid, dev: identity.dev, ino: identity.ino }));
     return await fn(runTmpDir);
   } finally {
-    rmSync(runTmpDir, { recursive: true, force: true });
+    try {
+      const current = lstatSync(runTmpDir);
+      if (current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino || realpathSync(runTmpDir) !== resolve(runTmpDir)) throw new Error('Refusing cleanup of replaced owned test root');
+      if (!ownership.retained && !existsSync(join(runTmpDir, RETAIN_RUN_MARKER))) rmSync(runTmpDir, { recursive: true, force: true });
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    finally { activeRoots.delete(runTmpDir); }
   }
 }
 

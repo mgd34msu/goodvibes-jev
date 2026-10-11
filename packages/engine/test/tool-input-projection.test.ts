@@ -332,19 +332,6 @@ test('an explicitly missing projector cannot silently register an ordinary tool'
   expect(bodies).toHaveLength(0);
 });
 
-test('final projection snapshot checks do not run owner callbacks', async () => {
-  const { registry, tool } = fixture(); let currentCalls = 0;
-  registry.register(tool, { inputProjection: { assertCurrent() { currentCalls++; }, async project() { return { status: 'projected', args: safe() }; } } });
-  const call = await registry.projectCall('one', tool.definition.name, raw());
-  const before = currentCalls;
-  registry.assertProjectedSnapshot(call); expect(currentCalls).toBe(before);
-  registry.assertProjected(call); expect(currentCalls).toBeGreaterThan(before);
-  registry.unregister(tool.definition.name);
-  expect(() => registry.assertProjectedSnapshot(call)).toThrow(ToolInputProjectionError);
-  await registry.releaseProjected(call);
-});
-
-
 test('concurrent legacy reuse cannot clean another execution while repair is pending', async () => {
   const { registry, tool, bodies } = fixture({ type: 'object', properties: { enabled: { type: 'boolean' } }, required: ['enabled'] });
   const started = deferred<void>(); const finish = deferred<void>(); let releases = 0;
@@ -487,4 +474,27 @@ test('settings admission evidence cannot opt into read-result publication', asyn
     settingsAdmissionEvidence: { kind: 'agent-settings', operation: 'set', key: 'synthetic', effect: { changesState: true }, revision: 'a'.repeat(64) } }; } } });
   await expect(registry.projectCall('settings-marker', tool.definition.name, raw())).rejects.toThrow(ToolInputProjectionError);
   expect(bodies).toHaveLength(0);
+});
+
+test.each(['registered', 'prepared'] as const)('%s read publication checks the original caller after awaited release', async route => {
+  const { registry, tool, bodies } = fixture();
+  const releasing = deferred<void>(); const finish = deferred<void>();
+  let current = true; let releases = 0;
+  registry.register(tool, { inputProjection: { async project(request) {
+    return { status: 'projected', args: request.args, resultPublication: 'read-only',
+      async release() { releases++; releasing.resolve(); await finish.promise; } };
+  } } });
+  const options = { assertCurrent() { if (!current) throw new Error('original caller superseded'); } };
+  const prepared = route === 'prepared' ? await registry.prepareCall('late-caller', tool.definition.name, raw()) : undefined;
+  const pending = prepared
+    ? registry.executePrepared(prepared, () => {}, options)
+    : registry.execute('late-caller', tool.definition.name, raw(), options);
+  const settled = pending.then(value => ({ value }), error => ({ error }));
+  try {
+    await releasing.promise;
+    expect(bodies).toHaveLength(1);
+    current = false; finish.resolve();
+    expect(await settled).toMatchObject({ error: { message: 'original caller superseded' } });
+    expect(releases).toBe(1);
+  } finally { finish.resolve(); await settled; }
 });

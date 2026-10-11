@@ -280,7 +280,7 @@ async function handleNtfyAgentPayload(
     });
   }
 
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleNtfySurfaceWebhook',
     submission.session.id,

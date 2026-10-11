@@ -26,6 +26,11 @@ function memoryIo(initial: Record<string, Buffer> = {}) {
   const files = new Map<string, Buffer>(Object.entries(initial));
   const operations: string[] = [];
   const io: UpdateFileIo = {
+    writeExclusive: (path, data) => {
+      if (files.has(path)) throw new Error(`exclusive file exists: ${path}`);
+      files.set(path, data);
+    },
+    remove: (path) => { files.delete(path); },
     writeFile: (path, data) => {
       operations.push(`write ${path}`);
       files.set(path, data);

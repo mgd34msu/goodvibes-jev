@@ -37,6 +37,7 @@ export type Unregister = () => void;
 
 /** Normalized, host-facing principal/auth context derived from the invocation. */
 export interface HandlerContextEnvelope {
+  readonly signal?: AbortSignal | undefined;
   readonly principalId: string;
   readonly admin: boolean;
   readonly scopes: string[];
@@ -139,7 +140,7 @@ export function registerCatalogHandler<TBody, TResult>(
   }
 
   const wrapped = async (inv: GatewayMethodInvocation): Promise<unknown> => {
-    const context = normalizeContext(inv.context);
+    const context: HandlerContextEnvelope = { ...normalizeContext(inv.context), ...(inv.signal ? { signal: inv.signal } : {}) };
     const body = inv.body as TBody;
     if (options?.confirm) assertConfirmed(inv.body, context);
     try {

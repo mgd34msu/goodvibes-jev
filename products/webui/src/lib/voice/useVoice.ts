@@ -32,6 +32,8 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/voice/capture';
 import { sdk } from '../goodvibes';
 import { asRecord } from '../object';
+import { readSpeechSeams, type SpeechSource } from './speech-seams';
+import { getClientLifetime, isClientLifetimeCurrent, subscribeClientLifetime } from '../client-lifetime';
 import { coalesceForSpeech } from './request-policy';
 import { ttsEngine, canPlayAudio, type TtsPlaybackState } from './tts-player';
 import {
@@ -89,7 +91,13 @@ export interface UseTtsResult {
   readonly stop: () => void;
 }
 
-export function useTts(): UseTtsResult {
+export function useTts(source?: SpeechSource): UseTtsResult {
+  const owner = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const cancel = () => owner.current?.abort();
+    const unsubscribe = subscribeClientLifetime(cancel);
+    return () => { cancel(); unsubscribe(); };
+  }, [source?.sessionId, source?.messageId, source?.content]);
   const { availability } = useVoiceStatus();
   const { config } = useSharedVoiceConfig();
 
@@ -121,10 +129,18 @@ export function useTts(): UseTtsResult {
 
   const speak = useCallback(
     (id: string, text: string) => {
-      const segments = coalesceForSpeech(text);
-      void ttsEngine.speak({ id, segments, synth });
+      owner.current?.abort(); const controller = new AbortController(); owner.current = controller;
+      const lifetime = getClientLifetime();
+      const ownedSynth = (segment: string, signal: AbortSignal) => {
+        if (controller.signal.aborted || !isClientLifetimeCurrent(lifetime)) return Promise.reject(new Error('Speech owner is no longer current.'));
+        return synth(segment, signal);
+      };
+      void ttsEngine.speak({ id, synth: ownedSynth, signal: controller.signal, prepareSegments: signal => coalesceForSpeech(text, 1800, async (_paragraph, start, end, currentSignal) => {
+        if (source?.content !== text) throw new Error('Canonical message unavailable.');
+        return readSpeechSeams(source, start, end, currentSignal);
+      }, signal) });
     },
-    [synth],
+    [synth, source],
   );
 
   const stop = useCallback(() => ttsEngine.stop(), []);

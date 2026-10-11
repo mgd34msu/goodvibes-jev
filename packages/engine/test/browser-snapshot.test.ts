@@ -1,3 +1,4 @@
+import { liveControlDescriptor } from './_helpers/browser-control-descriptor.js';
 import { describe, expect, test } from 'bun:test';
 import { resolveRef, SnapshotStore, StaleElementError } from '../sdk/src/platform/browser/browser-snapshot.js';
 import type { BrowserSnapshot } from '../sdk/src/platform/browser/browser-types.js';
@@ -31,7 +32,7 @@ function fakePage(options: {
   readonly actual?: { readonly tag: string; readonly name: string };
 }): Page {
   const locator = {
-    evaluate: async () => options.actual ?? { tag: 'button', name: 'Send it' },
+    evaluate: async () => liveControlDescriptor({ ...(options.actual ?? { tag: 'button', name: 'Send it' }), submits: true }, options.url),
     first: () => locator,
   } as unknown as Locator;
   return {

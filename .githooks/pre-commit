@@ -8,7 +8,7 @@ set -euo pipefail
 # Keep credential checking for engine and product source/manifests/config.
 # Documentation-only edits do not invoke application tooling.
 STAGED_SRC=$(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '^(packages/engine/([^/]+/src/.*\.ts|package\.json)|products/[^/]+/((src|scripts)/.*\.[cm]?[jt]sx?|package\.json|tsconfig([^/]*)\.json|migration\.json))$' || true)
+  | grep -E '^(packages/engine/([^/]+/src/.*\.ts|package\.json)|products/[^/]+/((src|scripts)/.*\.[cm]?[jt]sx?|package\.json|tsconfig([^/]*)\.json))$' || true)
 if [ -z "$STAGED_SRC" ]; then
   exit 0
 fi

@@ -15,7 +15,7 @@ import {
 } from '../runtime/emitters/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { finalizeKnowledgeIngestedSource } from './ingest-compile.js';
-import type { KnowledgeIngestContext } from './ingest-context.js';
+import type { KnowledgeIngestContext, KnowledgeIngestOwnership } from './ingest-context.js';
 import {
   canonicalizeUri,
   inferSourceTypeFromArtifact,
@@ -154,10 +154,18 @@ export async function ingestKnowledgeArtifact(
     readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
   },
+  ownership: KnowledgeIngestOwnership = {},
 ): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
-  const { signal, ...values } = input;
+  const { signal: inputSignal, ...values } = input;
+  const signal = ownership.signal && inputSignal ? AbortSignal.any([ownership.signal, inputSignal]) : ownership.signal ?? inputSignal;
+  const assertOwned = () => {
+    try { signal?.throwIfAborted(); ownership.assertCurrent?.(); }
+    catch { throw new KnowledgeEntityAliasHoldError(); }
+  };
+  assertOwned();
   input = { ...snapshotNodeInput(values), signal };
   await context.store.init();
+  assertOwned();
   let artifactId = input.artifactId;
   let sourceUri = input.uri;
   if (!artifactId) {
@@ -189,7 +197,8 @@ export async function ingestKnowledgeArtifact(
   if (!record) throw new Error(`Unknown artifact: ${artifactId}`);
   const canonicalUri = canonicalizeUri(sourceUri ?? '') ?? undefined;
   const sourceId = reserveSourceId(context, canonicalUri);
-  const assertCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
+  const sourceCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
+  const assertCurrent = () => { assertOwned(); sourceCurrent(); };
   assertCurrent();
   const preparation = await capturePreparation(() => prepareKnowledgeExtraction(context, sourceId, artifactId));
   assertCurrent();
@@ -232,7 +241,7 @@ export async function ingestKnowledgeArtifact(
         ...pending.metadata,
         ...(input.metadata ?? {}),
       },
-    });
+    }, { ...ownership, signal, assertCurrent: assertOwned });
     const issues = await context.lint();
     context.emitIfReady((bus, ctx) => emitKnowledgeIngestCompleted(bus, ctx, {
       sourceId: result.source.id,
@@ -242,6 +251,9 @@ export async function ingestKnowledgeArtifact(
     }), result.source.sessionId);
     return { ...result, issues };
   } catch (error) {
+    // Host-owned operations never turn a revoked/precommit failure into a new
+    // failed-source write, or overwrite a committed receipt after bookkeeping fails.
+    if (ownership.assertCurrent || ownership.onCommitted || ownership.signal) throw error;
     if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
     const failed = await context.store.upsertSource({
       id: pending.id,

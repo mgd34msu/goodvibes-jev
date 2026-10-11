@@ -1,5 +1,5 @@
 /** Engine-owned native fixture; product tests use only its private control pipe and public HTTP. */
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { nativeWorkExecutionIdentitySchema, type NativeWorkExecutionIdentity } from '@goodvibes-jev/engine/sdk/platform/workflow/work-ledger/native-execution-client';
 
 async function within<T>(promise: Promise<T>, label: string, milliseconds: number): Promise<T> {
@@ -9,12 +9,21 @@ async function within<T>(promise: Promise<T>, label: string, milliseconds: numbe
   })]); } finally { clearTimeout(timer); }
 }
 
-interface HostReady { baseUrl: string; token: string; identity: NativeWorkExecutionIdentity; contractId: string }
+interface HostReady { baseUrl: string; token: string; identity: NativeWorkExecutionIdentity; contractId: string; projectRoot?: string; commitsBefore?: number }
+
+export interface NativeReviewedProof {
+  checks: { id: string; trigger: string; result: string; evidenceDigest: string; sourceRead: 'fixed' | 'buggy' | 'missing'; answered: boolean }[];
+  decisions: { stage: string; outcome: string; sourceBound: boolean; answered: boolean }[];
+  fixRounds: number; fixWorkers: number; fixPlans: number; escalations: number; status: string;
+  commit: { status: string; hash?: string; note?: string } | null;
+  goal: string; criteria: string[]; sourceGoal: string; sourceCriteria: string[];
+}
 
 /** Keep the host fixture behind a process/HTTP boundary, just like a daemon. */
-export function launchNativeIntegrationHost(withoutInspection = false) {
+export function launchNativeIntegrationHost(withoutInspection = false, scenario: 'conflict' | 'reviewed-repair' = 'conflict') {
+  if (withoutInspection && scenario === 'reviewed-repair') throw new Error('Reviewed repair requires native inspection');
   const script = resolve(import.meta.dir, '../../../../../packages/engine/test/helpers/native-integration-host-child.ts');
-  const child = Bun.spawn([process.execPath, '--no-env-file', script, ...(withoutInspection ? ['--without-inspection'] : [])], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  const child = Bun.spawn([process.execPath, '--no-env-file', script, ...(withoutInspection ? ['--without-inspection'] : []), ...(scenario === 'reviewed-repair' ? ['--reviewed-repair'] : [])], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   const output = child.stdout.getReader(); const decoder = new TextDecoder(); let buffered = '';
   // Drain rather than retain stderr: fixture failures must not leak its ephemeral bearer.
   const drained = (async () => { const reader = child.stderr.getReader(); try { while (!(await reader.read()).done) {} } finally { reader.releaseLock(); } })().catch(() => {});
@@ -43,7 +52,7 @@ export function launchNativeIntegrationHost(withoutInspection = false) {
       if (buffered.length > 8_192) throw new Error('Native fixture protocol reply exceeded its bound');
     }
   })(), `native fixture ${kind}`, milliseconds);
-  const send = async (type: 'repair' | 'inspect' | 'stop' | 'remerge' | 'finish' | 'hold-status' | 'release-status' | 'restart-host' | 'inspect-recovery') => {
+  const send = async (type: 'repair' | 'inspect' | 'stop' | 'remerge' | 'finish' | 'hold-status' | 'release-status' | 'restart-host' | 'inspect-recovery' | 'reviewed-proof') => {
     child.stdin.write(`${JSON.stringify({ type })}\n`); await child.stdin.flush();
   };
   return {
@@ -54,7 +63,28 @@ export function launchNativeIntegrationHost(withoutInspection = false) {
       let url: URL;
       try { url = new URL(value.baseUrl); } catch { throw new Error('Native fixture did not provide a local HTTP endpoint'); }
       if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname) || url.username || url.password) throw new Error('Native fixture did not provide a local HTTP endpoint');
-      return { baseUrl: value.baseUrl, token: value.token, identity: identity.data, contractId: value.contractId };
+      if (scenario === 'reviewed-repair' && (typeof value.projectRoot !== 'string' || !isAbsolute(value.projectRoot)
+        || typeof value.commitsBefore !== 'number' || !Number.isSafeInteger(value.commitsBefore) || value.commitsBefore < 1)) throw new Error('Reviewed fixture source repository is incomplete');
+      return { baseUrl: value.baseUrl, token: value.token, identity: identity.data, contractId: value.contractId,
+        ...(scenario === 'reviewed-repair' ? { projectRoot: value.projectRoot as string, commitsBefore: value.commitsBefore as number } : {}) };
+    },
+    async reviewedProof(): Promise<NativeReviewedProof> {
+      await within(send('reviewed-proof'), 'native reviewed proof', 2_000); const value = await event('reviewed-proof');
+      const record = (input: unknown): input is Record<string, unknown> => input !== null && typeof input === 'object' && !Array.isArray(input);
+      const strings = (input: unknown): input is string[] => Array.isArray(input) && input.every(item => typeof item === 'string');
+      if (!Array.isArray(value.checks) || !value.checks.every(check => record(check) && typeof check.id === 'string'
+          && typeof check.trigger === 'string' && typeof check.result === 'string' && typeof check.evidenceDigest === 'string'
+          && /^[a-f0-9]{64}$/.test(check.evidenceDigest) && ['fixed', 'buggy', 'missing'].includes(String(check.sourceRead)) && typeof check.answered === 'boolean')
+        || !Array.isArray(value.decisions) || !value.decisions.every(decision => record(decision) && ['stall', 'fix-plan'].includes(String(decision.stage))
+          && ['act', 'revise', 'defer', 'reject'].includes(String(decision.outcome)) && typeof decision.sourceBound === 'boolean' && typeof decision.answered === 'boolean')
+        || ![value.fixRounds, value.fixWorkers, value.fixPlans, value.escalations].every(count => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0)
+        || typeof value.status !== 'string' || typeof value.goal !== 'string' || typeof value.sourceGoal !== 'string'
+        || !strings(value.criteria) || !strings(value.sourceCriteria)
+        || !(value.commit === null || record(value.commit) && typeof value.commit.status === 'string'
+          && (value.commit.hash === undefined || typeof value.commit.hash === 'string' && /^[a-f0-9]{40}$/.test(value.commit.hash))
+          && (value.commit.note === undefined || typeof value.commit.note === 'string'))) throw new Error('Native reviewed proof is incomplete');
+      const { kind: _kind, ...proof } = value;
+      return proof as unknown as NativeReviewedProof;
     },
     async repair() { await within(send('repair'), 'native repair request', 2_000); await event('repaired'); },
     async remerge() { await within(send('remerge'), 'native remerge request', 2_000); await event('remerged'); },

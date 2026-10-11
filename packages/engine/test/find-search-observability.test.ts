@@ -9,7 +9,7 @@ import { executeFilesQuery } from '../sdk/src/platform/tools/find/files.ts';
 import { FindRuntimeService, type ImportGraphLike } from '../sdk/src/platform/tools/find/shared.ts';
 
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port); });
+beforeEach(() => { previous = installJudgmentPort(fakePort(() => noulAnswer(0.001)).port); });
 afterEach(() => { installJudgmentPort(previous); });
 
 function tempRoot(prefix: string): string {

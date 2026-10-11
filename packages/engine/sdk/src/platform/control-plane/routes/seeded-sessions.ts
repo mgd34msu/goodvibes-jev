@@ -1,3 +1,5 @@
+import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
+import { ciRepairPrompt } from '../../ci-watch/repair-prompt.js';
 /**
  * routes/seeded-sessions.ts
  *
@@ -30,18 +32,12 @@ export async function startCiFixSession(
   automation: Pick<AutomationManager, 'createJob' | 'runNow'>,
   brief: FixSessionBrief,
 ): Promise<FixSessionStartOutcome> {
-  const target = brief.prNumber !== undefined ? `PR #${brief.prNumber}` : (brief.ref ?? 'the default branch');
-  const prompt = [
-    `CI failed for ${brief.repo} (${target}).`,
-    `Failing jobs: ${brief.failingJobs.join(', ') || 'unknown'}.`,
-    '',
-    brief.logs,
-    '',
-    'Investigate the failing CI jobs and fix them.',
-  ].join('\n');
+  const operation = currentExternalOperationSource();
+  const prompt = ciRepairPrompt(brief);
   try {
     const job = await automation.createJob({
       name: `Fix CI: ${brief.repo}`,
+      ...(operation ? { requiresSourceOwner: true } : {}),
       prompt,
       schedule: { kind: 'at', at: Date.now() },
       target: {
@@ -53,7 +49,8 @@ export async function startCiFixSession(
       enabled: false,
       deleteAfterRun: true,
     });
-    const run = await automation.runNow(job.id);
+    operation?.assertCurrent(); operation?.signal?.throwIfAborted();
+    const run = await automation.runNow(job.id, operation);
     if (run.sessionId) return { sessionId: run.sessionId };
     return { error: `the fix run started without an attachable session (run ${run.id}, status ${run.status})` };
   } catch (error) {

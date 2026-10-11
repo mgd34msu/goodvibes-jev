@@ -10,7 +10,7 @@ export {
   requireContractRoute,
 } from './contract-client.js';
 export type { JsonSchemaValidationFailure, MethodArgs, RequiredKeys, WithoutKeys } from './client-plumbing.js';
-export { clientInputRecord, firstJsonSchemaFailure, mergeClientInput, splitClientArgs } from './client-plumbing.js';
+export { clientInputRecord, firstJsonSchemaFailure, firstJsonSchemaFailureAsync, mergeClientInput, splitClientArgs } from './client-plumbing.js';
 export type {
   HttpJsonRequestOptions,
   HttpTransport,

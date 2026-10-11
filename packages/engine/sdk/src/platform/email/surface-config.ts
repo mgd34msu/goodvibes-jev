@@ -90,6 +90,8 @@ export const SURFACE_EMAIL_SMTP_PASSWORD_REF =
 export type ConfigReader = (key: string) => unknown;
 
 export interface SecretReader {
+  getCredentialMutationState?(): Readonly<{ generation: number; pending: boolean }>;
+  onDidInvalidateCredentials?(listener: () => void): () => void;
   get(key: string): Promise<string | null>;
 }
 
@@ -286,6 +288,8 @@ async function firstStoredSecret(
  */
 export function createSurfaceEmailSecretReader(secrets: SecretReader): SecretReader {
   return {
+    ...(secrets.getCredentialMutationState ? { getCredentialMutationState: () => secrets.getCredentialMutationState!() } : {}),
+    ...(secrets.onDidInvalidateCredentials ? { onDidInvalidateCredentials: (listener: () => void) => secrets.onDidInvalidateCredentials!(listener) } : {}),
     async get(key: string): Promise<string | null> {
       if (key === SHARED_PASSWORD_SECRET_KEY) return firstStoredSecret(secrets, SHARED_PASSWORD_CHAIN);
       if (key === SMTP_PASSWORD_SECRET_KEY) return firstStoredSecret(secrets, SMTP_PASSWORD_CHAIN);

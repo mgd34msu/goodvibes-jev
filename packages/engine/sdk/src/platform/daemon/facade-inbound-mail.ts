@@ -97,7 +97,8 @@ const DEFAULT_MAILBOX = 'INBOX';
 
 export interface InboundMailCompositionOptions {
   readonly configManager: ConfigManager;
-  readonly secretsManager: Pick<SecretsManager, 'get'>;
+  readonly secretsManager: Pick<SecretsManager, 'get'>
+    & Partial<Pick<SecretsManager, 'onDidInvalidateCredentials' | 'getCredentialMutationState'>>;
   readonly shellPaths: Pick<ShellPathService, 'resolveUserPath'>;
   /**
    * `isRouteBindingEnabled` is in the slice deliberately. Without it, a build
@@ -445,6 +446,8 @@ export function composeInboundMail(
     account,
     mailbox,
     sources: createInboundMailSourceFactory({
+      getConfigurationIncarnation: () => configManager.getConfigurationIncarnation?.(),
+      onDidChangeConfiguration: (listener) => configManager.onDidChangeIncarnation?.(listener) ?? (() => {}),
       getConfig: (key) => configManager.get(key as never),
       secrets: options.secretsManager,
       transport: nodeEmailTransport,
@@ -503,6 +506,13 @@ export function composeInboundMail(
     // will ever arrive again. It goes to the owner through the same structured
     // notice port arriving mail goes through, and still logs.
     observer,
+  });
+
+  // The existing supervisor rebuilds same-identity sources after source retirement.
+  // A different account/mailbox still requires a fresh composition with new sinks.
+  configManager.onDidChangeIncarnation?.(() => queueMicrotask(() => supervisor?.recheckNow()));
+  options.secretsManager.onDidInvalidateCredentials?.(() => {
+    if (!options.secretsManager.getCredentialMutationState?.().pending) supervisor?.recheckNow();
   });
 
   registerEmailExpectationGatewayMethods(options.gatewayMethods, expectations);

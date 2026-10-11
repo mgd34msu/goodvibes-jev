@@ -37,10 +37,9 @@ import { runContractGates } from '../contract/gates.js';
 import { getContractTransportRetryDelayMs, getContractTransportRetryLimit } from '../contract/config.js';
 import { readFailure } from '@goodvibes-jev/engine/errors';
 import { logger } from '../utils/logger.js';
-import { summarizeError } from '../utils/error-display.js';
 import type { CancellationRegistry } from './cancellation.js';
 import { excludeUntouchedLaunchResidue, snapshotDirtyTree, type DirtyLaunchSnapshot } from './dirty-guard.js';
-import { classifyBookkeepingFailure } from './bookkeeping.js';
+import { classifyBookkeepingFailure, type BookkeepingFailureReading } from './bookkeeping.js';
 import { mergeWorkItemUsage } from './types.js';
 import type { UnitRoute } from '../contract/types.js';
 import type { CommitExclusion, GateOutcome, Phase, PhaseCommitOutcome, PhaseResult, PriceProvenanceFn, WorkItem, WorkItemUsage, Workstream } from './types.js';
@@ -108,7 +107,7 @@ export type ContractPreSpawn =
 export interface PhaseRunnerDeps {
   readonly prepareInputAuthority?: import('../contract/group-runner.js').ContractEngineInput['prepareInputAuthority'];
   readonly agentManager: PhaseRunnerAgentManagerLike;
-  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'> & Partial<Pick<ConfigManager, 'getConfigurationIncarnation' | 'onDidChangeIncarnation'>>;
   readonly runtimeBus: RuntimeEventBus;
   readonly projectRoot: string;
   readonly sessionId: string;
@@ -116,6 +115,8 @@ export interface PhaseRunnerDeps {
   readonly cancellation: CancellationRegistry;
   /** Engine-owned phase signal, registered before worktree setup or any spawn callback. */
   readonly cancellationSignal?: AbortSignal | undefined;
+  /** Engine lifetime and request ownership, retained through final publication. */
+  readonly assertBookkeepingCurrent?: (() => void) | undefined;
   readonly priceUsage?: ((model: string | undefined, usage: WorkItemUsage) => number | null) | undefined;
   /** Provenance for the same resolution priceUsage prices with, stamped onto the committed usage record at pricing time. */
   readonly priceProvenance?: PriceProvenanceFn | undefined;
@@ -142,6 +143,7 @@ export interface PhaseRunnerDeps {
 
 export interface PhaseRunOutcome {
   readonly result: PhaseResult;
+  readonly bookkeeping?: BookkeepingFailureReading | undefined;
   readonly agentStatus: 'completed' | 'failed' | 'cancelled';
 }
 
@@ -329,6 +331,7 @@ async function evaluateGate(
 interface CommitPhaseWorkResult {
   readonly exclusion?: CommitExclusion | undefined;
   readonly commit: PhaseCommitOutcome;
+  readonly bookkeeping?: BookkeepingFailureReading | undefined;
 }
 
 /**
@@ -336,8 +339,8 @@ interface CommitPhaseWorkResult {
  * outcome HONESTLY rather than swallowing failures. The gate has already
  * decided the phase passed; this step only records the changes, so its result
  * is bookkeeping: a failure surfaces to the engine as a warning on a passed
- * item (or, for the narrow negating set, workspace corruption, see
- * bookkeeping.ts, as an item failure), never as a silent no-op that lets the
+ * item only after a settled negative reading. A positive reading fails the
+ * item; an unresolved reading holds it. Never a silent no-op that lets the
  * fleet imply a commit happened when it did not.
  */
 async function commitPhaseWork(
@@ -345,7 +348,7 @@ async function commitPhaseWork(
   phase: Phase,
   agentId: string,
   worktree: WorktreeOps,
-  deps: Pick<PhaseRunnerDeps, 'projectRoot' | 'launchDirtySnapshot' | 'itemWorktree'>,
+  deps: PhaseRunnerDeps,
 ): Promise<CommitPhaseWorkResult> {
   if (phase.gate.scope === 'off') {
     return { commit: { status: 'skipped', reason: 'commit disabled for this phase (gate scope: off)' } };
@@ -372,12 +375,8 @@ async function commitPhaseWork(
       }
       return { commit: { status: 'committed', hash: result.hash, ...(ignoredNote ? { reason: ignoredNote } : {}) } };
     } catch (error) {
-      const reason = summarizeError(error);
-      const negating = classifyBookkeepingFailure(error) === 'negating';
-      logger.warn('orchestration phase-runner: worktree scoped commit did not complete', {
-        itemId: item.id, phaseId: phase.id, worktreePath: deps.itemWorktree.path, error: reason, negating,
-      });
-      return { commit: { status: 'failed', reason, negating } };
+      const bookkeeping = await readCommitFailure(error, item, phase, deps);
+      return { commit: failureOutcome(bookkeeping), bookkeeping };
     }
   }
 
@@ -423,15 +422,51 @@ async function commitPhaseWork(
       commit: { status: 'committed', hash: result.hash, ...(ignoredNote ? { reason: ignoredNote } : {}) },
     };
   } catch (error) {
-    const reason = summarizeError(error);
-    const negating = classifyBookkeepingFailure(error) === 'negating';
-    // Non-fatal by default: the gate already passed, so the engine treats this
-    // as a warning on a passed item. Only a NEGATING failure (workspace
-    // corruption, bookkeeping.ts) flips the item to failed.
-    logger.warn('orchestration phase-runner: scoped commit/merge did not complete', {
-      itemId: item.id, phaseId: phase.id, error: reason, negating,
+    const bookkeeping = await readCommitFailure(error, item, phase, deps);
+    return { exclusion, commit: failureOutcome(bookkeeping), bookkeeping };
+  }
+}
+
+function failureOutcome(reading: BookkeepingFailureReading): PhaseCommitOutcome {
+  return { status: 'failed', reason: reading.reason, classification: reading.classification,
+    ...(reading.classification === 'held' ? {} : { negating: reading.classification === 'negating' }) };
+}
+
+function currentFailureOutcome(commit: PhaseCommitOutcome | undefined, reading: BookkeepingFailureReading | undefined): PhaseCommitOutcome | undefined {
+  if (!reading || !commit) return commit;
+  try { reading.assertCurrent(); return commit; }
+  catch { return { status: 'failed', reason: commit.reason, classification: 'held' }; }
+}
+
+async function readCommitFailure(error: unknown, item: WorkItem, phase: Phase, deps: PhaseRunnerDeps): Promise<BookkeepingFailureReading> {
+  let release: (() => void) | undefined;
+  try {
+    const config = deps.configManager;
+    const readIncarnation = config.getConfigurationIncarnation;
+    const watchIncarnation = config.onDidChangeIncarnation;
+    const get = config.get, getCategory = config.getCategory;
+    const incarnation = readIncarnation?.call(config);
+    const controller = new AbortController();
+    release = watchIncarnation?.call(config, () => controller.abort());
+    const itemWorktree = deps.itemWorktree;
+    const task = item.task, phaseId = item.currentPhaseId;
+    return await classifyBookkeepingFailure(error, {
+      signal: AbortSignal.any([controller.signal, ...(deps.cancellationSignal ? [deps.cancellationSignal] : [])]),
+      assertCurrent: () => {
+        deps.assertBookkeepingCurrent?.();
+        if (deps.configManager !== config || config.getConfigurationIncarnation !== readIncarnation
+          || config.onDidChangeIncarnation !== watchIncarnation || config.get !== get || config.getCategory !== getCategory
+          || readIncarnation?.call(config) !== incarnation
+          || deps.itemWorktree !== itemWorktree || item.task !== task || item.currentPhaseId !== phaseId
+          || phase.id !== phaseId) throw new Error('Repository failure request retired.');
+      },
     });
-    return { exclusion, commit: { status: 'failed', reason, negating } };
+  } catch {
+    return { classification: 'held', reason: 'Commit or merge failed; repository reading ownership is unavailable.',
+      assertCurrent: () => { throw new Error('Repository failure request retired.'); } };
+  } finally {
+    // A broken lifetime release must not replace the original action failure.
+    try { release?.(); } catch { /* Reading remains subject to its captured owner. */ }
   }
 }
 
@@ -455,15 +490,17 @@ async function settleWithoutAgent(
     return { agentStatus: outcome, result: { ...base, report: genericReport(summary), gate: { passed: false, results: [] }, completedAt: Date.now() } };
   }
   const committed = await commitPhaseWork(item, phase, '', worktree, deps);
+  const settledCommit = currentFailureOutcome(committed.commit, committed.bookkeeping);
   return {
-    agentStatus: 'completed',
+    agentStatus: deps.cancellationSignal?.aborted ? 'cancelled' : 'completed',
+    bookkeeping: committed.bookkeeping,
     result: {
       ...base,
       report: genericReport('checked and passed by the contract runner after a restart; no agent ran this phase'),
       gate: { passed: true, results: [] },
       completedAt: Date.now(),
       ...(committed.exclusion ? { commitExclusion: committed.exclusion } : {}),
-      ...(committed.commit ? { commit: committed.commit } : {}),
+      ...(settledCommit ? { commit: settledCommit } : {}),
     },
   };
 }
@@ -637,10 +674,12 @@ async function runPhaseWithSignal(
 
   let commitExclusion: CommitExclusion | undefined;
   let commit: PhaseCommitOutcome | undefined;
+  let bookkeeping: BookkeepingFailureReading | undefined;
   if (gate.passed) {
     const committed = await commitPhaseWork(item, phase, record.id, worktree, deps);
     commitExclusion = committed.exclusion;
     commit = committed.commit;
+    bookkeeping = committed.bookkeeping;
   }
   // In worktree mode the item worktree persists across phases (the engine's
   // integration lane owns its teardown), so only the shared-mode transient
@@ -649,8 +688,10 @@ async function runPhaseWithSignal(
     await worktree.cleanup(record.id).catch(() => undefined);
   }
 
+  commit = currentFailureOutcome(commit, bookkeeping);
   return {
-    agentStatus: 'completed',
+    agentStatus: signal.aborted ? 'cancelled' : 'completed',
+    bookkeeping,
     result: {
       itemId: item.id,
       phaseId: phase.id,

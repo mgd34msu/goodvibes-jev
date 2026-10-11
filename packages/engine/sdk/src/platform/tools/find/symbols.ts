@@ -1,4 +1,5 @@
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { CodeIntelligence } from '../../intelligence/index.js';
 import type { OutputOptions, SymbolsQuery, SymbolKind } from './shared.js';
 import {
@@ -6,7 +7,6 @@ import {
   createFindDiagnostics,
   groupByKey,
   loadFileLines,
-  matchesSymbolQuery,
   makeCountResult,
   makeFilesResult,
   toSymbolKind,
@@ -16,7 +16,7 @@ import {
   addFindWarning,
 } from './shared.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { compileSafeRegExp } from '../../utils/safe-regex.js';
+import { createSafeRegex } from '../../utils/safe-regex.js';
 
 interface SymbolResult {
   name: string;
@@ -30,8 +30,15 @@ export async function executeSymbolsQuery(
   query: SymbolsQuery,
   output: OutputOptions,
   projectRoot: string,
-  walkOptions: WalkDirOptions = {},
+  options: JudgmentReadingOptions & WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
+  const before = JSON.stringify([query, output]);
+  const current = () => {
+    options.signal?.throwIfAborted(); options.beforeAttempt?.(); options.assertCurrent?.();
+    if (JSON.stringify([query, output]) !== before) throw new Error('Find regex request changed');
+  };
+  current();
+  const walkOptions: WalkDirOptions = { ...options, beforeAttempt: current };
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
@@ -59,14 +66,8 @@ export async function executeSymbolsQuery(
   const files = await collectTextFiles(basePath, diagnostics, walkOptions);
   const symbols: SymbolResult[] = [];
 
-  let queryRegex: RegExp | null = null;
-  if (query.query) {
-    try {
-      queryRegex = compileSafeRegExp(query.query, 'i', { operation: 'find symbols query' });
-    } catch {
-      return { error: `Invalid symbol query pattern: ${query.query}` };
-    }
-  }
+  await using queryRegex = query.query
+    ? await createSafeRegex(query.query, 'i', { ...options, assertCurrent: current, operation: 'find symbols query' }) : undefined;
 
   const ci = new CodeIntelligence({});
   let treeSitterFiles = 0;
@@ -89,7 +90,7 @@ export async function executeSymbolsQuery(
           const kind = toSymbolKind(sym.kind);
           if (kindFilter && !kindFilter.has(kind)) continue;
           if (query.exported_only && !query.include_private && !sym.exported) continue;
-          if (!matchesSymbolQuery(sym.name, queryRegex)) continue;
+          if (queryRegex && !await queryRegex.test(sym.name)) continue;
           symbols.push({ name: sym.name, kind, file, line: sym.line, exported: sym.exported });
         }
       }
@@ -110,7 +111,7 @@ export async function executeSymbolsQuery(
         if (match) {
           const name = match[1] ?? '';
           if (!name) continue;
-          if (!matchesSymbolQuery(name, queryRegex)) continue;
+          if (queryRegex && !await queryRegex.test(name)) continue;
           symbols.push({ name, kind, file, line: i + 1, exported });
           break;
         }
@@ -119,10 +120,12 @@ export async function executeSymbolsQuery(
   }
 
   if (output.format === 'count_only') {
+    queryRegex?.assertCurrent();
     return withFindWarnings({ ...makeCountResult(symbols.length), source: symbolSource(treeSitterFiles, regexFallbackFiles) }, diagnostics.warnings);
   }
   if (output.format === 'files_only') {
     const uniqueFiles = [...new Set(symbols.map((s) => s.file))];
+    queryRegex?.assertCurrent();
     return withFindWarnings({ ...makeFilesResult(uniqueFiles, symbols.length), source: symbolSource(treeSitterFiles, regexFallbackFiles) }, diagnostics.warnings);
   }
 
@@ -181,17 +184,21 @@ export async function executeSymbolsQuery(
     const groupBy = query.group_by ?? 'none';
     const grouped = groupByKey(enriched as Array<{ file: string; kind: string }>, groupBy);
     if (grouped) {
+      queryRegex?.assertCurrent();
       return withFindWarnings({ symbols: grouped, count: symbols.length, source: symbolSource(treeSitterFiles, regexFallbackFiles) }, diagnostics.warnings);
     }
+    queryRegex?.assertCurrent();
     return withFindWarnings({ symbols: enriched, count: symbols.length, source: symbolSource(treeSitterFiles, regexFallbackFiles) }, diagnostics.warnings);
   }
 
   const groupBy = query.group_by ?? 'none';
   const grouped = groupByKey(symbols, groupBy);
   if (grouped) {
+    queryRegex?.assertCurrent();
     return withFindWarnings({ symbols: grouped, count: symbols.length, source: symbolSource(treeSitterFiles, regexFallbackFiles) }, diagnostics.warnings);
   }
 
+  queryRegex?.assertCurrent();
   return withFindWarnings({ symbols, count: symbols.length, source: symbolSource(treeSitterFiles, regexFallbackFiles) }, diagnostics.warnings);
 }
 

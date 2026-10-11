@@ -1,12 +1,6 @@
-/**
- * sandbox-escalation-wiring.ts, compose the sandbox-escalation seam + the
- * Jev advisory tier at the runtime composition root.
- *
- * Kept out of services.ts so the wiring (broker routing + the advisory tier) lives next to the seam it configures rather than
- * bloating the services monolith. Returns the boolean handler the exec tool's
- * sandbox calls; when the sandbox is inactive the handler is simply never
- * invoked.
- */
+/** Canonical sandbox sub-operations retain the recorded autonomous owner and
+ * exact final-spawn permit. Broker/advisory behavior remains only for direct
+ * compatibility constructors outside an autonomous operation. */
 import { logger } from '../../utils/logger.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { FeatureFlagManager } from '../feature-flags/index.js';
@@ -16,17 +10,14 @@ import {
   type SandboxEscalationJudgment,
 } from './sandbox-escalation.js';
 
-/** The boolean escalation handler the exec sandbox invokes per command. */
-export type ExecSandboxEscalationHandler = (input: {
-  readonly command: string;
-  readonly escalations: readonly string[];
-  readonly boundary: string;
-  readonly policyReasons: readonly string[];
-  readonly workingDirectory?: string | undefined;
-}) => Promise<boolean>;
+import { currentExternalOperationSource } from '../../permissions/external-operation-scope.js';
+import { admitSandboxEscalation } from './autonomous-sandbox-escalation.js';
+import type { AutonomousToolPromptHost } from './autonomous-tool-prompts.js';
+export type ExecSandboxEscalationHandler = import('../../tools/exec/sandbox.js').SandboxEscalationHandler;
 
 /** The broker seam this wiring routes through. */
 export interface EscalationWiringDeps {
+  readonly autonomousHost?: AutonomousToolPromptHost | undefined;
   readonly requestApproval: (input: {
     readonly request: PermissionPromptRequest;
     readonly routeId?: string | undefined;
@@ -36,13 +27,7 @@ export interface EscalationWiringDeps {
   readonly featureFlags: Pick<FeatureFlagManager, 'isEnabled'>;
 }
 
-/**
- * Build the exec-sandbox escalation handler: escalations ride the approval
- * broker, and, while the `sandbox.judgment` setting is annotate or
- * auto-approve, the judgment tier annotates the ask (annotate, the default)
- * or additionally auto-approves a looks-safe verdict (auto-approve, an
- * explicit opt-in). Every judgment leaves a receipt.
- */
+/** Build the canonical exact-plan handler, preserving standalone advisory compatibility. */
 export function buildSandboxEscalationHandler(deps: EscalationWiringDeps): ExecSandboxEscalationHandler {
   const judgment: SandboxEscalationJudgment | undefined = deps.featureFlags.isEnabled('sandbox-model-judgment')
     ? {
@@ -54,5 +39,9 @@ export function buildSandboxEscalationHandler(deps: EscalationWiringDeps): ExecS
     : undefined;
 
   const seam = createSandboxEscalationApprovalHandler(deps.requestApproval, judgment);
-  return async (input) => (await seam({ sandbox: 'exec-sandbox', ...input })).approved;
+  return async (input, execution) => {
+    if (deps.autonomousHost) return admitSandboxEscalation(deps.autonomousHost, input, execution);
+    if (currentExternalOperationSource()) return false;
+    return (await seam({ sandbox: 'exec-sandbox', ...input })).approved;
+  };
 }

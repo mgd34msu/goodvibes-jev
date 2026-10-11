@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { finished } from 'node:stream/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { classifyHostTrustTier, extractHostname } from '../tools/fetch/trust-tiers.js';
@@ -22,6 +23,12 @@ import {
   sanitizeArtifactFilename,
 } from './types.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
+
+/** Caller-owned publication fence; never populated from artifact metadata. */
+export interface ArtifactWriteOwnership {
+  readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
+}
 
 export interface ArtifactStoreConfig {
   readonly rootDir?: string | undefined;
@@ -329,26 +336,32 @@ export class ArtifactStore {
     };
   }
 
-  async create(input: ArtifactCreateInput): Promise<ArtifactDescriptor> {
+  async create(input: ArtifactCreateInput, ownership: ArtifactWriteOwnership = {}): Promise<ArtifactDescriptor> {
+    ownership.signal?.throwIfAborted(); ownership.assertCurrent?.();
     const intent = resolveArtifactIntent(input);
     const resolved = await this.resolveInput(input, intent);
-    return this.writeResolvedArtifact(input, intent, resolved);
+    return this.writeResolvedArtifact(input, intent, resolved, ownership);
   }
 
-  async createFromStream(input: ArtifactStreamCreateInput): Promise<ArtifactDescriptor> {
+  async createFromStream(input: ArtifactStreamCreateInput, ownership: ArtifactWriteOwnership = {}): Promise<ArtifactDescriptor> {
+    const check = () => { ownership.signal?.throwIfAborted(); ownership.assertCurrent?.(); };
+    check();
     const id = `artifact-${randomUUID().slice(0, 8)}`;
     const filename = sanitizeArtifactFilename(input.filename, 'artifact');
     const contentPath = assertWithinArtifactRoot(this.rootDir, join(this.rootDir, `${id}.data`), 'Artifact content path');
     const metadataPath = assertWithinArtifactRoot(this.rootDir, join(this.rootDir, `${id}.json`), 'Artifact metadata path');
     const retentionMs = sanitizeRetentionMs(input.retentionMs, this.defaultRetentionMs, this.maxRetentionMs);
     await mkdir(this.rootDir, { recursive: true });
+    check();
     const { sizeBytes, sha256 } = await this.writeStreamContent({
       contentPath,
       stream: input.stream,
       expectedSizeBytes: input.sizeBytes,
+      assertCurrent: check,
     });
     let record: ArtifactRecord;
     try {
+      check();
       // Kind inference is a judgment call and can reject after the bytes were
       // spooled. It belongs to the same cleanup boundary as metadata writing.
       record = {
@@ -367,7 +380,9 @@ export class ArtifactStore {
         contentPath,
         metadataPath,
       };
+      check();
       await writeFile(metadataPath, `${JSON.stringify(record, null, 2)}\n`, 'utf-8');
+      check();
     } catch (error) {
       rmSync(contentPath, { force: true });
       rmSync(metadataPath, { force: true });
@@ -385,6 +400,7 @@ export class ArtifactStore {
       allowPrivateHosts: boolean;
     },
     resolved: ResolvedArtifactInput,
+    ownership: ArtifactWriteOwnership,
   ): Promise<ArtifactDescriptor> {
     const streamInput = resolved.stream
       ? {
@@ -405,13 +421,14 @@ export class ArtifactStore {
       acquisitionMode: intent.acquisitionMode,
       fetchMode: intent.fetchMode,
       metadata: input.metadata ?? {},
-    });
+    }, ownership);
   }
 
   private async writeStreamContent(input: {
     readonly contentPath: string;
     readonly stream: ArtifactStreamCreateInput['stream'];
     readonly expectedSizeBytes?: number | undefined;
+    readonly assertCurrent?: (() => void) | undefined;
   }): Promise<{ sizeBytes: number; sha256: string }> {
     if (typeof input.expectedSizeBytes === 'number' && input.expectedSizeBytes > this.maxBytes) {
       throw new Error(`Artifact exceeds the ${this.maxBytes}-byte limit.`);
@@ -423,6 +440,7 @@ export class ArtifactStore {
     let sizeBytes = 0;
     try {
       for await (const chunk of streamToAsyncIterable(input.stream)) {
+        input.assertCurrent?.();
         const buffer = chunkToBuffer(chunk);
         sizeBytes += buffer.byteLength;
         if (sizeBytes > this.maxBytes) {
@@ -435,9 +453,14 @@ export class ArtifactStore {
         }
       }
       await finishWriter(writer);
+      input.assertCurrent?.();
       return { sizeBytes, sha256: hash.digest('hex') };
     } catch (error) {
+      // Destruction can race the asynchronous open. Wait for actual closure
+      // before unlinking this operation's spool or allowing owner cleanup.
+      const settled = finished(writer, { cleanup: true });
       writer.destroy();
+      try { await settled; } catch { /* Preserve the initiating failure. */ }
       rmSync(contentPath, { force: true });
       throw error;
     }

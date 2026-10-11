@@ -13,7 +13,12 @@
  * runs everywhere.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { googleSetupFixturePort } from './_helpers/google-setup-readings.ts';
+let previousGooglePort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousGooglePort = installJudgmentPort(googleSetupFixturePort().port); });
+afterEach(() => { installJudgmentPort(previousGooglePort); });
 import type { BrowserEngine } from '../sdk/src/platform/browser/browser-engine.ts';
 import {
   describeElements,
@@ -124,44 +129,44 @@ describe('findElement', () => {
     el('e3', 'link', 'Integrate calendar', { tag: 'a' }),
   ];
 
-  test('matches names case-insensitively', () => {
-    expect(findElement(elements, { nameIncludes: 'create' })?.ref).toBe('e2');
+  test('matches names case-insensitively', async () => {
+    expect((await findElement(elements, { nameIncludes: 'create' }))?.ref).toBe('e2');
   });
 
-  test('matches names with internal and surrounding whitespace normalized away', () => {
-    expect(findElement(elements, { nameIncludes: 'app name' })?.ref).toBe('e1');
+  test('matches names with internal and surrounding whitespace normalized away', async () => {
+    expect((await findElement(elements, { nameIncludes: 'app name' }))?.ref).toBe('e1');
   });
 
-  test('filters by role when given', () => {
-    expect(findElement(elements, { role: 'link' })?.ref).toBe('e3');
-    expect(findElement(elements, { role: 'button', nameIncludes: 'app name' })).toBeNull();
+  test('filters by role when given', async () => {
+    expect((await findElement(elements, { role: 'link' }))?.ref).toBe('e3');
+    expect((await findElement(elements, { role: 'button', nameIncludes: 'app name' }))).toBeNull();
   });
 
-  test('filters by tag when given', () => {
-    expect(findElement(elements, { tag: 'a' })?.ref).toBe('e3');
-    expect(findElement(elements, { tag: 'select' })).toBeNull();
+  test('filters by tag when given', async () => {
+    expect((await findElement(elements, { tag: 'a' }))?.ref).toBe('e3');
+    expect((await findElement(elements, { tag: 'select' }))).toBeNull();
   });
 
-  test('filters by a name pattern when given', () => {
-    expect(findElement(elements, { namePattern: /integrate/i })?.ref).toBe('e3');
+  test('filters by a name pattern when given', async () => {
+    expect((await findElement(elements, { namePattern: /integrate/i }))?.ref).toBe('e3');
   });
 
-  test('returns null when nothing matches', () => {
-    expect(findElement(elements, { nameIncludes: 'does not exist anywhere' })).toBeNull();
+  test('returns null when nothing matches', async () => {
+    expect((await findElement(elements, { nameIncludes: 'does not exist anywhere' }))).toBeNull();
   });
 });
 
 describe('requireElement', () => {
-  test('returns the element wrapped in a found:true result on a match', () => {
+  test('returns the element wrapped in a found:true result on a match', async () => {
     const elements = [el('e1', 'button', 'Create')];
-    const lookup = requireElement(elements, { role: 'button', nameIncludes: 'create' });
+    const lookup = (await requireElement(elements, { role: 'button', nameIncludes: 'create' }));
     expect(lookup.found).toBe(true);
     if (lookup.found) expect(lookup.element.ref).toBe('e1');
   });
 
-  test('a miss names exactly what was looked for and what the page showed instead', () => {
+  test('a miss names exactly what was looked for and what the page showed instead', async () => {
     const elements = [el('e1', 'button', 'Cancel'), el('e2', 'link', 'Learn more')];
-    const lookup = requireElement(elements, { role: 'button', nameIncludes: 'create' });
+    const lookup = (await requireElement(elements, { role: 'button', nameIncludes: 'create' }));
     expect(lookup.found).toBe(false);
     if (!lookup.found) {
       expect(lookup.message).toContain('role "button"');
@@ -172,8 +177,8 @@ describe('requireElement', () => {
     }
   });
 
-  test('a miss on an empty page says so plainly', () => {
-    const lookup = requireElement([], { role: 'button', nameIncludes: 'create' });
+  test('a miss on an empty page says so plainly', async () => {
+    const lookup = (await requireElement([], { role: 'button', nameIncludes: 'create' }));
     expect(lookup.found).toBe(false);
     if (!lookup.found) {
       expect(lookup.message).toContain('no interactive elements were found');
@@ -182,7 +187,7 @@ describe('requireElement', () => {
 });
 
 describe('describeElements', () => {
-  test('truncates long lists and reports how many were left out', () => {
+  test('truncates long lists and reports how many were left out', async () => {
     const many: GoogleBrowserElement[] = Array.from({ length: 15 }, (_unused, index) => el(`e${String(index)}`, 'button', `Button ${String(index)}`));
     const described = describeElements(many);
     expect(described).toContain('and 5 more');
@@ -190,23 +195,23 @@ describe('describeElements', () => {
 });
 
 describe('looksLikeGoogleSignIn', () => {
-  test('a sign-in url is detected', () => {
-    expect(looksLikeGoogleSignIn(SIGN_IN_URL, [])).toBe(true);
+  test('a sign-in url is detected', async () => {
+    expect((await looksLikeGoogleSignIn(SIGN_IN_URL, []))).toBe(true);
   });
 
-  test('a real password textbox is detected even on the original url', () => {
+  test('a real password textbox is detected even on the original url', async () => {
     const elements = [el('e1', 'textbox', 'Enter your password')];
-    expect(looksLikeGoogleSignIn(NORMAL_APP_PASSWORD_URL, elements)).toBe(true);
+    expect((await looksLikeGoogleSignIn(NORMAL_APP_PASSWORD_URL, elements))).toBe(true);
   });
 
-  test('a heading or button that merely contains the word "password" is not mistaken for a sign-in page', () => {
+  test('a heading or button that merely contains the word "password" is not mistaken for a sign-in page', async () => {
     const elements = [el('e1', 'heading', 'App passwords', { tag: 'h1' }), el('e2', 'button', 'Create app password')];
-    expect(looksLikeGoogleSignIn(NORMAL_APP_PASSWORD_URL, elements)).toBe(false);
+    expect((await looksLikeGoogleSignIn(NORMAL_APP_PASSWORD_URL, elements))).toBe(false);
   });
 
-  test('an ordinary page is not flagged', () => {
+  test('an ordinary page is not flagged', async () => {
     const elements = [el('e1', 'button', 'Create')];
-    expect(looksLikeGoogleSignIn(NORMAL_APP_PASSWORD_URL, elements)).toBe(false);
+    expect((await looksLikeGoogleSignIn(NORMAL_APP_PASSWORD_URL, elements))).toBe(false);
   });
 });
 
@@ -342,7 +347,7 @@ describe('createAppPassword (fake port)', () => {
 const VALID_ICS_URL = 'https://calendar.google.com/calendar/ical/me%40example.com/private-abcdef1234567890/basic.ics';
 
 describe('captureIcsAddress (fake port)', () => {
-  test('captures the address on the happy path using the default (first) calendar', async () => {
+  test('captures the address on the happy path using the semantically identified default calendar', async () => {
     const port = new ScriptedGoogleBrowserPort(
       {
         settings: {
@@ -787,8 +792,8 @@ describe('createDesktopOAuthClient (fake port)', () => {
 // ---------------------------------------------------------------------------
 
 describe('GoogleElementLookup shape', () => {
-  test('a found lookup carries the element and nothing else misleading', () => {
-    const lookup: GoogleElementLookup = requireElement([el('e1', 'button', 'Create')], { nameIncludes: 'create' });
+  test('a found lookup carries the element and nothing else misleading', async () => {
+    const lookup: GoogleElementLookup = (await requireElement([el('e1', 'button', 'Create')], { nameIncludes: 'create' }));
     expect(lookup.found).toBe(true);
   });
 });
@@ -888,9 +893,9 @@ describe('createGoogleBrowserPort maps the engine onto the six-method port', () 
     await port.navigate('https://example.com');
     const elements = await port.snapshot();
 
-    expect(findElement(elements, { role: 'button', nameIncludes: 'create' })?.ref).toBe('e1');
-    expect(requireElement(elements, { nameIncludes: 'integrate calendar' }).found).toBe(true);
-    const missing = requireElement(elements, { role: 'button', nameIncludes: 'publish app' });
+    expect((await findElement(elements, { role: 'button', nameIncludes: 'create' }))?.ref).toBe('e1');
+    expect((await requireElement(elements, { nameIncludes: 'integrate calendar' })).found).toBe(true);
+    const missing = (await requireElement(elements, { role: 'button', nameIncludes: 'publish app' }));
     expect(missing.found).toBe(false);
     if (missing.found) throw new Error('unreachable');
     expect(missing.message).toContain('publish app');

@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 const RUNNER = resolve(import.meta.dir, '../../../scripts/run-tests.ts');
@@ -155,7 +155,9 @@ describe('the product test runner owns every file through teardown', () => {
         test('isolated startup environment', () => {
           expect(process.env.OPENAI_API_KEY).toBeUndefined();
           expect(process.env.HOME).not.toBe('INHERITED-HOME');
-          expect(process.env.GIT_CEILING_DIRECTORIES).toBe(process.cwd() + '/.test-tmp');
+          expect(process.env.GIT_CEILING_DIRECTORIES?.split(${JSON.stringify(delimiter)}).sort()).toEqual([
+            process.cwd() + '/.test-tmp', process.env.GOODVIBES_TEST_OWNED_TMP_ROOT,
+          ].sort());
         });
       `,
       'src/not-selected.test.ts': `throw new Error('UNSELECTED-SOURCE-RAN');`,

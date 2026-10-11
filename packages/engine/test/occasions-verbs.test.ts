@@ -16,6 +16,8 @@
  *    requiring it refuses nobody who was going to succeed and closes the case
  *    where omitting it meant a removal ran with no gate at all.
  */
+import { useOccasionReadings } from './helpers/occasion-readings.ts';
+useOccasionReadings();
 import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -90,7 +92,8 @@ function harness(): Harness {
     profile: {
       importantDates: () => profile.importantDates(),
       plans: () => profile.plans(),
-      person: (name) => profile.person(name),
+      person: (name, options) => profile.person(name, options),
+      captureRead: () => profile.captureRead(),
     },
     writer: {
       append: (input) => profile.append(input),

@@ -1,5 +1,5 @@
 import { useToolReadings } from './_helpers/tool-readings.js';
-useToolReadings();
+useToolReadings([], [["'bun' 'run' 'build'", { needsNetwork: true }]]);
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -333,3 +333,79 @@ test('failed repeated-backup atomic publication restores original bytes and exec
   expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe('original source');
   expect(statSync(join(f.root, 'source.txt')).mode & 0o777).toBe(0o755); expect(existsSync(join(f.root, 'parent'))).toBe(false);
 });
+
+
+test.skipIf(!supported)('captured validator consumes its escalation at final spawn and preserves atomic rollback on refusal', async () => {
+  const f = await fixture();
+  writeFileSync(join(f.root, 'package.json'), JSON.stringify({ scripts: { build: 'echo unexpected > validator-spawn.txt' } }));
+  let claims = 0; let closes = 0;
+  const signal = new AbortController().signal;
+  const filter: ReadAccessFilter = async () => true;
+  const validatorRunner = createCapturedValidatorRunner({ authority: f.authority, root: f.root, readAccessFilter: filter }, { sandbox: {
+    config: { enabled: true, egressAllowlist: [], workspaceWritable: [] }, featureEnabled: true,
+    availability: { available: true, backend: 'bubblewrap', bwrapPath: '/usr/bin/bwrap', networkIsolationGuaranteed: true, reason: 'test host' },
+    requestEscalation: async () => Object.freeze({ signal, assertCurrent() {}, claim() { claims++; throw new Error('Synthetic final validator admission revoked'); }, close() { closes++; } }),
+  } });
+  const tool = capturedInputTool(createEditTool(f.fileCache, { cwd: f.root, validatorRunner }), f.authority, f.root, filter, undefined);
+  const result = await tool.execute({ edits: [{ path: 'source.txt', find: 'original', replace: 'must roll back' }], validate: { after: ['build'] } });
+  expect(claims).toBe(1); expect(closes).toBe(1); expect(result.success).toBe(false);
+  expect(existsSync(join(f.root, 'validator-spawn.txt'))).toBe(false);
+  expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe('original source');
+});
+
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.ts';
+import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.ts';
+import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
+import { ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
+
+for (const name of ['write', 'edit'] as const) for (const forwarding of ['exact', 'copied-options', 'cloned-args'] as const) {
+  test(`admitted captured ${name} requires ${forwarding} invocation identity through its real backend`, async () => {
+    const f = await fixture();
+    forgetGateReadings();
+    const config = {
+      getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory: f.owner }),
+      getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }),
+      getWorkingDirectory: () => f.owner, isAutoApproveEnabled: () => false,
+    } as PermissionConfigReader;
+    const manager = new PermissionManager(undefined, config, new PolicyRuntimeState());
+    const registry = new ToolRegistry(manager);
+    const gate = gateReadingsPort();
+    const autonomous = fakePort((_key, question) => choiceAnswer(question, 'act', 0.99));
+    const log = new SqliteDecisionLog(':memory:');
+    const previous = installJudgmentPort(withDecisionLog({ ...gate.port, ask(request) {
+      return 'disposition' in request.questions ? autonomous.port.ask(request) : gate.port.ask(request);
+    } }, log));
+    const filter: ReadAccessFilter = async () => true;
+    const raw = name === 'write'
+      ? createWriteTool({ projectRoot: f.root, fileCache: f.fileCache,
+        capturedReadAccess: capturedInputReadFilter(f.authority, f.root, filter, f.signal.signal, new Set()) })
+      : createEditTool(f.fileCache, { cwd: f.root });
+    let calls = 0;
+    const wrapped = capturedInputTool({ definition: raw.definition, async execute(args, options) {
+      calls++;
+      return raw.execute(forwarding === 'cloned-args' ? structuredClone(args) : args,
+        forwarding === 'copied-options' ? { ...options } : options);
+    } }, f.authority, f.root, filter, f.signal.signal);
+    registry.register(wrapped);
+    try {
+      const args = name === 'write'
+        ? { files: [{ path: 'source.txt', content: 'changed source', mode: 'overwrite' }] }
+        : { edits: [{ path: 'source.txt', find: 'original', replace: 'changed' }] };
+      const call = await registry.prepareCall('captured-effect', name, args);
+      const admission = await manager.admitAutonomous(call.callId, name, call.args, {
+        sourceOf: () => ({ goal: 'Change the owned fixture file', criteria: ['Apply the exact admitted edit once'] }),
+        schemaRevision: call.schemaRevision, preparedCall: { registry, call },
+      });
+      const result = await registry.executePrepared(call, admission);
+      expect(calls).toBe(1);
+      expect(result.success).toBe(forwarding === 'exact');
+      expect(readFileSync(join(f.root, 'source.txt'), 'utf8')).toBe(forwarding === 'exact' ? 'changed source' : 'original source');
+      expect(readFileSync(join(f.owner, 'source.txt'), 'utf8')).toBe('original source');
+      await expect(registry.executePrepared(call, admission)).rejects.toThrow('claimed');
+      expect(calls).toBe(1);
+    } finally { installJudgmentPort(previous); log[Symbol.dispose](); forgetGateReadings(); }
+  });
+}

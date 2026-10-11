@@ -1,17 +1,9 @@
 /**
- * `engine.state.code-search`: orders code-index chunks against a search
- * query when the vector path is off (the index was built under a different
- * embedding provider than the current one). Read by Jev in place of the
- * matched-token fraction code-index-store.ts searchLexical used to sort by
- * (query tokens found in the chunk's symbol and path, over the token count).
- *
- * The re-ranking cookbook: the SQL LIKE match over symbol and path builds the
- * shortlist (code), then one yes/no per query-chunk pair, each in its own
- * request, orders it by probability. Chunks read as not matching are dropped.
- *
- * Band: low stakes. The order only decides which chunks a reader sees first;
- * nothing is changed or injected on the strength of it (per-turn injection
- * never reads a provider-mismatched index).
+ * Canonical `engine.state.code-search` relevance owner. Lexical search and
+ * passive vector-code injection both use these pair readings; recall remains
+ * deterministic candidate production. No chunks are changed by a reading.
+ * Passive injection additionally requires settled outcomes, live source
+ * authority, and its caller's shared relevance floor and token budget.
  */
 import { defineRerank, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import type { CodeChunk } from '../code-index-chunking.js';

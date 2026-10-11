@@ -1,4 +1,5 @@
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { stat as statAsync } from 'node:fs/promises';
 import { relative } from 'node:path';
@@ -6,7 +7,7 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { contentMatchView, contentRank } from '../batteries/content-rank.js';
 import type { ContentQuery, OutputOptions, ContentMatch } from './shared.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
+import { createSafeRegex } from '../../utils/safe-regex.js';
 import {
   collectFilesForSearch,
   createFindDiagnostics,
@@ -59,8 +60,15 @@ async function executeContentQuery(
   runtime: FindRuntimeService,
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
-  walkOptions: WalkDirOptions = {},
+  options: JudgmentReadingOptions & WalkDirOptions = {},
 ): Promise<Record<string, unknown>> {
+  const before = JSON.stringify([query, output]);
+  const current = () => {
+    options.signal?.throwIfAborted(); options.beforeAttempt?.(); options.assertCurrent?.();
+    if (JSON.stringify([query, output]) !== before) throw new Error('Find regex request changed');
+  };
+  current();
+  const walkOptions: WalkDirOptions = { ...options, beforeAttempt: current };
   const validatedPath = validateSearchPath(query.path, projectRoot);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
@@ -91,12 +99,7 @@ async function executeContentQuery(
 
   const flags = [query.case_sensitive === false ? 'i' : '', query.multiline ? 'm' : '', 'g'].join('');
 
-  let regex: RegExp;
-  try {
-    regex = compileSafeRegExp(rawPattern, flags, { operation: 'find content' });
-  } catch (e) {
-    return { error: `Invalid regex: ${summarizeError(e)}` };
-  }
+  await using regex = await createSafeRegex(rawPattern, flags, { ...options, assertCurrent: current, operation: 'find content', maxInputChars: 500_000 });
 
   const files = await collectFilesForSearch(basePath, query.glob, diagnostics, walkOptions);
   // Read-side deny enforcement: a file whose read the gate would hold behind an
@@ -109,6 +112,7 @@ async function executeContentQuery(
   const onlyReadable = async (reported: readonly string[]): Promise<string[]> => {
     const { allowed, restricted } = await partitionByReadAccess(reported, (f) => f, readAccessFilter);
     restrictedCount += restricted.length;
+    regex.assertCurrent();
     return allowed;
   };
   const noteRestricted = (): void => {
@@ -122,7 +126,7 @@ async function executeContentQuery(
       const content = await readTextFile(file, diagnostics);
       if (content === null) continue;
       if (content.length > 500_000) continue;
-      if (!safeRegExpTest(regex, content, { operation: 'find content negate', maxInputChars: 500_000 })) {
+      if (!await regex.test(content, 500_000)) {
         nonMatchingFiles.push(file);
         if (nonMatchingFiles.length >= maxTotal) break;
       }
@@ -130,6 +134,7 @@ async function executeContentQuery(
     const reported = await onlyReadable(nonMatchingFiles);
     noteRestricted();
     if (format === 'count_only') return withFindWarnings(makeCountResult(reported.length), diagnostics.warnings);
+    regex.assertCurrent();
     return withFindWarnings(makeFilesResult(reported, reported.length), diagnostics.warnings);
   }
 
@@ -169,7 +174,7 @@ async function executeContentQuery(
         if (totalMatches >= maxTotal) break outer;
         if ((lines[i]?.length ?? 0) > 50_000) continue;
 
-        if (safeRegExpTest(regex, lines[i]!, { operation: 'find content line' })) {
+        if (await regex.test(lines[i]!, 50_000)) {
           const match: ContentMatch = { file, line: i + 1, text: lines[i]! };
           if (format === 'context') {
             match.context_before = lines.slice(Math.max(0, i - ctxBefore), i);
@@ -252,9 +257,11 @@ async function executeContentQuery(
   }
 
   if (format === 'count_only') {
+    regex.assertCurrent();
     return withFindWarnings(makeCountResult(totalMatches, undefined, matchedFiles.size), diagnostics.warnings);
   }
   if (format === 'files_only') {
+    regex.assertCurrent();
     return withFindWarnings(makeFilesResult(Array.from(matchedFiles.keys()), matchedFiles.size), diagnostics.warnings);
   }
   if (format === 'locations') {
@@ -264,6 +271,7 @@ async function executeContentQuery(
         locations.push({ file, line: m.line });
       }
     }
+    regex.assertCurrent();
     return withFindWarnings(makeLocationsResult(locations, totalMatches), diagnostics.warnings);
   }
 
@@ -283,12 +291,7 @@ async function executeContentQuery(
         let displayText = m.text;
         let replacedText: string | undefined;
         if (query.preview_replace !== undefined) {
-          try {
-            const replaceRegex = compileSafeRegExp(rawPattern, flags, { operation: 'find content preview_replace' });
-            replacedText = m.text.replace(replaceRegex, query.preview_replace);
-          } catch {
-            // ignore
-          }
+          replacedText = await regex.replace(m.text, query.preview_replace, 50_000);
         }
         if (output.max_line_length && displayText.length > output.max_line_length) {
           displayText = displayText.slice(0, output.max_line_length) + '...';
@@ -317,15 +320,18 @@ async function executeContentQuery(
           importedBy: importGraph.findDependents(file),
         };
       }
+      regex.assertCurrent();
       return withFindWarnings({ matches: results, count: totalMatches, relationships: relMap }, [
         ...diagnostics.warnings,
         ...(importGraph.getWarnings?.() ?? []),
       ]);
     }
 
+    regex.assertCurrent();
     return withFindWarnings({ matches: results, count: totalMatches }, diagnostics.warnings);
   }
 
+  regex.assertCurrent();
   return withFindWarnings(makeCountResult(totalMatches), diagnostics.warnings);
 }
 

@@ -7,11 +7,12 @@
  * the download/verify/swap and runtime/update-schedule.ts for the cadence
  * (boot-settle first check, hourly steady state, short retry while busy).
  *
- * Safety contract: a swap only ever happens at a no-active-work moment. The
- * activity probe (the daemon's real busy signal, sessions with pending
- * input / agents mid-turn) is consulted immediately before swapping; while
- * busy, the verified update is held in memory and re-attempted on a short
- * retry cadence until an idle moment arrives. A mid-turn daemon never swaps.
+ * Safety boundary: the daemon's activity probe is checked before downloads
+ * and synchronously after staging, immediately before the first live rename.
+ * A busy daemon retains the release descriptor for a short retry; downloaded
+ * bytes are discarded. Cancellation and a bounded deadline cover lookup and
+ * downloads. This final snapshot is not a work-admission lease: the host must
+ * still fence new work through handover before automatic activation is safe.
  *
  * Restart: the swap is followed by the daemon's OWN orderly stop, the same
  * stop path a SIGTERM takes, so every shutdown hook fires on an update restart
@@ -34,8 +35,8 @@
  *    , install, fail three starts, roll back, reinstall the same release an
  *     interval later, and the installed daemon oscillates instead of moving
  *     forward. It resumes on its own as soon as a NEWER tag ships.
- *   - It never fails silently. Checks that keep throwing are counted, and once
- *     the count crosses the threshold the owner is told over a channel that
+ *   - It never fails silently. Persistent failures are read from the actual
+ *     error and the owner is told over a channel that
  *     works (the same owner-alert path a failing channel uses), with a quiet
  *     window so a persistent failure is one message rather than one an hour.
  *     Recovery is stated too. A WARN line in a debug file is not telling
@@ -45,6 +46,9 @@
  * Time, network, filesystem, activity, service actions, and process exit are
  * all injectable; the whole loop is provable under test.
  */
+import { readFailureTransience } from '@goodvibes-jev/engine/errors';
+import { daemonReadingPort } from './reading-lifetime.js';
+import { captureJudgmentFailure } from '../gate/failure-input.js';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { flushActivityLogSync, logger } from '../utils/logger.js';
@@ -52,6 +56,10 @@ import { summarizeError } from '../utils/error-display.js';
 import {
   applyVerifiedUpdate,
   compareVersions,
+  captureUpdateFileIo,
+  realUpdateFileIo,
+  DEFAULT_UPDATE_TIMEOUT_MS,
+  UpdateTransactionError,
   normalizeVersion,
   resolveArtifactNames,
   resolveLatestReleaseTag,
@@ -59,6 +67,7 @@ import {
   type UpdateFetchLike,
   type UpdateFileIo,
   type UpdateTarget,
+  type UpdateTransactionReceipt,
 } from '../runtime/self-update.js';
 import { PeriodicUpdateLoop, type PeriodicCheckOutcome } from '../runtime/update-schedule.js';
 import { formatReceiptTime, type DaemonReceiptStore } from './receipts.js';
@@ -147,8 +156,10 @@ export interface DaemonAutoUpdaterOptions {
   readonly checkIntervalMs?: number | undefined;
   /** Delay before the FIRST check after start. Default 30s (boot settle). */
   readonly firstCheckDelayMs?: number | undefined;
-  /** How often to re-try a verified-but-deferred swap while the daemon is busy. */
+  /** How often to retry a discovered-but-deferred update while the daemon is busy. */
   readonly busyRetryMs?: number | undefined;
+  /** Whole lookup/download/staging budget per check. Defaults to two minutes. */
+  readonly updateTimeoutMs?: number | undefined;
   /** The daemon's real activity signal: true only when NO work is in flight. */
   readonly isIdle: () => boolean;
   readonly serviceActions: AutoUpdateServiceActions;
@@ -180,9 +191,7 @@ export interface DaemonAutoUpdaterOptions {
    */
   readonly alertOwner?: ((text: string) => void) | undefined;
   /**
-   * Consecutive failed checks before the owner is told. Default 3, one flaky
-   * network hour is not news; three in a row means the daemon has stopped
-   * being able to update itself.
+   * @deprecated Compatibility only; failure transience, never a count, decides alerts.
    */
   readonly alertAfterFailedChecks?: number | undefined;
   /** Quiet window after an update alert, so a persistent failure is one message, not one per hour. Default 12h. */
@@ -192,7 +201,7 @@ export interface DaemonAutoUpdaterOptions {
   readonly clearTimer?: ((timer: ReturnType<typeof setTimeout>) => void) | undefined;
 }
 
-/** Default consecutive failed checks before the owner hears about it. */
+/** @deprecated Compatibility value only; the canonical failure reading decides alerts. */
 export const DEFAULT_UPDATE_ALERT_AFTER_FAILED_CHECKS = 3;
 
 /** Default quiet window between update alerts about the same ongoing failure. */
@@ -217,20 +226,28 @@ export interface DaemonUpdateLoopSnapshot {
   readonly failedCheckCount: number;
   /** What the most recent failing check said, or null when none is failing. */
   readonly lastCheckFailure: string | null;
-  /** A downloaded-and-verified release waiting for an idle moment, or null. */
+  /** A discovered release waiting for an idle moment, or null. */
   readonly pendingVersion: string | null;
   /** The version installed on disk by this process, independently of handover. */
   readonly appliedVersion?: string | null;
+  /** An incomplete filesystem transaction has paused updates pending inspection. */
+  readonly recoveryRequired?: boolean;
+  /** Exact retained-filesystem evidence for the paused transaction, if any. */
+  readonly transactionRecovery?: UpdateTransactionReceipt | null;
   /** Service-manager acknowledgement, never proof that the new daemon is healthy. */
   readonly handover?: ServiceHandoverOutcome | null;
 }
 
 export class DaemonAutoUpdater {
   private readonly loop: PeriodicUpdateLoop;
-  /** A downloaded-and-verified update waiting for an idle moment. */
+  private failureReadAbort = new AbortController();
+  /** A discovered release descriptor waiting for an idle moment. */
   private pendingSwap: PendingSwap | null = null;
   /** A completed disk swap is terminal for this process, even if handover fails. */
   private appliedVersion: string | null = null;
+  private recoveryRequired = false;
+  private transactionRecovery: UpdateTransactionReceipt | null = null;
+  private readonly updateTimeoutMs: number;
   private handover: ServiceHandoverOutcome | null = null;
   private handoverCancelled = false;
   private handoverTask: Promise<void> | null = null;
@@ -247,14 +264,36 @@ export class DaemonAutoUpdater {
   /** Rejected releases already reported, so the skip is stated once per release, not hourly. */
   private readonly reportedRejections = new Set<string>();
 
-  constructor(private readonly options: DaemonAutoUpdaterOptions) {
+  private readonly options: DaemonAutoUpdaterOptions;
+  private readonly writeReceipt: DaemonReceiptStore['record'];
+
+  constructor(options: DaemonAutoUpdaterOptions) {
+    // Own the install identity and callbacks before the first await. Captured
+    // probes still observe their live closure state; callers cannot redirect
+    // an admitted update by replacing members on the retained options object.
+    const actions = options.serviceActions;
+    this.options = {
+      ...options,
+      fetchImpl: options.fetchImpl ?? (fetch as unknown as UpdateFetchLike),
+      serviceActions: {
+        isSupervised: actions.isSupervised.bind(actions),
+        adoptIntoService: actions.adoptIntoService.bind(actions),
+        restartService: actions.restartService.bind(actions),
+      },
+    };
+    this.writeReceipt = options.receipts.record.bind(options.receipts);
+    this.updateTimeoutMs = this.options.updateTimeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS;
+    if (!Number.isFinite(this.updateTimeoutMs) || this.updateTimeoutMs <= 0) {
+      throw new Error('updateTimeoutMs must be positive and finite');
+    }
     this.loop = new PeriodicUpdateLoop({
       checkIntervalMs: options.checkIntervalMs,
       firstCheckDelayMs: options.firstCheckDelayMs,
       busyRetryMs: options.busyRetryMs,
       runCheck: async (): Promise<PeriodicCheckOutcome> => {
-        // A separate completion promise never rejects. Failures are settled by
-        // onError below only AFTER the periodic loop has recorded their result.
+        const signal = this.failureReadAbort.signal;
+        // A separate completion promise never rejects and includes any owned
+        // failure reading, so shutdown can drain it without a second retry owner.
         this.activeCheck = new Promise((resolve) => {
           this.finishActiveCheck = () => {
             this.activeCheck = null;
@@ -262,19 +301,22 @@ export class DaemonAutoUpdater {
             resolve();
           };
         });
-        await this.checkAndApply();
-        // A failed handover must not be followed by a misleading recovery line.
-        if (!this.handoverCancelled && (this.handover === null || this.handover.status === 'accepted')) this.recordCheckSucceeded();
-        this.finishActiveCheck?.();
-        return this.pendingSwap ? 'deferred' : 'settled';
-      },
-      onError: (error) => {
         try {
-          this.recordCheckFailed(summarizeError(error));
+          await this.checkAndApply(signal);
+          // A failed handover must not be followed by a misleading recovery line.
+          if (!signal.aborted && !this.handoverCancelled && !this.recoveryRequired && (this.handover === null || this.handover.status === 'accepted')) this.recordCheckSucceeded();
+        } catch (error) {
           this.pendingSwap = null;
+          if (!signal.aborted && !this.handoverCancelled) await this.recordCheckFailed(error, signal);
         } finally {
           this.finishActiveCheck?.();
         }
+        return this.pendingSwap ? 'deferred' : 'settled';
+      },
+      onError: (error) => {
+        // A reading failure is operational: never turn it into an owner alert
+        // or a guessed transience. The cadence remains owned by the loop.
+        logger.error('DaemonAutoUpdater: update failure reading could not complete', { error: summarizeError(error) });
       },
       setTimer: options.setTimer,
       clearTimer: options.clearTimer,
@@ -302,25 +344,26 @@ export class DaemonAutoUpdater {
     }
   }
 
-  /**
-   * A check that threw. Counted rather than announced: one bad hour is a flaky
-   * network. Once the count reaches the threshold the owner is told once, and
-   * not again until the quiet window has passed.
-   */
-  private recordCheckFailed(detail: string): void {
+  /** Counts remain diagnostics. Only the canonical failure reading decides an alert. */
+  private async recordCheckFailed(error: unknown, signal: AbortSignal): Promise<void> {
+    const assertCurrent = () => signal.throwIfAborted();
+    assertCurrent();
     this.consecutiveFailures += 1;
+    const captured = captureJudgmentFailure(error);
+    const detail = summarizeError(captured);
     this.lastFailureDetail = detail;
-    const threshold = Math.max(1, this.options.alertAfterFailedChecks ?? DEFAULT_UPDATE_ALERT_AFTER_FAILED_CHECKS);
-    const windowMs = Math.max(0, this.options.alertWindowMs ?? DEFAULT_UPDATE_ALERT_WINDOW_MS);
-    const now = this.now();
-    if (this.consecutiveFailures < threshold) {
-      logger.warn('DaemonAutoUpdater: update check failed; will retry on the next interval', {
-        error: detail,
-        consecutiveFailures: this.consecutiveFailures,
-        alertAfter: threshold,
+    const transience = await readFailureTransience(captured, 'daemon.auto-updater.failure', {
+      reading: { get port() { return daemonReadingPort('daemon.auto-updater.failure', assertCurrent, signal); }, signal, beforeAttempt: assertCurrent },
+    });
+    assertCurrent();
+    if (transience.failureClass === 'retryable') {
+      logger.warn('DaemonAutoUpdater: transient update check failure; will retry on the next interval', {
+        error: detail, consecutiveFailures: this.consecutiveFailures,
       });
       return;
     }
+    const windowMs = Math.max(0, this.options.alertWindowMs ?? DEFAULT_UPDATE_ALERT_WINDOW_MS);
+    const now = this.now();
     if (this.failureAlertedAt !== null && now - this.failureAlertedAt < windowMs) {
       logger.warn('DaemonAutoUpdater: update check still failing; the owner has already been told', {
         error: detail,
@@ -377,6 +420,13 @@ export class DaemonAutoUpdater {
       lastCheckFailure: this.lastFailureDetail,
       pendingVersion: this.pendingSwap ? normalizeVersion(this.pendingSwap.tag) : null,
       appliedVersion: this.appliedVersion,
+      recoveryRequired: this.recoveryRequired,
+      transactionRecovery: this.transactionRecovery ? {
+        ...this.transactionRecovery,
+        targets: [...this.transactionRecovery.targets],
+        recoveryPaths: [...this.transactionRecovery.recoveryPaths],
+        recoveryErrors: [...this.transactionRecovery.recoveryErrors],
+      } : null,
       handover: this.handover ? { ...this.handover } : null,
     };
   }
@@ -398,8 +448,9 @@ export class DaemonAutoUpdater {
 
   /** Begin the loop. The first check runs after a short boot-settle delay. */
   start(): void {
-    if (this.appliedVersion !== null) return;
+    if (this.appliedVersion !== null || this.recoveryRequired) return;
     this.handoverCancelled = false;
+    if (this.failureReadAbort.signal.aborted) this.failureReadAbort = new AbortController();
     this.loop.start();
   }
 
@@ -410,6 +461,7 @@ export class DaemonAutoUpdater {
     // service action. Timing alone cannot distinguish it from our own stop.
     if (!forHandover) {
       this.handoverCancelled = true;
+      this.failureReadAbort.abort();
       this.handoverAbort?.abort();
     }
   }
@@ -424,13 +476,30 @@ export class DaemonAutoUpdater {
     await this.loop.tick();
   }
 
-  private async checkAndApply(): Promise<void> {
-    if (this.appliedVersion !== null || this.handoverCancelled) return;
+  private async checkAndApply(signal: AbortSignal): Promise<void> {
+    if (this.appliedVersion !== null || this.recoveryRequired || this.handoverCancelled) return;
+    // Capture member methods per check, so pre-tick injected adapters remain
+    // supported while asynchronous lookup cannot redirect resolve or commit I/O.
+    const io = captureUpdateFileIo(this.options.io ?? realUpdateFileIo);
+    const deadline = performance.now() + this.updateTimeoutMs;
+    const assertCurrent = () => {
+      signal.throwIfAborted();
+      if (signal !== this.failureReadAbort.signal || this.handoverCancelled || this.appliedVersion !== null || this.recoveryRequired) {
+        throw new Error('update check no longer belongs to the current updater lifecycle');
+      }
+      if (performance.now() >= deadline) throw new Error('update check deadline exceeded');
+    };
+    const remainingBudget = () => {
+      assertCurrent();
+      return Math.max(Number.EPSILON, deadline - performance.now());
+    };
     const fetchImpl = this.options.fetchImpl ?? (fetch as unknown as UpdateFetchLike);
 
     if (!this.pendingSwap) {
-      const latestTag = await resolveLatestReleaseTag(fetchImpl, this.options.releasesLatestUrl);
-      if (this.handoverCancelled) return;
+      const latestTag = await resolveLatestReleaseTag(fetchImpl, this.options.releasesLatestUrl, {
+        signal, timeoutMs: remainingBudget(),
+      });
+      assertCurrent();
       if (compareVersions(this.options.currentVersion, latestTag) >= 0) {
         return; // already current
       }
@@ -445,7 +514,7 @@ export class DaemonAutoUpdater {
         this.reportRejectedRelease(rejected);
         return;
       }
-      const targets = this.resolveTargets();
+      const targets = this.resolveTargets(io);
       if (!targets) {
         logger.info('DaemonAutoUpdater: no prebuilt binaries for this platform; not self-updating', {
           platform: this.options.platform,
@@ -460,8 +529,9 @@ export class DaemonAutoUpdater {
       });
     }
 
-    // The no-active-work gate: consult the daemon's real activity signal
-    // immediately before touching any file. A busy daemon defers the swap.
+    // Avoid downloading while already busy. The authoritative snapshot is
+    // repeated below after every asynchronous download and synchronous stage.
+    assertCurrent();
     if (!this.options.isIdle()) {
       logger.info('DaemonAutoUpdater: update ready but the daemon has active work; deferring the swap', {
         tag: this.pendingSwap.tag,
@@ -469,22 +539,44 @@ export class DaemonAutoUpdater {
       return;
     }
 
+    assertCurrent();
     const { tag, targets } = this.pendingSwap;
     const downloadBase = this.options.downloadBaseUrl
       ? this.options.downloadBaseUrl(tag)
       : defaultDownloadBaseUrl(this.options.releasesLatestUrl, tag);
 
-    if (this.handoverCancelled) return;
-    // Once the transactional apply begins it cannot be interrupted here safely.
-    // If shutdown arrives during its awaits, preserve the completed disk swap
-    // and receipt below, but suppress all subsequent stop/service/exit actions.
-    await applyVerifiedUpdate({
-      fetchImpl,
-      downloadBaseUrl: downloadBase,
-      targets,
-      ...(this.options.io ? { io: this.options.io } : {}),
-      platform: this.options.platform,
-    });
+    const busyBeforeCommit = new Error('daemon became busy before update commit');
+    try {
+      await applyVerifiedUpdate({
+        fetchImpl,
+        downloadBaseUrl: downloadBase,
+        targets,
+        io,
+        platform: this.options.platform,
+        signal,
+        timeoutMs: remainingBudget(),
+        beforeCommit: () => {
+          assertCurrent();
+          const idle = this.options.isIdle();
+          // Even an injected activity probe can synchronously stop/restart us.
+          assertCurrent();
+          if (!idle) throw busyBeforeCommit;
+        },
+      });
+    } catch (error) {
+      if (error instanceof UpdateTransactionError) {
+        if (error.receipt.recoveryRequired) {
+          this.pauseForTransactionRecovery(tag, error);
+          return;
+        }
+        if (error.receipt.phase === 'admission' && !error.receipt.committed && error.cause === busyBeforeCommit) {
+          assertCurrent();
+          logger.info('DaemonAutoUpdater: daemon became busy before commit; deferring the update', { tag });
+          return;
+        }
+      }
+      throw error;
+    }
     this.pendingSwap = null;
     // Set the latch before any receipt, shutdown hook, or service action can
     // fail. The old running version must never re-swap the installed release
@@ -514,6 +606,31 @@ export class DaemonAutoUpdater {
       return;
     }
     await this.restartIntoNewBinary();
+  }
+
+  /** Filesystem recovery is an observed outcome, never an automatic retry decision. */
+  private pauseForTransactionRecovery(tag: string, error: UpdateTransactionError): void {
+    this.recoveryRequired = true;
+    this.transactionRecovery = {
+      ...error.receipt,
+      targets: [...error.receipt.targets],
+      recoveryPaths: [...error.receipt.recoveryPaths],
+      recoveryErrors: [...error.receipt.recoveryErrors],
+    };
+    this.pendingSwap = null;
+    this.loop.stop();
+    this.consecutiveFailures += 1;
+    if (error.receipt.committed) {
+      this.appliedVersion = normalizeVersion(tag);
+      this.handover = { status: 'unknown', detail: 'update committed but transaction cleanup requires recovery; no service handover was requested' };
+    }
+    const detail = `update to v${normalizeVersion(tag)} requires filesystem recovery after ${error.receipt.phase}`
+      + (error.receipt.committed ? '; the complete update is installed on disk.' : '; the complete update was not installed.')
+      + ' Automatic updates are paused in this process. Inspect the retained transaction files before retrying; no service handover was requested.';
+    this.lastFailureDetail = detail;
+    this.recordReceipt(detail);
+    this.alertOwner(detail);
+    flushActivityLogSync();
   }
 
   /** The version a crash-loop rollback rejected, normalized, or null. Never throws into the loop. */
@@ -556,12 +673,12 @@ export class DaemonAutoUpdater {
   }
 
   /** The update targets, or null when this platform/arch publishes no assets. */
-  private resolveTargets(): UpdateTarget[] | null {
+  private resolveTargets(io: UpdateFileIo): UpdateTarget[] | null {
     const files = resolveDaemonInstalledFiles({
       execPath: this.options.execPath,
       platform: this.options.platform,
       arch: this.options.arch,
-      io: this.options.io,
+      io,
     });
     const targets = files.flatMap((file) =>
       file.assetName === null
@@ -657,7 +774,7 @@ export class DaemonAutoUpdater {
   /** Receipt persistence must not undo a completed swap or detach its handover. */
   private recordReceipt(text: string): void {
     try {
-      this.options.receipts.record(text);
+      this.writeReceipt(text);
     } catch (error) {
       logger.error(`DaemonAutoUpdater: ${text}`, {
         receiptError: summarizeError(error),

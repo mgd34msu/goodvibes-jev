@@ -130,10 +130,11 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
     `Current: ${currentSettingValue(modal, entry, true)}`,
     `Default: ${formatDefaultValue(entry.setting.default)}`,
     `Type: ${entry.setting.type}${entry.setting.enumValues ? ` with ${entry.setting.enumValues.length} possible value(s)` : ''}`,
-    `Source: ${entry.metadataUnavailable ? 'unavailable' : entry.effectiveSource ?? 'default'}${entry.sourceLabel ? ` from ${entry.sourceLabel}` : ''}`,
+    `Source: ${entry.metadataUnavailable || entry.valueUnavailable ? 'unavailable' : entry.effectiveSource ?? 'default'}${entry.sourceLabel ? ` from ${entry.sourceLabel}` : ''}`,
   ];
 
   if (entry.metadataUnavailable) lines.push(`Unavailable: ${entry.metadataUnavailable}`);
+  if (entry.valueUnavailable) lines.push(`Value unavailable: ${entry.valueUnavailable} You can set an explicit value here.`);
   if (entry.locked) lines.push(`Locked: ${entry.lockReason ?? 'This setting is locked by a higher-priority layer.'}`);
   if (entry.conflict) lines.push(`Conflict: resolve with /settings-sync resolve ${entry.setting.key} local|synced.`);
 
@@ -242,6 +243,7 @@ function buildFlagContext(entry: SettingEntry | null): string[] {
     `Setting: ${feature.enablement.key} = ${formatValue(entry)}`,
     `State: ${displayState}`,
     ...(entry.metadataUnavailable ? [`Source: unavailable`, `Unavailable: ${entry.metadataUnavailable}`] : []),
+    ...(entry.valueUnavailable ? [`Value unavailable: ${entry.valueUnavailable} You can set an explicit value here.`] : []),
     // A capability the registry declares not operable reads as disabled no
     // matter what its settings key says. Without this line the row shows a
     // value of true beside a state of disabled and explains nothing, the

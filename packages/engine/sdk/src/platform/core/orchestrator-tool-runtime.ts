@@ -87,6 +87,8 @@ export type ToolExecutionDeps = {
   hookOwner?: TurnHookOwner | undefined;
   /** This execution's immutable whole-turn signal, never a later turn's controller. */
   turnSignal?: AbortSignal | undefined;
+  /** Additive caller observation restriction; never execution permission. */
+  assertCurrent?: (() => void) | undefined;
   toolRegistry: ToolRegistry;
   permissionManager: Pick<PermissionManager, 'checkDetailed' | 'check' | 'admitAutonomous' | 'autonomousPreparation'>
     & Partial<Pick<PermissionManager, 'prepareAutonomousOwner' | 'projectAutonomousChoices' | 'releaseAutonomousChoices'>>;
@@ -143,7 +145,8 @@ export async function executeToolCalls(
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
   const turnSignal = deps.turnSignal;
-  const assertTurnActive = () => turnSignal?.throwIfAborted();
+  const callerCurrent = deps.assertCurrent;
+  const assertTurnActive = () => { turnSignal?.throwIfAborted(); callerCurrent?.(); };
 
   for (const originalCall of calls) {
     assertTurnActive();
@@ -178,7 +181,7 @@ export async function executeToolCalls(
         try {
           if (typeof deps.toolRegistry.projectCall === 'function') {
             inputProjection = await deps.toolRegistry.projectCall(call.id, call.name, call.arguments,
-              { signal: admissionSignal, assertCurrent: originalPreparation.assertCurrent });
+              { signal: admissionSignal, assertCurrent: () => { assertTurnActive(); originalPreparation.assertCurrent(); } });
             call = { id: inputProjection.callId, name: inputProjection.name, arguments: inputProjection.args };
           }
           if (deps.permissionManager.projectAutonomousChoices && deps.permissionManager.releaseAutonomousChoices) {
@@ -189,7 +192,7 @@ export async function executeToolCalls(
             ? deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort, choiceProjection)
             : originalPreparation;
           prepared = await deps.toolRegistry.prepareCall(call.id, call.name, call.arguments, { signal: admissionSignal,
-            port: preparation.port, assertCurrent: preparation.assertCurrent });
+            port: preparation.port, assertCurrent: () => { assertTurnActive(); preparation.assertCurrent(); } });
           preparation.assertCurrent();
         } catch (error) {
           // A hallucinated tool remains a failed call so the model can recover
@@ -236,7 +239,7 @@ export async function executeToolCalls(
           if (consumedRevisions.includes(revision.ref.id)) throw new Error('Autonomous revision was already consumed');
           consumedRevisions.push(revision.ref.id);
           const preparation = deps.permissionManager.autonomousPreparation(sourceId, sourceOf!, admissionSignal, deps.autonomousPort, choiceProjection);
-          prepared = await deps.toolRegistry.prepareCall(call.id, revision.toolName, revision.args, { signal: admissionSignal, port: preparation.port, assertCurrent: preparation.assertCurrent });
+          prepared = await deps.toolRegistry.prepareCall(call.id, revision.toolName, revision.args, { signal: admissionSignal, port: preparation.port, assertCurrent: () => { assertTurnActive(); preparation.assertCurrent(); } });
           preparation.assertCurrent();
           call = { id: prepared.callId, name: prepared.name, arguments: prepared.args };
         }
@@ -352,7 +355,7 @@ export async function executeToolCalls(
           { tool: call.name, callId: call.id, mcpServer: mcpServerOfToolName(call.name) },
           () => {
             if (!prepared || !admission) return deps.toolRegistry.execute(call.id, call.name,
-              checkResult.modifiedArgs ?? call.arguments, callSignal ? { signal: callSignal } : undefined);
+              checkResult.modifiedArgs ?? call.arguments, callerCurrent ? { signal: callSignal, assertCurrent: assertTurnActive } : callSignal ? { signal: callSignal } : undefined);
             // Older embedding managers own a callback-only admission contract.
             // Permit it only on authenticated non-adopted registrations; it
             // mints no strict-body proof. Any genuine brand (even stale) keeps
@@ -360,7 +363,7 @@ export async function executeToolCalls(
             const preparedAdmission = isAuthenticAutonomousAdmission(admission)
               || deps.toolRegistry.readPreparedOwnedAdmissionEvidence(prepared) !== undefined
               ? admission : admission.claim;
-            return deps.toolRegistry.executePrepared(prepared, preparedAdmission, callSignal ? { signal: callSignal } : undefined);
+            return deps.toolRegistry.executePrepared(prepared, preparedAdmission, callerCurrent ? { signal: callSignal, assertCurrent: assertTurnActive } : callSignal ? { signal: callSignal } : undefined);
           },
         ));
         if (checkResult.autonomousDecision) result = { ...result, autonomousDecision: checkResult.autonomousDecision };
@@ -506,12 +509,16 @@ export async function executeToolCalls(
         // Fire-and-forget: the scheduler only records a debounce timer; it must never block the
         // tool-result path. Args are the ones actually executed (post-permission modification).
         try {
-          deps.onToolExecuted(call.name, checkResult.modifiedArgs ?? call.arguments, result.success === true);
+          withExternalOperationSource(sourceOf && autonomous ? {
+            sourceOf, signal: callSignal, assertCurrent: () => { assertTurnActive(); callSignal?.throwIfAborted(); },
+            inputFacts: [prepared?.args ?? checkResult.modifiedArgs ?? call.arguments],
+          } : undefined, () => deps.onToolExecuted!(call.name, checkResult.modifiedArgs ?? call.arguments, result.success === true));
         } catch (err) {
           logger.warn('onToolExecuted hook error', { tool: call.name, error: summarizeError(err) });
         }
       }
 
+      assertTurnActive();
       results.push(result);
     } catch (error) {
       if (earlyCallSignal?.aborted && !turnSignal?.aborted) results.push(toCancelledResult(call.id, admission?.result.autonomousDecision

@@ -134,7 +134,7 @@ describe('repair profile complete-pass write boundaries', () => {
     await expect(promoteRepairSources({ store: item.store, enrichSource: async () => { atHold = snapshot(item.store); throw error; } }, spaceId, gap, [empty.id], task, Date.now() + 5_000)).rejects.toBe(error);
     expect(atHold).not.toBe(''); expect(snapshot(item.store)).toBe(atHold);
   });
-  test('selected exact spans never reenter canonical heuristics; distinct unselected evidence keeps its existing path', async () => {
+  test('canonical profile pass retains distinct display and network spans without legacy value fabrication', async () => {
     const item = await fixture();
     const selected = 'AC-7 refresh rate: 120 Hz.';
     const distinct = 'AC-7 supports Bluetooth wireless connectivity.';
@@ -142,7 +142,7 @@ describe('repair profile complete-pass write boundaries', () => {
     const observed = { id: 'exact-span-gap', kind: 'knowledge_gap' as const, slug: 'exact-span-gap', title: 'Full AC-7 specifications', status: 'active' as const, metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [item.device.id] } };
     const gap = await upsertObservedKnowledgeNode(item.store, observed, 'research-task', observed, () => observed);
     const task = await item.store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
-    readings('yes', [[display, selected]]);
+    readings('yes', [[display, selected], ['Network and wireless capabilities', distinct]]);
     for (let repeat = 0; repeat < 2; repeat++) {
       await promoteRepairSources({ store: item.store }, spaceId, gap, [item.source.id], task, Date.now() + 5_000);
       const facts = item.store.listNodes().filter((node) => node.kind === 'fact');

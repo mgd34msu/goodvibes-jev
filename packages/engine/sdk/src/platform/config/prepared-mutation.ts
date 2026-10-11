@@ -23,6 +23,8 @@ export interface PreparedConfigMutationFacts {
   /** Ordered possible setting-file effects; absent tier removals remain no-ops. */
   readonly destinations: readonly PreparedConfigMutationDestination[];
   readonly incarnation: number;
+  /** Full ordered plan, present only for a same-owner compound mutation. */
+  readonly effects?: readonly PreparedConfigMutationFacts[];
 }
 export interface PreparedConfigMutationTransitionFacts {
   readonly beforeIncarnation: number;
@@ -42,7 +44,8 @@ export interface PreparedMutationRecord {
   readonly schemaSignature: string;
   readonly validator: ConfigSetting['validate'];
   readonly normalizedJson: string;
-  phase: 'prepared' | 'beginning' | 'begun' | 'spent';
+  readonly steps?: readonly PreparedConfigMutation[];
+  phase: 'prepared' | 'beginning' | 'begun' | 'committing' | 'spent';
   transition?: PreparedConfigMutationTransition;
 }
 

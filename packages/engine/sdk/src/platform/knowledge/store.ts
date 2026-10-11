@@ -1,11 +1,15 @@
+import { readKnowledgeRecordSnapshot, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
+import { captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
+import { JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { createNativeCiContinuationTable, validateNativeCiContinuationTable } from './store-native-ci-continuation.js';
 import { createNativeConversationStorage, validateNativeConversationCaptureTable, migrateNativeConversationCaptureTable } from './store-native-intake.js';
 import type { NativeConversationStorage } from '../workflow/work-ledger/native-intake-types.js';
 import { migrateNativeWorkSettlementTable, validateNativeWorkSettlementTable, createNativeWorkExecutionStorage, createNativeWorkExecutionTable, validateNativeWorkExecutionTable, createNativeWorkExecutionIntentTable, validateNativeWorkExecutionIntentTable } from './store-native-work-execution.js';
 import type { NativeWorkExecutionStorage } from '../workflow/work-ledger/native-execution-types.js';
 import { createKnowledgeWorkLedgerStorage, createWorkLedgerTable, validateWorkLedgerTable, migrateWorkLedgerTableToVersion2, type KnowledgeWorkLedgerStorage } from './store-work-ledger.js';
 import { randomUUID } from 'node:crypto';
-import { readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
-import { applyKnowledgeImport, type KnowledgeImportInput, type PrepareKnowledgeImportGraph } from './store-import.js';
+import { KnowledgeSourcePublicationHeldError, readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
+import { applyKnowledgeImport, type KnowledgeImportInput, type KnowledgeImportReceipt, type PrepareKnowledgeImportGraph } from './store-import.js';
 import { prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow, findKnowledgeEdge } from './store-edge-writes.js';
 import { snapshotNodeInput } from './activation/projection.js';
 import { KnowledgeNodeActivationHeldError, type KnowledgeNodeActivationOptions } from './activation/types.js';
@@ -439,6 +443,11 @@ export class KnowledgeStore {
     return this.sqlite.readPersisted((db) => readKnowledgeSourceSnapshot(db, selector));
   }
 
+  /** Detached complete SQL row for semantic admission; numeric views confer no authority. */
+  getRecordSnapshot(kind: 'node' | 'extraction', id: string): KnowledgeRecordSnapshot {
+    return this.sqlite.readPersisted((db) => readKnowledgeRecordSnapshot(db, kind, id));
+  }
+
   /** Opaque full-row entity fingerprint. Possessing it does not grant authority. */
   getSourceGeneration(id: string): string | null {
     return this.getSourceSnapshot({ id }).generation;
@@ -470,6 +479,83 @@ export class KnowledgeStore {
     return { kind: 'held', reason: current.generation === expectedGeneration ? 'pending-local-changes' : 'source-changed', current: current.source, generation: current.generation };
   }
 
+  /** Internal semantic-publication restriction; not an execution permission. */
+  captureSourcePublication(): () => void { return this.sqlite.captureObservation(); }
+
+  /**
+   * Publish a bounded owner-selected source set in one existing coordinated
+   * transaction. Every row and the reader remain current at the commit boundary.
+   */
+  async upsertOwnedCanonicalSources(
+    writes: readonly { readonly input: KnowledgeSourceUpsertInput; readonly generation: string | null }[],
+    assertCurrent: () => void,
+    published: (sources: readonly KnowledgeSourceSnapshot[], successor: () => void) => void,
+  ): Promise<readonly KnowledgeSourceSnapshot[]> {
+    const captured = snapshotJudgmentInput(writes) as typeof writes;
+    await this.init();
+    assertCurrent();
+    const result = await this.sqlite.transactPersisted<readonly KnowledgeSourceSnapshot[]>((db) => {
+      assertCurrent();
+      const prepared = captured.map(({ input, generation }) => {
+        if (!input.id) throw new TypeError('Owned source publication requires an exact identity');
+        if (input.connectorId !== 'goodvibes-project-planning') throw new TypeError('Canonical source clocks require a planning artifact');
+        const current = readKnowledgeSourceSnapshot(db, { id: input.id });
+        if (current.generation !== generation) throw new KnowledgeSourcePublicationHeldError('state-changed');
+        // Admission owns the original persisted values, never the numeric
+        // compatibility view. Generic metadata and caller lastCrawledAt are not
+        // rewritten. A legacy clock can migrate only after this full admission.
+        snapshotJudgmentInput(current.raw);
+        snapshotJudgmentInput(current.source?.metadata);
+        snapshotJudgmentInput(current.source?.tags);
+        if (current.raw) for (const key of ['created_at', 'updated_at'] as const) {
+          const value = current.raw[key];
+          const timestamp = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
+          if (!Number.isSafeInteger(timestamp) || Math.abs(timestamp) > 8.64e15
+            || (typeof value === 'string' && new Date(timestamp).toISOString() !== value)) throw new JudgmentInputError('unsupported-input');
+        }
+        const record = prepareKnowledgeSourceRecord(input, current.source);
+        const now = new Date(Date.now()).toISOString();
+        const inherited = current.raw?.created_at;
+        let createdAt = now;
+        if (inherited !== undefined) {
+          const timestamp = typeof inherited === 'number' ? inherited : typeof inherited === 'string' ? Date.parse(inherited) : NaN;
+          if (!Number.isSafeInteger(timestamp) || Math.abs(timestamp) > 8.64e15
+            || (typeof inherited === 'string' && new Date(timestamp).toISOString() !== inherited)) throw new JudgmentInputError('unsupported-input');
+          createdAt = new Date(timestamp).toISOString();
+        }
+        return { ...record, createdAt, updatedAt: now };
+      });
+      assertCurrent();
+      for (const record of prepared) writeKnowledgeSourceRow(db, record);
+      assertCurrent();
+      return { changed: prepared.length > 0, value: prepared.map(record => readKnowledgeSourceSnapshot(db, { id: record.id })) };
+    }, () => this.refreshSnapshot(), (sources) => {
+      // Capture only our exact committed successor while still owning the lock.
+      published(sources, this.captureSourcePublication());
+    });
+    if (result.kind !== 'completed') throw new KnowledgeSourcePublicationHeldError('pending-local-changes');
+    assertCurrent();
+    return result.value;
+  }
+
+  /** Canonical source-clock storage for planning artifacts, with numeric read
+   * compatibility. This accepts no trust flag: all original input and existing
+   * persisted values are admitted before any legacy clock representation change. */
+  async upsertCanonicalSource(input: KnowledgeSourceUpsertInput): Promise<KnowledgeSourceRecord> {
+    const captured = snapshotJudgmentInput(input) as KnowledgeSourceUpsertInput;
+    await this.init();
+    const observation = this.captureSourcePublication();
+    const selector = captured.id ? { id: captured.id } : captured.canonicalUri ? { canonicalUri: captured.canonicalUri } : null;
+    if (!selector) throw new TypeError('Canonical source publication requires an exact identity');
+    const previous = this.getSourceSnapshot(selector);
+    const id = previous.source?.id ?? captured.id;
+    if (!id) throw new TypeError('Canonical source publication requires an exact identity');
+    let current = observation;
+    const written = await this.upsertOwnedCanonicalSources([{ input: { ...captured, id }, generation: previous.generation }],
+      () => current(), (_sources, successor) => { current = successor; });
+    return written[0]!.source!;
+  }
+
   async upsertSource(input: KnowledgeSourceUpsertInput): Promise<KnowledgeSourceRecord> {
     await this.init();
     const existing = input.id
@@ -496,6 +582,8 @@ export class KnowledgeStore {
   }
 
   async replaceSourceRecord(record: KnowledgeSourceRecord): Promise<void> {
+    // A restored value is a new observation; never revive an earlier row identity.
+    record = snapshotNodeInput(record);
     await this.init();
     this.sqlite.run(`
       INSERT OR REPLACE INTO knowledge_sources (
@@ -571,9 +659,10 @@ export class KnowledgeStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
+    prepareKnowledgeOwnedClocks(candidate, existing, now);
     // Authority is resolved before automatic activation or any persistence.
     const gated = resolveNodeActivation({ input, candidate, existing, mutation, now });
-    const record = retainKnowledgeNodeRecord({ ...candidate, ...gated });
+    const record = retainKnowledgeNodeRecord({ ...candidate, ...gated }, candidate);
     return { input, existing, record, now, authority: gated !== undefined, observation: resolveKnowledgeNodeObservation(observationInput, existing) };
   }
 
@@ -587,7 +676,7 @@ export class KnowledgeStore {
 
   /** Stage imported evidence and judgments before a guarded all-or-none SQL/cache commit. */
   async applyImport(input: KnowledgeImportInput, options: KnowledgeNodeActivationOptions = {}): Promise<void> {
-    input = snapshotNodeInput(input);
+    input = captureKnowledgeStoreInput(input);
     await this.init();
     await applyKnowledgeImport(this, { sqlite: this.sqlite, sources: this.sources, extractions: this.extractions, nodes: this.nodes,
       nodeRevisions: this.nodeRevisions, edges: this.edges, issues: this.issues }, input,
@@ -596,13 +685,13 @@ export class KnowledgeStore {
 
   /** Prepare a source-backed graph before committing evidence and nodes together. */
   async applyPreparedIngest(input: KnowledgeImportInput, prepareGraph: PrepareKnowledgeImportGraph,
-    options: KnowledgeNodeActivationOptions = {}): Promise<void> {
-    input = snapshotNodeInput(input);
+    options: KnowledgeNodeActivationOptions = {}, onCommitted?: () => void): Promise<KnowledgeImportReceipt> {
+    input = copyKnowledgeRepresentation(input, captureKnowledgeStoreInput(input));
     await this.init();
-    await applyKnowledgeImport(this, { sqlite: this.sqlite, sources: this.sources, extractions: this.extractions, nodes: this.nodes,
+    return applyKnowledgeImport(this, { sqlite: this.sqlite, sources: this.sources, extractions: this.extractions, nodes: this.nodes,
       nodeRevisions: this.nodeRevisions, edges: this.edges, issues: this.issues }, input,
     (node, original) => this.prepareNodeMutation(node, undefined, original),
-    this.nodeActivationConfidenceFloor, this.nodeActivationScope, options, prepareGraph);
+    this.nodeActivationConfidenceFloor, this.nodeActivationScope, options, prepareGraph, onCommitted);
   }
 
   assertPreparedNodeWrites(prepared: KnowledgePreparedNodeWrites): void { assertPreparedNodeWrites(this, prepared, this.nodeActivationScope); }
@@ -902,8 +991,9 @@ export class KnowledgeStore {
     return upsertKnowledgeRefinementTask(this.sqlite, this.refinementTasks, input, () => `kref-${randomUUID().slice(0, 8)}`);
   }
 
-  async upsertUsageRecord(input: KnowledgeUsageUpsertInput): Promise<KnowledgeUsageRecord> {
+  async upsertUsageRecord(input: KnowledgeUsageUpsertInput, assertCurrent?: () => void): Promise<KnowledgeUsageRecord> {
     await this.init();
+    assertCurrent?.();
     const _task = stableText(input.task);
     const _sessionId = stableText(input.sessionId);
     const record: KnowledgeUsageRecord = {
@@ -1082,8 +1172,8 @@ export class KnowledgeStore {
 
   private async initialize(): Promise<void> {
     await this.sqlite.init(createSchema, {
-      storeName: 'knowledge store', schemaVersion: 7,
-      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); },
+      storeName: 'knowledge store', schemaVersion: 9,
+      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); validateNativeCiContinuationTable(db); },
       migrations: [
         { toVersion: 1, migrate: createSchema },
         { toVersion: 2, migrate: createWorkLedgerTable },
@@ -1092,6 +1182,17 @@ export class KnowledgeStore {
         { toVersion: 5, migrate: db => { validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); migrateWorkLedgerTableToVersion2(db); } },
         { toVersion: 6, migrate: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); migrateNativeConversationCaptureTable(db); } },
         { toVersion: 7, migrate: db => { validateNativeConversationCaptureTable(db); migrateNativeWorkSettlementTable(db); } },
+        { toVersion: 8, migrate: db => { validateWorkLedgerTable(db); validateNativeWorkSettlementTable(db); createNativeCiContinuationTable(db); validateNativeCiContinuationTable(db); } },
+        // Format barrier: owned knowledge clocks may now be canonical ISO TEXT.
+        // The existing version opener snapshots v8 before this marker and older
+        // targets refuse v9. Do not rewrite or bless any legacy numeric rows.
+        { toVersion: 9, migrate: db => {
+          // Established v8 data must validate BEFORE the version stamp and the
+          // idempotent base-schema pass, which would recreate missing tables.
+          validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db);
+          validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db);
+          validateNativeWorkSettlementTable(db); validateNativeCiContinuationTable(db);
+        } },
       ],
     });
     try {

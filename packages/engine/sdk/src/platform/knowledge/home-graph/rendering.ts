@@ -11,8 +11,7 @@ import { REPAIRS_GAP_RELATION } from './types.js';
 import { countFacet, normalizeStringArray, readString } from '../map-filters.js';
 import { edgeIsActive, factSourceIds, isGeneratedPageSource, uniqueStrings } from './helpers.js';
 import type { HomeGraphMapHaFilterInput, HomeGraphMapInput, HomeGraphMapResult } from './types.js';
-import { isLowValueFeatureOrSpecText } from '../semantic/fact-quality.js';
-import { isUsefulHomeGraphPageFact, createHomeGraphPageSourceReader, type HomeGraphPageSourceReader } from './page-quality.js';
+import { isHomeGraphPageFactCandidate, assertHomeGraphPageFactPlan, createHomeGraphPageSourceReader, type HomeGraphPageSourceReader, type HomeGraphPageFactReader, type HomeGraphPageFactPlan } from './page-quality.js';
 
 export interface HomeGraphRenderState {
   readonly spaceId: string;
@@ -23,7 +22,7 @@ export interface HomeGraphRenderState {
   readonly issues: readonly KnowledgeIssueRecord[];
 }
 
-export async function renderRoomPage(state: HomeGraphRenderState, areaId?: string, sourceReader = createHomeGraphPageSourceReader()): Promise<string> {
+export async function renderRoomPage(state: HomeGraphRenderState, areaId?: string, sourceReader = createHomeGraphPageSourceReader(), createFactReader?: (subjects: readonly KnowledgeNodeRecord[]) => HomeGraphPageFactReader): Promise<string> {
   const area = areaId
     ? findNodeByHaId(state.nodes, 'ha_area', areaId) ?? findNodeByHaId(state.nodes, 'ha_room', areaId)
     : undefined;
@@ -52,7 +51,14 @@ export async function renderRoomPage(state: HomeGraphRenderState, areaId?: strin
     ...scripts.map((node) => node.id),
   ]);
   const sources = await relatedSources(state.sources, state.edges, state.nodes, relatedNodeIds, sourceReader);
-  const semanticFacts = semanticFactsLinkedToSources(sources, state.nodes, state.edges, relatedNodeIds);
+  if (!createFactReader) throw new GoodVibesSdkError('Home Graph room rendering requires a fact quality reader.', {
+    category: 'bad_request', source: 'runtime', operation: 'homegraph.generateRoomPage',
+  });
+  const factReader = createFactReader(state.nodes.filter((node) => relatedNodeIds.has(node.id)));
+  const factPlan = await factReader.prepare(semanticFactsLinkedToSources(sources, state.nodes, state.edges, relatedNodeIds));
+  assertHomeGraphPageFactPlan(factPlan);
+  const semanticFacts = factPlan.facts.filter((fact) => factPlan.accepts(fact));
+  factPlan.assertCurrent();
   const issues = issuesForScope(state.issues, state.edges, relatedNodeIds, sources);
   return [
     `# ${title}`,
@@ -79,7 +85,10 @@ export function renderDevicePassportPage(input: {
   readonly issues: readonly KnowledgeIssueRecord[];
   readonly missingFields: readonly string[];
   readonly semanticFacts?: readonly KnowledgeNodeRecord[] | undefined;
+  readonly factPlan: HomeGraphPageFactPlan;
 }): string {
+  assertHomeGraphPageFactPlan(input.factPlan);
+  const semanticFacts = (input.semanticFacts ?? input.factPlan.facts).filter((fact) => input.factPlan.accepts(fact));
   return [
     `# ${input.device.title}`,
     '',
@@ -97,7 +106,7 @@ export function renderDevicePassportPage(input: {
     renderMetadataField('Device id', readHa(input.device, 'deviceId')),
     '',
     renderNodeList('Entities Exposed To Home Assistant', input.entities),
-    renderSemanticFacts('Verified Device Facts', input.semanticFacts ?? []),
+    renderSemanticFacts('Verified Device Facts', semanticFacts),
     renderSourceList('Sources', input.sources),
     renderIssueList('Open Issues', input.issues.filter((issue) => issue.status === 'open')),
     input.missingFields.length > 0
@@ -392,8 +401,7 @@ function renderSourceList(title: string, sources: readonly KnowledgeSourceRecord
 }
 
 function renderSemanticFacts(title: string, facts: readonly KnowledgeNodeRecord[]): string {
-  const entries = dedupePageFacts(facts
-    .filter(isUsefulHomeGraphPageFact)
+  const entries = dedupePageFacts([...facts]
     .sort((left, right) => semanticFactSortKey(left).localeCompare(semanticFactSortKey(right)) || left.title.localeCompare(right.title)))
     .slice(0, 80);
   if (entries.length === 0) return '';
@@ -429,12 +437,13 @@ function dedupePageFacts(facts: readonly KnowledgeNodeRecord[]): KnowledgeNodeRe
 function renderPageFactLine(fact: KnowledgeNodeRecord): string {
   const title = cleanPageFactTitle(fact.title);
   if (!title) return '';
-  const value = cleanPageFactDetail(readString(fact.metadata.value));
+  const value = cleanPageFactDetail(typeof fact.metadata.value === 'string' ? fact.metadata.value
+    : fact.metadata.value === undefined ? undefined : JSON.stringify(fact.metadata.value));
   const summary = cleanPageFactDetail(fact.summary);
   const canonicalValue = selectPageFactValue(title, value, summary);
   const detail = selectPageFactDetail(title, canonicalValue, summary);
   const line = normalizePageFactLine(`- ${title}${canonicalValue ? `: ${canonicalValue}` : ''}${detail ? ` - ${detail}` : ''}`);
-  return isLowValueFeatureOrSpecText(line) ? '' : line;
+  return line;
 }
 
 function selectPageFactValue(
@@ -444,7 +453,6 @@ function selectPageFactValue(
 ): string | undefined {
   for (const candidate of [value, extractSummaryValue(title, summary)]) {
     if (!candidate) continue;
-    if (isLowValueFeatureOrSpecText(candidate)) continue;
     if (isRedundantPageFactDetail(title, undefined, candidate)) continue;
     return candidate;
   }
@@ -472,62 +480,33 @@ function extractSummaryValue(title: string, detail: string | undefined): string 
 }
 
 function isRedundantPageFactDetail(title: string, value: string | undefined, detail: string): boolean {
-  const normalized = normalizePageFactText(detail);
-  if (!normalized) return true;
-  const normalizedTitle = normalizePageFactText(title);
-  const normalizedValue = normalizePageFactText(value ?? '');
-  const extractedValue = normalizePageFactText(extractSummaryValue(title, detail) ?? '');
-  if (normalized === normalizedTitle || normalized === normalizedValue) return true;
-  if (normalizedValue && extractedValue && normalizedFactValuesEquivalent(normalizedValue, extractedValue)) return true;
-  if (normalizedValue && normalized === normalizePageFactText(`${title}: ${value}.`)) return true;
-  if (normalizedTitle && normalizedValue && normalized.includes(normalizedTitle) && normalized.includes(normalizedValue)) return true;
-  if (normalizedTitle && normalized.startsWith(`${normalizedTitle} `) && normalized.length <= normalizedTitle.length + 12) return true;
-  return false;
-}
-
-function normalizedFactValuesEquivalent(left: string, right: string): boolean {
-  const normalizeTokens = (value: string): string[] => value
-    .split(/\s+/)
-    .filter((token) => token !== 'and')
-    .filter(Boolean);
-  const leftTokens = normalizeTokens(left);
-  const rightTokens = normalizeTokens(right);
-  const leftText = leftTokens.join(' ');
-  const rightText = rightTokens.join(' ');
-  if (leftText === rightText) return true;
-  const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
-  const longer = new Set(leftTokens.length <= rightTokens.length ? rightTokens : leftTokens);
-  if (shorter.length === 0) return false;
-  const shared = shorter.filter((token) => longer.has(token)).length;
-  return shared / shorter.length >= 0.75;
+  const text = detail.trim();
+  return text.length === 0 || text === title.trim() || text === value?.trim()
+    || (value !== undefined && (text === `${title}: ${value}` || text === `${title}: ${value}.`));
 }
 
 function cleanPageFactDetail(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
-  if (!trimmed || isLowValueFeatureOrSpecText(trimmed)) return undefined;
+  if (!trimmed) return undefined;
   return trimmed;
 }
 
 function cleanPageFactTitle(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = normalizePageFactLine(value.trim());
-  if (!trimmed || isLowValueFeatureOrSpecText(trimmed)) return undefined;
-  if (trimmed.length > 120 && /\b(hdmi|usb|hdr|speaker|audio|ports?|features?|selected|motion|freesync|quantity|table)\b/i.test(trimmed)) {
-    return undefined;
-  }
+  if (!trimmed) return undefined;
   return trimmed;
 }
 
 function normalizePageFactLine(value: string): string {
-  return value
-    .replace(/\s+/g, ' ')
-    .replace(/\b([A-Za-z][A-Za-z0-9/+.-]*(?:\s+[A-Za-z][A-Za-z0-9/+.-]*){1,5})\b\s+\1\b/gi, '$1')
-    .trim();
+  return value.trim();
 }
 
 function normalizePageFactText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // Formatting comparison only. Signs, punctuation, case, units and qualifiers
+  // remain part of the claim; lexical overlap never establishes equivalence.
+  return value.trim();
 }
 
 function escapeRegExp(value: string): string {
@@ -552,7 +531,7 @@ function semanticFactsLinkedToSources(
   return nodes.filter((node) => (
     (factIds.has(node.id) || factSourceIds(node).some((sourceId) => sourceIds.has(sourceId)))
     && (!nodeIds || factHasSubjectLink(node, nodeIds, describedFactIds))
-    && isUsefulHomeGraphPageFact(node)
+    && isHomeGraphPageFactCandidate(node)
   ));
 }
 
@@ -608,7 +587,6 @@ function renderIssueList(title: string, issues: readonly KnowledgeIssueRecord[])
 function isUsefulHomeGraphPageIssue(issue: KnowledgeIssueRecord): boolean {
   if (issue.status !== 'open') return false;
   if (issue.code.startsWith('knowledge.')) return false;
-  if (isLowValueFeatureOrSpecText(issue.message)) return false;
   return true;
 }
 

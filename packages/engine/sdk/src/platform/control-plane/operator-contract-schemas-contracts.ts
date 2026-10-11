@@ -1,3 +1,6 @@
+import { toJSONSchema } from 'zod/v4';
+import { nativeConversationContinuationMessageSchema } from '../workflow/work-ledger/native-continuation-context.js';
+import { nativeSelectedDiffContextSchema } from '../workflow/work-ledger/native-diff-context.js';
 /**
  * operator-contract-schemas-contracts.ts
  *
@@ -277,6 +280,8 @@ const DRAFT_PLAN_SCHEMA = objectSchema({
 
 /** One contract with its whole tree: what `contracts.get` returns and `contracts.list` lists. */
 export const CONTRACT_VIEW_SCHEMA = objectSchema({
+  originalSource: objectSchema({ goal: STRING_SCHEMA, criteria: STRING_LIST_SCHEMA, conversationContext: arraySchema(toJSONSchema(nativeConversationContinuationMessageSchema)), selectedDiffContext: toJSONSchema(nativeSelectedDiffContextSchema) }, ['goal', 'criteria']),
+  taskEvidence: STRING_SCHEMA,
   nativeSource: CONTRACT_NATIVE_SOURCE_SCHEMA,
   nativeDecisions: CONTRACT_NATIVE_DECISIONS_SCHEMA,
   nativeProgress: CONTRACT_NATIVE_PROGRESS_SCHEMA,

@@ -14,6 +14,8 @@ export async function startCapturedBackground(
   signal: AbortSignal | undefined,
   network: 'enabled' | 'disabled',
   environment: Readonly<Record<string, string>>,
+  beforeSpawn?: () => void,
+  beforePublish?: () => void,
 ): Promise<ExecCommandResult> {
   const controller = new AbortController();
   const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -27,7 +29,7 @@ export async function startCapturedBackground(
   void started.catch(() => {});
   const commandInput = input.background ? { ...input, background: false, until: undefined } : { ...input, background: false };
   const completion = runCapturedCommand(binding, command, commandInput, workingDirectory, timeoutMs,
-    combined, network, environment, { onStarted: (active) => { lease = active; if (!commandInput.until) resolveStarted({ pid: active.pid }); },
+    combined, network, environment, { beforeSpawn, beforePublish, onStarted: (active) => { lease = active; if (!commandInput.until) resolveStarted({ pid: active.pid }); },
       onUntilMatched: () => { if (lease) resolveStarted({ pid: lease.pid }); } })
     .then((completed) => {
       result = completed;

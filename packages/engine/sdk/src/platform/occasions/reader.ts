@@ -1,3 +1,4 @@
+import type { ProfilePersonReadingOptions } from '../owner-profile/person-reading.js';
 /**
  * reader.ts, the profile, read as occasions and plans.
  *
@@ -18,6 +19,7 @@
 import type { ProfileLine } from '../owner-profile/types.js';
 import { renderOccasionDate, type IsoDate } from './dates.js';
 import { parseOccasionLine, parsePlanLine } from './grammar.js';
+import { OccasionReadingWork } from './readings.js';
 import { resolveOccasionSubject } from './subject.js';
 import type {
   Occasion,
@@ -40,7 +42,9 @@ export interface OccasionProfileSource {
   /** Raw prose lines under `## Plans`. */
   plans(): readonly ProfileLine[];
   /** Profile lines mentioning one person, by name. Opens the interview. */
-  person(name: string): readonly ProfileLine[];
+  person(name: string, options?: ProfilePersonReadingOptions): readonly ProfileLine[] | Promise<readonly ProfileLine[]>;
+  /** Captures the actual profile incarnation without exposing closed content. */
+  captureRead?(): { readonly assertCurrent: () => void };
   /**
    * What the owner calls THEMSELVES: `identity.name` and `identity.goesBy`.
    *
@@ -78,14 +82,12 @@ export interface PlanReadResult {
  * the same one it is a harmless duplicate that stays in the file and stays
  * visible.
  */
-export function readOccasions(source: OccasionProfileSource): OccasionReadResult {
+export function readOccasionDeclarations(source: OccasionProfileSource): OccasionReadResult {
   const occasions: Occasion[] = [];
   const unparsed: UnparsedOccasionLine[] = [];
   const byId = new Map<string, Occasion[]>();
-  // Read once for the whole document rather than per line: the answer is the
-  // same for every occasion, and a closed-tier field read per birthday would be
-  // a disclosure per birthday.
-  const declaredNames = source.ownerNames?.() ?? [];
+  // This structural projection grants only explicit schema attribution.
+
 
   for (const line of source.importantDates()) {
     const result = parseOccasionLine(line.lineIndex, line.text);
@@ -93,12 +95,11 @@ export function readOccasions(source: OccasionProfileSource): OccasionReadResult
       unparsed.push(result.unparsed);
       continue;
     }
-    // Attribution is settled HERE because this is the first layer that has both
-    // the line and the owner's declared names. The parser has only the line.
+    // Free-form attribution is settled only by the asynchronous reader below.
     const parsed = result.occasion;
     const occasion: Occasion = {
       ...parsed,
-      subject: resolveOccasionSubject(parsed, declaredNames),
+      subject: parsed.selfDeclared ? 'owner' : 'unattributed',
     };
     const seen = byId.get(occasion.id);
     if (seen === undefined) {
@@ -123,6 +124,24 @@ export function readOccasions(source: OccasionProfileSource): OccasionReadResult
   }
 
   return { occasions, unparsed, conflicts };
+}
+
+/** Semantic attribution used by the live service; capture/removal only need structural declarations. */
+export async function readOccasions(source: OccasionProfileSource, work = new OccasionReadingWork()): Promise<OccasionReadResult> {
+  const lease = source.captureRead?.();
+  if (lease) work.retain(lease.assertCurrent);
+  const original = { lines: source.importantDates(), names: source.ownerNames?.() ?? [] };
+  const captured = work.snapshot(original);
+  const sourceKey = JSON.stringify(captured);
+  work.retain(() => { if (JSON.stringify({ lines: source.importantDates(), names: source.ownerNames?.() ?? [] }) !== sourceKey) throw new Error('Occasion source changed.'); });
+  const result = readOccasionDeclarations({ ...source, importantDates: () => captured.lines });
+  const occasions: Occasion[] = [];
+  for (const occasion of result.occasions) {
+    // Full lines were screened above. Closed-tier dates never enter model context.
+    const subject = await resolveOccasionSubject({ title: occasion.title, person: occasion.person, selfDeclared: occasion.selfDeclared }, captured.names, work);
+    occasions.push({ ...occasion, subject });
+  }
+  work.assertCurrent(); return { ...result, occasions };
 }
 
 /** Read every plan, in document order. */

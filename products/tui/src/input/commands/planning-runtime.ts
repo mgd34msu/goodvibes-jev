@@ -114,19 +114,17 @@ export function registerPlanningRuntimeCommands(registry: CommandRegistry): void
         if (projectPlanningService && projectId) {
           const current = await projectPlanningService.getState({ projectId });
           if (current.state && current.state.metadata?.['active'] === true) {
-            await projectPlanningService.upsertState({
-              projectId,
-              state: {
-                ...current.state,
-                metadata: {
-                  ...(current.state.metadata ?? {}),
-                  active: false,
-                  dismissedAt: Date.now(),
-                  dismissedFrom: 'plan-command',
-                },
-              },
-            });
-            planningNote = ' Historical project planning record marked inactive.';
+            if (!current.revision) {
+              planningNote = ' Historical project planning record was not changed because its revision is unavailable. Refresh and retry.';
+            } else {
+              const result = await projectPlanningService.applyStateAction({ projectId,
+                planningId: current.state.id, expected: { kind: 'revision', revision: current.revision },
+                action: { kind: 'dismiss' },
+              });
+              planningNote = result.applied
+                ? ' Historical project planning record marked inactive.'
+                : ` Historical project planning record was not changed (${result.reason}); refresh and retry.`;
+            }
           }
         }
         if (dismissal.outcome === 'dismissed') {

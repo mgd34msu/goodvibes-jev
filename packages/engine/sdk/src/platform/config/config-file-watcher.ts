@@ -28,6 +28,8 @@ import { summarizeError } from '../utils/error-display.js';
 
 /** A running watch over one or more config files; call stop() to release it. */
 export interface ConfigFileWatchHandle {
+  /** Consume every disk change visible now through the normal reload path. */
+  poll(): void;
   stop(): void;
 }
 
@@ -84,7 +86,7 @@ export function watchConfigFiles(
     if (!path || baselines.has(path)) continue;
     baselines.set(path, readSnapshot(path, trackReadErrors));
   }
-  if (baselines.size === 0) return { stop(): void { /* nothing watched */ } };
+  if (baselines.size === 0) return { poll(): void { /* nothing watched */ }, stop(): void { /* nothing watched */ } };
 
   let stopped = false;
   const poll = (): void => {
@@ -108,6 +110,7 @@ export function watchConfigFiles(
   (timer as unknown as { unref?: () => void }).unref?.();
 
   return {
+    poll,
     stop(): void {
       stopped = true;
       clearInterval(timer);

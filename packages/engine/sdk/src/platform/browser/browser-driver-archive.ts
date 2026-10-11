@@ -47,31 +47,58 @@ function classify(typeflag: number | undefined, name: string): TarEntryKind {
   return 'other';
 }
 
+export interface ReadTarGzOptions {
+  /** Opt-in fail-closed header/checksum/terminator validation for fixed CI cohorts. */
+  readonly strict?: boolean;
+  /** Bound gzip expansion before allocating the decompressed archive. */
+  readonly maxOutputLength?: number;
+}
+
 /**
  * Walks every entry of a gzipped tar in archive order.
  *
  * Throws when the gzip stream does not decompress: a corrupted download must
  * fail loudly, never read as "the archive was empty".
  */
-export function* readTarGzEntries(archive: Buffer | Uint8Array): Generator<TarEntry> {
-  const tar = gunzipSync(archive);
+export function* readTarGzEntries(archive: Buffer | Uint8Array, options: ReadTarGzOptions = {}): Generator<TarEntry> {
+  const tar = gunzipSync(archive, options.maxOutputLength === undefined ? {} : { maxOutputLength: options.maxOutputLength });
   let offset = 0;
   while (offset + TAR_BLOCK <= tar.length) {
     const header = tar.subarray(offset, offset + TAR_BLOCK);
     // Two consecutive zero blocks end the archive; a zero name block is enough here.
-    if (header[0] === 0) return;
+    if (header[0] === 0) {
+      if (options.strict && (tar.length - offset < 2 * TAR_BLOCK || tar.subarray(offset).some(byte => byte !== 0))) throw new Error('Invalid tar terminator');
+      return;
+    }
+    if (options.strict) {
+      const stored = readTarString(header, 148, 8).trim();
+      if (!/^[0-7]+$/.test(stored)) throw new Error('Invalid tar header checksum');
+      let checksum = 0;
+      for (let i = 0; i < TAR_BLOCK; i++) checksum += i >= 148 && i < 156 ? 32 : header[i]!;
+      if (checksum !== Number.parseInt(stored, 8)) throw new Error('Tar header checksum mismatch');
+      if (!readTarString(header, 257, 6).startsWith('ustar')) throw new Error('Expected a ustar archive');
+    }
     const name = readTarString(header, 0, 100);
     const prefix = readTarString(header, 345, 155);
     const fullName = prefix ? `${prefix}/${name}` : name;
     const sizeOctal = readTarString(header, 124, 12).trim();
+    if (options.strict && !/^[0-7]+$/.test(sizeOctal)) throw new Error('Invalid tar member size');
     const size = Number.parseInt(sizeOctal || '0', 8);
-    if (!Number.isFinite(size) || size < 0) return;
+    if (!Number.isSafeInteger(size) || size < 0) {
+      if (options.strict) throw new Error('Invalid tar member size');
+      return;
+    }
     const modeOctal = readTarString(header, 100, 8).trim();
+    if (options.strict && !/^[0-7]+$/.test(modeOctal)) throw new Error('Invalid tar member mode');
     const parsedMode = Number.parseInt(modeOctal || '0', 8);
+    if (options.strict && (!Number.isSafeInteger(parsedMode) || parsedMode > 0o7777)) throw new Error('Invalid tar member mode');
     const kind = classify(header[156], fullName);
     const normalized = fullName.startsWith('./') ? fullName.slice(2) : fullName;
     const dataStart = offset + TAR_BLOCK;
-    if (dataStart + size > tar.length) return;
+    if (dataStart + size > tar.length) {
+      if (options.strict) throw new Error('Truncated tar member');
+      return;
+    }
     yield {
       path: normalized,
       kind,
@@ -80,6 +107,7 @@ export function* readTarGzEntries(archive: Buffer | Uint8Array): Generator<TarEn
     };
     offset = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
   }
+  if (options.strict) throw new Error('Missing tar terminator');
 }
 
 /**

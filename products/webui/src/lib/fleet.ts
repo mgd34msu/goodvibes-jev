@@ -12,6 +12,7 @@
  * never drop it.
  */
 
+import type { ProcessCheckSummary, ProcessCheckCriterion } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 import type { ApprovalRecord, FleetProcessNode } from './goodvibes';
 import { asRecord } from './object';
 
@@ -274,6 +275,35 @@ export function readReviewSummary(node: FleetProcessNode): ProcessReviewSummary 
   }
 
   return { score: candidate.score, passed: candidate.passed, cycles: candidate.cycles, checklist };
+}
+
+/** Validate the canonical adapter projection without deriving a second acceptance verdict. */
+export function readCheckSummary(node: FleetProcessNode): ProcessCheckSummary | null {
+  const value = node.check;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const count = (input: unknown): input is number => typeof input === 'number' && Number.isSafeInteger(input) && input >= 0;
+  if (!Array.isArray(record.criteria) || !count(record.met) || !count(record.judged) || !count(record.nudges)
+    || (record.lastCheckAt !== undefined && (typeof record.lastCheckAt !== 'number' || !Number.isFinite(record.lastCheckAt) || record.lastCheckAt < 0))) return null;
+  const criteria: ProcessCheckCriterion[] = [];
+  const ids = new Set<string>();
+  for (const value of record.criteria) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const criterion = value as Record<string, unknown>;
+    if (typeof criterion.id !== 'string' || !criterion.id || ids.has(criterion.id) || typeof criterion.text !== 'string'
+      || (typeof criterion.verdict !== 'string' || !['unread', 'met', 'unmet', 'unshown'].includes(criterion.verdict))
+      || (criterion.outcome !== undefined && (typeof criterion.outcome !== 'string' || !['act', 'confirm', 'escalate'].includes(criterion.outcome)))
+      || (criterion.severity !== undefined && (typeof criterion.severity !== 'string' || !['critical', 'major', 'minor'].includes(criterion.severity)))) return null;
+    ids.add(criterion.id);
+    criteria.push({ id: criterion.id, text: criterion.text, verdict: criterion.verdict as ProcessCheckCriterion['verdict'],
+      ...(criterion.outcome === undefined ? {} : { outcome: criterion.outcome as NonNullable<ProcessCheckCriterion['outcome']> }),
+      ...(criterion.severity === undefined ? {} : { severity: criterion.severity as NonNullable<ProcessCheckCriterion['severity']> }),
+    });
+  }
+  if (record.judged !== criteria.length || record.met !== criteria.filter(criterion => criterion.verdict === 'met').length) return null;
+  return { criteria, met: record.met, judged: record.judged, nudges: record.nudges,
+    ...(record.lastCheckAt === undefined ? {} : { lastCheckAt: record.lastCheckAt as number }),
+  };
 }
 
 export interface FleetRow {

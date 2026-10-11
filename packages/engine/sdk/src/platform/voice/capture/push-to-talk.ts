@@ -100,6 +100,7 @@ export class PushToTalkSession {
   readonly #openCapture: AudioCaptureOpener;
   #phase: PushToTalkPhase = 'idle';
   #stream: AudioCaptureStream | null = null;
+  #captureGeneration = 0;
   #recorder: VoiceInputRecorder | null = null;
 
   constructor(options: PushToTalkOptions) {
@@ -147,7 +148,9 @@ export class PushToTalkSession {
    * recorder installed, permission refused, plain-http origin.
    */
   async start(): Promise<void> {
-    if (this.#stream !== null) return;
+    if (this.#stream !== null || this.#phase === 'requesting') return;
+    const generation = ++this.#captureGeneration;
+    const current = (): boolean => generation === this.#captureGeneration;
     this.#setPhase('requesting');
     const recorder = new VoiceInputRecorder(this.#recorderPolicy(this.#options.silenceStopMs ?? 0));
     try {
@@ -160,19 +163,22 @@ export class PushToTalkSession {
         },
         {
           onFrame: (frame) => {
+            if (!current()) return;
             const stop = this.#recorder?.push(frame);
             if (stop !== null && stop !== undefined) void this.#endWith(stop);
           },
           onStopped: (reason, error) => {
-            if (reason === 'requested') return;
+            if (!current() || reason === 'requested') return;
             this.#fail(error ?? new AudioCaptureError('stream-ended', 'the capture stream ended'));
           },
         },
       );
+      if (!current()) { await stream.stop(); return; }
       this.#recorder = recorder;
       this.#stream = stream;
       this.#setPhase('recording');
     } catch (error) {
+      if (!current()) return;
       this.#recorder = null;
       const captureError = error instanceof AudioCaptureError
         ? error
@@ -189,20 +195,23 @@ export class PushToTalkSession {
    * a no-op rather than an error.
    */
   async stop(): Promise<CapturedUtterance | null> {
+    if (this.#phase === 'requesting') { await this.cancel(); return null; }
     if (this.#stream === null || this.#recorder === null) return null;
     return this.#endWith('requested');
   }
 
   /** Abandon the capture and release the device, keeping nothing. */
   async cancel(): Promise<void> {
+    const generation = ++this.#captureGeneration;
     const stream = this.#stream;
     this.#stream = null;
     this.#recorder = null;
     if (stream !== null) await stream.stop();
-    this.#setPhase('idle');
+    if (generation === this.#captureGeneration) this.#setPhase('idle');
   }
 
   async #endWith(reason: VoiceInputStopReason): Promise<CapturedUtterance> {
+    const generation = ++this.#captureGeneration;
     const recorder = this.#recorder;
     const stream = this.#stream;
     this.#recorder = null;
@@ -210,6 +219,7 @@ export class PushToTalkSession {
     this.#setPhase('stopping');
     if (stream !== null) await stream.stop();
     const utterance = (recorder ?? new VoiceInputRecorder(this.#recorderPolicy(0))).finish(reason);
+    if (generation !== this.#captureGeneration) return utterance;
     this.#setPhase('idle');
     // An auto-stop has nobody awaiting the return value, so it is announced.
     if (reason !== 'requested') this.#options.onAutoStop?.(utterance);
@@ -217,6 +227,9 @@ export class PushToTalkSession {
   }
 
   #fail(error: AudioCaptureError): void {
+    ++this.#captureGeneration;
+    const retiredStream = this.#stream;
+    if (retiredStream) void retiredStream.stop().catch(() => {});
     this.#recorder = null;
     this.#stream = null;
     this.#setPhase('error');

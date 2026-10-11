@@ -1,3 +1,4 @@
+import { readConfigSettingForDisplay } from '@goodvibes-jev/engine/sdk/platform/config';
 /**
  * settings-modal-data, pure data-assembly helpers for SettingsModal.
  *
@@ -152,11 +153,13 @@ export function refreshSettingsPolicyAvailability(groups: Map<string, SettingEnt
         sourceLabel: undefined, lockReason: undefined, metadataUnavailable: POLICY_METADATA_UNAVAILABLE,
       });
     } else if (entry.kind !== 'host' && entry.metadataUnavailable) {
+      const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key));
       const resolved = getResolvedSettingLookup(configManager, entry.setting.key)?.entry;
       Object.assign(entry, {
         effectiveSource: resolved?.effectiveSource, locked: resolved?.locked,
         conflict: resolved?.conflict, sourceLabel: resolved?.sourceLabel, lockReason: resolved?.lockReason,
         metadataUnavailable: undefined,
+        valueUnavailable: display.held,
       });
     }
   }
@@ -188,7 +191,8 @@ export function buildSettingGroups(
   for (const setting of configManager.getSchema()) {
     const rawCat = setting.key.split('.')[0] as string;
     const cat = rawCat as SettingsCategory;
-    const currentValue = configManager.get(setting.key as ConfigKey);
+    const display = readConfigSettingForDisplay(() => configManager.get(setting.key as ConfigKey));
+    const currentValue = display.value;
     const resolved = hostMetadataUnavailable ? undefined : getResolvedSettingLookup(configManager, setting.key)?.entry;
     const entry: SettingEntry = {
       setting,
@@ -200,6 +204,7 @@ export function buildSettingGroups(
       sourceLabel: resolved?.sourceLabel,
       lockReason: resolved?.lockReason,
       metadataUnavailable: hostMetadataUnavailable ? POLICY_METADATA_UNAVAILABLE : undefined,
+      valueUnavailable: display.held,
     };
     if (groups.has(cat)) groups.get(cat)!.push(entry);
     if ((rawCat === 'controlPlane' || rawCat === 'httpListener' || rawCat === 'web') && groups.has('network')) {
@@ -689,7 +694,9 @@ export function refreshEntryValues(
         refreshPaymentsSyntheticEntry(entry, configManager);
         continue;
       }
-      const raw = configManager.get(entry.setting.key as ConfigKey);
+      const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key as ConfigKey));
+      const raw = display.value;
+      entry.valueUnavailable = display.held;
       // Synthetic entries that have no SDK schema key return undefined from
       // configManager; the schema-driven entries above already normalize on
       // their own read paths, so the raw value is used as-is here.
@@ -740,7 +747,9 @@ export function updateEntryForKey(
         entry.isDefault = (entry.currentValue as string[]).length === 0;
         continue;
       }
-      const raw = configManager.get(entry.setting.key);
+      const display = readConfigSettingForDisplay(() => configManager.get(entry.setting.key));
+      const raw = display.value;
+      entry.valueUnavailable = display.held;
       entry.currentValue = raw;
       entry.isDefault = deepEqual(entry.currentValue, entry.setting.default);
       refreshHostSettingEntry(entry, configManager);

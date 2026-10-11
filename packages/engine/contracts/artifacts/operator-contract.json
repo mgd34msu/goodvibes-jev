@@ -27480,6 +27480,15 @@
                   "items": {
                     "type": "object",
                     "properties": {
+                      "headSha": {
+                        "type": "string"
+                      },
+                      "runId": {
+                        "type": "string"
+                      },
+                      "jobId": {
+                        "type": "string"
+                      },
                       "name": {
                         "type": "string"
                       },
@@ -27546,7 +27555,7 @@
       {
         "id": "ci.watches.create",
         "title": "Create CI Watch",
-        "description": "Create a standing watch on a repo/ref or PR. On transition to a terminal verdict it notifies the delivery channel; set triggerFixSession to opt in to starting a fix-session pre-briefed with the failing jobs on failure.",
+        "description": "Create a standing watch on a repo/ref or PR. On a terminal verdict it notifies the channel. Failed jobs request a fresh recorded repair decision from the original source owner; the compatibility flag is not authorization.",
         "category": "ci",
         "source": "builtin",
         "access": "authenticated",
@@ -27696,7 +27705,7 @@
       {
         "id": "ci.watches.list",
         "title": "List CI Watches",
-        "description": "Return every standing CI watch (repo/ref/PR, delivery channel, and whether a fix-session is opted in on failure).",
+        "description": "Return every standing CI watch. Stored flags are not repair authority; production repair requires current original-source ownership and Jev admission.",
         "category": "ci",
         "source": "builtin",
         "access": "authenticated",
@@ -27780,7 +27789,7 @@
       {
         "id": "ci.watches.run",
         "title": "Check CI Watch Now",
-        "description": "Poll a standing watch immediately: returns the per-job report, whether a completion notification fired, and whether an opted-in fix-session was triggered on failure.",
+        "description": "Poll a standing watch immediately: returns the per-job report, whether a completion notification fired, and whether an admitted fix-session started, or an honest refusal/error.",
         "category": "ci",
         "source": "builtin",
         "access": "authenticated",
@@ -27836,6 +27845,15 @@
                   "items": {
                     "type": "object",
                     "properties": {
+                      "headSha": {
+                        "type": "string"
+                      },
+                      "runId": {
+                        "type": "string"
+                      },
+                      "jobId": {
+                        "type": "string"
+                      },
                       "name": {
                         "type": "string"
                       },
@@ -30403,6 +30421,195 @@
         "outputSchema": {
           "type": "object",
           "properties": {
+            "originalSource": {
+              "type": "object",
+              "properties": {
+                "goal": {
+                  "type": "string"
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "conversationContext": {
+                  "type": "array",
+                  "items": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "assistant",
+                          "system",
+                          "tool"
+                        ]
+                      },
+                      "content": {
+                        "type": "string",
+                        "maxLength": 131072
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "content"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "selectedDiffContext": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "session"
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "fileIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "hunkIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "unifiedDiff": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 65536
+                        },
+                        "provenance": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "session"
+                            },
+                            "sessionId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "baselineCheckpointId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "latestCheckpointId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "sessionId",
+                            "baselineCheckpointId",
+                            "latestCheckpointId"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "revision",
+                        "fileIndex",
+                        "hunkIndex",
+                        "unifiedDiff",
+                        "provenance"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "workspace"
+                        },
+                        "baselineId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "fileIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "hunkIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "unifiedDiff": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 65536
+                        },
+                        "provenance": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "workspace"
+                            },
+                            "baselineId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "to": {
+                              "type": "string",
+                              "const": "WORKING"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "baselineId",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baselineId",
+                        "revision",
+                        "fileIndex",
+                        "hunkIndex",
+                        "unifiedDiff",
+                        "provenance"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "goal",
+                "criteria"
+              ],
+              "additionalProperties": false
+            },
+            "taskEvidence": {
+              "type": "string"
+            },
             "nativeSource": {
               "type": "object",
               "properties": {
@@ -36848,6 +37055,195 @@
               "items": {
                 "type": "object",
                 "properties": {
+                  "originalSource": {
+                    "type": "object",
+                    "properties": {
+                      "goal": {
+                        "type": "string"
+                      },
+                      "criteria": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "conversationContext": {
+                        "type": "array",
+                        "items": {
+                          "$schema": "https://json-schema.org/draft/2020-12/schema",
+                          "type": "object",
+                          "properties": {
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "assistant",
+                                "system",
+                                "tool"
+                              ]
+                            },
+                            "content": {
+                              "type": "string",
+                              "maxLength": 131072
+                            }
+                          },
+                          "required": [
+                            "role",
+                            "content"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "selectedDiffContext": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "session"
+                              },
+                              "revision": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "fileIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "hunkIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unifiedDiff": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 65536
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "session"
+                                  },
+                                  "sessionId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "baselineCheckpointId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "latestCheckpointId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "sessionId",
+                                  "baselineCheckpointId",
+                                  "latestCheckpointId"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "revision",
+                              "fileIndex",
+                              "hunkIndex",
+                              "unifiedDiff",
+                              "provenance"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "workspace"
+                              },
+                              "baselineId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              "revision": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "fileIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "hunkIndex": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unifiedDiff": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 65536
+                              },
+                              "provenance": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "workspace"
+                                  },
+                                  "baselineId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "const": "WORKING"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "baselineId",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "baselineId",
+                              "revision",
+                              "fileIndex",
+                              "hunkIndex",
+                              "unifiedDiff",
+                              "provenance"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "goal",
+                      "criteria"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "taskEvidence": {
+                    "type": "string"
+                  },
                   "nativeSource": {
                     "type": "object",
                     "properties": {
@@ -43397,6 +43793,195 @@
             "contract": {
               "type": "object",
               "properties": {
+                "originalSource": {
+                  "type": "object",
+                  "properties": {
+                    "goal": {
+                      "type": "string"
+                    },
+                    "criteria": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "conversationContext": {
+                      "type": "array",
+                      "items": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "assistant",
+                              "system",
+                              "tool"
+                            ]
+                          },
+                          "content": {
+                            "type": "string",
+                            "maxLength": 131072
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "content"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "selectedDiffContext": {
+                      "$schema": "https://json-schema.org/draft/2020-12/schema",
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "session"
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "session"
+                                },
+                                "sessionId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "baselineCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "latestCheckpointId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sessionId",
+                                "baselineCheckpointId",
+                                "latestCheckpointId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "workspace"
+                            },
+                            "baselineId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "fileIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "hunkIndex": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unifiedDiff": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 65536
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "workspace"
+                                },
+                                "baselineId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "to": {
+                                  "type": "string",
+                                  "const": "WORKING"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "baselineId",
+                                "to"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "baselineId",
+                            "revision",
+                            "fileIndex",
+                            "hunkIndex",
+                            "unifiedDiff",
+                            "provenance"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "goal",
+                    "criteria"
+                  ],
+                  "additionalProperties": false
+                },
+                "taskEvidence": {
+                  "type": "string"
+                },
                 "nativeSource": {
                   "type": "object",
                   "properties": {
@@ -54901,6 +55486,50 @@
                       "additionalProperties": false
                     }
                   },
+                  "attemptCount": {
+                    "type": "number"
+                  },
+                  "selectableCandidateCount": {
+                    "type": "number"
+                  },
+                  "unresolved": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "itemId": {
+                          "type": "string"
+                        },
+                        "attemptIndex": {
+                          "type": "number"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "itemId",
+                        "attemptIndex",
+                        "title",
+                        "state",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
                   "autoAccept": {
                     "type": "boolean"
                   },
@@ -55210,6 +55839,50 @@
                       "usage",
                       "failureReason",
                       "diff"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "attemptCount": {
+                  "type": "number"
+                },
+                "selectableCandidateCount": {
+                  "type": "number"
+                },
+                "unresolved": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "itemId": {
+                        "type": "string"
+                      },
+                      "attemptIndex": {
+                        "type": "number"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "itemId",
+                      "attemptIndex",
+                      "title",
+                      "state",
+                      "reason"
                     ],
                     "additionalProperties": false
                   }
@@ -62857,6 +63530,84 @@
                 "battery": {
                   "type": "string",
                   "enum": [
+                    "webui.voice.speech-seams"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "contentDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "cursor": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4095,
+                      "multipleOf": 64
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "messageId",
+                    "start",
+                    "end",
+                    "contentDigest",
+                    "cursor"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
                     "webui.errors.daemon-refusal"
                   ]
                 },
@@ -63184,11 +63935,780 @@
                 "input"
               ],
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
+                    "webui.pwa.install-platform"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "userAgent": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048
+                    },
+                    "platform": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "maxTouchPoints": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 256
+                    }
+                  },
+                  "required": [
+                    "userAgent",
+                    "platform",
+                    "maxTouchPoints"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
+                    "webui.models.catalog-provider-match"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "providerId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "minItems": 1,
+                      "maxItems": 64
+                    }
+                  },
+                  "required": [
+                    "providerId",
+                    "keys"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
+                    "webui.credentials.provider-key"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "providerId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "minItems": 1,
+                      "maxItems": 64
+                    }
+                  },
+                  "required": [
+                    "providerId",
+                    "keys"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
+                    "webui.settings.card-material-key"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "minItems": 1,
+                      "maxItems": 64
+                    }
+                  },
+                  "required": [
+                    "keys"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
+                    "webui.config.credential-key"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "minItems": 1,
+                      "maxItems": 64
+                    }
+                  },
+                  "required": [
+                    "keys"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "protocolVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "battery": {
+                  "type": "string",
+                  "enum": [
+                    "webui.code.language"
+                  ]
+                },
+                "batteryVersion": {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                "input": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "start": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "end": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000
+                    },
+                    "contentDigest": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "sessionId",
+                    "messageId",
+                    "start",
+                    "end",
+                    "contentDigest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "protocolVersion",
+                "requestId",
+                "battery",
+                "batteryVersion",
+                "input"
+              ],
+              "additionalProperties": false
             }
           ]
         },
         "outputSchema": {
           "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.voice.speech-seams"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "endOffsets": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 32768
+                          },
+                          "maxItems": 64
+                        },
+                        "nextCursor": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 64,
+                              "maximum": 4095
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "endOffsets",
+                        "nextCursor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.voice.speech-seams"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
             {
               "anyOf": [
                 {
@@ -64701,6 +66221,2394 @@
                       "type": "string",
                       "enum": [
                         "webui.mail.reply-subject"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.pwa.install-platform"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "platform": {
+                          "type": "string",
+                          "enum": [
+                            "ios-share-menu",
+                            "other"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "platform"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.pwa.install-platform"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.models.catalog-provider-match"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "matches": {
+                          "type": "array",
+                          "items": {
+                            "type": "boolean"
+                          }
+                        }
+                      },
+                      "required": [
+                        "matches"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.models.catalog-provider-match"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.credentials.provider-key"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "matches": {
+                          "type": "array",
+                          "items": {
+                            "type": "boolean"
+                          }
+                        }
+                      },
+                      "required": [
+                        "matches"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.credentials.provider-key"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.settings.card-material-key"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "matches": {
+                          "type": "array",
+                          "items": {
+                            "type": "boolean"
+                          }
+                        }
+                      },
+                      "required": [
+                        "matches"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.settings.card-material-key"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.config.credential-key"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "matches": {
+                          "type": "array",
+                          "items": {
+                            "type": "boolean"
+                          }
+                        }
+                      },
+                      "required": [
+                        "matches"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.config.credential-key"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "held"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "uncertain"
+                      ]
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "reason",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.code.language"
+                      ]
+                    },
+                    "batteryVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "settled"
+                      ]
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "language": {
+                          "type": "string",
+                          "enum": [
+                            "bash",
+                            "c",
+                            "cpp",
+                            "csharp",
+                            "css",
+                            "diff",
+                            "dockerfile",
+                            "go",
+                            "ini",
+                            "java",
+                            "javascript",
+                            "json",
+                            "markdown",
+                            "php",
+                            "plaintext",
+                            "python",
+                            "ruby",
+                            "rust",
+                            "shell",
+                            "sql",
+                            "typescript",
+                            "wasm",
+                            "xml",
+                            "yaml"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "language"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "readings": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "yes-no"
+                                ]
+                              },
+                              "probability": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "probability",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "choice"
+                                ]
+                              },
+                              "choice": {
+                                "type": "string"
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1
+                              },
+                              "probabilities": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "choice",
+                              "confidence",
+                              "probabilities",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "requestedModel": {
+                            "type": "string"
+                          },
+                          "usage": {
+                            "type": "object",
+                            "properties": {
+                              "inputTokens": {
+                                "type": "number"
+                              },
+                              "outputTokens": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "outputTokens"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "latencyMs": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "decisionId",
+                          "model",
+                          "requestedModel",
+                          "usage",
+                          "latencyMs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "protocolVersion",
+                    "requestId",
+                    "battery",
+                    "batteryVersion",
+                    "status",
+                    "value",
+                    "readings",
+                    "outcome",
+                    "evidence"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "protocolVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "battery": {
+                      "type": "string",
+                      "enum": [
+                        "webui.code.language"
                       ]
                     },
                     "batteryVersion": {

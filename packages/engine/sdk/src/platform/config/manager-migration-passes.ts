@@ -61,6 +61,8 @@ export type MigrationReceiptSink = (id: string, text: string) => void;
 export interface MigrationOwnership {
   /** True only in the runtime that owns this file on disk. */
   readonly ownsFile: boolean;
+  /** Optional owner intent gate; false preserves only the in-memory migration. */
+  readonly beforeWrite?: () => boolean;
 }
 
 /** The default for a pass over a file the loading process owns outright. */
@@ -97,7 +99,7 @@ export function applyLegacySettingsMigrationPass(
 ): Record<string, unknown> {
   const result = migrateLegacyFeatureToggles(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) return result.config;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return result.config;
   persistMigratedFile(sourcePath, result.config, 'Settings migration');
   const keyList = result.changedKeys.length > 0 ? result.changedKeys.join(', ') : 'no value changes';
   const receiptText = `Settings migrated: legacy featureFlags entries now live on their domain settings keys (${keyList}) in ${sourcePath}.`;
@@ -122,7 +124,7 @@ export function applyFleetMaxSizeMigrationPass(
 ): Record<string, unknown> {
   const result = migrateFleetMaxSizeRename(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) return result.config;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return result.config;
   persistMigratedFile(sourcePath, result.config, 'fleet.maxSize migration');
   const receiptText = `Setting renamed: orchestration.maxActiveAgents is now fleet.maxSize ("Maximum fleet size"); your value (${result.movedValue}) moved with it (${sourcePath}).`;
   logger.info(receiptText);
@@ -143,7 +145,7 @@ export function applyControlPlaneBaseUrlMigrationPass(
 ): Record<string, unknown> {
   const result = migrateControlPlaneBaseUrlRemoval(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) return result.config;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return result.config;
   persistMigratedFile(sourcePath, result.config, 'controlPlane.baseUrl removal');
   const quoted = result.removedValue ? ` (it was ${result.removedValue})` : '';
   const receiptText =
@@ -170,7 +172,7 @@ export function applyDefaultStripMigrationPass(
   if (!isFrozenDefaultDump(parsed)) return parsed;
   const { config: stripped, changed } = stripFrozenDefaults(parsed);
   if (!changed) return parsed;
-  if (!ownership.ownsFile) return stripped;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return stripped;
   try {
     writeJsonFileAtomic(sourcePath, stripped);
   } catch (err) {
@@ -196,7 +198,7 @@ export function applyDaemonEmbedInProcessMigrationPass(
 ): Record<string, unknown> {
   const result = migrateDaemonEmbedInProcessRemoval(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) return result.config;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return result.config;
   persistMigratedFile(sourcePath, result.config, 'daemon.embedInProcess removal');
   const quoted = result.removedValue === undefined ? '' : ` (it was ${String(result.removedValue)})`;
   const receiptText =
@@ -242,7 +244,7 @@ export function applyDaemonConnectedHostSplitMigrationPass(
 ): Record<string, unknown> {
   const result = migrateDaemonConnectedHostSplit(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) {
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) {
     logger.debug(
       `daemon connected-host split applied in memory only for ${sourcePath}: this process does not own the file.`,
     );
@@ -297,7 +299,7 @@ export function applyPaymentsBudgetMigrationPass(
 ): Record<string, unknown> {
   const result = migratePaymentsBudgetAmounts(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) {
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) {
     // The reader's own view is correct; the bytes belong to the owner, who will
     // migrate them when it next loads. Debug, not info: a client re-derives this
     // on every load until the owner catches up, and an info line per start would
@@ -366,7 +368,7 @@ export function applyOccasionsFinalStretchMigrationPass(
 ): Record<string, unknown> {
   const result = migrateOccasionsFinalStretchRemoval(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) {
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) {
     logger.debug(
       `occasions.finalStretchDays removal applied in memory only for ${sourcePath}: this process does not own the file.`,
     );
@@ -410,7 +412,7 @@ export function applyContractSettingsMigrationPass(
 ): Record<string, unknown> {
   const result = migrateWrfcSettings(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) return result.config;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return result.config;
   persistMigratedFile(sourcePath, result.config, 'contract settings migration');
   if (result.moves.length > 0) {
     const moved = result.moves
@@ -461,7 +463,7 @@ export function applySandboxQemuMigrationPass(
 ): Record<string, unknown> {
   const result = migrateSandboxQemuRemoval(parsed);
   if (!result.migrated) return parsed;
-  if (!ownership.ownsFile) return result.config;
+  if (!ownership.ownsFile || ownership.beforeWrite?.() === false) return result.config;
   persistMigratedFile(sourcePath, result.config, 'QEMU sandbox settings removal');
   const changes: string[] = [];
   if (result.removedKeys.length > 0) changes.push(`${result.removedKeys.join(', ')} removed`);

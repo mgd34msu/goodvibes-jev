@@ -1,7 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import {
-  evaluateProjectPlanningReadiness,
-  type ProjectPlanningService,
+  KnowledgeStore,
+  ProjectPlanningService,
   type ProjectPlanningState,
 } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
@@ -53,11 +58,17 @@ function makeService(initial: ProjectPlanningState | null = null): {
       };
     },
     async getState() {
-      return { ok: true, projectId: 'proj', knowledgeSpaceId: 'project:proj', state };
+      return { ok: true, projectId: 'proj', knowledgeSpaceId: 'project:proj', state,
+        ...(state ? { revision: { sourceId: 'fixture-source', generation: 'a'.repeat(64) } } : {}) };
     },
-    async upsertState(input: { state: Partial<ProjectPlanningState> }) {
-      state = evaluateProjectPlanningReadiness(makeState(input.state)).state;
-      return { ok: true, projectId: 'proj', knowledgeSpaceId: 'project:proj', state };
+    async upsertState(): Promise<never> {
+      throw new Error('Commands must not round-trip numeric public planning state');
+    },
+    async applyStateAction(input: { action: { kind: string } }) {
+      if (input.action.kind !== 'dismiss' || !state) throw new Error('Unexpected fixture action');
+      state = { ...state, metadata: { ...state.metadata, active: false,
+        dismissedAt: new Date(Date.now()).toISOString(), dismissedFrom: 'plan-command' } };
+      return { ok: true, applied: true, state };
     },
     async evaluate(): Promise<never> {
       throw new Error('Commands must not request a fresh historical evaluation');
@@ -305,7 +316,7 @@ describe('/project-plan project planning runtime command', () => {
         ok: true, projectId: 'proj', knowledgeSpaceId: 'project:proj', applied: false,
         reason: 'question-not-found',
         openQuestions: [{ id: 'q1', prompt: 'What scope?', status: 'open' }],
-        state: fake.state(), evaluation: evaluateProjectPlanningReadiness(makeState({ goal: 'Answer path' })),
+        state: fake.state(),
       }),
     } as unknown as ProjectPlanningService;
 
@@ -408,4 +419,85 @@ for (const name of ['project-plan', 'planning']) {
       expect(opened).toEqual([]);
     });
   }
+}
+
+
+async function withActualDismissalService(run: (fixture: {
+  readonly service: ProjectPlanningService; readonly store: KnowledgeStore; readonly path: string;
+  readonly requests: () => number; readonly openStore: () => KnowledgeStore;
+}) => Promise<void>, collisionClock = false): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'tui-owned-dismissal-'));
+  const path = join(root, 'knowledge.sqlite');
+  const clock = collisionClock ? spyOn(Date, 'now').mockReturnValue(1700000000004) : undefined;
+  const fake = fakePort(() => noulAnswer(0.99)); const previous = installJudgmentPort(fake.port);
+  const stores: KnowledgeStore[] = [];
+  const openStore = () => { const store = new KnowledgeStore({ dbPath: path }); stores.push(store); return store; };
+  try {
+    const store = openStore(); const service = new ProjectPlanningService(store);
+    await service.upsertState({ projectId: 'proj', state: {
+      goal: 'Preserve retry history', scope: 'Retry helper only', executionApproved: true,
+      tasks: [{ id: 'retry', title: 'Keep retry records', verification: ['Run retry tests'] }],
+      metadata: { active: true, owner: 'tui' },
+    } });
+    await run({ service, store, path, requests: () => fake.requests.length, openStore });
+  } finally {
+    try { for (const store of stores) await store.close(); }
+    finally { installJudgmentPort(previous); clock?.mockRestore(); rmSync(root, { recursive: true, force: true }); }
+  }
+}
+
+for (const clockMode of ['runtime', 'collision'] as const) test(`actual /project-plan dismiss owns canonical stored state with the ${clockMode} clock`, async () => {
+  await withActualDismissalService(async f => {
+    const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+    const out: string[] = [];
+    f.service.upsertState = async () => { throw new Error('Dismissal must not submit a numeric public view'); };
+    await registry.execute('project-plan', ['dismiss'], makeContext(f.service, out, []));
+    const reopened = new ProjectPlanningService(f.openStore());
+    const state = await reopened.getState({ projectId: 'proj' });
+    expect(state.state?.metadata).toMatchObject({ active: false, owner: 'tui', dismissedFrom: 'plan-command' });
+    const dismissedAt = state.state?.metadata?.dismissedAt;
+    expect(typeof dismissedAt).toBe('string');
+    expect(new Date(dismissedAt as string).toISOString()).toBe(dismissedAt);
+    if (clockMode === 'collision') {
+      expect(dismissedAt).toBe(new Date(1700000000004).toISOString());
+      expect(state.state?.createdAt).toBe(1700000000004);
+    } else expect(typeof state.state?.createdAt).toBe('number');
+    expect(state.state?.goal).toBe('Preserve retry history');
+    expect(out.join('\n')).toContain('Historical project planning record marked inactive.');
+    const before = readFileSync(f.path), requests = f.requests();
+    const forged = { projectId: 'proj', expected: { kind: 'current' as const },
+      action: { kind: 'dismiss' as const, dismissedAt: 4111111111111111 } };
+    await expect(reopened.applyStateAction(forged)).rejects.toMatchObject({ problem: 'card-material' });
+    expect(readFileSync(f.path)).toEqual(before); expect(f.requests()).toBe(requests);
+  }, clockMode === 'collision');
+});
+
+for (const mode of ['missing', 'stale'] as const) {
+  test(`actual /project-plan dismiss refuses a ${mode} selected revision without changing history`, async () => {
+    await withActualDismissalService(async f => {
+      const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
+      const out: string[] = []; const getState = f.service.getState.bind(f.service);
+      let expectedBytes: Buffer | undefined; let requests = 0;
+      f.service.getState = async input => {
+        const selected = await getState(input);
+        if (mode === 'stale') {
+          await new ProjectPlanningService(f.openStore()).upsertState({ projectId: 'proj', state: {
+            goal: 'A newer historical record', scope: 'Retry helper only', executionApproved: false,
+            tasks: [{ id: 'newer', title: 'Keep newer work', verification: ['Run retry tests'] }],
+            metadata: { active: true, owner: 'other-owner' },
+          } });
+        }
+        expectedBytes = readFileSync(f.path); requests = f.requests();
+        return mode === 'missing' ? { ...selected, revision: undefined } : selected;
+      };
+      f.service.upsertState = async () => { throw new Error('Dismissal must not submit a numeric public view'); };
+      await registry.execute('project-plan', ['dismiss'], makeContext(f.service, out, []));
+      expect(readFileSync(f.path)).toEqual(expectedBytes); expect(f.requests()).toBe(requests);
+      const after = await new ProjectPlanningService(f.openStore()).getState({ projectId: 'proj' });
+      expect(after.state?.metadata?.active).toBe(true);
+      expect(after.state?.metadata?.dismissedAt).toBeUndefined();
+      expect(out.join('\n')).toContain('Historical project planning record was not changed');
+      expect(out.join('\n')).not.toContain('record marked inactive');
+    });
+  });
 }

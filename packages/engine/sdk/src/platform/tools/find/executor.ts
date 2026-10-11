@@ -1,4 +1,4 @@
-import { assertCurrentToolExecution } from '../registry.js';
+import { assertCurrentToolInvocation } from '../registry.js';
 import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
 import { appendSchemaFingerprint } from '../shared/schema-fingerprint.js';
 import { findSchema } from './schema.js';
@@ -36,14 +36,17 @@ export function createFindTool(
   return {
     definition: findSchema,
 
-    async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
+    async execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
       try {
-        const assertCurrent = (): void => {
-          options?.signal?.throwIfAborted();
-          assertCurrentToolExecution(args, options);
+        const before = JSON.stringify(args);
+        const current = () => {
+          opts?.signal?.throwIfAborted(); assertCurrentToolInvocation(args, opts);
+          if (JSON.stringify(args) !== before) throw new Error('Find invocation changed');
         };
-        assertCurrent();
-        const walkOptions = { ...(options?.signal ? { signal: options.signal } : {}), beforeAttempt: assertCurrent };
+        current();
+        const reading = { ...(opts?.signal ? { signal: opts.signal } : {}), assertCurrent: current };
+        const walkOptions = { ...(opts?.signal ? { signal: opts.signal } : {}), beforeAttempt: current };
+        const queryOptions = { ...walkOptions, ...reading };
         if (!Array.isArray(args.queries) || (args.queries as unknown[]).length === 0) {
           return { success: false, error: 'Missing or empty "queries" array' };
         }
@@ -59,13 +62,13 @@ export function createFindTool(
           let result: Record<string, unknown>;
           switch (query.mode) {
             case 'files':
-              result = await executeFilesQuery(query, output, projectRoot, readAccessFilter, capturedReadAccess, walkOptions);
+              result = await executeFilesQuery(query, output, projectRoot, readAccessFilter, capturedReadAccess, queryOptions);
               break;
             case 'content':
-              result = await executeContentQuery(query, output, runtime, projectRoot, readAccessFilter, walkOptions);
+              result = await executeContentQuery(query, output, runtime, projectRoot, readAccessFilter, queryOptions);
               break;
             case 'symbols':
-              result = await executeSymbolsQuery(query, output, projectRoot, walkOptions);
+              result = await executeSymbolsQuery(query, output, projectRoot, queryOptions);
               break;
             case 'references':
               result = await executeReferencesQuery(query, output, projectRoot, walkOptions);
@@ -78,7 +81,7 @@ export function createFindTool(
               result = { error: `Unknown mode: ${(exhaustive as FindQuery).mode}` };
             }
           }
-          assertCurrent();
+          current();
           return [query.id, appendSchemaFingerprint(result, 'find', query.mode, { featureFlags })];
         };
 
@@ -101,6 +104,7 @@ export function createFindTool(
           ? appendSchemaFingerprint(results, 'find', 'multi', { featureFlags })
           : results;
 
+        current();
         return { success: true, output: JSON.stringify(finalResults) };
       } catch (err) {
         return {

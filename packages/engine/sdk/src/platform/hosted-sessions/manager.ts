@@ -1,3 +1,4 @@
+import type { FailureReadOptions } from '@goodvibes-jev/engine/errors';
 import { createHash } from 'node:crypto';
 import { captureNativeConversationContinuation, canonicalNativeConversationContinuation, type NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
 import { readNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
@@ -107,6 +108,7 @@ export interface HostedLiveTurnRegistry {
 }
 
 export interface HostedSessionManagerOptions {
+  readonly failureReading?: FailureReadOptions | undefined;
   readonly floorFactory: HostedWorkspaceFloorFactory;
   /** Fences and drains native dispatch ownership before runtime teardown. */
   readonly closeNativeTurns?: (() => Promise<void>) | undefined;
@@ -179,6 +181,7 @@ export class HostedSessionManager {
     this.floors = new HostedWorkspaceFloors(options.floorFactory);
     this.now = options.now ?? ((): number => Date.now());
     this.spine = new HostedSessionSpineIntake({
+      failureReading: options.failureReading,
       ...(options.spine === undefined ? {} : { spine: options.spine }),
       ...(options.intakeIntervalMs === undefined ? {} : { intervalMs: options.intakeIntervalMs }),
       liveSessions: () => this.list(),

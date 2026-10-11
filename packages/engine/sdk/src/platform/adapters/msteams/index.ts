@@ -164,7 +164,7 @@ export async function handleMSTeamsSurfaceWebhook(req: Request, context: Surface
     });
   }
 
-  const controlCommand = context.parseSurfaceControlCommand(text);
+  const controlCommand = await context.parseSurfaceControlCommand(text, { signal: req.signal });
   if (controlCommand) {
     const message = await context.performSurfaceControlCommand(controlCommand);
     return Response.json({ ok: true, acknowledged: true, message });
@@ -186,7 +186,7 @@ export async function handleMSTeamsSurfaceWebhook(req: Request, context: Surface
     return Response.json({ ok: true, continued: true, sessionId: submission.session.id, agentId: submission.activeAgentId ?? null });
   }
 
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleMSTeamsSurfaceWebhook',
     submission.session.id,

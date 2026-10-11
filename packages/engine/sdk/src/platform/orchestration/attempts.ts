@@ -265,12 +265,18 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
       const workstream = deps.getWorkstream(entry.workstreamId);
       if (!workstream) continue;
       const siblings = siblingsOf(workstream, entry);
-      const candidates = await Promise.all(siblings.map(buildCandidate));
+      const candidates = await Promise.all(siblings.filter(item => item.state === 'held-merge' || item.state === 'failed').map(buildCandidate));
       result.push({
         groupId,
         workstreamId: entry.workstreamId,
         sourceTitle: entry.sourceTitle,
         ready: allTerminal(siblings),
+        attemptCount: siblings.length,
+        selectableCandidateCount: siblings.filter(item => item.state === 'held-merge').length,
+        unresolved: siblings.filter(item => item.state !== 'held-merge' && item.state !== 'failed').map(item => ({
+          itemId: item.id, attemptIndex: item.attemptIndex ?? 0, title: item.title,
+          state: item.state, reason: item.blockedReason ?? null,
+        })),
         candidates,
         autoAccept: entry.autoAccept,
         judgment: entry.judgment,
@@ -330,6 +336,7 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
       throw new AttemptError('no judge is configured on this engine; pick a best-of-N winner explicitly (fleet.attempts.pick)');
     }
     const { entry, siblings } = resolveReadyGroup(groupId);
+    if (!allTerminal(siblings)) throw new AttemptError(`best-of-N group ${groupId} is not ready: some attempts are unresolved`);
     const candidates = await Promise.all(
       siblings.map(async (s) => ({
         itemId: s.id,

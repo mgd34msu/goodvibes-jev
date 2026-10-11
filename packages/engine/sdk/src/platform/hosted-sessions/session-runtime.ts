@@ -61,6 +61,7 @@ import { ConversationManager } from '../core/conversation.js';
 import { Orchestrator } from '../core/orchestrator.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { registerAllTools } from '../tools/index.js';
+import { registerDevicePhoneTool } from '../devices/device-phone-tool.js';
 import { ContextAccountingHolder } from '../tools/context-accounting/index.js';
 import { FeatureAnnouncementStore, featureAnnouncementsPath } from '../runtime/feature-announcements.js';
 import { createApprovalDerivedHandlers } from '../runtime/permissions/permission-composition.js';
@@ -205,8 +206,12 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     ? withHostedSessionModel(services.providerRegistry, options.model)
     : services.providerRegistry;
 
+  const promptLifetime = new AbortController();
+  const autonomousHost = { port: services.judgment.port, permissionManager: services.permissionManager,
+    config: services.configManager, signal: promptLifetime.signal, workspaceTrust: services.workspaceTrust };
   const announcementStore = new FeatureAnnouncementStore(featureAnnouncementsPath(services.configManager));
   const approvalHandlers = createApprovalDerivedHandlers({
+    autonomousHost,
     requestApproval: services.requestApproval,
     configManager: services.configManager,
     featureFlags: services.featureFlags,
@@ -270,6 +275,8 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     )),
     ownerTerminalGuard: HOSTED_OWNER_TERMINAL_GUARD,
   });
+
+  if (options.floor.devicePosture) registerDevicePhoneTool(toolRegistry, options.floor.devicePosture);
 
   const orchestrator = new Orchestrator({
     conversation,
@@ -360,6 +367,7 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
       return true;
     },
     dispose: (): void => {
+      promptLifetime.abort();
       stopContracts();
       try {
         orchestrator.dispose();

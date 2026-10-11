@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { types as nodeTypes } from 'node:util';
 import { createHash } from 'node:crypto';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -15,10 +16,10 @@ import {
 import { canonicalJson, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { autonomousRevision } from '../permissions/autonomous.js';
-import { assertAutonomousConfigTransition, readAutonomousSettingsPresentation, consumeAutonomousAdmission, type AutonomousPermissionAdmission, type PermissionManager } from '../permissions/manager.js';
+import { assertAutonomousConfigTransition, readAutonomousSettingsPresentation, readAutonomousWorkspaceConstraint, consumeAutonomousAdmission, type AutonomousPermissionAdmission, type PermissionManager } from '../permissions/manager.js';
 import type { PreparedConfigMutationReceipt, PreparedConfigMutationTransition } from '../config/manager.js';
 import { assertPreparedConfigWriteRoute } from '../config/settings-precondition-client.js';
-import { firstJsonSchemaFailure } from '@goodvibes-jev/engine/transport-http';
+import { firstJsonSchemaFailureAsync } from '@goodvibes-jev/engine/transport-http';
 import type { Tool, ToolDefinition, ToolExecuteOptions, ToolResult } from '../types/tools.js';
 import { UnknownPreparedToolError } from './preparation-error.js';
 import { ToolError } from '../types/errors.js';
@@ -88,9 +89,11 @@ const MAX_LIVE_INPUT_PROJECTIONS = 128;
 const applyIntrinsic = Reflect.apply;
 
 interface CurrentToolExecution {
+  readonly assertWorkspace?: (() => void) | undefined;
   readonly args: Record<string, unknown>;
   readonly assertCurrent: () => void;
   readonly commitSettings?: (() => PreparedConfigMutationReceipt) | undefined;
+  readonly commitSettingsPlan?: (() => Promise<PreparedConfigMutationReceipt>) | undefined;
   readonly settingsPresentation?: Readonly<{ previous: unknown; current: unknown }> | undefined;
   active: boolean;
   checking: boolean;
@@ -99,11 +102,32 @@ interface CurrentToolExecution {
 // Exact options identity is the invocation capability. No caller-visible field
 // and no exported minting operation can construct an authentic body proof.
 const currentToolExecutions = new WeakMap<ToolExecuteOptions, CurrentToolExecution>();
+// Carries the same authentic body proof across trusted wrappers. It never
+// creates authority, and cannot be cleared or replaced by a tool argument.
+const executingContext = new AsyncLocalStorage<{ readonly proof: CurrentToolExecution; readonly options: ToolExecuteOptions }>();
+
+/** Effectful tools must not downgrade wrapped/copied options to legacy authority. */
+export function assertCurrentToolInvocation(args: Record<string, unknown>, options?: ToolExecuteOptions): boolean {
+  const current = executingContext.getStore();
+  if (current && (current.options !== options || currentToolExecutions.get(current.options) !== current.proof
+    || current.proof.args !== args || !current.proof.active)) throw new ToolInputProjectionError('stale');
+  return assertCurrentToolExecution(args, options);
+}
+/** Compatibility name for the existing Exec consumer. */
+export const assertCurrentExecInvocation = assertCurrentToolInvocation;
+/** Additional restriction only; captured jobs still require their own authority and lease. */
+export function captureCurrentExecWorkspaceConstraint(args: Record<string, unknown>, options?: ToolExecuteOptions): (() => void) | undefined {
+  if (!assertCurrentExecInvocation(args, options)) return undefined;
+  return currentToolExecutions.get(options!)!.assertWorkspace;
+}
 // Constructor-only owner identity, without a caller-writable registry property.
 const registryPermissionOwners = new WeakMap<ToolRegistry, PermissionManager>();
 
 /** False for legacy/unadmitted calls; a known expired or mismatched proof throws. */
 export function assertCurrentToolExecution(args: Record<string, unknown>, options?: ToolExecuteOptions): boolean {
+  // Restrictions apply even to ordinary/legacy invocations. They never mint an
+  // authenticated admission: absent proof still returns false below.
+  options?.assertCurrent?.(args);
   const proof = options && currentToolExecutions.get(options);
   if (!proof) return false;
   if (!proof.active || proof.checking || proof.args !== args) throw new ToolInputProjectionError('stale');
@@ -125,6 +149,14 @@ export function commitCurrentToolSettings(args: Record<string, unknown>, options
   // Retire before begin: a callback can never reenter this invocation to write.
   proof.active = false;
   return proof.commitSettings();
+}
+
+/** Consume a complete config/credential plan once. Async acquisition stays under its original proof. */
+export async function commitCurrentToolSettingsPlan(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<PreparedConfigMutationReceipt> {
+  const proof = options && currentToolExecutions.get(options);
+  if (!proof?.commitSettingsPlan || !assertCurrentToolExecution(args, options)) throw new ToolInputProjectionError('held');
+  proof.active = false;
+  return proof.commitSettingsPlan();
 }
 
 /** Captured display data is not execution authority and can accompany the committed receipt. */
@@ -523,7 +555,7 @@ export class ToolRegistry {
       assertProjectionSignal(signal);
       const effective = captureProjectionArgs(repair.repaired ? repair.fixed : projection.args, name);
       this.repairProjection(record, effective);
-      if (firstJsonSchemaFailure(record.definition.parameters, effective)) throw new ToolError('Prepared tool arguments do not match the registered schema', name);
+      if (await firstJsonSchemaFailureAsync(record.definition.parameters, effective, { signal, assertCurrent: () => this.assertPreparationCurrent(record) })) throw new ToolError('Prepared tool arguments do not match the registered schema', name);
       const call = Object.freeze({ callId, name, args: effective, schemaRevision: record.definitionRevision, judgmentDecisionIds: Object.freeze(ids) });
       this.prepared.set(call, { tool: record.tool, executor: record.executor, definitionRevision: record.definitionRevision,
         warnings: [...(repair.warnings ?? [])], projection: record, claimed: false });
@@ -573,6 +605,7 @@ export class ToolRegistry {
 
   /** Invoke the exact prepared executor/arguments immediately after its one-use admission claim. */
   async executePrepared(call: PreparedToolCall, admission: AutonomousPermissionAdmission | (() => void), opts?: ToolExecuteOptions): Promise<ToolResult> {
+    const callerCurrent = opts?.assertCurrent;
     const record = this.prepared.get(call);
     if (!record || record.claimed || record.projection.executionStarted) throw new ToolError('Prepared tool registration is stale or already claimed', call.name);
     record.projection.executionStarted = true;
@@ -580,10 +613,11 @@ export class ToolRegistry {
     let proof: CurrentToolExecution | undefined;
     let assertReadPublication: (() => void) | undefined;
     try {
+      callerCurrent?.();
       const signal = combineProjectionSignals(record.projection.signal, record.projection.preparationSignal, opts === undefined ? undefined : projectionSignal(projectionProperty(opts, 'signal')));
       this.assertPreparationCurrent(record.projection);
       this.assertPrepared(call);
-      const executionOptions = Object.freeze({ signal, ...(record.projection.executionContext ? { inputProjectionContext: record.projection.executionContext } : {}) });
+      const executionOptions = Object.freeze({ signal, ...(callerCurrent ? { assertCurrent: callerCurrent } : {}), ...(record.projection.executionContext ? { inputProjectionContext: record.projection.executionContext } : {}) });
       // All callbacks and option capture precede claim. The tail below is synchronous
       // and invokes only metadata/intrinsic checks before the exact executor.
       const guardRevision = record.projection.preparationGuards.revision;
@@ -598,6 +632,7 @@ export class ToolRegistry {
           this.assertCapturedIdentity(record.projection, true);
           assertProjectionSignal(signal);
           assertAdmissionCurrent?.();
+          callerCurrent?.();
           this.assertCapturedIdentity(record.projection, true);
           assertProjectionSignal(signal);
         };
@@ -610,22 +645,50 @@ export class ToolRegistry {
       retireExecution = activateProjectionExecution(record.projection.executionContext, call.args, signal);
       if (assertAdmissionCurrent) {
         const mutation = record.projection.settingsMutation;
-        proof = { args: call.args, active: true, checking: false,
-          settingsPresentation: readAutonomousSettingsPresentation(assertAdmissionCurrent),
-          ...(mutation ? { commitSettings: () => {
-            const transition: PreparedConfigMutationTransition = mutation.owner.beginPreparedMutation(mutation.mutation);
-            // Discovery owner reads can themselves reenter; sample them before
-            // the manager's final authority/source/config transition check.
+        const assertPlanAuthority = () => {
+          callerCurrent?.();
+          if (mutation?.route) assertPreparedConfigWriteRoute(mutation.route);
+          if (mutation) mutation.owner.assertPreparedMutation(mutation.mutation);
+          this.assertExecuting(call, record); assertProjectionSignal(signal); assertAdmissionCurrent();
+          if (mutation) mutation.owner.assertPreparedMutation(mutation.mutation);
+          this.assertExecuting(call, record); assertProjectionSignal(signal);
+        };
+        const commitConfig = mutation ? () => {
+          const transition = mutation.owner.beginPreparedMutation(mutation.mutation);
+          const final = () => {
+            callerCurrent?.();
             if (mutation.route) assertPreparedConfigWriteRoute(mutation.route);
-            this.assertExecuting(call, record);
-            assertProjectionSignal(signal);
+            this.assertExecuting(call, record); assertProjectionSignal(signal);
             assertAutonomousConfigTransition(assertAdmissionCurrent, mutation, transition);
-            this.assertExecuting(call, record);
-            assertProjectionSignal(signal);
-            // The existing owner performs its final owned-data checks and synchronous
-            // persistence. No caller callback lies between these checks and commit.
-            return mutation.owner.finishPreparedMutation(mutation.mutation, transition);
-          } } : {}), assertCurrent: () => {
+            if (mutation.secretDeletion) mutation.secretDeletion.owner.assertCompletedScopedDeletion(mutation.secretDeletion.mutation);
+            this.assertExecuting(call, record); assertProjectionSignal(signal);
+          };
+          final();
+          return mutation.owner.finishPreparedMutation(mutation.mutation, transition, final);
+        } : undefined;
+        const commitPlan = mutation && commitConfig ? async (): Promise<PreparedConfigMutationReceipt> => {
+          const completedPaths: string[] = [];
+          try {
+            if (mutation.secretDeletion) {
+              const deletion = mutation.secretDeletion;
+              const receipt = await deletion.owner.applyPreparedScopedDeletion(deletion.mutation, assertPlanAuthority);
+              completedPaths.push(...receipt.completedPaths);
+              if (receipt.status !== 'committed') return receipt;
+              deletion.owner.assertCompletedScopedDeletion(deletion.mutation);
+              assertPlanAuthority();
+            }
+            const receipt = commitConfig();
+            return Object.freeze({ ...receipt, status: receipt.status !== 'committed' && completedPaths.length ? 'partial' : receipt.status,
+              completedPaths: Object.freeze([...completedPaths, ...receipt.completedPaths]) });
+          } catch {
+            return Object.freeze({ status: completedPaths.length ? 'partial' : 'unknown', completedPaths: Object.freeze(completedPaths) });
+          }
+        } : undefined;
+        proof = { args: call.args, active: true, checking: false,
+          assertWorkspace: readAutonomousWorkspaceConstraint(assertAdmissionCurrent),
+          settingsPresentation: readAutonomousSettingsPresentation(assertAdmissionCurrent),
+          ...(mutation && commitConfig && commitPlan ? { ...(mutation.secretDeletion ? {} : { commitSettings: commitConfig }), commitSettingsPlan: commitPlan } : {}), assertCurrent: () => {
+          callerCurrent?.();
           this.assertExecuting(call, record);
           assertProjectionSignal(signal);
           assertAdmissionCurrent();
@@ -635,7 +698,9 @@ export class ToolRegistry {
         } };
         currentToolExecutions.set(executionOptions, proof);
       }
-      const result = await applyIntrinsic(record.executor, record.tool, [call.args, executionOptions]);
+      const execute = () => { callerCurrent?.(); return applyIntrinsic(record.executor, record.tool, [call.args, executionOptions]); };
+      const result = await (proof ? executingContext.run({ proof, options: executionOptions }, execute) : execute());
+      callerCurrent?.();
       if (proof) proof.active = false;
       retireExecution(); retireExecution = undefined;
       return { ...result, callId: call.callId,
@@ -661,6 +726,8 @@ export class ToolRegistry {
     args: Record<string, unknown>,
     opts?: ToolExecuteOptions,
   ): Promise<ToolResult> {
+    const callerCurrent = opts?.assertCurrent;
+    callerCurrent?.();
     const tool = this.tools.get(name);
     if (!tool) {
       const known = [...this.tools.keys()].sort();
@@ -696,16 +763,22 @@ export class ToolRegistry {
       const effectiveArgs = captureProjectionArgs(repairResult.repaired ? repairResult.fixed : projected.args, name);
       this.repairProjection(record, effectiveArgs);
       const executionOptions = record.registration.projector
-        ? Object.freeze({ signal, ...(record.executionContext ? { inputProjectionContext: record.executionContext } : {}) })
+        ? Object.freeze({ signal, ...(callerCurrent ? { assertCurrent: callerCurrent } : {}), ...(record.executionContext ? { inputProjectionContext: record.executionContext } : {}) })
         : opts === undefined || projectionProperty(opts, 'inputProjectionContext') === undefined ? opts : Object.freeze({ signal });
       this.assertCaptured(record, false);
       record.claimed = true;
       if (record.resultPublication === 'read-only') {
         const capturedRecord = record;
-        assertReadPublication = () => { this.assertCapturedIdentity(capturedRecord, true); assertProjectionSignal(signal); };
+        assertReadPublication = () => {
+          callerCurrent?.(effectiveArgs);
+          this.assertCapturedIdentity(capturedRecord, true);
+          assertProjectionSignal(signal);
+        };
       }
       retireExecution = activateProjectionExecution(record.executionContext, effectiveArgs, signal);
+      callerCurrent?.(effectiveArgs);
       const result = await applyIntrinsic(record.executor, record.tool, [effectiveArgs, executionOptions]);
+      callerCurrent?.(effectiveArgs);
       retireExecution(); retireExecution = undefined;
       const toolResult = { ...result, callId };
       if (repairResult.warnings && repairResult.warnings.length > 0) {
@@ -736,14 +809,19 @@ export class ToolRegistry {
   private async executeOrdinary(callId: string, name: string, tool: Tool,
     args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<ToolResult> {
     const signal = opts?.signal;
+    const assertCurrent = opts?.assertCurrent;
+    assertCurrent?.();
     try {
       const repair = await repairToolCall(name, args, tool.definition, signal);
       if (signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
+      assertCurrent?.();
       const effectiveArgs = repair.repaired ? repair.fixed : args;
       // The new projection-context field is owner-only, even on a legacy call.
-      const executionOptions = opts === undefined || projectionProperty(opts, 'inputProjectionContext') === undefined
-        ? opts : Object.freeze({ signal });
+      const executionOptions = assertCurrent ? Object.freeze({ signal, assertCurrent })
+        : opts === undefined || projectionProperty(opts, 'inputProjectionContext') === undefined ? opts : Object.freeze({ signal });
+      assertCurrent?.(effectiveArgs);
       const result = await tool.execute(effectiveArgs, executionOptions);
+      assertCurrent?.(effectiveArgs);
       const toolResult = { ...result, callId };
       if (repair.warnings?.length) toolResult.warnings = [...(toolResult.warnings ?? []), ...repair.warnings];
       if (repair.repaired && !toolResult.cancelled && !signal?.aborted) {

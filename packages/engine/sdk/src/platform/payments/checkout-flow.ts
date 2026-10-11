@@ -161,6 +161,7 @@ export type { PurchaseLedger, PaymentNotifier } from './payment-ports.js';
 import type { PurchaseLedger, PaymentNotifier } from './payment-ports.js';
 
 export interface CheckoutFlowDeps {
+  readonly signal?: AbortSignal | undefined;
   readonly registry: CheckoutRegistry;
   readonly cards: CardMaterialStore;
   /**
@@ -446,17 +447,28 @@ export async function runCheckout(
   // is worse than a refusal because it can succeed.
   const addressFields = controls.addressFields ?? [];
   const addressKinds = [...new Set(addressFields.map((entry) => entry.kind))];
-  for (const kind of addressKinds) {
-    const stored = await deps.addresses.read(kind);
-    const check = checkAddress(stored, kind);
-    if (!check.ok) {
-      await release();
-      return refused(kind === 'shipping' ? 'no-shipping-address' : 'no-card', check.reason ?? 'Refused: the stored address is incomplete.');
+  let addresses: AddressStore;
+  try {
+    addresses = deps.addresses.prepare ? await deps.addresses.prepare(addressKinds, { signal: deps.signal }) : deps.addresses;
+    addresses.assertCurrent?.();
+    for (const kind of addressKinds) {
+      const stored = await addresses.read(kind);
+      addresses.assertCurrent?.();
+      const check = checkAddress(stored, kind);
+      if (!check.ok) {
+        await release();
+        return refused(kind === 'shipping' ? 'no-shipping-address' : 'no-card', check.reason ?? 'Refused: the stored address is incomplete.');
+      }
     }
+  } catch {
+    await release();
+    return refused('no-shipping-address', 'The stored address could not be verified for this purchase. Nothing was submitted.');
   }
-  const shippingAddress = addressKinds.includes('shipping')
-    ? await deps.addresses.read('shipping')
-    : null;
+  const addressCurrent = () => { deps.signal?.throwIfAborted(); addresses.assertCurrent?.(); };
+  const addressStillCurrent = () => { try { addressCurrent(); return true; } catch { return false; } };
+  let shippingAddress;
+  try { shippingAddress = addressKinds.includes('shipping') ? await addresses.read('shipping') : null; addressCurrent(); }
+  catch { await release(); return refused('no-shipping-address', 'The stored address changed before this purchase could proceed.'); }
 
   const metadata = await deps.cards.metadata(request.cardId);
   const cardLast4 = metadata?.last4 ?? '????';
@@ -503,7 +515,10 @@ export async function runCheckout(
       expiresInMinutes: deps.approvalMinutes,
       merchantReason: merchantVerdict.reason,
     });
-    const deliveries = await notifier.deliver({ kind: 'approval', message });
+    if (!addressStillCurrent()) { await release(); return refused('no-shipping-address', 'The stored address changed before the purchase notice.'); }
+    let deliveries: readonly ChannelDelivery[];
+    try { deliveries = await notifier.deliver({ kind: 'approval', message, assertCurrent: addressCurrent, signal: deps.signal }); addressCurrent(); }
+    catch { await release(); return refused('no-shipping-address', 'The address reading or purchase notice became unavailable. Nothing was submitted.'); }
     const deadlineMs = windowDeadlineMs(now(), deps.approvalMinutes);
     // Persisted so a restart can apply the delivery-keyed recovery rules.
     await registry.advance(request.purchaseId, 'awaiting-window', { windowDeliveries: deliveries, windowDeadlineMs: deadlineMs, windowKind }, now());
@@ -569,7 +584,10 @@ export async function runCheckout(
       expiresInMinutes: deps.vetoMinutes,
       merchantReason: merchantVerdict.reason,
     });
-    const deliveries = await notifier.deliver({ kind: 'veto', message });
+    if (!addressStillCurrent()) { await release(); return refused('no-shipping-address', 'The stored address changed before the purchase notice.'); }
+    let deliveries: readonly ChannelDelivery[];
+    try { deliveries = await notifier.deliver({ kind: 'veto', message, assertCurrent: addressCurrent, signal: deps.signal }); addressCurrent(); }
+    catch { await release(); return refused('no-shipping-address', 'The address reading or purchase notice became unavailable. Nothing was submitted.'); }
     const deadlineMs = windowDeadlineMs(now(), deps.vetoMinutes);
     // Persisted so a restart can apply the delivery-keyed recovery rules.
     await registry.advance(request.purchaseId, 'awaiting-window', { windowDeliveries: deliveries, windowDeadlineMs: deadlineMs, windowKind }, now());
@@ -604,6 +622,8 @@ export async function runCheckout(
     }
   }
 
+  if (!addressStillCurrent()) { await release(); return refused('no-shipping-address', 'The stored address changed while awaiting your answer. Nothing was submitted.'); }
+
   // ── 7. Apply the delivery option the ladder chose ───────────────────────
   const chosenIndex = checkout.shippingOptions.findIndex(
     (option) => option.rawLabel === shipping.option.rawLabel
@@ -626,8 +646,8 @@ export async function runCheckout(
   // material has been typed anywhere.
   if (addressFields.length > 0) {
     const addressFill = await fillAddresses(addressFields, {
-      store: deps.addresses,
-      fill: (target, value) => driver.fill(target, value),
+      store: addresses,
+      fill: (target, value) => driver.fill(target, value, { assertCurrent: addressCurrent, signal: deps.signal }),
     });
     if (!addressFill.ok) {
       await release();
@@ -638,6 +658,7 @@ export async function runCheckout(
     }
   }
 
+  if (!addressStillCurrent()) { await release(); return refused('no-shipping-address', 'The stored address changed before payment entry. Nothing was submitted.'); }
   await registry.advance(request.purchaseId, 'arming-payment', {}, now());
   const fill = await fillCard(
     {
@@ -672,7 +693,8 @@ export async function runCheckout(
     readonly verified: boolean;
   };
   try {
-    submission = await driver.submitOrder(controls.placeOrderTarget);
+    try { addressCurrent(); } catch { throw new CheckoutSubmitRefused('The stored address changed before submission.'); }
+    submission = await driver.submitOrder(controls.placeOrderTarget, { assertCurrent: addressCurrent, signal: deps.signal });
   } catch (error) {
     if (error instanceof CheckoutSubmitRefused) {
       // Refused BEFORE the click reached the merchant (a typed refusal, the

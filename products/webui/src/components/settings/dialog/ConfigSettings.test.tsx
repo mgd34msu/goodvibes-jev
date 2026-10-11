@@ -39,6 +39,7 @@ const CONFIG_FIXTURE = {
 const cardsListCalls: string[] = [];
 
 mock.module('../../../lib/goodvibes', () => ({
+  runBrowserJudgment: async () => { throw new Error('No semantic reading fixture'); },
   sdk: {
     operator: {
       payments: {

@@ -23,34 +23,23 @@
  * question rather than starting again, that is what makes the open-item loop's
  * third case work.
  */
+import { occasionInterest, occasionEntry, OccasionReadingHeldError, OccasionReadingWork } from './readings.js';
 import type { ProfileLine } from '../owner-profile/types.js';
 import type { IsoDate } from './dates.js';
 import type { GiftRecord, Interview, InterviewStep, Occasion } from './types.js';
 
-/**
- * Words that turn a line about a person into a line about what she LIKES.
- *
- * A People section holds both, "Sarah, sister, lives in Leeds" and "Sarah has
- * been doing pottery all year", and only the second one opens a useful
- * question. Preferring it is a small heuristic with an honest fallback rather
- * than a classifier: when nothing matches, the question is asked plainly instead
- * of being asked about the wrong line.
- */
-const INTEREST_WORDS = [
-  'likes', 'liked', 'loves', 'loved', 'into', 'enjoys', 'enjoyed', 'collects',
-  'wants', 'wanted', 'obsessed', 'keeps talking about', 'been doing', 'hobby',
-  'favourite', 'favorite', 'fan of', 'reading', 'plays',
-];
-
-/** The profile line most likely to be about what she is interested in. */
-export function interestLine(lines: readonly ProfileLine[]): string {
-  const texts = lines.map((line) => line.text.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim())
-    .filter((text) => text.length > 0);
-  const match = texts.find((text) => {
-    const lower = text.toLowerCase();
-    return INTEREST_WORDS.some((word) => lower.includes(word));
-  });
-  return match ?? '';
+/** Choose from every supplied line; none is a settled reading, never a keyword fallback. */
+export async function interestLine(lines: readonly ProfileLine[], context: { readonly title?: string; readonly person?: string } = {}, work = new OccasionReadingWork()): Promise<string> {
+  const source = work.snapshot({ lines, context });
+  if (source.lines.length === 0) return '';
+  const candidates = source.lines.map((line, index) => ({ id: `line_${index}`, content: occasionEntry(line) }));
+  const result = await work.wait(() => occasionInterest.select(work.port, occasionEntry(source.context), candidates, { ...(work.signal ? { signal: work.signal } : {}), site: 'engine.occasions.interest-line' }));
+  if (result.outcome !== 'act') throw new OccasionReadingHeldError();
+  const index = candidates.findIndex(candidate => candidate.id === result.chosen);
+  if (result.chosen !== undefined && index < 0) throw new OccasionReadingHeldError();
+  result.recordAction(index < 0 ? 'no grounded interest line' : 'selected an offered interest line');
+  work.assertCurrent();
+  return index < 0 ? '' : source.lines[index]!.text.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim();
 }
 
 export interface OpenInterviewInput {
@@ -65,6 +54,11 @@ export interface OpenInterviewInput {
   readonly maxQuestions: number;
 }
 
+/** Internal content preparation has no newly generated clock or stored clock metadata. */
+export type InterviewContentInput = Omit<OpenInterviewInput, 'now' | 'history'> & {
+  readonly history: readonly Omit<GiftRecord, 'recordedAt'>[];
+};
+
 /** Who the questions are about: the person label, or the occasion's title. */
 function subjectOf(occasion: Occasion): string {
   const person = occasion.person.trim();
@@ -78,9 +72,10 @@ function subjectOf(occasion: Occasion): string {
  * first, because it is the question that proves the thing was listening. A blank
  * opening question is what makes an interview feel like a form.
  */
-export function interviewSteps(input: OpenInterviewInput): readonly InterviewStep[] {
+export async function interviewSteps(input: InterviewContentInput, work = new OccasionReadingWork()): Promise<readonly InterviewStep[]> {
+  input = work.snapshot(input);
   const subject = subjectOf(input.occasion);
-  const opener = interestLine(input.personLines);
+  const opener = await interestLine(input.personLines, { title: input.occasion.title, person: subject }, work);
   const previous = input.history[0];
   const steps: InterviewStep[] = [];
 
@@ -122,13 +117,23 @@ export function interviewIdFor(occasionId: string, occurrence: IsoDate): string 
 }
 
 /** Start an interview. Nothing is asked until a surface renders the first step. */
-export function openInterview(input: OpenInterviewInput): Interview {
+export async function openInterview(input: OpenInterviewInput, work = new OccasionReadingWork()): Promise<Interview> {
+  input = work.snapshot(input);
+  const prepared = await prepareInterview(input, work);
+  work.assertCurrent();
+  return { ...prepared, startedAt: input.now };
+}
+
+/** Internal service preparation; owned publication metadata is attached afterward. */
+export async function prepareInterview(input: InterviewContentInput, work: OccasionReadingWork): Promise<Omit<Interview, 'startedAt'>> {
+  input = work.snapshot(input);
+  const steps = await interviewSteps(input, work);
+  work.assertCurrent();
   return {
     id: interviewIdFor(input.occasion.id, input.occurrence),
     occasionId: input.occasion.id,
     occurrence: input.occurrence,
-    startedAt: input.now,
-    steps: interviewSteps(input),
+    steps,
     answers: [],
   };
 }

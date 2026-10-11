@@ -1,17 +1,15 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { inspectProductWorkspaces, inventoryDispositions, moduleSpecifiers, productCheckCommands, productTestMatrix, readProductSources, selectProductWorkspaces, type ProductSource } from '../scripts/product-workspace-contract.ts';
+import { inspectProductWorkspaces, moduleSpecifiers, productCheckCommands, productTestMatrix, PRODUCT_DEFINITIONS, selectProductWorkspaces, type ProductDefinition } from '../scripts/product-workspace-contract.ts';
 import { executeProductCommands } from '../scripts/product-workspaces.ts';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-const source: ProductSource = {
+const definition: ProductDefinition = {
   name: 'daemon', path: 'products/daemon', packageName: '@goodvibes-jev/daemon',
-  repository: 'mgd34msu/goodvibes-daemon', revision: 'a'.repeat(40),
-  inventory: 'docs/inventory/daemon.md', inventoryPrefix: '', files: ['src/main.ts'],
 };
 function write(root: string, path: string, value: string | object): void {
   const file = join(root, path); mkdirSync(dirname(file), { recursive: true });
@@ -19,11 +17,10 @@ function write(root: string, path: string, value: string | object): void {
 }
 function fixture(present = true): string {
   const root = mkdtempSync(join(tmpdir(), 'product-contract-')); roots.push(root);
-  write(root, source.inventory, '| `src/main.ts` | PORT | Source fixture |\n');
   write(root, 'packages/engine/package.json', { exports: { './sdk/platform/config': {} } });
   if (!present) return root;
   write(root, 'products/daemon/package.json', {
-    name: source.packageName, private: true, dependencies: { '@goodvibes-jev/engine': 'workspace:*' },
+    name: definition.packageName, main: 'src/main.ts', private: true, dependencies: { '@goodvibes-jev/engine': 'workspace:*' },
     scripts: { build: 'bun scripts/build.ts', typecheck: 'tsc --noEmit', 'typecheck:test': 'tsc --noEmit -p tsconfig.test.json', test: 'bun scripts/test.ts' },
   });
   write(root, 'products/daemon/tsconfig.json', {});
@@ -32,31 +29,29 @@ function fixture(present = true): string {
   write(root, 'products/daemon/scripts/test.ts', 'export const fixtureTestRunner = true;');
   write(root, 'products/daemon/src/main.ts', 'export function main() { return 42; }');
   write(root, 'products/daemon/src/main.test.ts', "import { test, expect } from 'bun:test'; test('main', () => expect(42).toBe(42));");
-  write(root, 'products/daemon/migration.json', { sourceRevision: source.revision, entrypoints: ['src/main.ts'] });
   return root;
 }
 function mutate(root: string, file: string, update: (value: Record<string, unknown>) => void): void {
   const value = JSON.parse(readFileSync(join(root, file), 'utf8')) as Record<string, unknown>; update(value); write(root, file, value);
 }
 
-test('in-progress validation records missing products, while strict completion refuses them', () => {
+test('workspace inspection records absent products without inventing successful CI lanes', () => {
   const root = fixture(false);
-  expect(inspectProductWorkspaces(root, [source])).toEqual({ products: [], missing: ['daemon'], findings: [] });
-  expect(inspectProductWorkspaces(root, [source], true).findings).toContain('products/daemon: product is missing');
+  expect(inspectProductWorkspaces(root, [definition])).toEqual({ products: [], missing: ['daemon'], findings: [] });
+  expect(() => productTestMatrix(inspectProductWorkspaces(root, [definition]))).toThrow('No present product');
 });
 
-test('a partial workspace runs each compiler project once without repeating product aggregates', () => {
+test('a workspace runs each compiler project once without repeating product aggregates', () => {
   const root = fixture();
-  const inspection = inspectProductWorkspaces(root, [source]);
+  const inspection = inspectProductWorkspaces(root, [definition]);
   expect(inspection.findings).toEqual([]);
-  for (const mode of ['build', 'test'] as const) expect(productCheckCommands(root, inspection.products, mode)).toEqual([{ kind: 'script', label: `daemon:${mode}`, cwd: join(root, source.path), script: mode }]);
+  for (const mode of ['build', 'test'] as const) expect(productCheckCommands(root, inspection.products, mode)).toEqual([{ kind: 'script', label: `daemon:${mode}`, cwd: join(root, definition.path), script: mode }]);
   expect(productCheckCommands(root, inspection.products, 'typecheck').map((command) => command.kind === 'script' ? command.script : command.file.split('/').at(-1))).toEqual(['tsconfig.json', 'tsconfig.test.json']);
-  expect(inspectProductWorkspaces(root, [source], true).findings).toContain('products/daemon: source module not accounted for: src/main.ts');
 });
 
 test('the product command runner executes the declared build and propagates its failure', async () => {
   const root = fixture();
-  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'build');
+  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [definition]).products, 'build');
   write(root, 'products/daemon/scripts/build.ts', "import { writeFileSync } from 'node:fs'; writeFileSync('build-marker', 'built');");
   await executeProductCommands(root, commands, 'build');
   expect(readFileSync(join(root, 'products/daemon/build-marker'), 'utf8')).toBe('built');
@@ -66,7 +61,7 @@ test('the product command runner executes the declared build and propagates its 
 
 test('a product typecheck printing errors cannot report success with exit zero', async () => {
   const root = fixture();
-  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'typecheck');
+  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [definition]).products, 'typecheck');
   await expect(executeProductCommands(root, commands, 'typecheck', () => ({ status: 0, stdout: 'file.ts(1,1): error TS2322: incompatible type\n', stderr: '' }))).rejects.toThrow('failed');
 });
 
@@ -75,7 +70,7 @@ test('direct compilation still catches an error owned only by a secondary projec
   write(root, 'products/daemon/tsconfig.json', { compilerOptions: { types: [] }, include: ['src/main.ts', 'scripts'] });
   write(root, 'products/daemon/tsconfig.test.json', { compilerOptions: { types: [] }, files: ['src/main.test.ts'] });
   write(root, 'products/daemon/src/main.test.ts', 'export const result: string = 42;');
-  const inspection = inspectProductWorkspaces(root, [source]);
+  const inspection = inspectProductWorkspaces(root, [definition]);
   expect(inspection.findings).toEqual([]);
   const compiler = resolve(import.meta.dir, '../../../node_modules/typescript/bin/tsc');
   const projects: string[] = [];
@@ -86,25 +81,13 @@ test('direct compilation still catches an error owned only by a secondary projec
   expect(projects).toEqual([join(root, 'products/daemon/tsconfig.json'), join(root, 'products/daemon/tsconfig.test.json')]);
 });
 
-test('strict structural completion requires all module mappings and reviewable parity, proof and audit artifacts', () => {
-  const root = fixture();
-  for (const name of ['parity', 'proof', 'patternAudit']) write(root, `evidence/${name}.txt`, `Fixture ${name} evidence`);
-  mutate(root, 'products/daemon/migration.json', (value) => {
-    value.mappings = [{ source: 'src/main.ts', disposition: 'PORT', targets: ['products/daemon/src/main.ts'] }];
-    value.verification = { parity: 'evidence/parity.txt', proof: 'evidence/proof.txt', patternAudit: 'evidence/patternAudit.txt' };
-  });
-  expect(inspectProductWorkspaces(root, [source], true).findings).toEqual([]);
-  rmSync(join(root, 'evidence/proof.txt'));
-  expect(inspectProductWorkspaces(root, [source], true).findings).toContain('products/daemon: missing proof evidence file');
-});
-
 test('empty shells, empty-success scripts and missing script files cannot green the gate', () => {
   const root = fixture();
   write(root, 'products/daemon/src/main.ts', '// no implementation\n');
   rmSync(join(root, 'products/daemon/src/main.test.ts'));
   mutate(root, 'products/daemon/package.json', (value) => { value.scripts = { build: 'echo pending', typecheck: 'true', test: 'bun scripts/missing.ts' }; });
-  const findings = inspectProductWorkspaces(root, [source]).findings.join('\n');
-  expect(findings).toContain('missing or empty source entrypoint');
+  const findings = inspectProductWorkspaces(root, [definition]).findings.join('\n');
+  expect(findings).toContain('missing, empty or outside-product source entrypoint');
   expect(findings).toContain('no actual test source');
   expect(findings).toContain('build must be a real failing check');
   expect(findings).toContain('typecheck must be a real failing check');
@@ -115,7 +98,7 @@ test('legacy dependencies, private engine imports and cross-workspace relative i
   const root = fixture();
   mutate(root, 'products/daemon/package.json', (value) => { value.dependencies = { '@pellux/goodvibes-sdk': '2.0.23' }; });
   write(root, 'products/daemon/src/main.ts', "import x from '@pellux/goodvibes-sdk'; import y from '@goodvibes-jev/engine/sdk/private'; import z from '../../../packages/engine/sdk/src/index.ts'; export { x, y, z };");
-  const findings = inspectProductWorkspaces(root, [source]).findings.join('\n');
+  const findings = inspectProductWorkspaces(root, [definition]).findings.join('\n');
   expect(findings).toContain('engine must be a workspace:* dependency');
   expect(findings).toContain('legacy dependency');
   expect(findings).toContain('legacy import');
@@ -127,7 +110,7 @@ test('selective TypeScript includes cannot hide source, tests or tooling from wh
   const root = fixture();
   write(root, 'products/daemon/tsconfig.json', { files: ['src/main.ts'] });
   write(root, 'products/daemon/tsconfig.test.json', { files: ['src/main.test.ts'] });
-  const findings = inspectProductWorkspaces(root, [source]).findings.join('\n');
+  const findings = inspectProductWorkspaces(root, [definition]).findings.join('\n');
   expect(findings).toContain('scripts/build.ts: source/test/tooling file is outside every TypeScript project');
   expect(findings).toContain('scripts/test.ts: source/test/tooling file is outside every TypeScript project');
 });
@@ -139,14 +122,14 @@ test('inherited options are not compiled as projects and cannot hide unowned sou
   write(root, 'products/daemon/tsconfig.test.json', { extends: './tsconfig.base.json', compilerOptions: { jsx: 'preserve' }, include: ['src'] });
   write(root, 'products/daemon/src/main.test.ts', 'export const fixture = true;');
   write(root, 'products/daemon/src/view.tsx', 'declare global { namespace JSX { interface IntrinsicElements { div: Record<string, never>; } } } export const view = <div />;');
-  const inspection = inspectProductWorkspaces(root, [source]);
+  const inspection = inspectProductWorkspaces(root, [definition]);
   expect(inspection.findings).toEqual([]);
   const programs = productCheckCommands(root, inspection.products, 'typecheck').filter((command) => command.kind === 'tsconfig');
   const compiler = resolve(import.meta.dir, '../../../node_modules/typescript/bin/tsc');
   await executeProductCommands(root, programs, 'typecheck', (executable, args, cwd) =>
     spawnSync(executable, [compiler, ...args.slice(1)], { cwd, encoding: 'utf8', timeout: 20_000 }));
   write(root, 'products/daemon/unowned/missing.ts', 'export const missing = true;');
-  expect(inspectProductWorkspaces(root, [source]).findings.join('\n')).toContain('unowned/missing.ts: source/test/tooling file is outside every TypeScript project');
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('unowned/missing.ts: source/test/tooling file is outside every TypeScript project');
 });
 
 test('imports are parsed as code, including exports and dynamic imports, without reading prose', () => {
@@ -154,21 +137,15 @@ test('imports are parsed as code, including exports and dynamic imports, without
   expect(moduleSpecifiers('fixture.ts', '/// <reference types="ambient-types" />\nimport old = require("equals-import");')).toEqual(['ambient-types', 'equals-import']);
 });
 
-test('inventory/source drift, duplicate rows and mismatched mapping dispositions fail', () => {
-  const root = fixture();
-  write(root, source.inventory, '| `other.ts` | HOIST | Fixture |\n');
-  mutate(root, 'products/daemon/migration.json', (value) => { value.mappings = [{ source: 'other.ts', disposition: 'PORT', targets: ['products/daemon/src/main.ts'] }]; });
-  const findings = inspectProductWorkspaces(root, [source]).findings.join('\n');
-  expect(findings).toContain('pinned source file omitted');
-  expect(findings).toContain('file absent from pinned source');
-  expect(findings).toContain('mapping disagrees with inventory');
-  expect(() => inventoryDispositions('| `a` | PORT | A |\n| `a` | JEV | B |', '')).toThrow('Duplicate inventory');
+test('the executable product identities name each supported workspace exactly once', () => {
+  expect(PRODUCT_DEFINITIONS).toEqual((['daemon', 'tui', 'agent', 'webui'] as const).map((name) => ({
+    name, path: `products/${name}`, packageName: `@goodvibes-jev/${name}`,
+  })));
 });
 
-test('checked-in sources match their inventories and present product workspaces', () => {
+test('checked-in product workspaces satisfy the executable workspace contract', () => {
   const root = resolve(import.meta.dir, '../../..');
-  const sources = readProductSources(root);
-  const result = inspectProductWorkspaces(root, sources);
+  const result = inspectProductWorkspaces(root);
   expect(result.findings).toEqual([]);
 });
 
@@ -199,7 +176,7 @@ test.each([0, 23])('the product runner drains both piped output streams before e
 
 test('product failures report a child signal and cannot run later commands', async () => {
   const root = fixture();
-  const command = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'build')[0]!;
+  const command = productCheckCommands(root, inspectProductWorkspaces(root, [definition]).products, 'build')[0]!;
   let calls = 0;
   await expect(executeProductCommands(root, [command, command], 'build', () => {
     calls += 1;
@@ -210,7 +187,7 @@ test('product failures report a child signal and cannot run later commands', asy
 
 test('product failures retain spawn errors alongside missing exit status', async () => {
   const root = fixture();
-  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'build');
+  const commands = productCheckCommands(root, inspectProductWorkspaces(root, [definition]).products, 'build');
   await expect(executeProductCommands(root, commands, 'build', () => ({
     status: null, signal: null, stdout: '', stderr: '', error: new Error('spawn bun ENOENT'),
   }))).rejects.toThrow('daemon:build failed (exit code null, signal none): spawn bun ENOENT');
@@ -291,15 +268,15 @@ test('real product progress reaches both outer sinks before the command exits', 
 
 test('product matrix and explicit lanes cover all present declared suites exactly once', () => {
   const root = fixture();
-  const daemon = inspectProductWorkspaces(root, [source]).products[0]!;
+  const daemon = inspectProductWorkspaces(root, [definition]).products[0]!;
   const products = ['daemon', 'tui', 'agent', 'webui'].map((name) => ({
-    ...daemon, source: { ...source, name: name as ProductSource['name'], path: `products/${name}` },
+    ...daemon, definition: { ...definition, name: name as ProductDefinition['name'], path: `products/${name}` },
   }));
   // Exercise every nonempty subset, including main and the two product branches.
   for (let mask = 1; mask < 16; mask++) {
     const present = products.filter((_, index) => mask & (1 << index));
     const matrix = productTestMatrix({ products: present, findings: [], missing: [] });
-    expect(matrix).toEqual(present.map((product) => product.source.name));
+    expect(matrix).toEqual(present.map((product) => product.definition.name));
     const aggregate = productCheckCommands(root, present, 'test');
     const lanes = matrix.flatMap((name) => productCheckCommands(root, selectProductWorkspaces(present, [name]), 'test'));
     expect(lanes).toEqual([...aggregate]);
@@ -310,7 +287,7 @@ test('product matrix and explicit lanes cover all present declared suites exactl
 
 test('product selectors and matrix reject omissions disguised as successful selection', () => {
   const root = fixture();
-  const inspection = inspectProductWorkspaces(root, [source]);
+  const inspection = inspectProductWorkspaces(root, [definition]);
   expect(() => selectProductWorkspaces(inspection.products, ['deamon'])).toThrow('Unknown product selector');
   expect(() => selectProductWorkspaces(inspection.products, ['tui'])).toThrow('Selected product tui is not present');
   expect(() => selectProductWorkspaces(inspection.products, ['daemon', 'daemon'])).toThrow('Duplicate product selector');
@@ -323,7 +300,7 @@ test('product selectors and matrix reject omissions disguised as successful sele
 test('the product matrix CLI emits only complete inspected JSON and refuses selectors', () => {
   const root = resolve(import.meta.dir, '../../..');
   const runner = join(root, 'packages/engine/scripts/product-workspaces.ts');
-  const expected = productTestMatrix(inspectProductWorkspaces(root, readProductSources(root)));
+  const expected = productTestMatrix(inspectProductWorkspaces(root));
   const run = spawnSync('bun', [runner, 'matrix'], { cwd: root, encoding: 'utf8', timeout: 10_000 });
   expect(run.error).toBeUndefined();
   expect(run.status, run.stderr).toBe(0);
@@ -331,4 +308,106 @@ test('the product matrix CLI emits only complete inspected JSON and refuses sele
   const filtered = spawnSync('bun', [runner, 'matrix', 'daemon'], { cwd: root, encoding: 'utf8', timeout: 10_000 });
   expect(filtered.status).toBe(1);
   expect(filtered.stderr).toContain('matrix does not accept product selectors');
+});
+
+
+test('package identities and undeclared product directories still fail inspection', () => {
+  const root = fixture();
+  mutate(root, 'products/daemon/package.json', (value) => { value.name = '@goodvibes-jev/other'; });
+  write(root, 'products/other/src/main.ts', 'export const other = true;');
+  const findings = inspectProductWorkspaces(root, [definition]).findings.join('\n');
+  expect(findings).toContain('package name must be @goodvibes-jev/daemon');
+  expect(findings).toContain('products/other: undeclared product workspace');
+});
+
+test('a package without an executable source entrypoint cannot pass', () => {
+  const root = fixture();
+  mutate(root, 'products/daemon/package.json', (value) => { delete value.main; });
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('no source entrypoints declared by package/build inputs');
+});
+
+for (const entry of ['src/missing.ts', '../outside.ts', '../daemon/src/main.ts', '/absolute.ts']) {
+  test(`package entrypoints reject missing or escaped paths: ${entry}`, () => {
+    const root = fixture();
+    write(root, 'products/outside.ts', 'export const outside = true;');
+    mutate(root, 'products/daemon/package.json', (value) => { value.main = entry; });
+    expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('missing, empty or outside-product source entrypoint');
+  });
+}
+
+for (const destination of ['outside', 'sibling'] as const) {
+  test(`an entrypoint symlink cannot claim a ${destination} implementation`, () => {
+    const root = fixture();
+    const target = destination === 'outside' ? join(fixture(false), 'outside.ts') : join(root, 'products/tui/src/main.ts');
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, 'export const foreignImplementation = true;');
+    rmSync(join(root, 'products/daemon/src/main.ts'));
+    symlinkSync(target, join(root, 'products/daemon/src/main.ts'));
+    expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('outside-product source entrypoint');
+  });
+}
+
+
+test('an in-product entrypoint symlink must still resolve to a nonempty file', () => {
+  const root = fixture();
+  write(root, 'products/daemon/src/implementation.ts', 'export const implementation = true;');
+  rmSync(join(root, 'products/daemon/src/main.ts'));
+  symlinkSync(join(root, 'products/daemon/src/implementation.ts'), join(root, 'products/daemon/src/main.ts'));
+  expect(inspectProductWorkspaces(root, [definition]).findings).toEqual([]);
+  write(root, 'products/daemon/src/implementation.ts', '// empty implementation');
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('empty or outside-product source entrypoint');
+  rmSync(join(root, 'products/daemon/src/implementation.ts'));
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('outside-product source entrypoint');
+});
+
+test('package bin and runtime exports validate every source entry, excluding declaration-only types', () => {
+  const root = fixture();
+  write(root, 'products/daemon/bin/cli.ts', 'export const cli = true;');
+  mutate(root, 'products/daemon/package.json', (value) => {
+    value.bin = { daemon: 'bin/cli.ts' };
+    value.exports = { '.': { types: './dist/main.d.ts', bun: './src/main.ts' } };
+  });
+  expect(inspectProductWorkspaces(root, [definition]).findings).toEqual([]);
+  write(root, 'products/daemon/bin/cli.ts', '// empty entrypoint');
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('source entrypoint bin/cli.ts');
+  write(root, 'products/daemon/bin/cli.ts', 'export const cli = true;');
+  mutate(root, 'products/daemon/package.json', (value) => { value.exports = { '.': { bun: './src/missing.ts' } }; });
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('source entrypoint ./src/missing.ts');
+});
+
+test('compiler runtime outputs and start commands require their authored build entrypoints', () => {
+  const root = fixture();
+  write(root, 'products/daemon/tsconfig.build.json', { extends: './tsconfig.json', compilerOptions: { rootDir: 'src', outDir: 'dist' }, include: ['src'] });
+  write(root, 'products/daemon/src/entrypoint.ts', 'export const executable = true;');
+  mutate(root, 'products/daemon/package.json', (value) => {
+    value.main = 'dist/main.js';
+    value.exports = { '.': { types: './dist/main.d.ts', import: './dist/main.js' } };
+    value.scripts = { ...(value.scripts as Record<string, string>), start: 'bun dist/entrypoint.js' };
+  });
+  expect(inspectProductWorkspaces(root, [definition]).findings).toEqual([]);
+  rmSync(join(root, 'products/daemon/src/entrypoint.ts'));
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('source entrypoint src/entrypoint.ts (from dist/entrypoint.js)');
+  mutate(root, 'products/daemon/package.json', (value) => { value.main = '../daemon/dist/main.js'; });
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('source entrypoint ../daemon/dist/main.js');
+});
+
+test('browser entrypoints come from executable HTML module scripts, not comments', () => {
+  const root = fixture();
+  mutate(root, 'products/daemon/package.json', (value) => { delete value.main; });
+  write(root, 'products/daemon/index.html', '<!-- <script type="module" src="/src/missing.ts"></script> --><script src="/src/main.ts" type="module"></script>');
+  expect(inspectProductWorkspaces(root, [definition]).findings).toEqual([]);
+  write(root, 'products/daemon/index.html', '<script type="module" src="/src/missing.ts"></script>');
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('source entrypoint src/missing.ts');
+  write(root, 'products/daemon/index.html', '<!-- <script type="module" src="/src/main.ts"></script> -->');
+  expect(inspectProductWorkspaces(root, [definition]).findings.join('\n')).toContain('no source entrypoints declared by package/build inputs');
+});
+
+test('the obsolete completion CLI is rejected and has no package script alias', () => {
+  const root = resolve(import.meta.dir, '../../..');
+  const run = spawnSync('bun', [join(root, 'packages/engine/scripts/product-workspaces.ts'), 'complete'], { cwd: root, encoding: 'utf8', timeout: 10_000 });
+  expect(run.error).toBeUndefined();
+  expect(run.status).toBe(1);
+  expect(run.stderr).toContain('Unknown product check mode complete');
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+  expect(Object.hasOwn(manifest.scripts, 'migration:complete')).toBe(false);
 });

@@ -1,15 +1,26 @@
+import { getAgentSettingsSchema, type AgentSettingsCatalog } from '../config/settings-catalog.ts';
+import { catalogRoutingInput } from './agent-harness-catalog-ingress.ts';
+import type { CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import {
   MAX_SETTING_LIMIT,
-  countHarnessSettingCatalog,
-  harnessSettingQueryRelaxed,
-  listEffectiveHarnessSettings,
+  listEffectiveHarnessSettingsPage,
 } from '../agent/harness-control.ts';
 import { settingDomainRelatedCommand } from '../config/settings-search-vocabulary.ts';
 import { settingsPolicySummary } from './agent-harness-metadata.ts';
 import { CATALOG_QUERIES } from './agent-harness-catalog-filters.ts';
 import { catalogEnvelope, catalogFilters, readLimit, readString } from './agent-harness-tool-utils.ts';
 import type { AgentHarnessToolArgs } from './agent-harness-tool-types.ts';
+
+/** Exact catalog identities do not require semantic source projection. */
+export function isHarnessSettingsQuery(input: Record<string, unknown>, config?: AgentSettingsCatalog): boolean {
+  const args = catalogRoutingInput(input);
+  if (args.mode === 'settings') return typeof args.query === 'string' && args.query.trim().length > 0;
+  if (args.mode !== 'get_setting') return false;
+  const value = [args.key, args.target, args.query].find(item => typeof item === 'string' && item.trim());
+  if (typeof value !== 'string') return false;
+  return !config || !getAgentSettingsSchema(config).some(setting => setting.key.toLowerCase() === value.trim().toLowerCase());
+}
 
 /**
  * The `settings` catalog page, with the count of what matched beside it.
@@ -32,27 +43,31 @@ import type { AgentHarnessToolArgs } from './agent-harness-tool-types.ts';
 export async function harnessSettingsCatalog(
   configManager: ConfigManager,
   args: AgentHarnessToolArgs,
+  options: CatalogRankingOptions = {},
 ): Promise<Record<string, unknown>> {
   const filters = {
-    category: readString(args.category) || undefined,
-    prefix: readString(args.prefix) || undefined,
-    query: readString(args.query) || undefined,
+    ...(readString(args.category) ? { category: readString(args.category) } : {}),
+    ...(readString(args.prefix) ? { prefix: readString(args.prefix) } : {}),
+    ...(readString(args.query) ? { query: readString(args.query) } : {}),
     includeHidden: args.includeHidden === true,
     limit: readLimit(args.limit, MAX_SETTING_LIMIT, MAX_SETTING_LIMIT),
   };
   // Ownership-aware: daemon-owned keys carry the DAEMON's live value.
-  const settings = await listEffectiveHarnessSettings(configManager, { ...filters }, {
+  const page = await listEffectiveHarnessSettingsPage(configManager, filters, {
+    ...options,
     includeParameters: args.includeParameters === true,
   });
+  options.assertCurrent?.();
+  const settings = page.settings;
   const related = relatedSettingCommands(settings);
   return {
     ...catalogEnvelope(
       'settings',
       settings,
-      countHarnessSettingCatalog(configManager, filters),
+      page.total,
       catalogFilters(args, CATALOG_QUERIES.settings.filters),
       CATALOG_QUERIES.settings.discovery,
-      { relaxedQuery: harnessSettingQueryRelaxed(configManager, filters) },
+      {},
     ),
     ...(related.length > 0 ? { relatedCommands: related } : {}),
     policy: settingsPolicySummary(),

@@ -17,6 +17,7 @@ import { getPackageVersion } from '../../cli/help.js';
 import { runConfiguredDaemonCli, type DaemonCliRuntime } from '../../cli/serve.js';
 import type { DaemonProcessExitCode, DaemonProcessHandle } from '../../daemon/process-lifecycle.js';
 import * as hosts from '../../runtime/daemon-host.js';
+import * as maintenance from '../../cli/startup-maintenance.js';
 import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.js';
 import { availableLoopbackPorts } from '../helpers/companion-cli-fixture.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
@@ -396,3 +397,39 @@ for (const host of ['user:private-password@127.0.0.1', 'http://user:private-pass
     expect(f.acquired()).toBe(0); expect(existsSync(f.tokenPath)).toBe(false);
   });
 }
+
+
+test('admitted CLI calls canonical startup maintenance and fences post-probe persistence on shutdown', async () => {
+  const entered = gate(); const release = gate(); const f = await fixture();
+  const prune = keep(spyOn(maintenance, 'pruneDaemonStartupTokens'));
+  let signal: AbortSignal | undefined;
+  keep(spyOn(maintenance, 'reconcileDaemonStartup').mockImplementation(async (_configuration, _env, admitted) => {
+    signal = admitted; entered.resolve(); await release.promise; return undefined;
+  }));
+  const persist = keep(spyOn(maintenance, 'persistDaemonStartupPublicUrl'));
+  const handle = f.start(); await entered.promise;
+  expect(prune).toHaveBeenCalledWith(f.configuration);
+  const closing = handle.shutdown(); expect(signal!.aborted).toBe(true);
+  release.resolve(); await closing; await handle.ready;
+  expect(persist).not.toHaveBeenCalled();
+  expect(f.stdout.some((line) => line.includes('host started'))).toBe(false);
+});
+
+test('admitted CLI persists served origin only after maintenance and settled listener', async () => {
+  const f = await fixture();
+  const persist = keep(spyOn(maintenance, 'persistDaemonStartupPublicUrl'));
+  const handle = f.start(); await handle.ready;
+  expect(persist).toHaveBeenCalledWith(f.configuration, { host: '127.0.0.1', port: f.port!, scheme: 'http' });
+  await handle.shutdown();
+});
+
+test('startup maintenance failures are non-fatal and diagnostics contain no raw exception values', async () => {
+  const f = await fixture();
+  keep(spyOn(maintenance, 'reconcileDaemonStartup').mockRejectedValue(new Error('synthetic-private-detail')));
+  keep(spyOn(maintenance, 'persistDaemonStartupPublicUrl').mockImplementation(() => { throw new Error('synthetic-private-detail'); }));
+  const handle = f.start(); expect(await handle.ready).toBeDefined();
+  expect(f.stderr.join('\n')).toContain('legacy-unit reconcile failed (non-fatal)');
+  expect(f.stderr.join('\n')).toContain('startup public URL could not be persisted');
+  expect(f.stderr.join('\n')).not.toContain('synthetic-private-detail');
+  await handle.shutdown();
+});

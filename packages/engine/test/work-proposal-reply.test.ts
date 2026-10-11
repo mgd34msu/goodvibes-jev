@@ -11,13 +11,26 @@
  * - a reply with nothing pending flows through as ordinary conversation
  * - an expired proposal is reported as expired and starts nothing
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   findProposalForReply,
   tryResolveWorkProposalReplyFromChannel,
 } from '../sdk/src/platform/daemon/work-proposal-reply.ts';
 import { WorkProposalStore, type WorkProposalRecord } from '../sdk/src/platform/agents/work-proposal-store.ts';
 import type { ChannelIngressPolicyInput } from '../sdk/src/platform/channels/index.ts';
+
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+let prior: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  const answers: Record<string, string> = { 'yeah go for it': 'approve', 'yes': 'approve', 'yes but only the adapter': 'steer', 'nah, not now': 'reject', 'what is the status': 'message' };
+  prior = installJudgmentPort(fakePort((_name, question, state) => {
+    const reply = (state as { reply: string }).reply;
+    if (!answers[reply]) throw new Error('Missing deterministic test answer');
+    return choiceAnswer(question, answers[reply]!, 0.99);
+  }).port);
+});
+afterEach(() => installJudgmentPort(prior));
 
 function ingress(overrides: Partial<ChannelIngressPolicyInput> = {}): ChannelIngressPolicyInput {
   return {
@@ -41,7 +54,7 @@ function propose(
   store: WorkProposalStore,
   input: Parameters<WorkProposalStore['create']>[0],
 ): WorkProposalRecord {
-  const record = store.create(input);
+  const record = store.create({ userId: 'owner', channelId: 'goodvibes-agent', ...input });
   return store.markDelivered(record.id) ?? record;
 }
 
@@ -82,7 +95,7 @@ describe('tryResolveWorkProposalReplyFromChannel', () => {
     const { store, started, deps } = harness();
     propose(store, { surfaceKind: 'ntfy', task: 't', summary: 's', ttlMs: 60_000 });
     await tryResolveWorkProposalReplyFromChannel(ingress({ text: 'yes but only the adapter' }), deps);
-    expect(started[0]!.note).toBe('but only the adapter');
+    expect(started[0]!.note).toBe('yes but only the adapter');
     store.dispose();
   });
 
@@ -166,33 +179,33 @@ describe('findProposalForReply', () => {
   function record(overrides: Partial<WorkProposalRecord>): WorkProposalRecord {
     return {
       id: 'wp_1', createdAt: 1, expiresAt: 2, status: 'pending',
-      surfaceKind: 'ntfy', task: 't', summary: 's', delivered: true, ...overrides,
+      surfaceKind: 'ntfy', userId: 'owner', task: 't', summary: 's', delivered: true, ...overrides,
     };
   }
 
   test('narrows to the same surface', () => {
     const pending = [record({ id: 'a', surfaceKind: 'telegram' }), record({ id: 'b', surfaceKind: 'ntfy' })];
-    expect(findProposalForReply({ surface: 'ntfy' }, pending)?.id).toBe('b');
+    expect(findProposalForReply({ userId: 'owner', surface: 'ntfy' }, pending)?.id).toBe('b');
   });
 
   test('prefers a thread match', () => {
     const pending = [record({ id: 'a' }), record({ id: 'b', threadId: 'T1' })];
-    expect(findProposalForReply({ surface: 'ntfy', threadId: 'T1' }, pending)?.id).toBe('b');
+    expect(findProposalForReply({ userId: 'owner', surface: 'ntfy', threadId: 'T1' }, pending)?.id).toBe('b');
   });
 
   test('prefers a channel match when there is no thread', () => {
     const pending = [record({ id: 'a' }), record({ id: 'b', channelId: 'C1' })];
-    expect(findProposalForReply({ surface: 'ntfy', channelId: 'C1' }, pending)?.id).toBe('b');
+    expect(findProposalForReply({ userId: 'owner', surface: 'ntfy', channelId: 'C1' }, pending)?.id).toBe('b');
   });
 
   test('a proposal owned by another user is not answerable by this one', () => {
     const pending = [record({ id: 'a', userId: 'someone-else' })];
-    expect(findProposalForReply({ surface: 'ntfy', userId: 'owner' }, pending)?.id).toBe('a');
+    expect(findProposalForReply({ surface: 'ntfy', userId: 'owner' }, pending)).toBeNull();
     const mixed = [record({ id: 'a', userId: 'someone-else' }), record({ id: 'b', userId: 'owner' })];
     expect(findProposalForReply({ surface: 'ntfy', userId: 'owner' }, mixed)?.id).toBe('b');
   });
 
   test('nothing pending on this surface yields null', () => {
-    expect(findProposalForReply({ surface: 'ntfy' }, [])).toBeNull();
+    expect(findProposalForReply({ userId: 'owner', surface: 'ntfy' }, [])).toBeNull();
   });
 });

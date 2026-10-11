@@ -609,3 +609,29 @@ export function reduceWorkLedgerSettlement(state: WorkLedgerState, input: {
   if (evidence.kind !== 'accepted' || evidence.replayed || evidence.event.type === 'import_legacy' || !evidence.event.evidence) throw new Error('Native settlement evidence refused');
   return { state: readWorkLedgerState(next, next.projectId), report: report.event, evidence: evidence.event };
 }
+
+/** Native owner-only successor reduction; ledger events remain evidence, never launch authority. */
+export function reduceWorkLedgerContinuation(state: WorkLedgerState, input: {
+  readonly target: WorkEvidenceTarget; readonly actorId: string; readonly continuationId: string; readonly successorId: string;
+}, clock: WorkLedgerClock): { readonly state: WorkLedgerState; readonly target: WorkEvidenceTarget } {
+  const next = readWorkLedgerState(state, state.projectId);
+  const work = next.works.find(value => value.id === input.target.workId);
+  const attempt = next.attempts.find(value => value.id === input.target.attemptId);
+  if (!work?.source || !attempt || !targetMatches(input.target, work, attempt) || attempt.ownerId !== input.actorId
+    || !['active', 'complete'].includes(attempt.state) || work.reportedState === 'cancelled') throw new Error('Native continuation target is stale');
+  const transition = attempt.state === 'complete'
+    ? { type: 'reopen' as const, reason: 'Continue the issued native CI repair' }
+    : { type: 'release' as const, attemptId: attempt.id, reason: 'Transfer to the issued native CI repair' };
+  const actor = { projectId: next.projectId, actorId: input.actorId, role: 'coordinator' as const };
+  const result = reduceWorkLedger(next, workLedgerCommandSchema.parse({ ...transition, workId: work.id,
+    requestId: `${input.continuationId}:release`, expectedRevision: next.revision }), actor, clock);
+  if (result.kind !== 'accepted' || result.replayed) throw new Error('Native continuation transition refused');
+  const claim = reduceWorkLedger(next, workLedgerCommandSchema.parse({ type: 'claim', workId: work.id,
+    requestId: `${input.continuationId}:claim`, expectedRevision: next.revision }), actor,
+  { now: clock.now, newId: kind => { if (kind !== 'attempt') throw new Error('Invalid continuation identity'); return input.successorId; } });
+  if (claim.kind !== 'accepted' || claim.replayed || claim.event.type === 'import_legacy') throw new Error('Native continuation claim refused');
+  const successor = claim.event.attempts.find(item => item.id === input.successorId);
+  if (!successor || successor.predecessorId !== attempt.id) throw new Error('Invalid continuation successor');
+  return { state: readWorkLedgerState(next, next.projectId), target: { workId: work.id, workRevision: work.revision,
+    criteriaRevision: work.criteriaRevision, attemptId: successor.id, attemptRevision: successor.revision } };
+}

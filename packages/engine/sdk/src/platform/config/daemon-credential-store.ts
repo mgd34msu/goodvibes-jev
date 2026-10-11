@@ -9,6 +9,8 @@ function isSecretReferenceValue(value: string): boolean {
 }
 
 export interface DaemonCredentialStore {
+  /** Alias/tier-aware local incarnation, including pending mutations; never sent to judgment. */
+  resolveConfigCredentialSnapshot?(configKey: string): ReturnType<SecretsManager['resolveLocalCredentialSnapshot']>;
   /**
    * Resolve a goodvibes://secrets/ reference OR a raw secret key to its
    * plaintext value (daemon-internal only).
@@ -50,8 +52,10 @@ function secretKeyFromReference(ref: string): string {
   return decodeURIComponent(last);
 }
 
-export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' | 'set'> & Partial<Pick<SecretsManager, 'getOrCreateDaemonSecret' | 'resolveLocalSecretSync'>>): DaemonCredentialStore {
+export function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' | 'set'> & Partial<Pick<SecretsManager, 'getOrCreateDaemonSecret' | 'resolveLocalSecretSync' | 'resolveLocalCredentialSnapshot'>>): DaemonCredentialStore {
+  const observe = secrets.resolveLocalCredentialSnapshot?.bind(secrets);
   return {
+    ...(observe ? { resolveConfigCredentialSnapshot: (configKey: string) => observe(daemonSecretKeyFor(configKey)) } : {}),
     ...(secrets.resolveLocalSecretSync ? {
       inspectConfigSecret(configKey: string): 'absent' | 'present' | 'unavailable' {
         const current = secrets.resolveLocalSecretSync!(daemonSecretKeyFor(configKey));

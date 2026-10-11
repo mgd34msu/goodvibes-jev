@@ -166,3 +166,30 @@ describe('TtsEngine', () => {
     expect(engine.getState().id).toBeNull();
   });
 });
+
+describe('asynchronous seam preparation ownership', () => {
+  test('stop while reading seams prevents all synthesis and late state publication', async () => {
+    const engine = new TtsEngine(); const sink = new FakeSink(); const pending = Promise.withResolvers<readonly string[]>(); const started = Promise.withResolvers<undefined>(); let calls = 0;
+    const done = engine.speak({ createSink: () => sink, id: 'old', prepareSegments: () => { started.resolve(undefined); return pending.promise; }, synth: async () => { calls++; return new ArrayBuffer(1); } });
+    expect(engine.getState()).toMatchObject({ id: 'old', phase: 'loading' });
+    await started.promise; engine.stop(); await done; expect(sink.stopped).toBe(true); expect(sink.closed).toBe(true); pending.resolve(['late']);
+    expect(calls).toBe(0); expect(engine.getState()).toMatchObject({ id: null, phase: null });
+  });
+  test('repeated reads supersede pending preparation and old owners cannot stop new ones', async () => {
+    const engine = new TtsEngine(); const first = Promise.withResolvers<readonly string[]>(); const second = Promise.withResolvers<readonly string[]>();
+    const firstStarted = Promise.withResolvers<undefined>(); const secondStarted = Promise.withResolvers<undefined>();
+    const owner = new AbortController(); let calls = 0; const synth = async () => { calls++; return new ArrayBuffer(1); };
+    const one = engine.speak({ createSink: () => new FakeSink(), id: 'old', prepareSegments: () => { firstStarted.resolve(undefined); return first.promise; }, signal: owner.signal, synth });
+    await firstStarted.promise;
+    const two = engine.speak({ createSink: () => new FakeSink(), id: 'new', prepareSegments: () => { secondStarted.resolve(undefined); return second.promise; }, synth });
+    await secondStarted.promise;
+    owner.abort(); first.resolve(['late']); await one;
+    expect(engine.getState()).toMatchObject({ id: 'new', phase: 'loading' });
+    engine.stop(); second.resolve(['late']); await two; expect(calls).toBe(0);
+  });
+  test('unavailable seams are explicit and never synthesize', async () => {
+    const engine = new TtsEngine(); let calls = 0;
+    await engine.speak({ createSink: () => new FakeSink(), id: 'held', prepareSegments: async () => { throw new Error('held'); }, synth: async () => { calls++; return new ArrayBuffer(1); } });
+    expect(calls).toBe(0); expect(engine.getState().error).toContain('Sentence boundaries are unavailable');
+  });
+});

@@ -5,6 +5,7 @@
  * shows it.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
+import { startE2ENativeHost } from './native-host-fixture.ts';
 import { inputAreaVisible, lastUserText, launchTui, makeHome, screenText, startStubModel, waitFor, type TuiSession } from './harness.ts';
 
 const PROMPT = 'summarize the heron migration notes';
@@ -14,7 +15,8 @@ const model = startStubModel((request) => (
   lastUserText(request).includes('heron migration') ? { text: REPLY } : { text: 'E2E side request' }
 ));
 let tui: TuiSession | null = null;
-afterAll(() => { tui?.stop(); model.stop(); });
+let host: Awaited<ReturnType<typeof startE2ENativeHost>> | null = null;
+afterAll(async () => { try { await tui?.stop(); } finally { try { await host?.stop(); } finally { model.stop(); } } });
 
 /** Every OSC 9 payload in a raw terminal stream. */
 function osc9Payloads(raw: string): string[] {
@@ -24,8 +26,11 @@ function osc9Payloads(raw: string): string[] {
 describe('turn-end notification', () => {
   test('the OSC 9 payload for a finished turn names the turn', async () => {
     const home = await makeHome(model);
+    host = await startE2ENativeHost(home);
     home.setTuiSetting('behavior.terminalNotifyTurnEnd', true);
-    tui = launchTui(home, { cols: 100, rows: 30 });
+    // Detailed notifications require explicit current owner consent.
+    home.setTuiSetting('behavior.notificationsMetadataOnly', false);
+    tui = launchTui(home, { cols: 100, rows: 30, env: host.env });
     await tui.waitForScreen('the input area', inputAreaVisible, 45_000);
 
     tui.type(PROMPT);
@@ -39,5 +44,11 @@ describe('turn-end notification', () => {
     const turnEnd = payloads.find((payload) => /heron migration/i.test(payload));
     expect(turnEnd, `OSC 9 payloads: ${JSON.stringify(payloads)}`).toBeDefined();
     expect(turnEnd!).not.toMatch(/[0-9a-f]{12}/); // no internal ids in outward text
+    expect(host.judgments.accepted).toContain('native-route');
+    expect(host.judgments.accepted).toContain('native-turn');
+    expect(host.judgments.accepted).not.toContain('route');
+    expect(host.judgments.accepted).not.toContain('turn');
+    expect(host.daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0);
+    expect(host.daemon.services.agentManager.list()).toHaveLength(0);
   }, 100_000);
 });

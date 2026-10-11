@@ -1,3 +1,4 @@
+import { createAskPageRecovery } from './ask-page-recovery.js';
 import { snapshotNodeInput } from '../activation/projection.js';
 import { KnowledgeGeneratedFactSupportHeldError } from '../semantic/verification/types.js';
 import { restoreKnowledgeSourceAnswerAliases } from '../source-structural-references.js';
@@ -10,14 +11,13 @@ import {
   isGeneratedPageSource,
   mergeSourceStatus,
   readHomeAssistantMetadataString,
-  readString,
   readStringArray,
   uniqueStrings,
 } from './helpers.js';
 import { refreshHomeGraphDevicePassport } from './generated-pages.js';
 import {
   createHomeGraphPageSourceReader,
-  isUsefulHomeGraphPageFact,
+  createHomeGraphPageFactReader,
 } from './page-quality.js';
 import { isKnowledgeSourceQualityFailure } from '../source-quality.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
@@ -36,6 +36,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
   readonly spaceId: string;
   readonly installationId: string;
   readonly answer: HomeGraphAskResult;
+  readonly signal?: AbortSignal | undefined;
 }): Promise<{ readonly requested: boolean; readonly refreshed: number }> {
   if ((input.answer.answer.facts?.length ?? 0) === 0 && input.answer.answer.sources.length === 0) return { requested: false, refreshed: 0 };
   const devices = input.answer.answer.linkedObjects.filter((node) => node.kind === 'ha_device' && getKnowledgeSpaceId(node) === input.spaceId).slice(0, MAX_ASK_REFRESH_DEVICES);
@@ -45,13 +46,23 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
   for (const device of devices) selectedDevices.watch(`selected-device:${device.id}`,
     () => input.store.getNode(device.id), snapshotNodeInput(device));
   selectedDevices.assertCurrent();
+  const store = input.store, artifactStore = input.artifactStore, signal = input.signal;
+  const request = JSON.stringify({ spaceId: input.spaceId, installationId: input.installationId, answer: input.answer });
+  const selected = devices.map((device) => ({ device, current: store.getNode(device.id) }));
+  const recovery = createAskPageRecovery(store, input.spaceId, () => {
+    selectedDevices.assertCurrent();
+    if (input.store !== store || input.artifactStore !== artifactStore || input.signal !== signal
+      || JSON.stringify({ spaceId: input.spaceId, installationId: input.installationId, answer: input.answer }) !== request
+      || selected.some(({ device, current }) => store.getNode(device.id) !== current)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  }, signal);
   try {
     await persistAnswerFactSubjectLinks({
       store: input.store,
       spaceId: input.spaceId,
       installationId: input.installationId,
       devices,
-      assertSelectedDevicesCurrent: selectedDevices.assertCurrent,
+      assertSelectedDevicesCurrent: recovery.assertCurrent,
+      sourceWritten: recovery.acknowledgeSourceWritten,
       facts: input.answer.answer.facts ?? [],
       sources: input.answer.answer.sources ?? [],
     });
@@ -68,17 +79,19 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
     selectedDevices.assertCurrent();
     const deviceId = readHomeAssistantMetadataString(device, 'objectId', 'deviceId') ?? device.id;
     try {
-      await refreshHomeGraphDevicePassport({
+      await recovery.run(() => refreshHomeGraphDevicePassport({
         store: input.store,
         artifactStore: input.artifactStore,
         spaceId: input.spaceId,
         installationId: input.installationId,
+        signal,
+        assertCurrent: recovery.assertCurrent,
         input: {
           knowledgeSpaceId: input.spaceId,
           deviceId,
           metadata: { automation: 'ask-refresh' },
         },
-      });
+      }));
       selectedDevices.assertCurrent();
       refreshed += 1;
     } catch (error) {
@@ -101,6 +114,7 @@ async function persistAnswerFactSubjectLinks(input: {
   readonly installationId: string;
   readonly devices: readonly KnowledgeNodeRecord[];
   readonly assertSelectedDevicesCurrent: () => void;
+  readonly sourceWritten: (source: KnowledgeSourceRecord) => void;
   readonly facts: readonly KnowledgeNodeRecord[];
   readonly sources: readonly KnowledgeSourceRecord[];
 }): Promise<void> {
@@ -131,8 +145,29 @@ async function persistAnswerFactSubjectLinks(input: {
     .sort((a, b) => b.probability! - a.probability! || a.source.id.localeCompare(b.source.id))
     .slice(0, MAX_ASK_PAGE_SOURCES_TO_LINK);
   const acceptedSourceIds = new Set(pageSources.map((reading) => reading.source.id));
+  const factReader = createHomeGraphPageFactReader(input.store, {
+    spaceId: input.spaceId, query: 'Useful device reference facts selected by a Home Graph answer', subjects: input.devices,
+  });
+  const selectedFacts = facts.filter((fact) => Boolean(fact.sourceId && acceptedSourceIds.has(fact.sourceId)));
+  const responsesById = new Map(selectedFacts.map((fact) => [fact.id, fact]));
+  const canonicalFacts = selectedFacts.map((fact) => {
+    const current = input.store.getNode(fact.id);
+    // Answer-only subject projections may add top-level associations. Bind the
+    // complete persisted claim before using those associations for graph links.
+    const claimMetadata = (metadata: Record<string, unknown>) => Object.fromEntries(Object.entries(metadata)
+      .filter(([key]) => !['subject', 'subjectIds', 'linkedObjectIds', 'targetHints'].includes(key)));
+    if (!current || Object.keys(current).some((key) => JSON.stringify(key === 'metadata' ? claimMetadata(current.metadata) : current[key as keyof KnowledgeNodeRecord])
+      !== JSON.stringify(key === 'metadata' ? claimMetadata(fact.metadata) : fact[key as keyof KnowledgeNodeRecord]))) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    return current;
+  });
+  const factPlan = await factReader.prepare(canonicalFacts);
+  const factSourceIds = new Set(canonicalFacts.flatMap((fact) => [fact.sourceId, ...readStringArray(fact.metadata.sourceIds),
+    ...input.store.edgesFor('node', fact.id).filter((edge) => edge.fromKind === 'source' && edge.toKind === 'node'
+      && edge.toId === fact.id && edge.relation === 'supports_fact').map((edge) => edge.fromId),
+  ]).filter(Boolean));
   const assertRestoredAliasesCurrent = () => {
     input.assertSelectedDevicesCurrent();
+    factPlan.assertCurrent();
     for (const alias of restoredAliases) restoreKnowledgeSourceAnswerAliases(input.store, alias);
   };
   // The store methods await initialization/activation before committing. Keep
@@ -141,12 +176,14 @@ async function persistAnswerFactSubjectLinks(input: {
     input.store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
       nodes, edges, issues: [], assertCurrent: assertRestoredAliasesCurrent,
     }));
-  const writeEdge = (edge: KnowledgeEdgeUpsertInput) => writeGraph([], [edge]);
-  const writeNode = async (node: KnowledgeNodeUpsertInput & { readonly id: string }) => {
-    await writeGraph([node], []);
-    const stored = input.store.getNode(node.id);
-    if (!stored) throw new KnowledgeGeneratedFactSupportHeldError('stale');
-    return stored;
+  const writeEdge = async (edge: KnowledgeEdgeUpsertInput) => {
+    const receipt = await writeGraph([], [edge]);
+    if (edge.relation === 'supports_fact' || edge.relation === 'describes') {
+      const written = receipt.edges.find((candidate) => candidate.fromKind === edge.fromKind && candidate.fromId === edge.fromId && candidate.toKind === edge.toKind
+        && candidate.toId === edge.toId && candidate.relation === edge.relation);
+      if (!written || !input.store.edgesFor(edge.fromKind, edge.fromId).includes(written)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+      factPlan.acknowledgeEdgeWritten(written);
+    }
   };
   await input.store.batch(async () => {
     // No source/link mutation follows a stale model await.
@@ -156,7 +193,12 @@ async function persistAnswerFactSubjectLinks(input: {
     assertRestoredAliasesCurrent();
     const devicesById = new Map(input.devices.map((device) => [device.id, device]));
     for (const reading of pageSources) {
-      const storedSource = await upsertAnswerPageSource(input, reading.source, restoredSources.has(reading.source));
+      // Keep evidence rows selected by fact quality byte-for-byte intact. Other
+      // response sources retain the existing metadata/URI enrichment behavior.
+      const storedSource = factSourceIds.has(reading.source.id)
+        ? input.store.getSource(reading.source.id)!
+        : await upsertAnswerPageSource(input, reading.source, restoredSources.has(reading.source), assertRestoredAliasesCurrent);
+      input.sourceWritten(storedSource);
       assertRestoredAliasesCurrent();
       for (const device of input.devices) {
         await writeEdge({
@@ -173,50 +215,15 @@ async function persistAnswerFactSubjectLinks(input: {
         assertRestoredAliasesCurrent();
       }
     }
-    for (const fact of facts) {
-      if (!isUsefulHomeGraphPageFact(fact) || !fact.sourceId || !acceptedSourceIds.has(fact.sourceId)) continue;
+    for (const fact of factPlan.facts) {
+      if (!factPlan.accepts(fact) || !fact.sourceId || !acceptedSourceIds.has(fact.sourceId)) continue;
       const source = input.store.getSource(fact.sourceId);
       if (!source || source.status === 'stale' || isGeneratedPageSource(source)) continue;
-      const targets = answerFactTargetDevices(fact, devicesById);
+      const targets = answerFactTargetDevices(responsesById.get(fact.id) ?? fact, devicesById);
       if (targets.length === 0) continue;
-      const existing = input.store.getNode(fact.id) ?? fact;
-      const sourceId = existing.sourceId ?? fact.sourceId;
-      const subjectIds = uniqueStrings([
-        ...readStringArray(existing.metadata.subjectIds),
-        ...readStringArray(existing.metadata.linkedObjectIds),
-        ...targets.map((device) => device.id),
-      ]).filter((id) => devicesById.has(id));
-      const targetHints = uniqueTargetHints([
-        ...targets.map((device) => ({
-          id: device.id,
-          kind: device.kind,
-          title: device.title,
-          ...(device.summary ? { summary: device.summary } : {}),
-        })),
-        ...readTargetHints(existing.metadata.targetHints),
-      ]).filter((hint) => devicesById.has(readString(hint.id) ?? ''));
-      const updatedFact = await writeNode({
-        id: existing.id,
-        kind: existing.kind,
-        slug: existing.slug,
-        title: existing.title,
-        ...(existing.summary ? { summary: existing.summary } : {}),
-        aliases: existing.aliases,
-        status: existing.status,
-        confidence: existing.confidence,
-        ...(sourceId ? { sourceId } : {}),
-        metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
-          ...existing.metadata,
-          semanticKind: 'fact',
-          subject: targets[0]?.title,
-          subjectIds,
-          linkedObjectIds: subjectIds,
-          targetHints,
-          sourceId,
-          linkedBy: 'homegraph-ask-page-refresh',
-        }),
-      });
-      assertRestoredAliasesCurrent();
+      // Exact accepted facts already identify their target devices. Preserve the
+      // selected row and add graph relationships without rewriting its claim.
+      const updatedFact = fact;
       await writeEdge({
         fromKind: 'source',
         fromId: source.id,
@@ -255,7 +262,7 @@ async function upsertAnswerPageSource(input: {
   readonly store: KnowledgeStore;
   readonly spaceId: string;
   readonly installationId: string;
-}, source: KnowledgeSourceRecord, preserveOwnedSource = false): Promise<KnowledgeSourceRecord> {
+}, source: KnowledgeSourceRecord, preserveOwnedSource = false, assertCurrent: () => void): Promise<KnowledgeSourceRecord> {
   const existing = input.store.getSource(source.id);
   // A restored answer projection already names this exact current record. Do not
   // rewrite its minted URI as an external sourceUri or invalidate its provenance.
@@ -263,7 +270,7 @@ async function upsertAnswerPageSource(input: {
     if (source !== existing) throw new KnowledgeGeneratedFactSupportHeldError('stale');
     return source;
   }
-  return input.store.upsertSource({
+  const sourceInput = {
     id: source.id,
     connectorId: source.connectorId,
     sourceType: source.sourceType,
@@ -284,7 +291,12 @@ async function upsertAnswerPageSource(input: {
       ...(existing?.metadata ?? {}),
       ...source.metadata,
     }),
-  });
+  };
+  const receipt = await input.store.applyPreparedIngest({ sources: [sourceInput], extractions: [], nodes: [], edges: [], issues: [] },
+    async () => ({ nodes: [], edges: [], issues: [], assertCurrent }));
+  const written = receipt.sources[0];
+  if (!written || input.store.getSource(written.id) !== written) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  return written;
 }
 
 function answerFactTargetDevices(
@@ -299,21 +311,4 @@ function answerFactTargetDevices(
   ]);
   const explicit = ids.map((id) => devicesById.get(id)).filter((device): device is KnowledgeNodeRecord => Boolean(device));
   return explicit;
-}
-
-function readTargetHints(value: unknown): readonly Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object' && !Array.isArray(entry)));
-}
-
-function uniqueTargetHints(values: Iterable<Record<string, unknown>>): readonly Record<string, unknown>[] {
-  const seen = new Set<string>();
-  const result: Record<string, unknown>[] = [];
-  for (const value of values) {
-    const id = readString(value.id);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    result.push(value);
-  }
-  return result;
 }

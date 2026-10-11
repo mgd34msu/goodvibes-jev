@@ -1,6 +1,8 @@
 export interface RepairFactUsefulnessInput {
   /** Operation-local label. Store identifiers stay with the caller. */
   readonly reference: string;
+  /** Present only for the separately registered page-quality rubric. */
+  readonly pagePolicy?: { readonly rejectRemoteAccessoryDetails: boolean } | undefined;
   readonly query: string;
   readonly subjects: readonly {
     readonly title: string;

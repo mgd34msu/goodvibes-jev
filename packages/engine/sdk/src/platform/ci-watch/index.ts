@@ -46,3 +46,8 @@ export {
   type FixSessionStartOutcome,
   type FixSessionStarter,
 } from './types.js';
+
+/** Public CI repair composition still requires a live source owner and recorded admission. */
+export { startAdmittedCiRepair } from './autonomous.js';
+export type { CiRepairRequest } from './autonomous.js';
+export type { ExternalPermissionHost as CiRepairAdmissionHost } from '../permissions/external-request.js';

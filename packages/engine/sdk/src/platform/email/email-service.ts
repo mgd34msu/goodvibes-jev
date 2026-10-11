@@ -590,6 +590,8 @@ export class EmailService {
    */
   async createDraft(input: EmailDraftInput): Promise<ImapAppendDraftResult> {
     const config = this.getValidatedConfig();
+    input = { ...input };
+    const sourceRead = this.deps.replySubjectSourceOwner?.beginRead(config);
     const password = await resolveEmailPassword(config.passwordRef, this.deps.secretsManager);
     const from = input.from !== undefined && input.from.trim().length > 0
       ? input.from
@@ -597,7 +599,11 @@ export class EmailService {
 
     const socketFactory = this.deps.imapSocketFactory ?? imapSocketFactoryFor(this.deps.transport, config.imapSecurity);
     const socket = await socketFactory(config.imapHost, config.imapPort);
-    const client = new ImapClient({ socket, username: config.username, password });
+    const client = new ImapClient({ socket, username: config.username, password,
+      signal: sourceRead?.signal, assertCurrent: () => {
+        sourceRead?.assertCurrent();
+        if (JSON.stringify(config) !== JSON.stringify(this.getValidatedConfig())) throw new Error('Mail account changed.');
+      } });
 
     try {
       await client.open();
@@ -686,6 +692,8 @@ export class EmailService {
         socket,
         username: config.username,
         password,
+        signal: sourceRead?.signal,
+        assertCurrent: () => sourceRead?.assertCurrent(),
         // EXAMINE the mailbox that will actually be read, so a folder name
         // that does not exist fails the connection test rather than the first
         // real listing.

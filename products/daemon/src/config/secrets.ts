@@ -65,6 +65,12 @@ export class SecretsManager extends SdkSecretsManager {
     return decodeLiteralSecret(value) ?? value;
   }
 
+  override resolveLocalCredentialSnapshot(key: string): ReturnType<SdkSecretsManager['resolveLocalCredentialSnapshot']> {
+    const snapshot = super.resolveLocalCredentialSnapshot(key);
+    if (snapshot.state !== 'resolved') return snapshot;
+    return { ...snapshot, value: decodeLiteralSecret(snapshot.value) ?? snapshot.value };
+  }
+
   override async set(key: string, value: string, options?: Parameters<SdkSecretsManager['set']>[2]): Promise<void> {
     await super.set(key, shouldStoreAsLiteral(value) ? encodeLiteralSecret(value) : value, options);
   }

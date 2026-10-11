@@ -1,3 +1,4 @@
+import { isProxy } from 'node:util/types';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { UiRuntimeEvents } from '@/runtime/index.ts';
 import type { VoiceService } from '@goodvibes-jev/engine/sdk/platform/voice';
@@ -39,6 +40,7 @@ export function wireSpokenTurnRuntime(options: WireSpokenTurnRuntimeOptions): Sp
   const player = options.playerFactory ? options.playerFactory() : new LocalStreamingAudioPlayer();
   const controller = new SpokenTurnController({
     voiceService: options.voiceService,
+    rejectFailureObject: isProxy,
     configManager: options.configManager,
     sink: player,
     notify: options.notify,
@@ -52,14 +54,14 @@ export function wireSpokenTurnRuntime(options: WireSpokenTurnRuntimeOptions): Sp
       if (options.configManager.get('ui.voiceEnabled')) {
         controller.submitNextTurn(event.prompt);
       }
-      controller.handleTurnEvent(event);
+      void controller.handleTurnEvent(event);
     }),
-    turns.on('PREFLIGHT_FAIL', (event) => controller.handleTurnEvent(event)),
-    turns.on('STREAM_DELTA', (event) => controller.handleTurnEvent(event)),
-    turns.on('STREAM_END', (event) => controller.handleTurnEvent(event)),
-    turns.on('TURN_COMPLETED', (event) => controller.handleTurnEvent(event)),
-    turns.on('TURN_ERROR', (event) => controller.handleTurnEvent(event)),
-    turns.on('TURN_CANCEL', (event) => controller.handleTurnEvent(event)),
+    turns.on('PREFLIGHT_FAIL', (event) => { void controller.handleTurnEvent(event); }),
+    turns.on('STREAM_DELTA', (event) => { void controller.handleTurnEvent(event); }),
+    turns.on('STREAM_END', (event) => { void controller.handleTurnEvent(event); }),
+    turns.on('TURN_COMPLETED', (event) => { void controller.handleTurnEvent(event); }),
+    turns.on('TURN_ERROR', (event) => { void controller.handleTurnEvent(event); }),
+    turns.on('TURN_CANCEL', (event) => { void controller.handleTurnEvent(event); }),
   ];
 
   return {

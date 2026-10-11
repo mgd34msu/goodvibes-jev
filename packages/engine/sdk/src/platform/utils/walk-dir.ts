@@ -9,6 +9,17 @@ import { readWalkDirectories, type WalkDirectoryCandidate } from './directory-re
 import { logger } from './logger.js';
 import { summarizeError } from './error-display.js';
 
+/** @deprecated Historical compatibility data only; traversal uses canonical directory readings. */
+export const WALK_SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '__pycache__',
+]);
+
 /** A memory limit, independent of the directory-meaning reading (1 MiB). */
 export const WALK_MAX_FILE_SIZE = 1024 * 1024;
 

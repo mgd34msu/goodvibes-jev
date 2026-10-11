@@ -34,11 +34,26 @@
 import { isDaemonOwnedConfigKey } from '../../config/index.js';
 import { logger, summarizeError } from '../../utils/index.js';
 import type { DaemonVerbCaller } from './daemon-verbs.js';
+import {
+  applyRemoteSettingsPrecondition, assertRemoteSettingsPrecondition, inspectRemoteSettingsPrecondition,
+  type RemoteSettingsPrecondition, type RemoteSettingsPreconditionFacts,
+  type SettingsPreconditionRequest, type SettingsPreconditionReceipt,
+} from '../../config/settings-precondition-client.js';
+
+/** This is a deterministic owner capability, not an admission grant. */
+export interface PreparedDaemonSettingsClient {
+  capture(request: SettingsPreconditionRequest): Promise<RemoteSettingsPrecondition>;
+  inspect(handle: RemoteSettingsPrecondition): RemoteSettingsPreconditionFacts;
+  assertCurrent(handle: RemoteSettingsPrecondition): void;
+  apply(handle: RemoteSettingsPrecondition): Promise<SettingsPreconditionReceipt>;
+}
 
 /** Re-exported so call sites classify a key through one import, not two. */
 export { isDaemonOwnedConfigKey };
 
 export interface DaemonConfigClient {
+  /** Absent on old/unbound transports; callers must fail closed, never fall back. */
+  readonly preparedSettings?: PreparedDaemonSettingsClient;
   /** True when this key's value lives in the daemon's own settings tier. */
   ownsKey(key: string): boolean;
   /**
@@ -71,7 +86,26 @@ function readDottedPath(snapshot: Record<string, unknown> | null, key: string): 
 }
 
 export function createDaemonConfigClient(verbs: DaemonVerbCaller): DaemonConfigClient {
+  const capture = verbs.captureSettingsPrecondition?.bind(verbs);
+  const handles = new WeakSet<RemoteSettingsPrecondition>();
+  const assertCurrent = (handle: RemoteSettingsPrecondition): void => {
+    if (!handles.has(handle)) throw new Error('Settings owner precondition unavailable.');
+    assertRemoteSettingsPrecondition(handle);
+  };
+  const preparedSettings: PreparedDaemonSettingsClient | undefined = capture ? Object.freeze({
+    capture: async (request: SettingsPreconditionRequest) => {
+      if (!isDaemonOwnedConfigKey(request.key)) throw new Error('Setting is not owned by the connected daemon.');
+      const handle = await capture(request); handles.add(handle); return handle;
+    },
+    inspect: (handle: RemoteSettingsPrecondition) => {
+      if (!handles.has(handle)) throw new Error('Settings owner precondition unavailable.');
+      return inspectRemoteSettingsPrecondition(handle);
+    },
+    assertCurrent,
+    apply: async (handle: RemoteSettingsPrecondition) => { assertCurrent(handle); return await applyRemoteSettingsPrecondition(handle); },
+  }) : undefined;
   return {
+    ...(preparedSettings ? { preparedSettings } : {}),
     ownsKey: (key) => isDaemonOwnedConfigKey(key),
 
     set: async (key, value) => {

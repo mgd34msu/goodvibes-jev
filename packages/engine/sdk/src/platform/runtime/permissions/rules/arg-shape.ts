@@ -1,3 +1,4 @@
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 /**
  * Argument shape/content policy rule evaluator.
  *
@@ -10,7 +11,7 @@ import type {
   ArgShapeRule,
   EvaluationStep,
 } from '../types.js';
-import { compileSafeRegExp, safeRegExpTest } from '../../../utils/safe-regex.js';
+import { compileSafeRegExp, createSafeRegex, safeRegExpTest } from '../../../utils/safe-regex.js';
 
 /** Result returned by evaluateArgShapeRule. */
 export interface ArgShapeRuleResult {
@@ -70,10 +71,11 @@ function matchArgValue(actual: unknown, expected: unknown): boolean {
  * @param toolName, Name of the tool being called.
  * @param args    , Arguments passed to the tool.
  */
-export function evaluateArgShapeRule(
+function evaluateWithMatcher(
   rule: ArgShapeRule,
   toolName: string,
   args: Record<string, unknown>,
+  matches: (actual: unknown, expected: unknown) => boolean,
 ): ArgShapeRuleResult {
   const toolMatches = toolMatchesArgPattern(toolName, rule.toolPattern);
 
@@ -106,7 +108,7 @@ export function evaluateArgShapeRule(
   const failedMatchers: string[] = [];
   for (const [key, expected] of matchers) {
     const actual = args[key]!;
-    if (!matchArgValue(actual, expected)) {
+    if (!matches(actual, expected)) {
       failedMatchers.push(key);
     }
   }
@@ -132,4 +134,44 @@ export function evaluateArgShapeRule(
       detail: `arg matchers failed for keys: [${failedMatchers.join(', ')}]`,
     },
   };
+}
+
+/** @deprecated Synchronous compatibility only. Production evaluation is async. */
+export function evaluateArgShapeRule(rule: ArgShapeRule, toolName: string, args: Record<string, unknown>): ArgShapeRuleResult {
+  return evaluateWithMatcher(rule, toolName, args, matchArgValue);
+}
+
+export async function evaluateArgShapeRuleAsync(
+  rule: ArgShapeRule, toolName: string, args: Record<string, unknown>, options: JudgmentReadingOptions = {},
+): Promise<ArgShapeRuleResult> {
+  const before = JSON.stringify([rule, args]);
+  const [capturedRule, capturedArgs] = structuredClone([rule, args]) as [ArgShapeRule, Record<string, unknown>];
+  const current = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (JSON.stringify([rule, args]) !== before) throw new Error('Permission regex source changed while reading');
+  };
+  current();
+  const matches = new Map<unknown, boolean>();
+  if (toolMatchesArgPattern(toolName, capturedRule.toolPattern)) {
+    for (const [key, expected] of Object.entries(capturedRule.argMatchers)) {
+      if (typeof expected !== 'string' || !expected.startsWith('/')) continue;
+      const slash = expected.lastIndexOf('/');
+      const flags = slash > 0 ? expected.slice(slash + 1) : '';
+      const source = expected.slice(1, slash > 0 ? slash : undefined);
+      const actual = String(capturedArgs[key]);
+      current();
+      await using pattern = await createSafeRegex(source, flags, { operation: 'permission arg-shape', maxPatternChars: 256, maxInputChars: 4_096, ...options, assertCurrent: current });
+      matches.set(key, await pattern.test(actual));
+      current();
+    }
+  }
+  // Preserve key identity, including equal matcher text used for unequal args.
+  let index = 0;
+  const keys = Object.keys(capturedRule.argMatchers);
+  const result = evaluateWithMatcher(capturedRule, toolName, capturedArgs, (actual, expected) => {
+    const key = keys[index++]!;
+    return matches.has(key) ? matches.get(key)! : actual === expected;
+  });
+  current();
+  return result;
 }

@@ -37,6 +37,9 @@ This directory contains the current product documentation for `goodvibes-tui`.
 - [Channels, remote runtime, and API](channels-remote-and-api.md)
   Omnichannel surfaces, reply routing, remote peers, node-host contracts, and the daemon/control-plane HTTP + streaming surfaces.
 
+- [Contract runtime ownership](contract-runtime.md)
+  Canonical runner, persistence and agent-tool boundaries, with focused verification.
+
 - [Session durability](session-durability.md)
   Two-layer durability, combining post-turn snapshots plus periodic recovery files with the fsync-per-record transcript journal replayed at every resume seam.
 

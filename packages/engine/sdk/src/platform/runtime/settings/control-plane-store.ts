@@ -1,3 +1,4 @@
+import { postalConfigKey } from '../../config/postal-address.js';
 import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../../utils/atomic-json-store.js';
 import { randomUUID } from 'node:crypto';
 import { ConfigManager } from '../../config/manager.js';
@@ -176,7 +177,7 @@ export function trimStore(store: SettingsControlPlaneStore): SettingsControlPlan
 export function configSnapshot(configManager: ConfigManager): Record<ConfigKey, unknown> {
   const snapshot = {} as Record<ConfigKey, unknown>;
   for (const entry of CONFIG_SCHEMA) {
-    snapshot[entry.key] = structuredClone(configManager.get(entry.key));
+    snapshot[entry.key] = structuredClone((postalConfigKey(entry.key) ? configManager.getStored(entry.key) : configManager.get(entry.key)));
   }
   return snapshot;
 }

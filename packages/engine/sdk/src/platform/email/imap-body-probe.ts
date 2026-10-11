@@ -49,6 +49,7 @@
  * round trips, and neither form is droppable. The argument is at that function.
  */
 
+import { assertImapReadingCurrent, imapFailureText, type ImapReadingOptions } from './imap-readings.js';
 import { type ImapFetchFrame, parseFetchResponses } from './imap-fetch-response.js';
 import {
   extractBodyStructure,
@@ -59,7 +60,9 @@ import {
   type ImapBodyPart,
 } from './imap-bodystructure.js';
 import {
-  classifyServerRefusal,
+  classifyServerRefusalOwned,
+  retainImapFailureReading,
+  ImapOpenError,
   ownerMessageForFailure,
   type EmailCapabilityFailureNotice,
 } from './imap-open.js';
@@ -235,20 +238,16 @@ export class ImapBodyCapabilityError extends Error {
     readonly serverMessage: string;
     readonly mailbox: string;
   }) {
-    super(
-      input.serverMessage.length > 0
-        ? `${input.summary} ${input.serverMessage}`
-        : input.summary,
-    );
+    super(input.summary);
     this.name = 'ImapBodyCapabilityError';
     this.mailbox = input.mailbox;
-    this.serverMessage = input.serverMessage;
+    this.serverMessage = '';
     this.notice = {
       reason: 'bodies-unfetchable',
       terminal: true,
       mailbox: input.mailbox,
       ownerMessage: ownerMessageForFailure('bodies-unfetchable', input.mailbox),
-      serverMessage: input.serverMessage,
+      serverMessage: '',
     };
   }
 }
@@ -279,19 +278,31 @@ async function probeCommand(
   session: Pick<ImapSession, 'command'> & Partial<Pick<ImapSession, 'commandFrames'>>,
   command: string,
   mailbox: string,
+  options: ImapReadingOptions,
 ): Promise<(string | ImapFetchFrame)[]> {
+  assertImapReadingCurrent(options);
   try {
     return await (session.commandFrames ? session.commandFrames(command) : session.command(command));
   } catch (error) {
-    const text = error instanceof Error ? error.message : String(error ?? '');
-    if (!text.startsWith('IMAP command failed:')) throw error;
-    if (classifyServerRefusal(text, 'connection-failed') !== 'connection-failed') throw error;
-    throw bodyCapabilityFailure({
+    assertImapReadingCurrent(options);
+    const text = imapFailureText(error);
+    if (!text.startsWith('IMAP command failed:')) throw new ImapOpenError({
+      reason: 'connection-failed', summary: 'The body probe connection failed.', serverMessage: '', mailbox,
+    });
+    const reading = await classifyServerRefusalOwned(text, 'connection-failed', options);
+    reading.assertCurrent();
+    const reason = reading.value;
+    assertImapReadingCurrent(options);
+    const failure = reason !== 'connection-failed' ? new ImapOpenError({
+      reason, summary: 'The mail server refused the body probe.', serverMessage: '', mailbox,
+    }) : bodyCapabilityFailure({
       mailbox,
       summary: `The mailbox '${mailbox}' opened and the mail server refused to `
         + 'hand over the content of a message in it.',
-      serverMessage: text,
+      serverMessage: '',
     });
+    retainImapFailureReading(failure, reading);
+    throw failure;
   }
 }
 
@@ -343,7 +354,9 @@ export async function probeMailboxBody(
     readonly exists: number | null;
     readonly mailbox: string;
   },
+  options: ImapReadingOptions = {},
 ): Promise<ImapBodyProbe> {
+  assertImapReadingCurrent(options);
   const exists = input.exists ?? 0;
   if (exists <= 0) {
     return {
@@ -358,7 +371,9 @@ export async function probeMailboxBody(
     session,
     `FETCH ${exists} (UID BODYSTRUCTURE)`,
     input.mailbox,
+    options,
   );
+  assertImapReadingCurrent(options);
   if (!hasFetchResponse(structureLines)) {
     return {
       outcome: 'unproven',
@@ -382,7 +397,9 @@ export async function probeMailboxBody(
       ? `UID FETCH ${uid} BODY.PEEK[]<0.${IMAP_BODY_PROBE_BYTES}>`
       : `FETCH ${exists} BODY.PEEK[]<0.${IMAP_BODY_PROBE_BYTES}>`,
     input.mailbox,
+    options,
   );
+  assertImapReadingCurrent(options);
   const section = extractFetchSection(bodyLines);
   return assessFetchedBody({
     responded: hasFetchResponse(bodyLines),

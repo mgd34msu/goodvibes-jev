@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS native_work_execution_intents (project_id TEXT NOT NU
 
 CREATE TABLE IF NOT EXISTS native_work_execution_settlements (project_id TEXT NOT NULL, key_hash TEXT NOT NULL, format_version INTEGER NOT NULL, state_json TEXT NOT NULL, PRIMARY KEY(project_id, key_hash));
 
+CREATE TABLE IF NOT EXISTS native_ci_continuations (project_id TEXT NOT NULL, continuation_id TEXT NOT NULL, format_version INTEGER NOT NULL, state_json TEXT NOT NULL, PRIMARY KEY(project_id, continuation_id));
+
 CREATE TABLE IF NOT EXISTS knowledge_sources (
       id TEXT PRIMARY KEY,
       connector_id TEXT NOT NULL,

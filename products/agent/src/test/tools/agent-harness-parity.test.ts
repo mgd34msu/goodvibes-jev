@@ -136,7 +136,7 @@ function makeParityFixture(options: { sourceOwner?: boolean } = {}) {
     },
     session: {
       runtime: { sessionId: 'parity-session', provider: 'openai', model: 'gpt-4.1', reasoningEffort: 'medium' },
-      conversationManager: { title: 'Parity test', getMessageCount: () => 0, getTranscriptEventIndex: () => ({ events: [], groups: [] }) },
+      conversationManager: { title: 'Parity test', getMessageCount: () => 0, getMessageSnapshot: () => [], getTranscriptEventIndex: () => ({ events: [], groups: [] }) },
       sessionManager: { list: () => [], search: () => [] },
     },
     provider: {

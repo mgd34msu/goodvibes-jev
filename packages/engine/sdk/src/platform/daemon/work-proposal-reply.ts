@@ -1,3 +1,7 @@
+import { workProposalReply } from './batteries/conversation-gate.js';
+import { assertSynchronousCurrent, daemonReadingPort } from './reading-lifetime.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import type { CallOptions } from '@goodvibes-jev/judgment/decisions';
 /**
  * Channel-reply resolution of pending work proposals.
  *
@@ -10,7 +14,6 @@
  */
 import type { ChannelIngressPolicyInput } from '../channels/index.js';
 import {
-  parseWorkProposalReply,
   renderProposalDeclinedMessage,
   renderProposalExpiredMessage,
 } from '../agents/conversation-gate.js';
@@ -20,9 +23,11 @@ import { summarizeError } from '../utils/error-display.js';
 
 export type WorkProposalReplyOutcome =
   | { readonly consumed: false }
-  | { readonly consumed: true; readonly action: 'accepted' | 'declined' | 'expired' };
+  | { readonly consumed: true; readonly action: 'accepted' | 'declined' | 'expired' | 'unsettled' };
 
 export interface WorkProposalReplyDeps {
+  readonly readingOptions?: CallOptions | undefined;
+  readonly captureProposalSource?: ((proposal: WorkProposalRecord) => () => void) | undefined;
   readonly proposals?: Pick<WorkProposalStore, 'listPending' | 'resolve'> | undefined;
   /**
    * Start the agreed work. Called only after an affirmative reply resolved a
@@ -37,32 +42,25 @@ export interface WorkProposalReplyDeps {
 /**
  * Match an inbound message against the pending proposals for its surface.
  *
- * Matching is deliberately narrow: the proposal must be pending, on the same
- * surface, and (when both are known) from the same user. Only the most recent
- * such proposal is considered, so a bare "yes" can never resolve something the
- * owner has forgotten about. An expired proposal is not silently ignored, it
- * is reported back as expired, which is what "disclosed" means for state the
- * owner can no longer act on.
+ * Only one delivered pending proposal on the exact source is answerable.
+ * Owner, channel and thread are deterministic boundaries; ambiguity or a
+ * different identity cannot be resolved by falling back to a recent proposal.
+ * ntfy alone authenticates a topic rather than exposing a sender identity.
+ * Its userless replies require the same exact nonempty topic on both sides.
  */
 export function findProposalForReply(
   input: Pick<ChannelIngressPolicyInput, 'surface' | 'userId' | 'threadId' | 'channelId'>,
   pending: readonly WorkProposalRecord[],
 ): WorkProposalRecord | null {
-  const sameSurface = pending.filter((record) => record.surfaceKind === input.surface);
-  if (sameSurface.length === 0) return null;
-  const sameUser = input.userId
-    ? sameSurface.filter((record) => !record.userId || record.userId === input.userId)
-    : sameSurface;
-  const candidates = sameUser.length > 0 ? sameUser : sameSurface;
-  // Prefer a thread/channel match when the surface carries one; otherwise the
-  // newest pending proposal on this surface.
-  const threadMatch = input.threadId
-    ? candidates.find((record) => record.threadId === input.threadId)
-    : undefined;
-  const channelMatch = input.channelId
-    ? candidates.find((record) => record.channelId === input.channelId || record.externalId === input.channelId)
-    : undefined;
-  return threadMatch ?? channelMatch ?? candidates[0] ?? null;
+  // Never fall back to another owner, channel or thread. Unidentified owners
+  // cannot answer someone else's proposal. Topic-authenticated surfaces may
+  // omit user IDs only when both sides omit them and the exact channel matches.
+  if (!input.userId && (input.surface !== 'ntfy' || !input.channelId)) return null;
+  const candidates = pending.filter(record => record.surfaceKind === input.surface
+    && record.userId === input.userId
+    && record.threadId === input.threadId
+    && (record.channelId ?? record.externalId) === input.channelId);
+  return candidates.length === 1 ? candidates[0]! : null;
 }
 
 /**
@@ -78,18 +76,40 @@ export async function tryResolveWorkProposalReplyFromChannel(
 ): Promise<WorkProposalReplyOutcome> {
   const store = deps.proposals;
   if (!store) return { consumed: false };
+  // Explicit authenticated button wire tokens are not conversational replies.
+  if ((input.surface === 'slack' || input.surface === 'discord') && input.metadata?.interactive === true
+    && /^gv:(?:approval:(?:approve|deny|claim)|run:(?:cancel|retry)):.+$/.test(input.text ?? '')) return { consumed: false };
 
-  const reply = parseWorkProposalReply(input.text);
-  if (!reply) return { consumed: false };
-
-  // listPending reaps first, so anything returned here is genuinely answerable.
-  const pending = store.listPending({ surfaceKind: input.surface });
-  const target = findProposalForReply(input, pending);
-  if (!target) {
-    // A bare "yes" with nothing pending is ordinary conversation, let it flow
-    // through rather than swallowing it.
-    return { consumed: false };
+  // Bind an actual delivered pending proposal BEFORE interpreting the reply.
+  const target = findProposalForReply(input, store.listPending({ surfaceKind: input.surface }));
+  if (!target) return { consumed: false };
+  const options = deps.readingOptions ?? {};
+  const proposalCurrent = deps.captureProposalSource?.(target);
+  const inputSource = JSON.stringify(captureOwnedJson(input));
+  const targetSource = JSON.stringify(captureOwnedJson(target));
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted();
+    assertSynchronousCurrent(options.beforeAttempt);
+    assertSynchronousCurrent(proposalCurrent);
+    const current = findProposalForReply(input, store.listPending({ surfaceKind: input.surface }));
+    if (JSON.stringify(input) !== inputSource || !current || current !== target || current.id !== target.id
+      || JSON.stringify(current) !== targetSource) throw new Error('Work proposal source is no longer current');
+  };
+  assertCurrent();
+  const proposal = snapshotJudgmentInput({ task: target.task, summary: target.summary }) as { task: string; summary: string };
+  const text = snapshotJudgmentInput(input.text ?? '') as string;
+  const result = await workProposalReply.read(daemonReadingPort('daemon.work-proposal-reply', assertCurrent, options.signal), proposal, text, { ...options, beforeAttempt: assertCurrent });
+  assertCurrent();
+  if (result.reading.outcome !== 'act') {
+    result.recordAction('held: work proposal reply unsettled');
+    return { consumed: true, action: 'unsettled' };
   }
+  const answer = result.reading.choice;
+  if (answer === 'message') { result.recordAction('ordinary-message'); return { consumed: false }; }
+  const reply = { decision: answer === 'reject' ? 'negative' : 'affirmative',
+    ...(answer === 'steer' ? { note: text } : {}) };
+  result.recordAction(answer);
+  assertCurrent();
 
   const resolved = store.resolve(target.id, reply.decision === 'affirmative' ? 'accepted' : 'declined');
   if (!resolved) {

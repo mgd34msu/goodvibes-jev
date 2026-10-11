@@ -1,3 +1,4 @@
+import { agentDaemonConfigClientRevision } from '../config/daemon-config-routing.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
 import { types as nodeTypes } from 'node:util';
@@ -29,7 +30,7 @@ export function catalogRoutingInput(input: Record<string, unknown>): Record<stri
   if (!input || typeof input !== 'object' || nodeTypes.isProxy(input)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new ToolInputProjectionError('invalid');
   const result: Record<string, unknown> = {};
-  for (const key of ['mode', 'action', 'query', 'target', 'command', 'commandName', 'methodId', 'toolName']) {
+  for (const key of ['mode', 'action', 'query', 'target', 'command', 'commandName', 'methodId', 'toolName', 'key', 'setting']) {
     const descriptor = Object.getOwnPropertyDescriptor(input, key);
     if (!descriptor && Object.getPrototypeOf(input) !== null && Object.hasOwn(Object.prototype, key)) throw new ToolInputProjectionError('invalid');
     if (descriptor && !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
@@ -68,13 +69,17 @@ function registeredTool(registry: ToolRegistry, name: string): Tool | undefined 
   return undefined;
 }
 
-function catalogContextGuard(registry: ToolRegistry, context?: CommandContext): () => void {
+function catalogContextGuard(registry: ToolRegistry, context?: CommandContext, settings = false): () => void {
+  const config = settings ? context?.platform.configManager : undefined;
+  const incarnation = config?.getConfigurationIncarnation();
+  const clientRevision = settings ? agentDaemonConfigClientRevision() : undefined;
   const session = modelReadingServicePath(context, ['session', 'runtime']);
   const sessionId = modelReadingServicePath(session, ['sessionId']);
   const owner = agentResearchSourceOwner(registry);
   const api = modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry']);
   return () => {
-    if (modelReadingServicePath(context, ['session', 'runtime']) !== session || modelReadingServicePath(session, ['sessionId']) !== sessionId
+    if ((settings && (context?.platform.configManager !== config || config?.getConfigurationIncarnation() !== incarnation || agentDaemonConfigClientRevision() !== clientRevision))
+      || modelReadingServicePath(context, ['session', 'runtime']) !== session || modelReadingServicePath(session, ['sessionId']) !== sessionId
       || agentResearchSourceOwner(registry) !== owner
       || (modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry'])) !== api) throw new ToolInputProjectionError('stale');
   };
@@ -87,10 +92,11 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
   return { async project(request) {
     const protectedQuery = selected(request.args);
     const retained = retainedGuards(request.args);
-    const assertContext = protectedQuery ? catalogContextGuard(registry, context) : () => {};
     const routing = catalogRoutingInput(request.args);
+    const settingsInspection = request.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting';
+    const assertContext = protectedQuery ? catalogContextGuard(registry, context, settingsInspection) : () => {};
     const modelInspection = routing.mode === 'model_routing' || routing.mode === 'model_route' || request.name === 'models';
-    const original = protectedQuery && modelInspection ? captureModelReadingInput(request.args) : undefined;
+    const original = protectedQuery && (modelInspection || settingsInspection) ? captureModelReadingInput(request.args) : undefined;
     const originalJson = original && JSON.stringify(original);
     const guarded = protectedQuery ? { ...request, ...(original ? { args: original } : {}), assertCurrent: () => {
       request.assertCurrent(); assertContext();
@@ -108,7 +114,7 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
       // proof a third time in this same synchronous boundary.
       if (result.assertCurrent) result.assertCurrent(); else guarded.assertCurrent();
     };
-    return { ...result, ...(modelInspection ? { resultPublication: 'read-only' as const } : {}),
+    return { ...result, ...((modelInspection || settingsInspection) ? { resultPublication: 'read-only' as const } : {}),
       assertRepairedArgs(candidate) {
         result.assertRepairedArgs?.(candidate); assertCurrent();
         // The registry supplies this exact final argument object to execute.
@@ -158,7 +164,8 @@ export function protectHarnessCatalogTool(tool: Tool, registry: ToolRegistry, se
     if (!forwardedGuards.has(input) && !projectionGuards.has(input)) { publicationGuards.set(input, new Map()); }
     const guard = harnessCatalogExecutionGuard(input, options);
     const registration = registeredTool(registry, tool.definition.name);
-    const assertContext = catalogContextGuard(registry, context);
+    const routing = catalogRoutingInput(input);
+    const assertContext = catalogContextGuard(registry, context, tool.definition.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting');
     const assertRegistrationCurrent = () => {
       assertContext();
       if (registeredTool(registry, tool.definition.name) !== registration) throw new ToolInputProjectionError('stale');

@@ -179,7 +179,7 @@ export async function handleTelephonySurfaceWebhook(req: Request, context: Surfa
     return Response.json({ acknowledged: true, continued: true, sessionId: submission.session.id, agentId: submission.activeAgentId ?? null });
   }
 
-  const spawnResult = context.trySpawnAgent(
+  const spawnResult = await context.trySpawnAgent(
     { mode: 'spawn', task: submission.task! },
     'handleTelephonySurfaceWebhook',
     submission.session.id,

@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkWorkflowDirectory } from '../scripts/workflow-structure.ts';
 import { platformTestMatrix } from '../scripts/test-partitions.ts';
 
 // The workflows live at the monorepo root, two levels above packages/engine.
@@ -119,7 +120,11 @@ function permitsPublication(job: Job, results: Record<string, JobResult>, event:
 }
 
 describe('all workflows: baseline hygiene', () => {
-  const files = readdirSync(WF_DIR).filter((f) => f.endsWith('.yml'));
+  const files = readdirSync(WF_DIR).filter((f) => /\.ya?ml$/.test(f));
+
+  test('every workflow has a non-vacuous structure and propagates all job failures', () => {
+    expect(checkWorkflowDirectory(WF_DIR)).toEqual([]);
+  });
 
   test('job dependencies exist and have no cycles', () => {
     for (const f of files) {

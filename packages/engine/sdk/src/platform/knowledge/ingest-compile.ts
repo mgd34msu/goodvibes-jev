@@ -1,3 +1,4 @@
+import { knowledgeSourceCrawledNow } from './store-record-representation.js';
 import { randomUUID } from 'node:crypto';
 import { snapshotNodeInput } from './activation/projection.js';
 import { knowledgeIngestGuard } from './ingest-preparation.js';
@@ -21,7 +22,7 @@ import {
   readMetadataStrings,
   slugify,
 } from './shared.js';
-import type { KnowledgeIngestContext } from './ingest-context.js';
+import type { KnowledgeIngestContext, KnowledgeIngestOwnership } from './ingest-context.js';
 import { KnowledgeEntityAliasHoldError, readKnowledgeEntityAliases } from './entity-aliases.js';
 import type {
   KnowledgeExtractionRecord,
@@ -53,6 +54,7 @@ export async function finalizeKnowledgeIngestedSource(
     readonly sessionId?: string | undefined;
     readonly metadata: Record<string, unknown>;
   },
+  ownership: KnowledgeIngestOwnership = {},
 ): Promise<{ source: KnowledgeSourceRecord; artifactId: string; extraction: KnowledgeExtractionRecord }> {
   const { preparedExtraction, signal, ...values } = input;
   input = { ...snapshotNodeInput(values), preparedExtraction, signal };
@@ -73,22 +75,23 @@ export async function finalizeKnowledgeIngestedSource(
     let committed: { source: KnowledgeSourceRecord; extraction: KnowledgeExtractionRecord } | undefined;
     let assertAliasesCurrent = () => {};
     const assertPrepared = () => {
+      ownership.assertCurrent?.();
       assertCurrent();
       assertExtractionCurrent();
       assertAliasesCurrent();
       if (context.artifactStore.getRecord(input.artifactId)?.sha256 !== token.contentHash) throw new KnowledgeExtractionJudgmentHoldError();
     };
     await context.store.applyPreparedIngest({
-      sources: [{
+      sources: [knowledgeSourceCrawledNow({
         id: input.sourceId, connectorId: input.connectorId, sourceType: input.sourceType,
         title: input.inputTitle?.trim() || extractionEvidence.title || record.filename,
         sourceUri: record.sourceUri, canonicalUri: canonicalUri ?? undefined,
         summary: extractionEvidence.summary, description: stableText(extracted.excerpt) ?? previousExtraction?.excerpt,
         tags: input.tags, folderPath: input.folderPath, status: 'indexed', artifactId: input.artifactId,
-        contentHash: record.sha256, lastCrawledAt: Date.now(), sessionId: input.sessionId,
+        contentHash: record.sha256, sessionId: input.sessionId,
         metadata: { ...input.metadata, contentType: record.mimeType, extractionId,
           extractionFormat: extracted.format, outboundLinks: extracted.links },
-      }],
+      })],
       extractions: [{ id: extractionId, sourceId: input.sourceId, artifactId: input.artifactId,
         extractorId: extracted.extractorId, format: extracted.format, title: extracted.title,
         summary: extracted.summary, excerpt: extracted.excerpt, sections: extracted.sections,
@@ -105,7 +108,7 @@ export async function finalizeKnowledgeIngestedSource(
       await compileKnowledgeSourceRecords(context, source, extraction, entityHints, draft.writer);
       check();
       return { nodes: [...draft.nodes.values()], edges: draft.edges, issues: [], assertCurrent: assertPrepared };
-    }, { signal });
+    }, { signal }, () => ownership.onCommitted?.(input.sourceId));
     const { source, extraction } = committed!;
     context.emitIfReady((bus, ctx) => emitKnowledgeExtractionCompleted(bus, ctx, {
       sourceId: input.sourceId, extractionId: extraction.id, format: extraction.format, estimatedTokens: extraction.estimatedTokens,

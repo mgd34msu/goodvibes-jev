@@ -22,6 +22,7 @@ export type ProjectPlanningGapKind =
   | 'missing-scope'
   | 'open-question'
   | 'ambiguous-language'
+  | 'readiness-unavailable'
   | 'missing-tasks'
   | 'missing-dependencies'
   | 'missing-verification'
@@ -358,6 +359,7 @@ export type ProjectPlanningStateExpectation =
 
 export type ProjectPlanningStateAction =
   | { readonly kind: 'approve' }
+  | { readonly kind: 'dismiss' }
   | { readonly kind: 'answer'; readonly questionId?: string | undefined; readonly questionIndex?: number | undefined; readonly answer: string };
 
 export interface ProjectPlanningStateActionInput extends ProjectPlanningSpaceInput {

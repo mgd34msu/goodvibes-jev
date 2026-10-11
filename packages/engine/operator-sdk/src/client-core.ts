@@ -1,3 +1,4 @@
+import type { RegexReadingCapability, ContractRegexReadingFactory } from '@goodvibes-jev/engine/errors';
 import { ContractError, GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { OperatorContractManifest, OperatorMethodContract } from '@goodvibes-jev/engine/contracts';
 import type {
@@ -9,7 +10,7 @@ import type {
 import type { HttpTransport } from '@goodvibes-jev/engine/transport-http';
 import {
   invokeContractRoute,
-  firstJsonSchemaFailure,
+  firstJsonSchemaFailureAsync,
   openContractRouteStream,
   requireContractRoute,
   clientInputRecord,
@@ -40,6 +41,10 @@ export interface OperatorRemoteClientOptions {
    * @defaultValue true
    */
   readonly validateResponses?: boolean | undefined;
+  /** Authenticated request-owned regex reader supplied by browser composition. */
+  readonly regexReading?: RegexReadingCapability | undefined;
+  /** Creates a reader bound to this exact method/schema/request; required for browser compositions without an installed port. */
+  readonly getRegexReading?: ContractRegexReadingFactory | undefined;
 }
 
 /**
@@ -238,20 +243,37 @@ export function createOperatorRemoteClient(
   ): Promise<T> {
     const schema = options.responseSchema ?? clientOptions.getResponseSchema?.(methodId);
     const method = requireMethod(contract, methodId);
+    const validateResponse = clientOptions.validateResponses !== false;
+    const getRegexReading = clientOptions.getRegexReading, configuredReading = clientOptions.regexReading;
+    const outputSchema = method.outputSchema;
+    const schemaIdentity = JSON.stringify(outputSchema);
+    const assertValidationCurrent = () => {
+      options.signal?.throwIfAborted();
+      if (requireMethod(contract, methodId) !== method || clientOptions.getRegexReading !== getRegexReading || clientOptions.regexReading !== configuredReading || method.id !== methodId || method.outputSchema !== outputSchema || JSON.stringify(outputSchema) !== schemaIdentity)
+        throw new ContractError('Response schema owner changed during the request.');
+    };
     const route = methodHttpRoute(method);
     return invokeContractRoute<T>(
       transport,
       route,
       input,
       schema ? { ...options, responseSchema: schema } : options,
-    ).then((body) => {
+    ).then(async (body) => {
       // truth table for validation decision:
       // | schema (Zod) | validateResponses | getResponseSchema | action                |
       // |    present   |       any         |      any          | Zod only (no overlap) |
       // |    absent    |      false        |      any          | skip                  |
       // |    absent    |      true (def)   |    absent         | JSON-schema           |
       // |    absent    |      true (def)   |    present        | JSON-schema (from fn) |
-      if (!schema && clientOptions.validateResponses !== false) validateJsonSchemaResponse(method, body);
+      if (!schema && validateResponse) {
+        assertValidationCurrent();
+        const reading = getRegexReading && outputSchema
+          ? getRegexReading({ kind: 'operator', methodId: methodId, outputSchema: structuredClone(outputSchema) as Record<string, unknown>, signal: options.signal, assertCurrent: assertValidationCurrent })
+          : configuredReading;
+        assertValidationCurrent();
+        await validateJsonSchemaResponse(method, body, { signal: options.signal, reading, assertCurrent: assertValidationCurrent });
+        assertValidationCurrent();
+      }
       return body;
     });
   }
@@ -427,10 +449,10 @@ export function createOperatorRemoteClient(
   return client;
 }
 
-function validateJsonSchemaResponse(method: OperatorMethodContract, body: unknown): void {
+async function validateJsonSchemaResponse(method: OperatorMethodContract, body: unknown, options: { readonly signal?: AbortSignal | undefined; readonly reading?: RegexReadingCapability | undefined; readonly assertCurrent: () => void }): Promise<void> {
   const schema = method.outputSchema;
   if (!schema || typeof schema !== 'object') return;
-  const failure = firstJsonSchemaFailure(schema as Record<string, unknown>, body);
+  const failure = await firstJsonSchemaFailureAsync(schema as Record<string, unknown>, body, options);
   if (!failure) return;
   throw new ContractError(
     `Response validation failed for operator method "${method.id}": field "${failure.path}" expected ${failure.expected} but received ${failure.received}. Ensure the daemon is running the matching GoodVibes contract version.`,

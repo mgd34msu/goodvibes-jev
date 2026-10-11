@@ -31,6 +31,7 @@ import type { ExecFailureCategory } from '../../sdk/src/platform/tools/batteries
 import type { ChildFailureReading } from '../../sdk/src/platform/tools/batteries/child-failure-reason.ts';
 
 export interface ToolReading {
+  readonly backtracking?: boolean | 'uncertain';
   readonly credential?: boolean;
   readonly willPrompt?: boolean;
   readonly awaitingInput?: boolean;
@@ -92,7 +93,7 @@ function fitCandidate(question: Question): string | undefined {
 
 /** The question names the tools batteries ask. */
 const FINDING_QUESTIONS = new Set(['a11y_violation', 'omits_dependency', 'overflow_problem', 'fixed_size_problem', 'server_only', 'stacking_conflict']);
-const TOOL_QUESTIONS = new Set(['credential', 'will_prompt', 'awaiting_input', 'category', 'reason', 'breaks_callers', 'changes_behavior', 'pick', 'real_secret', 'risky', 'acts_on_session', 'owned_targets', 'severity', 'project_type', 'package_manager', 'test_framework', 'entry_point', 'route_registration', 'fixes_errors', 'only_the_fix', 'match', 'where', 'exists', 'boolean_value', 'memory_class', 'inputs_break', 'output_breaks', ...FINDING_QUESTIONS]);
+const TOOL_QUESTIONS = new Set(['backtracking', 'credential', 'will_prompt', 'awaiting_input', 'category', 'reason', 'breaks_callers', 'changes_behavior', 'pick', 'real_secret', 'risky', 'acts_on_session', 'owned_targets', 'severity', 'project_type', 'package_manager', 'test_framework', 'entry_point', 'route_registration', 'fixes_errors', 'only_the_fix', 'match', 'where', 'exists', 'boolean_value', 'memory_class', 'inputs_break', 'output_breaks', ...FINDING_QUESTIONS]);
 const isToolQuestion = (name: string): boolean => TOOL_QUESTIONS.has(name) || name.startsWith('fits_') || name.startsWith('serves_');
 
 /**
@@ -131,6 +132,7 @@ function toolAnswers(table: ToolReadingTable) {
     const text = JSON.stringify(state);
     const reading = table.find(([match]) => text.includes(match))?.[1] ?? {};
     switch (name) {
+      case 'backtracking': return noulAnswer(reading.backtracking === 'uncertain' ? 0.5 : reading.backtracking ? 0.999 : 0.001);
       case 'credential': return noul(reading.credential);
       case 'will_prompt': return noul(reading.willPrompt);
       case 'awaiting_input': return noul(reading.awaitingInput);

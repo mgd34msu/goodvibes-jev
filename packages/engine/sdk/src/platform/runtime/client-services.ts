@@ -186,6 +186,7 @@ export function createHeldSessionDispatch(): SessionContinuationDispatch & {
  * in/out rule and the two narrowings.
  */
 export interface ClientRuntimeServices {
+  readonly workspaceTrust?: Pick<import('./workspace-trust.js').WorkspaceTrustManager, 'prepareAutonomousConstraint'> | null | undefined;
   readonly workingDirectory: string;
   readonly homeDirectory: string;
   /** This product's storage root (`tui`, `agent`, …); every per-product path derives from it. */
@@ -308,6 +309,7 @@ export type ClientOnlyServiceMember =
 export type ClientRuntimeServicesFromHost = Omit<ClientRuntimeServices, ClientOnlyServiceMember>;
 
 export interface ClientRuntimeServicesOptions {
+  readonly workspaceTrust?: Pick<import('./workspace-trust.js').WorkspaceTrustManager, 'prepareAutonomousConstraint'> | null | undefined;
   /** Explicit absolute ordinary-Bun runtime for contained captured evaluation. */
   readonly capturedBunRuntimeExecutable?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
@@ -485,6 +487,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   const policyRuntimeState = createPolicyRuntimeState(configManager, featureFlags);
   const userPermissionRuleStore = createUserPermissionRuleStore(configManager);
   const permissionManager = createBrokeredPermissionManager({
+    workspaceTrust: options.workspaceTrust,
     requestApproval: options.requestApproval,
     configManager,
     policyRuntimeState,
@@ -492,8 +495,12 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     featureFlags,
     userRuleStore: userPermissionRuleStore,
   });
+  const externalPermissionLifetime = new AbortController();
+  disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
+  const externalPermissionHost = { port: judgment.port, permissionManager, config: configManager, signal: externalPermissionLifetime.signal, workspaceTrust: options.workspaceTrust, workspaceRoot: workingDirectory };
   const announcementStore = new FeatureAnnouncementStore(featureAnnouncementsPath(configManager));
   const approvalHandlers = createApprovalDerivedHandlers({
+    autonomousHost: externalPermissionHost,
     requestApproval: options.requestApproval,
     configManager,
     featureFlags,
@@ -509,9 +516,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   mcpRegistry.setRuntimeBus(options.runtimeBus);
   mcpRegistry.setSandboxRuntime(configManager, sandboxSessionRegistry);
   // MCP input requests use the canonical autonomous owner and current operation facts.
-  const externalPermissionLifetime = new AbortController();
-  disposalScope.registry.add('external protocol permission lifetime', () => externalPermissionLifetime.abort());
-  const externalPermissionHost = { port: judgment.port, permissionManager, config: configManager, signal: externalPermissionLifetime.signal };
+
   mcpRegistry.setPermissionHost(externalPermissionHost);
   mcpRegistry.setElicitationHandler(createMcpAutonomousElicitationHandler(externalPermissionHost));
 
@@ -609,6 +614,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     : null;
 
   return {
+    workspaceTrust: options.workspaceTrust,
     workingDirectory,
     homeDirectory,
     surfaceRoot,

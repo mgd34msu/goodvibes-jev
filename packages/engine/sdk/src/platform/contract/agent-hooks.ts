@@ -1,3 +1,6 @@
+import { nativeContractActionSource } from './native-decisions.js';
+import { getContractActionSource } from '../tools/agent/contract-binding.js';
+import { assertOwnedContractSource } from './owned-source.js';
 import { hashState } from '@goodvibes-jev/judgment';
 import { judgeState } from './evidence.js';
 import { nativeRecordedCheck } from './check.js';
@@ -458,8 +461,10 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
 
   function actionSource(record: AgentRecord): AutonomousToolSource | null {
     const found = locate(record);
-    if (!found || found.run.contract.criteria.length === 0) return null;
-    if (found.run.contract.nativeSource !== undefined) return nativeContractSourceForAdmission(found.run.contract);
+    if (!found) return null;
+    if (found.run.contract.originalSource) { assertOwnedContractSource(found.run.contract); return getContractActionSource(found.run.contract)!(); }
+    if (found.run.contract.criteria.length === 0) return null;
+    if (found.run.contract.nativeSource !== undefined) return nativeContractActionSource(found.run.contract, found.run.env.native, found.run.abort.signal)();
     const criteria: string[] = [];
     for (const criterion of found.run.contract.criteria) {
       // A planner's rewritten text or a unit brief is not the source request.

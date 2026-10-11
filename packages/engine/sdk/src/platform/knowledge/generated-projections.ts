@@ -1,3 +1,4 @@
+import { KnowledgeSourceQualityHeldError } from './source-quality.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactDescriptor } from '../artifacts/types.js';
 import type { ArtifactStore } from '../artifacts/index.js';
@@ -29,6 +30,7 @@ export interface GeneratedKnowledgeProjectionInput {
   readonly artifactMetadata?: Record<string, unknown> | undefined;
   readonly edgeMetadata?: Record<string, unknown> | undefined;
   readonly signal?: AbortSignal | undefined;
+  readonly assertCurrent?: (() => void) | undefined;
   readonly target?: {
     readonly kind: GeneratedKnowledgeProjectionTargetKind;
     readonly id: string;
@@ -59,8 +61,35 @@ export function isGeneratedKnowledgeSource(source: KnowledgeSourceRecord): boole
 export async function materializeGeneratedKnowledgeProjection(
   input: GeneratedKnowledgeProjectionInput,
 ): Promise<GeneratedKnowledgeProjectionResult> {
-  throwIfAborted(input.signal);
+  const store = input.store, artifactStore = input.artifactStore;
+  const authority = input.assertCurrent;
+  const signal = input.signal;
   const existing = input.store.getSource(input.sourceId);
+  const originalSourceVersion = JSON.stringify(existing);
+  const target = input.target;
+  const readTarget = () => !target ? null : target.kind === 'node' ? input.store.getNode(target.id)
+    : target.kind === 'source' ? input.store.getSource(target.id) : input.artifactStore.getRecord(target.id);
+  const originalTarget = readTarget(), targetVersion = JSON.stringify(originalTarget);
+  const readLinked = () => !target ? undefined : input.store.edgesFor('source', input.sourceId).find((edge) =>
+    edge.toKind === target.kind && edge.toId === target.id && edge.relation === (target.relation ?? 'source_for'));
+  const originalLinked = readLinked(), linkedVersion = JSON.stringify(originalLinked);
+  const outputState = () => JSON.stringify({ sourceId: input.sourceId, sourceType: input.sourceType, connectorId: input.connectorId,
+    canonicalUri: input.canonicalUri, title: input.title, summary: input.summary, tags: input.tags, filename: input.filename,
+    markdown: input.markdown, projectionKind: input.projectionKind, metadata: input.metadata, sourceMetadata: input.sourceMetadata,
+    artifactMetadata: input.artifactMetadata, edgeMetadata: input.edgeMetadata, target: input.target });
+  const outputVersion = outputState();
+  const stale = () => { throw new KnowledgeSourceQualityHeldError('stale'); };
+  const checkOwner = () => {
+    throwIfAborted(signal); authority?.();
+    if (authority && (input.store !== store || input.artifactStore !== artifactStore || input.assertCurrent !== authority || input.signal !== signal || outputState() !== outputVersion
+      || readTarget() !== originalTarget || JSON.stringify(readTarget()) !== targetVersion)) stale();
+  };
+  const check = () => {
+    checkOwner();
+    if (authority && (input.store.getSource(input.sourceId) !== existing || JSON.stringify(input.store.getSource(input.sourceId)) !== originalSourceVersion
+      || readLinked() !== originalLinked || JSON.stringify(readLinked()) !== linkedVersion)) stale();
+  };
+  check();
   const contentHash = stableHash(input.markdown, 40);
   const existingMetadata = readRecord(existing?.metadata);
   const existingGeneratedAt = typeof existingMetadata.generatedAt === 'number' ? existingMetadata.generatedAt : undefined;
@@ -81,9 +110,9 @@ export async function materializeGeneratedKnowledgeProjection(
       toId: input.target.id,
     });
   }
-  throwIfAborted(input.signal);
+  check();
   const reusedArtifact = await findReusableGeneratedArtifact(input.artifactStore, existing, input.markdown);
-  throwIfAborted(input.signal);
+  check();
   const artifact = reusedArtifact ?? await input.artifactStore.create({
     kind: 'document',
     mimeType: 'text/markdown',
@@ -145,12 +174,31 @@ export async function materializeGeneratedKnowledgeProjection(
   let source: KnowledgeSourceRecord | undefined;
   let linked: KnowledgeEdgeRecord | undefined;
   try {
-    throwIfAborted(input.signal);
-    source = await input.store.upsertSource(sourceInput);
-    throwIfAborted(input.signal);
-    linked = edgeInput ? await input.store.upsertEdge(edgeInput) : undefined;
-    throwIfAborted(input.signal);
+    check();
+    if (authority) {
+      const receipt = await input.store.applyPreparedIngest({ sources: [sourceInput], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+        nodes: [], edges: edgeInput ? [edgeInput] : [], issues: [], assertCurrent: check,
+      }), { signal });
+      checkOwner();
+      source = receipt.sources.find((record) => record.id === input.sourceId);
+      linked = edgeInput ? receipt.edges.find((record) => record.fromId === input.sourceId && record.toKind === edgeInput.toKind
+        && record.toId === edgeInput.toId && record.relation === edgeInput.relation) : undefined;
+      if (!source || input.store.getSource(input.sourceId) !== source || source.artifactId !== artifact.id
+        || (edgeInput && (!linked || readLinked() !== linked))) stale();
+    } else {
+      source = await input.store.upsertSource(sourceInput);
+      check();
+      linked = edgeInput ? await input.store.upsertEdge(edgeInput) : undefined;
+      check();
+    }
   } catch (error) {
+    if (authority) {
+      // The guarded ingest either committed atomically under the original owner,
+      // or made no mutation. Never overwrite a concurrent writer or compensate
+      // an already valid commit after a later owner retirement.
+      if (!reusedArtifact && !store.listSources().some((record) => record.artifactId === artifact.id)) artifactStore.delete(artifact.id);
+      throw error;
+    }
     if (!reusedArtifact) input.artifactStore.delete(artifact.id);
     const currentLinked = edgeInput
       ? input.store.edgesFor(edgeInput.fromKind, edgeInput.fromId).find((edge) => (
@@ -177,7 +225,8 @@ export async function materializeGeneratedKnowledgeProjection(
   if (!source) throw new Error(`Generated projection '${input.sourceId}' did not persist a source record.`);
   if (!reusedArtifact && existing?.artifactId && existing.artifactId !== artifact.id) {
     const existingArtifact = input.artifactStore.get(existing.artifactId);
-    if (existingArtifact && readRecord(existingArtifact.metadata).generatedKnowledgePage === true) {
+    if (existingArtifact && readRecord(existingArtifact.metadata).generatedKnowledgePage === true
+      && !input.store.listSources().some((record) => record.artifactId === existing.artifactId)) {
       input.artifactStore.delete(existing.artifactId);
     }
   }

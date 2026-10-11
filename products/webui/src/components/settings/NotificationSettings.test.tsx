@@ -23,6 +23,7 @@ const postureResult: unknown = { posture: { origin: 'http://192.168.0.131:3423',
 let postureRejects = false;
 
 mock.module('../../lib/goodvibes', () => ({
+  runBrowserJudgment: () => Promise.reject(new Error('No platform reading in this display fixture.')),
   getCurrentAuth: () => Promise.resolve({}),
   invokeMethod: () => Promise.resolve({}),
   sdk: {

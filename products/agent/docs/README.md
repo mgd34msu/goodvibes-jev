@@ -7,6 +7,7 @@ These are the package-facing docs for the GoodVibes Agent `2.1.x` release line.
 - [Docs index](README.md)
 - [Getting started](getting-started.md)
 - [Connected host](connected-host.md)
+- [Execution and session owners](runtime-owners.md)
 - [Knowledge, artifacts, and multimodal](knowledge-artifacts-and-multimodal.md)
 - [Tools and commands](tools-and-commands.md)
 - [Channels, remote access, and API](channels-remote-and-api.md)

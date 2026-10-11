@@ -4,8 +4,8 @@ import { logger } from '../../utils/logger.js';
 import { CodeIntelligence } from '../../intelligence/index.js';
 import type { EditItem, OccurrenceSpec, EditResult, EditResultStatus } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { assertSafeRegexInput, compileSafeRegExp, safeRegExpExec } from '../../utils/safe-regex.js';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { assertSafeRegexInput, compileSafeRegExp, createSafeRegex, safeRegExpExec } from '../../utils/safe-regex.js';
+import { judgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { editTarget, editTargetView } from '../batteries/edit-target.js';
 
 type AstGrepModule = typeof import('@ast-grep/napi');
@@ -99,6 +99,7 @@ export function findFuzzyLineMatch(
   return { start: bestStart, end: bestEnd, similarity: bestSimilarity, candidateLines: bestCandidateLines };
 }
 
+/** @deprecated Synchronous compatibility; production regex edits use findAllPositionsAsync. */
 export function findAllPositions(
   content: string,
   find: string,
@@ -294,6 +295,7 @@ export function selectOccurrences(
   return { selected: [positions[n - 1]!] };
 }
 
+/** @deprecated Synchronous compatibility; production regex edits use applyReplacementsAsync. */
 export function applyReplacements(
   content: string,
   selections: { start: number; end: number }[],
@@ -320,6 +322,58 @@ export function applyReplacements(
     }
     result = result.slice(0, start) + replacement + result.slice(end);
   }
+  return result;
+}
+
+async function findAllPositionsAsync(
+  content: string, find: string, mode: 'exact' | 'fuzzy' | 'regex',
+  caseSensitive: boolean, whitespaceSensitive: boolean, multiline: boolean, options: JudgmentReadingOptions,
+): Promise<{ start: number; end: number }[]> {
+  if (mode !== 'regex') return findAllPositions(content, find, mode, caseSensitive, whitespaceSensitive, multiline);
+  await assertCapturedToolAccessCurrent();
+  const flags = `${caseSensitive ? 'g' : 'gi'}${multiline ? 'sm' : ''}`;
+  await using pattern = await createSafeRegex(find, flags, { ...options, operation: 'edit regex search', maxInputChars: 500_000 });
+  const positions = await pattern.positions(content);
+  await assertCapturedToolAccessCurrent();
+  pattern.assertCurrent();
+  return [...positions];
+}
+
+async function applyReplacementsAsync(
+  content: string, selections: { start: number; end: number }[], find: string, replace: string,
+  mode: 'exact' | 'fuzzy' | 'regex', caseSensitive: boolean, options: JudgmentReadingOptions,
+): Promise<string> {
+  if (mode !== 'regex') return applyReplacements(content, selections, find, replace, mode, caseSensitive);
+  await assertCapturedToolAccessCurrent();
+  await using pattern = await createSafeRegex(find, caseSensitive ? '' : 'i', { ...options, operation: 'edit regex replacement' });
+  let result = content;
+  for (const { start, end } of [...selections].sort((a, b) => b.start - a.start)) {
+    const match = await pattern.exec(content.slice(start, end));
+    // Preserve the edit API's historical numeric-capture substitution (not
+    // String.replace's full replacement language, used by find preview).
+    const budget = 2_000_000 - (result.length - (end - start));
+    if (budget < 0 || replace.length > 2_000_000) throw new Error('edit regex replacement output exceeds 2000000 characters');
+    const parts: string[] = [];
+    let size = 0, cursor = 0;
+    const append = (part: string) => {
+      if (size + part.length > budget) throw new Error('edit regex replacement output exceeds 2000000 characters');
+      size += part.length; if (part.length) parts.push(part);
+    };
+    if (match) {
+      const tokens = /\$(\d+)/g;
+      let token: RegExpExecArray | null;
+      while ((token = tokens.exec(replace)) !== null) {
+        append(replace.slice(cursor, token.index));
+        append(match.captures[parseInt(token[1]!)] ?? '');
+        cursor = token.index + token[0].length;
+      }
+    }
+    append(replace.slice(cursor));
+    const replacement = parts.join('');
+    result = result.slice(0, start) + replacement + result.slice(end);
+  }
+  await assertCapturedToolAccessCurrent();
+  pattern.assertCurrent();
   return result;
 }
 
@@ -600,16 +654,24 @@ export async function computeSingleEdit(
   caseSensitive: boolean,
   whitespaceSensitive: boolean = true,
   multiline: boolean = false,
+  options: JudgmentReadingOptions = {},
 ): Promise<
   | { newContent: string; occurrencesReplaced: number; warning?: string | undefined }
   | { error: string; hint?: string | undefined }
 > {
+  const before = JSON.stringify(item);
+  const current = () => {
+    options.signal?.throwIfAborted(); options.assertCurrent?.();
+    if (JSON.stringify(item) !== before) throw new Error('Edit regex request changed');
+  };
+  current();
+  const readingOptions = { ...options, assertCurrent: current };
   const findStr = item.find_base64 ? decodeBase64(item.find_base64) : item.find;
   const replaceStr = item.replace_base64 ? decodeBase64(item.replace_base64) : item.replace;
 
   let positions: { start: number; end: number }[];
   try {
-    positions = findAllPositions(fileContent, findStr, mode, caseSensitive, whitespaceSensitive, multiline);
+    positions = await findAllPositionsAsync(fileContent, findStr, mode, caseSensitive, whitespaceSensitive, multiline, readingOptions);
   } catch (err) {
     return { error: `Invalid find pattern: ${summarizeError(err)}` };
   }
@@ -661,7 +723,7 @@ export async function computeSingleEdit(
   const selResult = selectOccurrences(positions, item.occurrence);
   if ('error' in selResult) return selResult;
 
-  const newContent = applyReplacements(fileContent, selResult.selected, findStr, replaceStr, mode, caseSensitive);
+  const newContent = await applyReplacementsAsync(fileContent, selResult.selected, findStr, replaceStr, mode, caseSensitive, readingOptions);
 
   let warning: string | undefined = hintsWarning;
   if (usedFallback === 'whitespace') {

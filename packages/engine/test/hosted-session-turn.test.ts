@@ -28,6 +28,8 @@ import { join } from 'node:path';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.ts';
+import { WorkspaceTrustManager } from '../sdk/src/platform/runtime/workspace-trust.ts';
+import { createShellPathService } from '../sdk/src/platform/runtime/shell-paths.ts';
 import { createClientRuntimeServices, type ClientRuntimeServices } from '../sdk/src/platform/runtime/client-services.ts';
 import { createHostedSessionRuntime } from '../sdk/src/platform/hosted-sessions/session-runtime.ts';
 import { HostedSessionManager } from '../sdk/src/platform/hosted-sessions/manager.ts';
@@ -45,6 +47,7 @@ const MODEL = 'stub-1';
 let root: string;
 let workspace: string;
 let services: ClientRuntimeServices;
+let workspaceTrust: WorkspaceTrustManager;
 let runtimeBus: RuntimeEventBus;
 /** What the stub was asked, turn by turn. */
 let requests: ChatRequest[];
@@ -113,7 +116,14 @@ beforeEach(() => {
   // recorded Jev fixture installed below, over the real permission manager.
   const approveEverything = async (): Promise<PermissionPromptDecision> => { approvalRequests++; return { approved: true }; };
 
+  // Like the real hosted floor, supply its workspace constraint explicitly.
+  // Undecided trust grants nothing: each mutation still needs recorded admission.
+  workspaceTrust = new WorkspaceTrustManager({
+    shellPaths: createShellPathService({ workingDirectory: workspace, homeDirectory: root }),
+    surfaceRoot: 'goodvibes',
+  });
   services = createClientRuntimeServices({
+    workspaceTrust,
     configManager,
     runtimeBus,
     runtimeStore: createRuntimeStore(),
@@ -261,6 +271,7 @@ test('the real hosted service boundary still excludes a mutating write from admi
     await session.submit('write blocked.txt');
     expect(executed).toEqual([]);
     expect(existsSync(join(workspace, 'blocked.txt'))).toBe(false);
+    expect(workspaceTrust.isDecided()).toBe(false);
     const admission = readings.requests.find((request) => request.context?.site === 'engine.gate.autonomous-tool');
     expect(admission?.state).toMatchObject({ input: { evidence: {
       boundary: { passed: false, refusedBy: 'surface-authority' },
@@ -715,6 +726,8 @@ for (const toolName of ['write', 'edit'] as const) {
         await turn;
         expect(terminal).toEqual(['cancel']);
         expect(executed).toEqual(['file-call']);
+        expect(workspaceTrust.isDecided()).toBe(false);
+        expect(approvalRequests).toBe(0);
         expect(session.liveTurnControls.cancelTurn!(turnId).status).toBe('already-ended');
       } finally { release(); await turn; services.hookDispatcher.fire = originalHook; session.dispose(); }
     });

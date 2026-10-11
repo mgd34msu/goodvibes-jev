@@ -161,3 +161,36 @@ test.each(['async', 'thenable'])('an %s admission assertion cannot authorize a s
     expect(scrub).not.toHaveBeenCalled(); expect(launches).not.toHaveBeenCalled(); expect(manager.list()).toEqual([]);
   } finally { await manager.close(); launches.mockRestore(); scrub.mockRestore(); }
 });
+
+test.each(['current', 'revoked', 'closed'] as const)('one-shot spawn claim finishes with fresh currentness when %s', async state => {
+  const manager = new ProcessManager(); let current = true; let claims = 0; let checks = 0;
+  const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('intercepted final spawn'); });
+  try {
+    await expect(manager.spawnArgv('synthetic-command', [], '/tmp', undefined, {
+      credentialEnvScrub: { enabled: false, allowlist: new Set() },
+      assertCurrent() { checks++; if (!current) throw new Error('claim revoked authority'); },
+      beforeSpawn() {
+        expect(++claims).toBe(1);
+        if (state === 'revoked') current = false;
+        if (state === 'closed') void manager.close();
+      },
+    })).rejects.toThrow(state === 'current' ? 'intercepted final spawn' : state === 'revoked' ? 'claim revoked authority' : 'ProcessManager is closed');
+    expect(claims).toBe(1);
+    expect(checks).toBeGreaterThan(1);
+    expect(launches).toHaveBeenCalledTimes(state === 'current' ? 1 : 0);
+    expect(manager.list()).toEqual([]);
+  } finally { await manager.close(); launches.mockRestore(); }
+});
+
+test('asynchronous one-shot spawn claim cannot authorize a child', async () => {
+  const manager = new ProcessManager();
+  const launches = spyOn(Bun, 'spawn').mockImplementation(() => { throw new Error('unexpected spawn'); });
+  try {
+    await expect(manager.spawnArgv('synthetic-command', [], '/tmp', undefined, {
+      credentialEnvScrub: { enabled: false, allowlist: new Set() },
+      beforeSpawn: async () => {},
+    })).rejects.toThrow('must be synchronous');
+    expect(launches).not.toHaveBeenCalled();
+    expect(manager.list()).toEqual([]);
+  } finally { await manager.close(); launches.mockRestore(); }
+});

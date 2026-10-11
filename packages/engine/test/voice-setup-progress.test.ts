@@ -107,6 +107,7 @@ describe('voice.local.status carries live install progress (polling shape)', () 
         // correctly, report itself unproven.
         prove: async () => ({
           proved: true,
+          comparison: 'yes' as const,
           stage: 'compare' as const,
           phrase: 'the quick brown fox jumps over the lazy dog',
           transcript: 'the quick brown fox jumps over the lazy dog',

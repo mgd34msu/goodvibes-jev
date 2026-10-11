@@ -1,23 +1,12 @@
-/**
- * Conversation-first spawn gate.
- *
- * The incident this covers: the single word "Testing" sent to the ntfy agent
- * topic started a full write-review-fix-confirm chain, spawned a second agent,
- * and produced 23 notifications, when a conversational reply was what was
- * wanted. Verifies the decision half of the fix:
- * - a trivial message classifies as conversation (no work, no chain)
- * - a work request classifies as work, which is what triggers a proposal
- * - agreement and refusal parse from natural phrasing, not a magic token
- * - configuration is bounded, and 'off' restores the previous behavior
- * - the TUI is exempt at the surface level
+/** Deterministic configuration/rendering boundaries for the conversation gate.
+ * Semantic caller qualification is in conversation-work-readings.test.ts;
+ * natural-language fixture expectations belong to the canonical batteries.
  */
 import { describe, expect, test } from 'bun:test';
 import {
   CONVERSATION_GATE_DEFAULTS,
   CONVERSATION_GATE_DEFAULT_SURFACES,
-  classifyInboundIntent,
   isGatedSurface,
-  parseWorkProposalReply,
   readConversationGateConfig,
   renderWorkProposalMessage,
   summarizeWorkRequest,
@@ -31,69 +20,6 @@ function reader(scalars: Record<string, unknown>, category?: unknown) {
   };
 }
 
-describe('classifyInboundIntent', () => {
-  test('the reported message, a bare "Testing", is conversation, not work', () => {
-    const intent = classifyInboundIntent('Testing');
-    expect(intent.kind).toBe('conversation');
-  });
-
-  test.each([
-    'hey',
-    'hello there',
-    'thanks!',
-    'what is the current status?',
-    'how does the reply pipeline work?',
-    'why did that fail',
-    'nice, that looks right',
-    'are you around',
-    'testing 1 2 3',
-    'just checking in',
-  ])('conversation: %p', (text) => {
-    expect(classifyInboundIntent(text).kind).toBe('conversation');
-  });
-
-  test.each([
-    'fix the login bug',
-    'please add a retry to the uploader',
-    'can you refactor the session broker',
-    'go ahead and rename that helper',
-    'implement the delta rendering',
-    "let's upgrade the ntfy client",
-    'hey, could you please review the diff',
-    'update src/platform/daemon/facade.ts to use the new helper',
-    'we need to migrate the store',
-  ])('work request: %p', (text) => {
-    expect(classifyInboundIntent(text).kind).toBe('work');
-  });
-
-  test('a work verb in a later clause still counts', () => {
-    const intent = classifyInboundIntent('thanks! now fix the failing gate');
-    expect(intent.kind).toBe('work');
-  });
-
-  test('a question ABOUT a work verb is not a work request', () => {
-    expect(classifyInboundIntent('how do I review a chain?').kind).toBe('conversation');
-    expect(classifyInboundIntent('what does deploy do here').kind).toBe('conversation');
-  });
-
-  test('a code reference plus a work verb is work even without an imperative', () => {
-    const intent = classifyInboundIntent('the `reply-pipeline.ts` progress path needs a fix');
-    expect(intent.kind).toBe('work');
-  });
-
-  test('an empty message is conversation', () => {
-    expect(classifyInboundIntent('').kind).toBe('conversation');
-    expect(classifyInboundIntent(undefined).kind).toBe('conversation');
-  });
-
-  test('a work intent carries a one-line summary', () => {
-    const intent = classifyInboundIntent('fix the login bug');
-    expect(intent.kind).toBe('work');
-    if (intent.kind !== 'work') throw new Error('unreachable');
-    expect(intent.summary).toBe('fix the login bug');
-  });
-});
-
 describe('summarizeWorkRequest', () => {
   test('collapses whitespace and stays one short line', () => {
     const summary = summarizeWorkRequest(`fix   the\n\nlogin bug`);
@@ -104,98 +30,6 @@ describe('summarizeWorkRequest', () => {
   test('truncates long requests', () => {
     const summary = summarizeWorkRequest('x'.repeat(400));
     expect(summary.length).toBeLessThanOrEqual(90);
-  });
-});
-
-describe('parseWorkProposalReply', () => {
-  test.each(['yes', 'Yes please', 'yeah', 'yep', 'y', 'ok', 'sure', 'go ahead', 'do it', 'ship it', 'sounds good', 'proceed'])(
-    'affirmative: %p',
-    (text) => {
-      expect(parseWorkProposalReply(text)?.decision).toBe('affirmative');
-    },
-  );
-
-  test.each(['no', 'nope', 'nah', "don't", 'not now', 'cancel', 'skip', 'never mind', 'hold off', 'no thanks'])(
-    'negative: %p',
-    (text) => {
-      expect(parseWorkProposalReply(text)?.decision).toBe('negative');
-    },
-  );
-
-  test('unrelated conversation is not an answer', () => {
-    expect(parseWorkProposalReply('what is the status')).toBeNull();
-    expect(parseWorkProposalReply('deploy the thing')).toBeNull();
-    expect(parseWorkProposalReply('')).toBeNull();
-  });
-
-  test('trailing text becomes steering guidance', () => {
-    const reply = parseWorkProposalReply('yes but only touch the ntfy adapter');
-    expect(reply?.decision).toBe('affirmative');
-    expect(reply?.note).toBe('but only touch the ntfy adapter');
-  });
-
-  test('a long paragraph starting with "no" is conversation, not an answer', () => {
-    const paragraph = `no ${'context '.repeat(40)}`;
-    expect(parseWorkProposalReply(paragraph)).toBeNull();
-  });
-
-  // The severe one, observed live: a brand-new request opening with an
-  // ordinary polite word was read as "yes" to an unrelated pending proposal,
-  // which was accepted and launched a chain on the OLD task with the new
-  // sentence demoted to "Additional direction from the owner". The owner had
-  // never even seen the proposal. A reply must be ONLY an answer.
-  test.each([
-    'Please refactor the parser in src/parse.ts',
-    'please add a test for the login flow',
-    'pls fix the changelog',
-    'go look at the deploy logs',
-    'go ahead and rename the config key',
-    'start the daemon on port 9000',
-    'begin the migration in packages/sdk',
-    'proceed with rewriting the release script',
-    'sure, can you fix the login bug',
-    'ok now deploy the web app',
-    'yes update packages/sdk/src/index.ts',
-    'yeah, write the migration guide',
-    'k, ship the release notes',
-  ])('a request that merely opens like an answer is not an answer: %p', (text) => {
-    expect(parseWorkProposalReply(text)).toBeNull();
-  });
-
-  // The same rule on the refusal side: these are verbs taking an object.
-  test.each([
-    'stop the daemon',
-    'cancel the release and ship the hotfix',
-    'skip the slow tests in test/integration',
-    "don't forget to bump the changelog",
-    'later today, migrate the store',
-  ])('a request that merely opens like a refusal is not an answer: %p', (text) => {
-    expect(parseWorkProposalReply(text)).toBeNull();
-  });
-
-  // The words above are still answers when they are the WHOLE answer, the
-  // owner types these from a phone and must not be forced to a magic token.
-  test.each([
-    'please', 'pls', 'go', 'start', 'begin', 'proceed',
-    'go ahead', 'go for it', 'start it', 'ok go', 'please go ahead',
-    'ok then', 'sure thing', 'yeah go for it', 'approved', 'confirmed',
-  ])('a bare answer still reads as agreement: %p', (text) => {
-    expect(parseWorkProposalReply(text)?.decision).toBe('affirmative');
-  });
-
-  test.each(['stop', 'cancel', 'skip', 'abort', 'later', "don't", 'do not', 'drop it', 'forget it'])(
-    'a bare refusal still reads as refusal: %p',
-    (text) => {
-      expect(parseWorkProposalReply(text)?.decision).toBe('negative');
-    },
-  );
-
-  test('a short qualifier still rides along, a second instruction does not', () => {
-    expect(parseWorkProposalReply('yes but only touch the ntfy adapter')?.note)
-      .toBe('but only touch the ntfy adapter');
-    // Same opener, but the trailer is its own job, the whole message is a
-    // request and must flow through rather than steer somebody else's task.
-    expect(parseWorkProposalReply('yes and also rewrite the telegram adapter')).toBeNull();
   });
 });
 

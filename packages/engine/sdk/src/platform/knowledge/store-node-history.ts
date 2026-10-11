@@ -1,3 +1,4 @@
+import { knowledgeClockIso, knowledgeRawRepresentation, retainKnowledgeRepresentation } from './store-record-representation.js';
 import { randomUUID } from 'node:crypto';
 import { KnowledgeNodeActivationHeldError } from './activation/types.js';
 import { preparedNodeWrite, markPreparedNodeWritten } from './store-node-activation.js';
@@ -17,6 +18,7 @@ import type {
 } from './types.js';
 
 export function writeKnowledgeNodeRow(sqlite: SQLiteStore, record: KnowledgeNodeRecord): void {
+  const raw = knowledgeRawRepresentation(record);
   sqlite.run(`
     INSERT OR REPLACE INTO knowledge_nodes (
       id, kind, slug, title, summary, aliases, status, confidence, source_id, metadata, created_at, updated_at
@@ -31,9 +33,9 @@ export function writeKnowledgeNodeRow(sqlite: SQLiteStore, record: KnowledgeNode
     record.status,
     record.confidence,
     record.sourceId ?? null,
-    JSON.stringify(record.metadata),
-    record.createdAt,
-    record.updatedAt,
+    JSON.stringify(raw.metadata),
+    raw.createdAt,
+    raw.updatedAt,
   ]);
 }
 
@@ -119,6 +121,9 @@ function appendNodeRevision(
     nodeUpdatedAt: snapshot.updatedAt,
     recordedAt: now,
   };
+  const original = knowledgeRawRepresentation(snapshot);
+  retainKnowledgeRepresentation(rev, { ...knowledgeRawRepresentation(rev), nodeCreatedAt: original.createdAt, nodeUpdatedAt: original.updatedAt, recordedAt: knowledgeClockIso(now) });
+  const raw = knowledgeRawRepresentation(rev);
   sqlite.run(`
     INSERT OR REPLACE INTO knowledge_node_revisions (
       id, node_id, revision, change_kind, changed_fields, kind, slug, title, summary,
@@ -138,10 +143,10 @@ function appendNodeRevision(
     rev.status,
     rev.confidence,
     rev.sourceId ?? null,
-    JSON.stringify(rev.metadata),
-    rev.nodeCreatedAt,
-    rev.nodeUpdatedAt,
-    rev.recordedAt,
+    JSON.stringify(raw.metadata),
+    raw.nodeCreatedAt,
+    raw.nodeUpdatedAt,
+    raw.recordedAt,
   ]);
   list.push(rev);
 }
@@ -303,6 +308,12 @@ function writeMergedEdgeRow(sqlite: SQLiteStore, record: KnowledgeEdgeRecord): v
     JSON.stringify(record.metadata), record.createdAt, record.updatedAt]);
 }
 
+const guardedSemanticStateInputs = new WeakMap<object, () => void>();
+/** Process-local authority for derived enrichment bookkeeping. */
+export function guardKnowledgeSemanticStateInput<T extends object>(input: T, assertCurrent: () => void): T {
+  guardedSemanticStateInputs.set(input, assertCurrent); return input;
+}
+
 export function upsertKnowledgeSemanticEnrichmentState(
   sqlite: SQLiteStore,
   states: Map<string, KnowledgeSemanticEnrichmentStateRecord>,
@@ -313,6 +324,7 @@ export function upsertKnowledgeSemanticEnrichmentState(
     readonly metadata?: Record<string, unknown> | undefined;
   },
 ): KnowledgeSemanticEnrichmentStateRecord {
+  guardedSemanticStateInputs.get(input)?.();
   const existing = states.get(input.sourceId);
   const now = nowMs();
   const record: KnowledgeSemanticEnrichmentStateRecord = {

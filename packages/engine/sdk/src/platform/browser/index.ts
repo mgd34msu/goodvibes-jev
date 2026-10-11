@@ -94,6 +94,9 @@ export { extractTarGzEntry, extractTarGzTree, readTarGzEntries } from './browser
 export type {
   ExtractTarGzTreeOptions,
   ExtractTarGzTreeResult,
+  ReadTarGzOptions,
   TarEntry,
   TarEntryKind,
 } from './browser-driver-archive.js';
+
+export type { BrowserProvisionLifetime } from './browser-failure-reading.js';

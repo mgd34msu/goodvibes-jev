@@ -14,6 +14,9 @@
 
 /** A GitHub job's run state (`status`) and, once complete, its `conclusion`. */
 export interface CiJob {
+  readonly headSha?: string | undefined;
+  readonly runId?: string | undefined;
+  readonly jobId?: string | undefined;
   readonly name: string;
   readonly status: 'queued' | 'in_progress' | 'completed';
   /** null while not yet completed; otherwise the GitHub conclusion string. */
@@ -53,13 +56,15 @@ export const PASSING_CONCLUSIONS: ReadonlySet<string> = new Set(['success', 'ski
 
 /** A standing watch on a repo/PR. */
 export interface CiWatchSubscription {
+  /** Lookup only; an issued native host record and live private owner remain mandatory. */
+  readonly continuationId?: string | undefined;
   readonly id: string;
   readonly repo: string;
   readonly ref?: string | undefined;
   readonly prNumber?: number | undefined;
   /** Channel to notify on completion ('surfaceKind' or 'surfaceKind:address'). */
   readonly deliveryChannel: string;
-  /** Opt-in: when jobs fail, start a fix-session pre-briefed with the failing jobs' logs. */
+  /** Historical standalone-service opt-in; production always requires original-source Jev admission. */
   readonly triggerFixSession: boolean;
   /** The last overall verdict seen, so a watch fires once on transition to a terminal state. */
   readonly lastOverall?: CiOverall | undefined;
@@ -76,6 +81,7 @@ export interface CiStatusSource {
     readonly ref?: string | undefined;
     readonly prNumber?: number | undefined;
     readonly jobNames: readonly string[];
+    readonly jobs?: readonly CiJob[] | undefined;
   }): Promise<string>;
 }
 
@@ -85,6 +91,7 @@ export interface FixSessionBrief {
   readonly ref?: string | undefined;
   readonly prNumber?: number | undefined;
   readonly failingJobs: readonly string[];
+  readonly jobs?: readonly CiJob[] | undefined;
   readonly logs: string;
 }
 
@@ -115,7 +122,7 @@ export type FixSessionOfferOutcome =
 /**
  * The "fix this?" offer for a red run on a watch that did NOT opt into
  * auto-start: surfaced through the approval/attention machinery (wired at the
- * composition root to the approval broker). Resolves accepted=true when the
+ * historical standalone integrations). Resolves accepted=true when the
  * operator accepts, the service then starts the fix-session with the SAME
  * brief, and (given an offerCallId) stamps the started id onto the approval
  * record.

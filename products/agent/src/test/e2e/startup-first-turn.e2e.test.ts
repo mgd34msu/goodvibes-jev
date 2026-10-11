@@ -38,7 +38,7 @@ let agent: AgentSession | null = null;
 let home: E2EHome | null = null;
 let host: Awaited<ReturnType<typeof startE2ENativeHost>> | null = null;
 afterEach(async () => {
-  agent?.stop(); agent = null;
+  await agent?.stop(); agent = null;
   try { await host?.stop(); } finally { host = null; removeHome(home); home = null; }
 });
 afterAll(() => model.stop());

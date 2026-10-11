@@ -7,14 +7,18 @@
  *   - the block appears exactly once when compaction runs twice (no stacking)
  *   - the compaction receipt records that instructions were re-injected
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previous = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port); });
+afterEach(() => { installJudgmentPort(previous); });
 import { compactMessages } from '../sdk/src/platform/core/context-compaction.js';
 import type { CompactionContext } from '../sdk/src/platform/core/compaction-types.js';
 import type { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 
-// A registry that never yields a usable provider, llmExtract catches the
-// failure and returns null, so compaction assembles only deterministic
-// rule-based sections. That keeps these tests free of live LLM calls.
+// Canonical membership uses a synthetic port; the legacy older-work prose
+// provider is unavailable. These tests make no live model calls.
 const stubRegistry = {
   getForModel() {
     throw new Error('no provider available in test');

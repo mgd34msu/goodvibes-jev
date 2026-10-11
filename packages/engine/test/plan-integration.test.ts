@@ -110,7 +110,7 @@ describe('proposal -> ExecutionPlanManager persistence (reuse, no duplicate sche
     expect(second.map((i) => i.description)).toEqual(['Implement handler']);
   });
 
-  test('markdown round-trip preserves structure, including comma-bearing descriptions', () => {
+  test('markdown round-trip preserves structure, including comma-bearing descriptions', async () => {
     const manager = new ExecutionPlanManager(createTmpRoot('plan-roundtrip-'));
     const shell = manager.create('Round trip', []);
     manager.replaceItems(shell.id, [
@@ -121,7 +121,7 @@ describe('proposal -> ExecutionPlanManager persistence (reuse, no duplicate sche
     manager.updateItem(shell.id, inserted.items[0]!.id, 'complete');
     const plan = manager.load(shell.id)!;
     const markdown = manager.toMarkdown(plan);
-    const parsed = manager.parseFromMarkdown(markdown);
+    const parsed = await manager.parseFromMarkdown(markdown);
     if (!parsed.items) throw new Error('parse returned no items');
     expect(parsed.items.map((i) => i.description)).toEqual([
       'Fetch, parse, and store the feed',

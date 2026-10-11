@@ -3,7 +3,7 @@ import { InfiniteBuffer, SelectionManager } from '@goodvibes-jev/engine/terminal
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { ConversationManager } from '../../core/conversation.ts';
 import { InputHandler } from '../../input/handler.ts';
-import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
+import { CommandRegistry, directOwnerRemoteInput, type CommandContext } from '../../input/command-registry.ts';
 import { registerHostPairingCommands } from '../../input/commands/host-pairing.ts';
 import { wireHostPairingShell } from '../../shell/host-pairing-shell.ts';
 import type { HostPairingController } from '../../shell/host-pairing-controller.ts';
@@ -244,3 +244,14 @@ describe('host pairing shell over the real InputHandler', () => {
     expect(s.fixture.migrations()).toBe(1);
   }));
 });
+
+
+test('pairing replacement preserves the exact original remote dispatch source', async () => withShell(async s => {
+  let original: string | undefined;
+  s.registry.register({ name: 'remote', description: 'Synthetic source probe', handler(_args, ctx) { original = directOwnerRemoteInput(ctx); } });
+  await s.start();
+  const command = '/remote dispatch engineer  Preserve exact command spacing';
+  s.input.feed(`${command}\r`);
+  await untilPairing(() => original !== undefined, 'replacement remote command');
+  expect(original).toBe(command); expectNoGrant(s);
+}));

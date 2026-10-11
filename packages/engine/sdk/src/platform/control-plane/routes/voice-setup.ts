@@ -47,7 +47,7 @@ export interface WakeModelChunkPayload {
 /** The narrow provisioning slice the verbs need. */
 export interface VoiceSetupGatewayService {
   status(): unknown;
-  install(): Promise<VoiceLocalInstallResult>;
+  install(options?: { readonly signal?: AbortSignal | undefined; readonly assertCurrent?: (() => void) | undefined }): Promise<VoiceLocalInstallResult>;
   /** Content-verified state of the pinned wake artifacts. */
   wakeStatus(): unknown;
   /** Download + verify the pinned wake artifacts. Explicit act, single-flight. */
@@ -61,7 +61,14 @@ export function createVoiceStatusHandler(service: VoiceSetupGatewayService): Gat
 }
 
 export function createVoiceInstallHandler(service: VoiceSetupGatewayService): GatewayMethodHandler {
-  return () => service.install();
+  return (invocation) => service.install({
+    signal: invocation.signal,
+    assertCurrent: () => {
+      if (invocation.signal?.aborted || invocation.isAuthorized?.(['write:config']) === false) {
+        throw new Error('The voice install request is no longer authorized.');
+      }
+    },
+  });
 }
 
 export function createWakeStatusHandler(service: VoiceSetupGatewayService): GatewayMethodHandler {

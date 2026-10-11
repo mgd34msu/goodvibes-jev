@@ -71,7 +71,7 @@ export interface SharedSessionContinuationResult { readonly agentId: string; rea
 export type SharedSessionContinuationOutcome =
   | SharedSessionContinuationResult
   | { readonly disposition: 'held' | 'unknown'; readonly reason: string; readonly agentId?: never }
-  | { readonly disposition: 'transferred'; readonly requestId: string; readonly agentId?: never };
+  | { readonly disposition: 'transferred'; readonly requestId: string; readonly inputConsumed?: true; readonly agentId?: never };
 
 export type SharedSessionContinuationRunner = (
   input: SharedSessionContinuationRequest,

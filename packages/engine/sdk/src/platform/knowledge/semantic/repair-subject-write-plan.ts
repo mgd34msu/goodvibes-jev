@@ -79,21 +79,21 @@ export async function writeSupportedRepairSubjectLinks(input: {
     }) };
     return { ...draft, supportMetadata, nodeInput };
   });
-  const activation = await store.prepareNodeWrites(plans.map((plan) => plan.nodeInput), { signal: input.signal, requireAccepted: true });
-  await store.batch(async () => {
-    store.assertPreparedNodeWrites(activation);
-    guard.assertCurrent();
-    input.assertCurrent?.();
-    for (const [index, { fact, primarySourceId, supportMetadata }] of plans.entries()) {
-      assertSemanticWriteAllowed(input.signal, input.shouldStop);
-      const written = await store.upsertPreparedNode(activation, index);
-      if (input.generatedClaims) retainRevalidatedGeneratedClaim(input.generatedClaims, store, fact, written);
-      for (const object of subjects) await store.upsertEdge({
-        fromKind: 'node', fromId: fact.id, toKind: 'node', toId: object.id,
-        relation: 'describes', weight: 0.82,
-        metadata: semanticMetadata(spaceId, { linkedBy: 'semantic-gap-repair', repairedAt: Date.now(),
-          sourceId: primarySourceId, generatedFactSupport: supportMetadata }),
-      });
-    }
-  });
+  const assertCurrent = () => { assertSemanticWriteAllowed(input.signal, input.shouldStop); guard.assertCurrent(); input.assertCurrent?.(); };
+  const edges = plans.flatMap(({ fact, primarySourceId, supportMetadata }) => subjects.map((object) => ({
+    fromKind: 'node' as const, fromId: fact.id, toKind: 'node' as const, toId: object.id,
+    relation: 'describes', weight: 0.82,
+    metadata: semanticMetadata(spaceId, { linkedBy: 'semantic-gap-repair', repairedAt: Date.now(),
+      sourceId: primarySourceId, generatedFactSupport: supportMetadata }),
+  })));
+  // One final original-authority check precedes all node/edge publication. There
+  // is no await between affected rows and no need to rebase our own writes.
+  const receipt = await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+    nodes: plans.map((plan) => plan.nodeInput), edges, issues: [], assertCurrent,
+  }), { signal: input.signal, requireAccepted: true });
+  if (input.generatedClaims) for (const { fact } of plans) {
+    const written = receipt.nodes.find((node) => node.id === fact.id);
+    if (!written || store.getNode(fact.id) !== written) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    retainRevalidatedGeneratedClaim(input.generatedClaims, store, fact, written);
+  }
 }

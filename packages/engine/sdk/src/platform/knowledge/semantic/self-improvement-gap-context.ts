@@ -1,3 +1,5 @@
+import { createKnowledgeFactQualityReader } from './fact-quality.js';
+import { createSemanticWriteGuard } from './primary-source-plan.js';
 import type { KnowledgeObjectProfilePolicy } from '../extensions.js';
 import { REPAIRS_GAP_RELATION } from '../home-graph/types.js';
 import {
@@ -16,7 +18,7 @@ import {
   factsForObject,
   factsForSource,
   isConcreteRepairSubject,
-  isUsableSelfImprovementFact,
+  isSelfImprovementFactCandidate,
   linkedObjectsForSource,
   matchingObjectProfiles,
   repairTargetFactCount,
@@ -34,6 +36,7 @@ export interface GapContext {
 }
 
 export interface GapClassification {
+  readonly assertCurrent?: (() => void) | undefined;
   readonly action: 'repair' | 'skip' | 'suppress';
   readonly reason?: string | undefined;
   readonly status?: string | undefined;
@@ -102,28 +105,43 @@ export function buildGapContext(
   return { gap, sources, linkedObjects, facts, repairSourceIds };
 }
 
-export function classifyGap(
+export async function classifyGap(
   context: GapContext,
   force: boolean,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): GapClassification {
+  store: KnowledgeStore,
+  options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined } = {},
+): Promise<GapClassification> {
   const status = readString(context.gap.metadata.repairStatus);
   const nextAttemptAt = readNumber(context.gap.metadata.nextRepairAttemptAt);
-  const repairedWithFacts = status === 'repaired' && hasRepairFactEvidence(context);
-  if (!force && repairedWithFacts) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'repaired' };
-  if (!force && status !== 'repaired' && nextAttemptAt && nextAttemptAt > Date.now()) return { action: 'skip', reason: 'Gap repair retry window has not elapsed.', status: 'retry_wait', markAttempt: true };
-  if (!force && hasRepairEdge(context) && hasRepairFactEvidence(context)) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'already_repaired' };
-  if (isDefaultUnanchoredAnswerGap(context)) {
-    return { action: 'skip', reason: 'Default answer gaps without a linked subject are not automatically web-repaired.', status: 'needs_context', markAttempt: true };
+  let usefulEvidence = false;
+  let assertCurrent: (() => void) | undefined;
+  if (!force && (status === 'repaired' || hasRepairEdge(context))) {
+    const guard = createSemanticWriteGuard(store, options.signal, options.shouldStop);
+    guard.watch(`gap:${context.gap.id}`, () => store.getNode(context.gap.id), context.gap);
+    const reader = createKnowledgeFactQualityReader(store, { spaceId: getKnowledgeSpaceId(context.gap),
+      purpose: 'repair', query: [context.gap.title, context.gap.summary].filter(Boolean).join('\n\n'),
+      subjects: context.linkedObjects, signal: options.signal, guard });
+    const candidates = repairEvidenceCandidates(context);
+    const quality = await reader.prepare(candidates);
+    assertCurrent = quality.assertCurrent;
+    usefulEvidence = quality.facts.length >= repairTargetFactCount(context.gap);
   }
-  if (isNotApplicableGap(context, objectProfiles)) return { action: 'suppress', reason: 'The gap is not applicable to the linked subject.' };
+  const repairedWithFacts = status === 'repaired' && usefulEvidence;
+  if (!force && repairedWithFacts) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'repaired', assertCurrent };
+  if (!force && status !== 'repaired' && nextAttemptAt && nextAttemptAt > Date.now()) return { action: 'skip', reason: 'Gap repair retry window has not elapsed.', status: 'retry_wait', markAttempt: true, assertCurrent };
+  if (!force && hasRepairEdge(context) && usefulEvidence) return { action: 'skip', reason: 'Gap already has promoted repair facts.', status: 'already_repaired', assertCurrent };
+  if (isDefaultUnanchoredAnswerGap(context)) {
+    return { action: 'skip', reason: 'Default answer gaps without a linked subject are not automatically web-repaired.', status: 'needs_context', markAttempt: true, assertCurrent };
+  }
+  if (isNotApplicableGap(context, objectProfiles)) return { action: 'suppress', reason: 'The gap is not applicable to the linked subject.', assertCurrent };
   if (!hasConcreteSubject(context, objectProfiles)) {
-    return { action: 'skip', reason: 'Gap has no concrete source or subject for automatic repair.', status: 'needs_context', markAttempt: true };
+    return { action: 'skip', reason: 'Gap has no concrete source or subject for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
   if (context.sources.length === 0 && context.linkedObjects.length === 0) {
-    return { action: 'skip', reason: 'Gap has no source context for automatic repair.', status: 'needs_context', markAttempt: true };
+    return { action: 'skip', reason: 'Gap has no source context for automatic repair.', status: 'needs_context', markAttempt: true, assertCurrent };
   }
-  return { action: 'repair' };
+  return { action: 'repair', assertCurrent };
 }
 
 function isDefaultUnanchoredAnswerGap(context: GapContext): boolean {
@@ -202,16 +220,16 @@ function hasRepairEdge(context: GapContext): boolean {
   return context.repairSourceIds.length > 0;
 }
 
-function hasRepairFactEvidence(context: GapContext): boolean {
+function repairEvidenceCandidates(context: GapContext): KnowledgeNodeRecord[] {
   const repairSourceIds = new Set(context.repairSourceIds);
   const subjectIds = new Set(context.linkedObjects.map((node) => node.id));
   const usableFacts = context.facts.filter((fact) => (
     fact.sourceId
     && repairSourceIds.has(fact.sourceId)
     && readString(fact.metadata.extractor) === 'repair-promotion'
-    && isUsableSelfImprovementFact(fact, subjectIds)
+    && isSelfImprovementFactCandidate(fact, subjectIds)
   ));
-  return usableFacts.length >= repairTargetFactCount(context.gap);
+  return usableFacts;
 }
 
 function isNotApplicableGap(context: GapContext, objectProfiles: readonly KnowledgeObjectProfilePolicy[]): boolean {

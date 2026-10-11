@@ -1,5 +1,5 @@
 import { types as nodeTypes } from 'node:util';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { gateJudgmentRegistry, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { SOURCE_SCREENING_LIMITS, type ProtectedSourceOwner, type ProtectedSource, type SourceScreeningReceipt } from '@goodvibes-jev/engine/sdk/platform/security';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -85,7 +85,7 @@ function assertCatalogBackendSlots(before: ReturnType<typeof catalogBackendSlots
 function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: Rerank) {
   const decisionKeys = ['name', 'version', 'description', 'accuracyFloor', 'model', 'fixtureCount', 'checkFixtures', 'rerank'];
   const definition = catalogBackendSlots(decision, decisionKeys);
-  const portKeys = ['model', 'ask', 'recorder'];
+  const portKeys = ['model', 'ask', 'health', 'recorder'];
   const slots = catalogBackendSlots(port, portKeys, true);
   const model = port.model, ask = port.ask, recorder = port.recorder, rerank = decision.rerank;
   if (typeof ask !== 'function' || typeof rerank !== 'function') throw new ToolInputProjectionError('unavailable');
@@ -210,8 +210,10 @@ export async function rankHarnessCatalog<T>(
     if (!decision) throw new ToolInputProjectionError('unavailable');
     const backend = captureCatalogBackend(port, decision as Rerank);
     const { model, recorder, rerank } = backend;
+    const installation = captureJudgmentPort(site);
     assertBackend = () => {
       backend.assertCurrent();
+      installation.assertCurrent();
       if (judgmentPort(site) !== port || gateJudgmentRegistry.get('engine.tools.registry-rank') !== decision) throw new ToolInputProjectionError('held');
     };
     retainCurrent?.(assertBackend, `engine.tools.registry-rank:${site}`);

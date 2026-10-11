@@ -49,7 +49,6 @@ const INTERNAL_PLATFORM_MODULES: readonly string[] = [
   'channel-profiles',
   'channel-sync',
   'checkin',
-  'ci-watch',
   'principals',
   'push',
 ];
@@ -124,9 +123,9 @@ describe('every public platform module has a subpath export', () => {
     expect(broken, `exports entries pointing at missing modules: ${broken.join(', ')}`).toEqual([]);
   });
 
-  test('the payments capability specifically is reachable', () => {
-    // The module this round shipped, pinned by name so a later manifest edit
+  test.each(['payments', 'ci-watch'])('the %s capability specifically is reachable', (name) => {
+    // Shipped modules, pinned by name so a later manifest edit
     // that drops it fails loudly rather than silently unshipping the feature.
-    expect(Object.keys(exportsMap())).toContain('./platform/payments');
+    expect(Object.keys(exportsMap())).toContain(`./platform/${name}`);
   });
 });

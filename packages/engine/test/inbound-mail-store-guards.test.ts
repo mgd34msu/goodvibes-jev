@@ -20,7 +20,13 @@
  * the real class, which is the same shape as the full disk and the
  * replaced-state-directory the design is written against.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { imapFixturePort } from './_helpers/imap-semantic-port.ts';
+import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
+
+let previousImapPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousImapPort = installJudgmentPort(imapFixturePort().port); });
+afterEach(() => { installJudgmentPort(previousImapPort); });
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -254,49 +260,49 @@ describe('a local failure is classified by errno, and the set is not editable in
     return Object.assign(new Error(`sweep failed: ${code}`), { code });
   }
 
-  test('a permanent store errno is terminal on the FIRST attempt', () => {
+  test('a permanent store errno is terminal on the FIRST attempt', async () => {
     // No amount of retrying reverses a directory sitting where a file belongs,
     // or a permission somebody set.
     for (const code of ['EISDIR', 'EACCES', 'EPERM', 'EROFS', 'ENOTDIR', 'ENAMETOOLONG']) {
-      const { verdict, terminal } = classifyLocalFailure(errored(code), 1, 10);
+      const { verdict, terminal } = await classifyLocalFailure(errored(code), 1, 10);
       expect({ code, terminal, reason: verdict.reason }).toEqual({
         code, terminal: true, reason: 'local-store-unwritable',
       });
     }
   });
 
-  test('a transient storage errno waits, then escalates at the ceiling', () => {
+  test('a transient storage errno waits, then escalates at the ceiling', async () => {
     // A full disk during a log rotation clears on its own; the tenth one has
     // been disproved by the machine.
-    const first = classifyLocalFailure(errored('ENOSPC'), 1, 10);
+    const first = await classifyLocalFailure(errored('ENOSPC'), 1, 10);
     expect(first.terminal).toBe(false);
     expect(first.verdict.reason).toBe('reconnecting');
     expect(first.verdict.detail).toContain('Attempt 1 of 10');
 
-    const last = classifyLocalFailure(errored('ENOSPC'), 10, 10);
+    const last = await classifyLocalFailure(errored('ENOSPC'), 10, 10);
     expect(last.terminal).toBe(true);
     expect(last.verdict.reason).toBe('local-store-unwritable');
   });
 
-  test('an errno that is not storage at all keeps its own name at the ceiling', () => {
+  test('an errno that is not storage at all keeps its own name at the ceiling', async () => {
     // Sending an owner to check disk space over an unrelated bug is the same
     // class of mistake as calling a connection limit a bad password.
-    const { verdict, terminal } = classifyLocalFailure(errored('ECONNRESET'), 10, 10);
+    const { verdict, terminal } = await classifyLocalFailure(errored('ECONNRESET'), 10, 10);
     expect(terminal).toBe(true);
     expect(verdict.reason).toBe('watcher-stopped-unexpectedly');
   });
 
-  test('a failure that merely mentions the cursor is treated as store-unwritable', () => {
-    const { verdict } = classifyLocalFailure(new Error('the cursor could not be written'), 10, 10);
+  test('a settled reading that says the cursor could not be written is store-unwritable', async () => {
+    const { verdict } = await classifyLocalFailure(new Error('the cursor could not be written'), 10, 10);
     expect(verdict.reason).toBe('local-store-unwritable');
   });
 
-  test('every permanent errno is also a storage errno: the sets cannot drift apart', () => {
+  test('every permanent errno is also a storage errno: the sets cannot drift apart', async () => {
     // `STORAGE_ERRNOS` is built by spreading `PERMANENT_STORE_ERRNOS`, so a
     // permanent errno that did not name `local-store-unwritable` would mean
     // the two had been split by hand.
     for (const code of ['EISDIR', 'EACCES', 'EPERM', 'EROFS', 'ENOTDIR', 'ENAMETOOLONG']) {
-      expect(classifyLocalFailure(errored(code), 10, 10).verdict.reason)
+      expect((await classifyLocalFailure(errored(code), 10, 10)).verdict.reason)
         .toBe('local-store-unwritable');
     }
   });

@@ -1,4 +1,5 @@
-import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { withDevicePageRefresh } from './page-refresh-queue.js';
+import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import type { ArtifactDescriptor } from '../../artifacts/types.js';
@@ -42,8 +43,9 @@ import {
 import { semanticHash } from '../semantic/utils.js';
 import { createSemanticWriteGuard } from '../semantic/primary-source-plan.js';
 import { prepareSourceLinkedRepairProfileFacts } from '../semantic/self-improvement-promotion.js';
+import { repairProfileNodeInput } from '../semantic/repair-profile-write-data.js';
 import { buildDevicePageProfileFacts, devicePageProfileFactInput } from './page-profile-facts.js';
-import { createHomeGraphPageSourceReader, type HomeGraphPageSourceReader, isUsefulHomeGraphPageFact } from './page-quality.js';
+import { createHomeGraphPageSourceReader, type HomeGraphPageSourceReader, type HomeGraphPageFactReader, isHomeGraphPageFactCandidate, createHomeGraphPageFactReader } from './page-quality.js';
 import type {
   HomeGraphDevicePassportResult,
   HomeGraphGeneratedPagesSummary,
@@ -53,6 +55,7 @@ import type {
 } from './types.js';
 
 export interface HomeGraphPageContext {
+  readonly assertCurrent?: (() => void) | undefined;
   readonly store: KnowledgeStore;
   readonly artifactStore: ArtifactStore;
   readonly spaceId: string;
@@ -60,7 +63,7 @@ export interface HomeGraphPageContext {
   readonly signal?: AbortSignal | undefined;
 }
 
-export const HOME_GRAPH_PAGE_POLICY_VERSION = 'homegraph-pages-v7';
+export const HOME_GRAPH_PAGE_POLICY_VERSION = 'homegraph-pages-v8';
 const DEFAULT_SYNC_DEVICE_PASSPORT_LIMIT = 32;
 const DEFAULT_SYNC_ROOM_PAGE_LIMIT = 12;
 const DEFAULT_SYNC_PAGE_RUN_MS = 15_000;
@@ -227,7 +230,26 @@ export async function refreshHomeGraphDevicePassport(
     readonly signal?: AbortSignal | undefined;
   },
 ): Promise<HomeGraphDevicePassportResult & { readonly artifactCreated: boolean }> {
+  throwIfAborted(context.signal);
+  const store = context.store, artifactStore = context.artifactStore, signal = context.signal, requestInput = context.input, requestData = context.state, requestAuthority = context.assertCurrent;
+  const requestState = () => JSON.stringify({ input: context.input, spaceId: context.spaceId, installationId: context.installationId,
+    sameAuthority: context.assertCurrent === requestAuthority, sameInput: context.input === requestInput, sameData: context.state === requestData, sameStore: context.store === store, sameArtifacts: context.artifactStore === artifactStore, sameSignal: context.signal === signal });
+  return withDevicePageRefresh(store, JSON.stringify([context.spaceId, context.input.deviceId]), signal, requestState,
+    (assertQueueCurrent) => refreshHomeGraphDevicePassportNow({ ...context, assertCurrent: () => { assertQueueCurrent(); requestAuthority?.(); } }));
+}
+
+async function refreshHomeGraphDevicePassportNow(
+  context: HomeGraphPageContext & {
+    readonly input: HomeGraphProjectionInput;
+    readonly state?: HomeGraphStateSnapshot | undefined;
+    readonly sourceLookup?: DevicePassportSourceLookup | undefined;
+    readonly extractionsBySourceId?: ExtractionBySourceId | undefined;
+    readonly signal?: AbortSignal | undefined;
+  },
+): Promise<HomeGraphDevicePassportResult & { readonly artifactCreated: boolean }> {
   const { store, artifactStore, spaceId, installationId, input } = context;
+  const assertCallerCurrent = context.assertCurrent;
+  assertCallerCurrent?.();
   throwIfAborted(context.signal);
   if (!input.deviceId) {
     throw new GoodVibesSdkError('refreshDevicePassport requires deviceId.', {
@@ -272,19 +294,47 @@ export async function refreshHomeGraphDevicePassport(
     extractionsBySourceId: context.extractionsBySourceId,
     signal: context.signal,
   });
-  const preparedProfileFacts = await prepareSourceLinkedRepairProfileFacts(
+  let assertFactQualityCurrent = () => {};
+  const initialPreparedProfileFacts = await prepareSourceLinkedRepairProfileFacts(
     pageProfileFacts.map((fact) => devicePageProfileFactInput(store, spaceId, installationId, device, fact)),
-    { signal: context.signal },
+    { signal: context.signal, assertCurrent: () => assertFactQualityCurrent() },
   );
   throwIfAborted(context.signal);
-  const semanticFacts = uniqueNodesById([
+  // Judge the final prepared source set and claim, including merged support.
+  // Intermediate writes for the same claim are acknowledged against this plan.
+  const proposedFacts = uniqueNodesById(initialPreparedProfileFacts.plans.map((plan) => {
+    const original = pageProfileFacts.find((fact) => fact.node.id === plan.factId)!.node;
+    return { ...original, ...repairProfileNodeInput(plan), id: plan.factId } as KnowledgeNodeRecord;
+  }));
+  const candidateFacts = uniqueNodesById([
     ...semanticFactsForNode(device.id, sources, state.nodes, state.edges),
-    ...pageProfileFacts.map((fact) => fact.node),
+    ...proposedFacts,
   ]);
+  const factReader = createHomeGraphPageFactReader(store, {
+    spaceId, query: `Verified device passport facts for ${device.title}`,
+    subjects: [device, ...entities], signal: context.signal,
+    proposedFacts: new Set(proposedFacts),
+  });
+  const factPlan = await factReader.prepare(candidateFacts);
+  const assertPageCurrent = () => {
+    assertCallerCurrent?.();
+    factPlan.assertCurrent();
+    sourceReader.assertCurrent((id) => store.getSource(id));
+  };
+  assertFactQualityCurrent = assertPageCurrent;
+  const semanticFacts = candidateFacts.filter((fact) => factPlan.accepts(fact));
+  const acceptedIds = new Set(semanticFacts.map((fact) => fact.id));
+  const acceptedProfiles = pageProfileFacts.filter((fact) => acceptedIds.has(fact.node.id));
+  const preparedProfileFacts = acceptedProfiles.length === pageProfileFacts.length
+    ? initialPreparedProfileFacts
+    : await prepareSourceLinkedRepairProfileFacts(
+      acceptedProfiles.map((fact) => devicePageProfileFactInput(store, spaceId, installationId, device, fact)),
+      { signal: context.signal, assertCurrent: () => assertFactQualityCurrent() },
+    );
   const scopedNodeIds = new Set([device.id, ...entities.map((node) => node.id)]);
   const issues = filterDevicePassportIssues(issuesForScope(state.issues, state.edges, scopedNodeIds, sources), sources);
   const missingFields = await missingDevicePassportFields(device, sources, semanticFacts, { entities, signal: context.signal });
-  const markdown = renderDevicePassportPage({ spaceId, device, entities, sources, issues, missingFields, semanticFacts });
+  const markdown = renderDevicePassportPage({ spaceId, device, entities, sources, issues, missingFields, semanticFacts, factPlan });
   const pageContentHash = semanticHash(markdown);
   const passportId = homeGraphNodeId(spaceId, 'ha_device_passport', input.deviceId);
   const existingPassport = store.getNode(passportId);
@@ -297,75 +347,68 @@ export async function refreshHomeGraphDevicePassport(
     sourceReader.assertCurrent((id) => store.getSource(id));
     writeGuard.assertCurrent();
     preparedProfileFacts.assertCurrent();
-    const priorRecords = captureDevicePassportRefreshRecords(store, passportId, pageProfileFacts.map((fact) => fact.node.id));
-    const writtenNodeIds = new Set<string>();
-    const writtenEdgeKeys: { fromKind: KnowledgeEdgeRecord['fromKind']; fromId: string; toKind: KnowledgeEdgeRecord['toKind']; toId: string; relation: string }[] = [];
-    async function rollbackWrittenRecords(): Promise<void> {
-      await restoreDevicePassportRefreshRecords(store, priorRecords, writtenNodeIds, writtenEdgeKeys);
-    }
-    let passport: KnowledgeNodeRecord | undefined;
-    try {
-      passport = await upsertObservedKnowledgeNode(store, {
-        id: passportId,
-        kind: 'ha_device_passport',
-        slug: `${device.slug}-passport`,
-        title: `${device.title} passport`,
-        summary: `Living device profile for ${device.title}.`,
-        aliases: [`${device.title} passport`],
-        status: 'active',
-        confidence: 80,
-        metadata: buildHomeGraphMetadata(spaceId, installationId, {
-          homeAssistant: { installationId, objectKind: 'device_passport', objectId: input.deviceId },
-          deviceId: input.deviceId,
-          missingFields,
-          pageContentHash,
-          refreshedAt: existingPassportMetadata.pageContentHash === pageContentHash && previousRefreshedAt !== undefined
-            ? previousRefreshedAt
-            : Date.now(),
-        }),
-      }, 'generated-page-index', device, () => store.getNode(device.id));
-      writtenNodeIds.add(passport.id);
-      await store.upsertEdge({
+    factPlan.assertCurrent();
+    // Quality is rechecked at each retained write boundary. A late hold cannot
+    // authorize compensating writes over a concurrent replacement.
+    const passportInput = prepareObservedKnowledgeNodeInput(store, {
+      id: passportId,
+      kind: 'ha_device_passport',
+      slug: `${device.slug}-passport`,
+      title: `${device.title} passport`,
+      summary: `Living device profile for ${device.title}.`,
+      aliases: [`${device.title} passport`],
+      status: 'active',
+      confidence: 80,
+      metadata: buildHomeGraphMetadata(spaceId, installationId, {
+        homeAssistant: { installationId, objectKind: 'device_passport', objectId: input.deviceId },
+        deviceId: input.deviceId,
+        missingFields,
+        pageContentHash,
+        refreshedAt: existingPassportMetadata.pageContentHash === pageContentHash && previousRefreshedAt !== undefined
+          ? previousRefreshedAt
+          : Date.now(),
+      }),
+    }, 'generated-page-index', device, () => store.getNode(device.id));
+    const passportWrites = await store.prepareNodeWrites([passportInput], { signal: context.signal, assertCurrent: assertPageCurrent });
+    const passport = await store.upsertPreparedNode(passportWrites, 0);
+    await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+      nodes: [], issues: [], assertCurrent: assertPageCurrent, edges: [{
         fromKind: 'node',
         fromId: passport.id,
         toKind: 'node',
         toId: device.id,
         relation: 'source_for',
         metadata: buildHomeGraphMetadata(spaceId, installationId),
-      });
-      writtenEdgeKeys.push({ fromKind: 'node', fromId: passport.id, toKind: 'node', toId: device.id, relation: 'source_for' });
-      throwIfAborted(context.signal);
-      preparedProfileFacts.assertCurrent();
-      await preparedProfileFacts.write({
-        nodeWritten: (node) => { writtenNodeIds.add(node.id); },
-        edgeWritten: (edge) => { writtenEdgeKeys.push(edgeKey(edge)); },
-      });
-      throwIfAborted(context.signal);
-      const generated = await materializeGeneratedMarkdown({
-        store,
-        artifactStore,
-        spaceId,
-        installationId,
-        filename: `${safeHomeGraphFilename(device.title)}-passport.md`,
-        markdown,
-        projectionKind: 'device-passport',
-        canonicalValue: `device-passport:${input.deviceId}`,
-        title: `${device.title} passport`,
-        summary: `Living device profile for ${device.title}.`,
-        tags: ['homeassistant', 'home-graph', 'generated-page', 'device-passport'],
-        targetNodeId: passport.id,
-        signal: context.signal,
-        metadata: {
-          ...(input.metadata ?? {}),
-          deviceId: input.deviceId,
-        },
-      });
-      return { passport, generated };
-    } catch (error) {
-      await rollbackWrittenRecords();
-      throwIfAborted(context.signal);
-      throw error;
-    }
+      }],
+    }), { signal: context.signal });
+    throwIfAborted(context.signal);
+    preparedProfileFacts.assertCurrent();
+    await preparedProfileFacts.write({
+      nodeWritten: (node) => { factPlan.acknowledgeWritten(node); },
+      edgeWritten: (edge) => { factPlan.acknowledgeEdgeWritten(edge); },
+    });
+    throwIfAborted(context.signal);
+    const generated = await materializeGeneratedMarkdown({
+      store,
+      artifactStore,
+      spaceId,
+      installationId,
+      filename: `${safeHomeGraphFilename(device.title)}-passport.md`,
+      markdown,
+      projectionKind: 'device-passport',
+      assertCurrent: assertPageCurrent,
+      canonicalValue: `device-passport:${input.deviceId}`,
+      title: `${device.title} passport`,
+      summary: `Living device profile for ${device.title}.`,
+      tags: ['homeassistant', 'home-graph', 'generated-page', 'device-passport'],
+      targetNodeId: passport.id,
+      signal: context.signal,
+      metadata: {
+        ...(input.metadata ?? {}),
+        deviceId: input.deviceId,
+      },
+    });
+    return { passport, generated };
   });
   return {
     ok: true,
@@ -391,110 +434,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   });
 }
 
-interface DevicePassportRefreshPriorRecords {
-  readonly nodes: ReadonlyMap<string, KnowledgeNodeRecord | null>;
-  readonly edges: ReadonlyMap<string, KnowledgeEdgeRecord | null>;
-}
-
-interface DevicePassportRefreshEdgeKey {
-  readonly fromKind: KnowledgeEdgeRecord['fromKind'];
-  readonly fromId: string;
-  readonly toKind: KnowledgeEdgeRecord['toKind'];
-  readonly toId: string;
-  readonly relation: string;
-}
-
-function captureDevicePassportRefreshRecords(
-  store: KnowledgeStore,
-  passportId: string,
-  factIds: readonly string[],
-): DevicePassportRefreshPriorRecords {
-  const nodeIds = uniqueStrings([passportId, ...factIds]);
-  const edgeKeys: DevicePassportRefreshEdgeKey[] = [];
-  const passport = store.getNode(passportId);
-  if (passport) {
-    for (const edge of store.edgesFor('node', passport.id)) {
-      if (edge.fromKind === 'node' && edge.fromId === passport.id && edge.relation === 'source_for') {
-        edgeKeys.push(edgeKey(edge));
-      }
-    }
-  }
-  for (const factId of factIds) {
-    const fact = store.getNode(factId);
-    if (!fact) continue;
-    for (const edge of store.edgesFor('node', fact.id)) {
-      if ((edge.toKind === 'node' && edge.toId === fact.id && edge.relation === 'supports_fact')
-        || (edge.fromKind === 'node' && edge.fromId === fact.id && edge.relation === 'describes')) {
-        edgeKeys.push(edgeKey(edge));
-      }
-    }
-  }
-  return {
-    nodes: new Map(nodeIds.map((id) => [id, store.getNode(id)])),
-    edges: new Map(edgeKeys.map((key) => [edgeKeyId(key), findDevicePassportRefreshEdge(store, key)])),
-  };
-}
-
-async function restoreDevicePassportRefreshRecords(
-  store: KnowledgeStore,
-  prior: DevicePassportRefreshPriorRecords,
-  writtenNodeIds: ReadonlySet<string>,
-  writtenEdgeKeys: readonly DevicePassportRefreshEdgeKey[],
-): Promise<void> {
-  const edgeIds = uniqueStrings(writtenEdgeKeys.map(edgeKeyId));
-  for (const id of edgeIds) {
-    const priorEdge = prior.edges.get(id);
-    const current = findDevicePassportRefreshEdgeByKeyId(store, id);
-    if (priorEdge) {
-      await store.replaceEdgeRecord(priorEdge);
-    } else if (current) {
-      await store.deleteEdge(current.id);
-    }
-  }
-  // Captured rows that this pass never touched may contain a concurrent edit.
-  const nodeIds = [...writtenNodeIds];
-  for (const id of nodeIds) {
-    const priorNode = prior.nodes.get(id);
-    const current = store.getNode(id);
-    if (priorNode) {
-      await store.replaceNodeRecord(priorNode);
-    } else if (current) {
-      await store.deleteNode(id);
-    }
-  }
-}
-
-function edgeKey(edge: KnowledgeEdgeRecord): DevicePassportRefreshEdgeKey {
-  return {
-    fromKind: edge.fromKind,
-    fromId: edge.fromId,
-    toKind: edge.toKind,
-    toId: edge.toId,
-    relation: edge.relation,
-  };
-}
-
-function edgeKeyId(key: DevicePassportRefreshEdgeKey): string {
-  return `${key.fromKind}:${key.fromId}->${key.toKind}:${key.toId}:${key.relation}`;
-}
-
-function findDevicePassportRefreshEdge(
-  store: KnowledgeStore,
-  key: DevicePassportRefreshEdgeKey,
-): KnowledgeEdgeRecord | null {
-  return store.edgesFor(key.fromKind, key.fromId).find((edge) => edgeKeyId(edgeKey(edge)) === edgeKeyId(key)) ?? null;
-}
-
-function findDevicePassportRefreshEdgeByKeyId(
-  store: KnowledgeStore,
-  keyId: string,
-): KnowledgeEdgeRecord | null {
-  for (const edge of store.listEdges()) {
-    if (edgeKeyId(edgeKey(edge)) === keyId) return edge;
-  }
-  return null;
-}
-
 export async function generateHomeGraphRoomPage(
   context: HomeGraphPageContext & { readonly input: HomeGraphProjectionInput; readonly signal?: AbortSignal | undefined },
 ): Promise<HomeGraphProjectionResult & { readonly artifactCreated: boolean }> {
@@ -505,7 +444,18 @@ export async function generateHomeGraphRoomPage(
   const areaId = input.areaId ?? input.roomId;
   const title = input.title ?? resolveRoomTitle(state.nodes, areaId) ?? 'Home Graph Room';
   const sourceReader = createHomeGraphPageSourceReader(context.signal);
-  const markdown = await renderRoomPage({ ...state, title }, areaId, sourceReader);
+  let factReader: HomeGraphPageFactReader | undefined;
+  const markdown = await renderRoomPage({ ...state, title }, areaId, sourceReader, (subjects) => {
+    factReader = createHomeGraphPageFactReader(store, {
+      spaceId, query: `Useful room reference facts for ${title}`, subjects, signal: context.signal,
+    });
+    return factReader;
+  });
+  const assertFactsCurrent = () => {
+    if (!factReader) throw new Error('Room fact quality reader was not prepared.');
+    factReader.assertCurrent();
+  };
+  assertFactsCurrent();
   sourceReader.assertCurrent((id) => store.getSource(id));
   writeGuard.assertCurrent();
   const filename = `${safeHomeGraphFilename(title)}.md`;
@@ -520,6 +470,7 @@ export async function generateHomeGraphRoomPage(
     filename,
     markdown,
     projectionKind: 'room-page',
+    assertCurrent: () => { assertFactsCurrent(); sourceReader.assertCurrent((id) => store.getSource(id)); },
     signal: context.signal,
     canonicalValue: `room-page:${areaId ?? 'home'}`,
     title,
@@ -576,6 +527,7 @@ async function materializeGeneratedMarkdown(input: HomeGraphPageContext & {
   readonly filename: string;
   readonly markdown: string;
   readonly projectionKind: 'device-passport' | 'room-page' | 'packet';
+  readonly assertCurrent?: (() => void) | undefined;
   readonly canonicalValue: string;
   readonly title: string;
   readonly summary: string;
@@ -629,6 +581,7 @@ async function materializeGeneratedMarkdown(input: HomeGraphPageContext & {
     sourceMetadata: homeGraphMetadata,
     artifactMetadata: homeGraphMetadata,
     signal: input.signal,
+    assertCurrent: input.assertCurrent,
     edgeMetadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
       homeGraphGeneratedPage: true,
       projectionKind: input.projectionKind,
@@ -724,7 +677,7 @@ function semanticFactsForNode(
       || factSourceIds(fact).some((sourceId) => sourceIds.has(sourceId));
     if (hasSource) supportedFactIds.add(fact.id);
   }
-  return nodes.filter((node) => supportedFactIds.has(node.id) && isUsefulHomeGraphPageFact(node));
+  return nodes.filter((node) => supportedFactIds.has(node.id) && isHomeGraphPageFactCandidate(node));
 }
 
 function sourceSupportedFactIds(

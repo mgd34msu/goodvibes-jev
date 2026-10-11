@@ -431,13 +431,9 @@ export function describeCommandPolicy(commandName: string): CommandExecutionPoli
 export function settingsPolicySummary(): Record<string, unknown> {
   return {
     discovery: 'Use settings action:"list" for the setting catalog and action:"get" with key, target, or query for one setting. Hidden/scriptable settings require includeHidden:true unless the exact key is supplied.',
-    mutation: 'Use settings action:"set" or action:"reset" with key, target, or query plus confirm:true and explicitUserRequest; ambiguous setting lookups are refused.',
-    secretHandling: 'Raw secret values are persisted through the secret manager; config receives only a secret reference and tool output is redacted.',
-    writablePolicy: 'Each setting descriptor includes writable and visibleInWorkspace. No setting is read-only to the model any more; danger.httpListener is visible and settable, and is one of the keys that needs the user to ask for it first.',
-    // Still declared, and still true: this key needs the user to ask for it
-    // first. What changed is the mechanism, it is protected by the narrow
-    // confirmation gate in agent-settings-write-policy.ts, which names the key
-    // and states the hazard, rather than by the deleted blanket read-only lock.
+    mutation: 'Use settings action:"set" or action:"reset" with key, target, or query; the complete resolved effect plan requires current recorded admission. Ambiguous lookups are refused.',
+    secretHandling: 'Raw secret values require the secure provisioning path and are refused before judgment, including through aliases. Stored references are opaque; reset/clear captures exact scoped secret deletion.',
+    writablePolicy: 'Each setting descriptor includes writable and visibleInWorkspace. Managed or read-only owners refuse mutations. The current source, privacy floor and recorded permission decision govern every proposed effect.',
     protectedRawDangerKeys: ['danger.httpListener'],
   };
 }

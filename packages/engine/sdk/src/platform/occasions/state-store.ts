@@ -41,6 +41,8 @@
  * built to
  * stop.
  */
+import { JudgmentInputError, type JudgmentInputProblem } from '../gate/judgment-input.js';
+import { StoredRecordAdmissionOwner, storedEvidenceProblem, storedGiftAdmission, type StoredGiftAdmission } from './stored-reading-evidence.js';
 import { PersistentStore } from '../state/persistent-store.js';
 import { StoreWriteQueue } from '../state/store-write-queue.js';
 import { logger } from '../utils/logger.js';
@@ -328,6 +330,68 @@ export interface OccasionSweepInput {
 export class OccasionStateStore {
   private readonly store: PersistentStore<OccasionStateSnapshot>;
   private snapshot: OccasionStateSnapshot | null = null;
+  private loading: Promise<OccasionStateSnapshot> | undefined;
+  private publication = 0;
+  private readonly admissionOwner = new StoredRecordAdmissionOwner();
+
+  private ownReadingRecords(snapshot: OccasionStateSnapshot): void {
+    snapshot.gifts = this.admissionOwner.own('gifts', snapshot.gifts);
+    snapshot.openItems = this.admissionOwner.own('openItems', snapshot.openItems);
+    snapshot.acknowledgements = this.admissionOwner.own('acknowledgements', snapshot.acknowledgements);
+  }
+
+  private adoptPublishedAdmission(snapshot: OccasionStateSnapshot): void {
+    this.giftAdmission = this.admissionOwner.giftAdmission(snapshot.gifts);
+    this.pendingAdmission = this.admissionOwner.collectionProblem('openItems', snapshot.openItems)
+      ?? this.admissionOwner.collectionProblem('acknowledgements', snapshot.acknowledgements);
+  }
+
+  private giftAdmission: StoredGiftAdmission = { collectionProblem: undefined, problems: new Map(), sanitizedOccasions: new Set() };
+  private pendingAdmission: JudgmentInputProblem | undefined;
+
+  private refreshReadingAdmission(raw: unknown, normalized: OccasionStateSnapshot): void {
+    const source = isRecord(raw) ? raw : {};
+    this.giftAdmission = storedGiftAdmission(source['gifts'] ?? [], normalized.gifts);
+    this.pendingAdmission = storedEvidenceProblem('openItems', source['openItems'] ?? [])
+      ?? storedEvidenceProblem('acknowledgements', source['acknowledgements'] ?? []);
+  }
+
+  /** Value-free original-file admission survives ordinary legacy field sanitation. */
+  assertPendingReadingAdmission(): void {
+    if (this.pendingAdmission) throw new JudgmentInputError(this.pendingAdmission);
+  }
+  assertGiftReadingAdmission(occasionId: string): void {
+    const problem = this.giftAdmission.collectionProblem ?? this.giftAdmission.problems.get(occasionId);
+    if (problem) throw new JudgmentInputError(problem);
+  }
+
+  private readonly giftReads = new Map<string, { epoch: number; content: string }>();
+
+  /** Per-occasion history ownership; unrelated answers do not retire gift preparation. */
+  captureGiftRead(occasionId: string): { readonly assertCurrent: () => void } {
+    if (this.snapshot === null || this.loading) throw new Error('Occasion state is not ready.');
+    const content = JSON.stringify(this.snapshot.gifts.filter(entry => entry.occasionId === occasionId));
+    const receipt = this.giftReads.get(occasionId) ?? { epoch: 0, content };
+    this.giftReads.set(occasionId, receipt);
+    const epoch = receipt.epoch;
+    return { assertCurrent: () => {
+      if (receipt.epoch !== epoch || JSON.stringify(this.snapshot!.gifts.filter(entry => entry.occasionId === occasionId)) !== content) throw new Error('Occasion gift history changed.');
+    } };
+  }
+
+  private publishedGiftHistory(snapshot: OccasionStateSnapshot, replacedOccasion?: string): void {
+    for (const [occasionId, receipt] of this.giftReads) {
+      const content = JSON.stringify(snapshot.gifts.filter(entry => entry.occasionId === occasionId));
+      if (content !== receipt.content || occasionId === replacedOccasion || this.giftAdmission.sanitizedOccasions.has(occasionId)) receipt.epoch += 1;
+      receipt.content = content;
+    }
+  }
+
+  /** Restricts a derived decision to the state it actually observed. */
+  captureRead(): { readonly assertCurrent: () => void } {
+    const publication = this.publication;
+    return { assertCurrent: () => { if (this.publication !== publication) throw new Error('Occasion state changed.'); } };
+  }
   private corruption: string | null = null;
   /** How many open nudges had their raise ledger rebuilt at load. Disclosed. */
   private reconciledOpenItems = 0;
@@ -351,7 +415,13 @@ export class OccasionStateStore {
    * INCLUDING the disclosure call that exists to explain exactly that state.
    */
   private async state(): Promise<OccasionStateSnapshot> {
+    if (this.loading) return this.loading;
     if (this.snapshot !== null) return this.snapshot;
+    this.loading = this.loadState();
+    try { return await this.loading; } finally { this.loading = undefined; }
+  }
+
+  private async loadState(): Promise<OccasionStateSnapshot> {
     const read = await this.store.loadOrDiscard();
     if (read.corruption !== null) {
       this.corruption = read.corruption.detail;
@@ -363,6 +433,8 @@ export class OccasionStateStore {
       return this.snapshot;
     }
     const { snapshot, dropped, reconciled } = validateOccasionState(read.data);
+    this.refreshReadingAdmission(read.data, snapshot);
+    this.ownReadingRecords(snapshot);
     if (dropped > 0) {
       logger.warn('occasions: dropped malformed records while loading state', {
         path: this.filePath,
@@ -382,6 +454,7 @@ export class OccasionStateStore {
       // and a correction that only exists in memory is one crash away from
       // undoing itself.
       await this.persist(snapshot);
+      this.adoptPublishedAdmission(snapshot);
     }
     return this.snapshot;
   }
@@ -396,6 +469,53 @@ export class OccasionStateStore {
       mirrors: [...snapshot.mirrors],
       lastSweep: snapshot.lastSweep,
     }));
+  }
+
+  /** Serialize calculation as well as publication. No tentative state is visible on refusal. */
+  private async change<T>(mutate: (snapshot: OccasionStateSnapshot) => T, assertCurrent: () => void = () => {}, options: { readonly publish?: (result: T) => boolean; readonly afterPublish?: () => void; readonly replacedGiftOccasion?: string } = {}): Promise<T> {
+    assertCurrent();
+    await this.state();
+    assertCurrent();
+    let value!: T;
+    await this.writes.run(async () => {
+      assertCurrent();
+      const current = this.snapshot!;
+      // Reading records are owned immutable data. Keep their proof incarnations;
+      // the other records retain the previous deep-copy transaction semantics.
+      const snapshot: OccasionStateSnapshot = {
+        ...current,
+        acknowledgements: [...current.acknowledgements],
+        gifts: [...current.gifts],
+        openItems: [...current.openItems],
+        interviews: structuredClone(current.interviews),
+        mirrors: structuredClone(current.mirrors),
+        lastSweep: structuredClone(current.lastSweep),
+      };
+      const result = mutate(snapshot);
+      assertCurrent();
+      if (options.publish?.(result) === false) { value = result; return; }
+      this.ownReadingRecords(snapshot);
+      Object.freeze(snapshot);
+      await this.store.persist(snapshot, { beforePublish: assertCurrent, afterPublish: () => {
+        this.publishedGiftHistory(snapshot, options.replacedGiftOccasion);
+        this.adoptPublishedAdmission(snapshot);
+        this.snapshot = snapshot; this.publication += 1; options.afterPublish?.();
+      } });
+      assertCurrent();
+      value = result;
+    });
+    return value;
+  }
+
+  /** A yes and its prepared interview become visible together, or neither does. */
+  async recordInterviewAnswer(entry: OccasionAcknowledgement, interview: Interview, resolvedId: string, assertCurrent: () => void, afterPublish: () => void = () => {}): Promise<void> {
+    assertCurrent();
+    const owned = this.admissionOwner.own('acknowledgements', [entry])[0]!;
+    await this.change(snapshot => {
+      snapshot.acknowledgements = [...snapshot.acknowledgements.filter(existing => !(existing.occasionId === owned.occasionId && existing.occurrence === owned.occurrence)), owned].slice(-MAX_ACKNOWLEDGEMENTS);
+      snapshot.interviews = [...snapshot.interviews.filter(existing => existing.id !== interview.id), interview].slice(-MAX_INTERVIEWS);
+      snapshot.openItems = snapshot.openItems.filter(item => item.id !== resolvedId);
+    }, assertCurrent, { afterPublish });
   }
 
   // -------------------------------------------------------------------------
@@ -421,16 +541,18 @@ export class OccasionStateStore {
    * decision that changed, not two decisions, and keeping both would leave the
    * sweep reading whichever it found first.
    */
-  async recordAnswer(entry: OccasionAcknowledgement): Promise<OccasionAcknowledgement> {
-    const snapshot = await this.state();
-    const kept = snapshot.acknowledgements.filter(
-      (existing) => !(existing.occasionId === entry.occasionId && existing.occurrence === entry.occurrence),
-    );
-    kept.push(entry);
-    if (kept.length > MAX_ACKNOWLEDGEMENTS) kept.splice(0, kept.length - MAX_ACKNOWLEDGEMENTS);
-    snapshot.acknowledgements = kept;
-    await this.persist(snapshot);
-    return entry;
+  async recordAnswer(entry: OccasionAcknowledgement, assertCurrent: () => void = () => {}): Promise<OccasionAcknowledgement> {
+    assertCurrent();
+    const owned = this.admissionOwner.own('acknowledgements', [entry])[0]!;
+    return this.change(snapshot => {
+      const kept = snapshot.acknowledgements.filter(
+        (existing) => !(existing.occasionId === owned.occasionId && existing.occurrence === owned.occurrence),
+      );
+      kept.push(owned);
+      if (kept.length > MAX_ACKNOWLEDGEMENTS) kept.splice(0, kept.length - MAX_ACKNOWLEDGEMENTS);
+      snapshot.acknowledgements = kept;
+      return entry;
+    }, assertCurrent);
   }
 
   // -------------------------------------------------------------------------
@@ -445,16 +567,18 @@ export class OccasionStateStore {
       .sort((left, right) => right.recordedAt - left.recordedAt);
   }
 
-  async recordGift(entry: GiftRecord): Promise<GiftRecord> {
-    const snapshot = await this.state();
-    const kept = snapshot.gifts.filter(
-      (existing) => !(existing.occasionId === entry.occasionId && existing.occurrence === entry.occurrence),
-    );
-    kept.push(entry);
-    if (kept.length > MAX_GIFT_RECORDS) kept.splice(0, kept.length - MAX_GIFT_RECORDS);
-    snapshot.gifts = kept;
-    await this.persist(snapshot);
-    return entry;
+  async recordGift(entry: GiftRecord, assertCurrent: () => void = () => {}): Promise<GiftRecord> {
+    assertCurrent();
+    const owned = this.admissionOwner.own('gifts', [entry])[0]!;
+    return this.change(snapshot => {
+      const kept = snapshot.gifts.filter(
+        (existing) => !(existing.occasionId === owned.occasionId && existing.occurrence === owned.occurrence),
+      );
+      kept.push(owned);
+      if (kept.length > MAX_GIFT_RECORDS) kept.splice(0, kept.length - MAX_GIFT_RECORDS);
+      snapshot.gifts = kept;
+      return entry;
+    }, assertCurrent, { replacedGiftOccasion: owned.occasionId });
   }
 
   // -------------------------------------------------------------------------
@@ -470,14 +594,28 @@ export class OccasionStateStore {
   }
 
   /** Create or replace one open item, addressed by its id. */
-  async putOpenItem(item: OpenItem): Promise<OpenItem> {
-    const snapshot = await this.state();
-    const kept = snapshot.openItems.filter((existing) => existing.id !== item.id);
-    kept.push(item);
-    if (kept.length > MAX_OPEN_ITEMS) kept.splice(0, kept.length - MAX_OPEN_ITEMS);
-    snapshot.openItems = kept;
-    await this.persist(snapshot);
-    return item;
+  async putOpenItem(item: OpenItem, assertCurrent: () => void = () => {}): Promise<OpenItem> {
+    assertCurrent();
+    const owned = this.admissionOwner.own('openItems', [item])[0]!;
+    return this.change(snapshot => {
+      const kept = snapshot.openItems.filter((existing) => existing.id !== owned.id);
+      kept.push(owned);
+      if (kept.length > MAX_OPEN_ITEMS) kept.splice(0, kept.length - MAX_OPEN_ITEMS);
+      snapshot.openItems = kept;
+      return item;
+    }, assertCurrent);
+  }
+
+  /** Publish one derived sweep batch, renewing only its own committed state receipt. */
+  async putOpenItems(items: readonly OpenItem[], assertCurrent: () => void, afterPublish: () => void): Promise<void> {
+    assertCurrent();
+    items = this.admissionOwner.own('openItems', items);
+    if (items.length === 0) { assertCurrent(); return; }
+    await this.change(snapshot => {
+      for (const item of items) {
+        snapshot.openItems = [...snapshot.openItems.filter(existing => existing.id !== item.id), item].slice(-MAX_OPEN_ITEMS);
+      }
+    }, assertCurrent, { afterPublish });
   }
 
   /**
@@ -488,13 +626,13 @@ export class OccasionStateStore {
    * thing that answers "what happened", the acknowledgement, or the gift
    * record, not a husk of the question.
    */
-  async resolveOpenItem(id: string): Promise<boolean> {
-    const snapshot = await this.state();
-    const before = snapshot.openItems.length;
-    snapshot.openItems = snapshot.openItems.filter((entry) => entry.id !== id);
-    if (snapshot.openItems.length === before) return false;
-    await this.persist(snapshot);
-    return true;
+  async resolveOpenItem(id: string, assertCurrent: () => void = () => {}): Promise<boolean> {
+    return this.change(snapshot => {
+      const before = snapshot.openItems.length;
+      snapshot.openItems = snapshot.openItems.filter((entry) => entry.id !== id);
+      if (snapshot.openItems.length === before) return false;
+      return true;
+    }, assertCurrent, { publish: value => value });
   }
 
   // -------------------------------------------------------------------------
@@ -514,14 +652,14 @@ export class OccasionStateStore {
     );
   }
 
-  async putInterview(interview: Interview): Promise<Interview> {
-    const snapshot = await this.state();
-    const kept = snapshot.interviews.filter((existing) => existing.id !== interview.id);
-    kept.push(interview);
-    if (kept.length > MAX_INTERVIEWS) kept.splice(0, kept.length - MAX_INTERVIEWS);
-    snapshot.interviews = kept;
-    await this.persist(snapshot);
-    return interview;
+  async putInterview(interview: Interview, assertCurrent: () => void = () => {}): Promise<Interview> {
+    return this.change(snapshot => {
+      const kept = snapshot.interviews.filter((existing) => existing.id !== interview.id);
+      kept.push(interview);
+      if (kept.length > MAX_INTERVIEWS) kept.splice(0, kept.length - MAX_INTERVIEWS);
+      snapshot.interviews = kept;
+      return interview;
+    }, assertCurrent);
   }
 
   // -------------------------------------------------------------------------
@@ -542,16 +680,16 @@ export class OccasionStateStore {
    * what makes the mirror idempotent: writing the same occasion again next year
    * adds one record, and writing it twice this year replaces one.
    */
-  async recordMirror(entry: OccasionMirrorRecord): Promise<OccasionMirrorRecord> {
-    const snapshot = await this.state();
-    const kept = snapshot.mirrors.filter(
-      (existing) => !(existing.occasionId === entry.occasionId && existing.occurrence === entry.occurrence),
-    );
-    kept.push(entry);
-    if (kept.length > MAX_MIRRORS) kept.splice(0, kept.length - MAX_MIRRORS);
-    snapshot.mirrors = kept;
-    await this.persist(snapshot);
-    return entry;
+  async recordMirror(entry: OccasionMirrorRecord, assertCurrent: () => void = () => {}): Promise<OccasionMirrorRecord> {
+    return this.change(snapshot => {
+      const kept = snapshot.mirrors.filter(
+        (existing) => !(existing.occasionId === entry.occasionId && existing.occurrence === entry.occurrence),
+      );
+      kept.push(entry);
+      if (kept.length > MAX_MIRRORS) kept.splice(0, kept.length - MAX_MIRRORS);
+      snapshot.mirrors = kept;
+      return entry;
+    }, assertCurrent);
   }
 
   // -------------------------------------------------------------------------
@@ -566,19 +704,19 @@ export class OccasionStateStore {
    * leave last year's "no" and a gift history for a person who is no longer in
    * their life sitting in a file they cannot see.
    */
-  async dropOccasion(occasionId: string): Promise<number> {
-    const snapshot = await this.state();
-    const before = snapshot.acknowledgements.length + snapshot.gifts.length
-      + snapshot.openItems.length + snapshot.interviews.length + snapshot.mirrors.length;
-    snapshot.acknowledgements = snapshot.acknowledgements.filter((e) => e.occasionId !== occasionId);
-    snapshot.gifts = snapshot.gifts.filter((e) => e.occasionId !== occasionId);
-    snapshot.openItems = snapshot.openItems.filter((e) => e.occasionId !== occasionId);
-    snapshot.interviews = snapshot.interviews.filter((e) => e.occasionId !== occasionId);
-    snapshot.mirrors = snapshot.mirrors.filter((e) => e.occasionId !== occasionId);
-    const after = snapshot.acknowledgements.length + snapshot.gifts.length
-      + snapshot.openItems.length + snapshot.interviews.length + snapshot.mirrors.length;
-    if (after !== before) await this.persist(snapshot);
-    return before - after;
+  async dropOccasion(occasionId: string, assertCurrent: () => void = () => {}): Promise<number> {
+    return this.change(snapshot => {
+      const before = snapshot.acknowledgements.length + snapshot.gifts.length
+        + snapshot.openItems.length + snapshot.interviews.length + snapshot.mirrors.length;
+      snapshot.acknowledgements = snapshot.acknowledgements.filter((e) => e.occasionId !== occasionId);
+      snapshot.gifts = snapshot.gifts.filter((e) => e.occasionId !== occasionId);
+      snapshot.openItems = snapshot.openItems.filter((e) => e.occasionId !== occasionId);
+      snapshot.interviews = snapshot.interviews.filter((e) => e.occasionId !== occasionId);
+      snapshot.mirrors = snapshot.mirrors.filter((e) => e.occasionId !== occasionId);
+      const after = snapshot.acknowledgements.length + snapshot.gifts.length
+        + snapshot.openItems.length + snapshot.interviews.length + snapshot.mirrors.length;
+      return before - after;
+    }, assertCurrent, { publish: value => value > 0 });
   }
 
   /**
@@ -598,70 +736,70 @@ export class OccasionStateStore {
    *  - Gift history ages out at the configured retention rather than never,
    *    because a persisted store with no reaper is unbounded by design.
    */
-  async sweep(input: OccasionSweepInput): Promise<OccasionSweepReport> {
-    const snapshot = await this.state();
-    const declared = input.declaredOccasionIds;
-    const giftCutoff = addDays(input.today, -Math.max(1, Math.round(input.giftHistoryYears * 365)));
+  async sweep(input: OccasionSweepInput, assertCurrent: () => void = () => {}): Promise<OccasionSweepReport> {
+    return this.change(snapshot => {
+      const declared = input.declaredOccasionIds;
+      const giftCutoff = addDays(input.today, -Math.max(1, Math.round(input.giftHistoryYears * 365)));
 
-    let expiredAcknowledgements = 0;
-    let orphanedRecords = 0;
-    let expiredOpenItems = 0;
-    let agedGiftRecords = 0;
-    let droppedInterviews = 0;
-    let staleMirrors = 0;
+      let expiredAcknowledgements = 0;
+      let orphanedRecords = 0;
+      let expiredOpenItems = 0;
+      let agedGiftRecords = 0;
+      let droppedInterviews = 0;
+      let staleMirrors = 0;
 
-    snapshot.acknowledgements = snapshot.acknowledgements.filter((entry) => {
-      if (!declared.has(entry.occasionId)) { orphanedRecords += 1; return false; }
-      if (entry.expiresAfter !== undefined && entry.expiresAfter < input.today) {
-        expiredAcknowledgements += 1;
-        return false;
-      }
-      return true;
-    });
+      snapshot.acknowledgements = snapshot.acknowledgements.filter((entry) => {
+        if (!declared.has(entry.occasionId)) { orphanedRecords += 1; return false; }
+        if (entry.expiresAfter !== undefined && entry.expiresAfter < input.today) {
+          expiredAcknowledgements += 1;
+          return false;
+        }
+        return true;
+      });
 
-    snapshot.gifts = snapshot.gifts.filter((entry) => {
-      if (!declared.has(entry.occasionId)) { orphanedRecords += 1; return false; }
-      if (entry.occurrence < giftCutoff) { agedGiftRecords += 1; return false; }
-      return true;
-    });
+      snapshot.gifts = snapshot.gifts.filter((entry) => {
+        if (!declared.has(entry.occasionId)) { orphanedRecords += 1; return false; }
+        if (entry.occurrence < giftCutoff) { agedGiftRecords += 1; return false; }
+        return true;
+      });
 
-    snapshot.openItems = snapshot.openItems.filter((entry) => {
-      if (!declared.has(entry.occasionId)) { orphanedRecords += 1; return false; }
-      const expiry = entry.expiresAfter ?? (entry.occurrence.length > 0 ? entry.occurrence : undefined);
-      if (expiry !== undefined && expiry < input.today) { expiredOpenItems += 1; return false; }
-      return true;
-    });
+      snapshot.openItems = snapshot.openItems.filter((entry) => {
+        if (!declared.has(entry.occasionId)) { orphanedRecords += 1; return false; }
+        const expiry = entry.expiresAfter ?? (entry.occurrence.length > 0 ? entry.occurrence : undefined);
+        if (expiry !== undefined && expiry < input.today) { expiredOpenItems += 1; return false; }
+        return true;
+      });
 
-    snapshot.interviews = snapshot.interviews.filter((entry) => {
-      if (!declared.has(entry.occasionId)) { droppedInterviews += 1; return false; }
-      if (entry.occurrence < input.today && entry.completedAt === undefined) {
-        droppedInterviews += 1;
-        return false;
-      }
-      return true;
-    });
+      snapshot.interviews = snapshot.interviews.filter((entry) => {
+        if (!declared.has(entry.occasionId)) { droppedInterviews += 1; return false; }
+        if (entry.occurrence < input.today && entry.completedAt === undefined) {
+          droppedInterviews += 1;
+          return false;
+        }
+        return true;
+      });
 
-    snapshot.mirrors = snapshot.mirrors.filter((entry) => {
-      if (!declared.has(entry.occasionId)) { staleMirrors += 1; return false; }
-      // A mirror for an occurrence that has passed has nothing left to keep
-      // idempotent. Dropping it is not a deletion in the calendar: the mirror
-      // is not the record, and the calendar entry is the calendar's to keep.
-      if (entry.occurrence < input.today) { staleMirrors += 1; return false; }
-      return true;
-    });
+      snapshot.mirrors = snapshot.mirrors.filter((entry) => {
+        if (!declared.has(entry.occasionId)) { staleMirrors += 1; return false; }
+        // A mirror for an occurrence that has passed has nothing left to keep
+        // idempotent. Dropping it is not a deletion in the calendar: the mirror
+        // is not the record, and the calendar entry is the calendar's to keep.
+        if (entry.occurrence < input.today) { staleMirrors += 1; return false; }
+        return true;
+      });
 
-    const report: OccasionSweepReport = {
-      sweptAt: input.now,
-      expiredAcknowledgements,
-      orphanedRecords,
-      expiredOpenItems,
-      agedGiftRecords,
-      droppedInterviews,
-      staleMirrors,
-    };
-    snapshot.lastSweep = report;
-    await this.persist(snapshot);
-    return report;
+      const report: OccasionSweepReport = {
+        sweptAt: input.now,
+        expiredAcknowledgements,
+        orphanedRecords,
+        expiredOpenItems,
+        agedGiftRecords,
+        droppedInterviews,
+        staleMirrors,
+      };
+      snapshot.lastSweep = report;
+      return report;
+    }, assertCurrent);
   }
 
   /** What this store is holding, and what the last sweep removed. */

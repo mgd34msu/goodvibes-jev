@@ -23,6 +23,8 @@
  * plain loopback socket.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertImapReadingCurrent } from '../imap-readings.js';
 import type { Socket } from 'node:net';
 import { ImapClient, imapConnection } from '../imap-client.js';
 import {
@@ -60,10 +62,20 @@ export function imapMailboxConnectionPort(
   options: ImapMailboxConnectionOptions,
 ): MailboxConnectionPort {
   return {
-    async open(): Promise<MailboxConnection> {
+    async open(owner: JudgmentReadingOptions = {}): Promise<MailboxConnection> {
+      const closed = new AbortController();
+      const reading = { signal: AbortSignal.any([closed.signal, ...(owner.signal ? [owner.signal] : [])]),
+        assertCurrent: owner.assertCurrent };
+      assertImapReadingCurrent(reading);
       const socket = await options.connect();
+      const abort = () => { socket.destroy(); };
+      reading.signal.addEventListener('abort', abort, { once: true });
+      socket.once('close', () => { reading.signal.removeEventListener('abort', abort); closed.abort(); });
+      try { assertImapReadingCurrent(reading); } catch (error) { socket.destroy(); throw error; }
       const client = new ImapClient({
         socket,
+        ...reading,
+        publication: owner,
         username: options.username,
         password: options.password,
         mailbox: options.mailbox,
@@ -76,6 +88,7 @@ export function imapMailboxConnectionPort(
       let opened;
       try {
         opened = await client.open();
+        assertImapReadingCurrent(reading);
       } catch (error) {
         try {
           socket.destroy();
@@ -99,6 +112,7 @@ export function imapMailboxConnectionPort(
       let bodyCapability: ImapBodyProbe;
       try {
         bodyCapability = await client.probeBodyReadable();
+        assertImapReadingCurrent(reading);
         if (bodyCapability.outcome === 'unreadable') {
           // This account cannot read message content, either the server
           // accepted the fetch and returned nothing for a message it declared
@@ -127,11 +141,14 @@ export function imapMailboxConnectionPort(
         fetchEnvelopeBatch: (uids) => client.fetchEnvelopeBatch(uids),
       };
       return {
+        reading,
         report,
         reader,
         bodyCapability,
         wire: imapConnection(client),
         close: async () => {
+          reading.signal.removeEventListener('abort', abort);
+          closed.abort();
           try {
             await client.logout();
           } catch {

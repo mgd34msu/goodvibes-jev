@@ -32,7 +32,7 @@ export async function withEmailReadConnection<T>(
   lifetime.addEventListener('abort', abort, { once: true });
   try {
     current();
-    client = new ImapClient({ socket, username: config.username, password,
+    client = new ImapClient({ socket, username: config.username, password, signal: lifetime, assertCurrent: current,
       ...(config.mailbox.length > 0 ? { mailbox: config.mailbox } : {}) });
     await client.open();
     current();

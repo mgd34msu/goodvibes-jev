@@ -15,7 +15,16 @@
  *  - a microphone left open after a failed transcription is the bug users notice
  *    and never report precisely.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+let previousPort: ReturnType<typeof installJudgmentPort>;
+let portInstalled = false;
+function recorderAnswer(choice: string): void {
+  previousPort = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, choice, 0.99)).port);
+  portInstalled = true;
+}
+afterEach(() => { if (portInstalled) installJudgmentPort(previousPort); portInstalled = false; });
 import {
   AudioCaptureError,
   AudioFrameSlicer,
@@ -790,6 +799,7 @@ describe('the recorder capture stream', () => {
   });
 
   test('a device error in stderr is classified, not dumped as a generic failure', async () => {
+    recorderAnswer('device-missing');
     const child = fakeProcess();
     let captured: AudioCaptureError | undefined;
     await opener(child)(request, {
@@ -798,10 +808,12 @@ describe('the recorder capture stream', () => {
     });
     child.emitStderr('stream node 56 error: no target node available');
     child.close(1);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
     expect(captured?.reason).toBe('device-missing');
   });
 
   test('a busy device classifies as unavailable, not missing: contention gets prompt retries', async () => {
+    recorderAnswer('device-unavailable');
     const child = fakeProcess();
     let captured: AudioCaptureError | undefined;
     await opener(child)(request, {
@@ -810,15 +822,18 @@ describe('the recorder capture stream', () => {
     });
     child.emitStderr('open failed: device or resource busy');
     child.close(1);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
     expect(captured?.reason).toBe('device-unavailable');
   });
 
   test('a permission refusal is its own reason, because the remedy is different', async () => {
+    recorderAnswer('permission-denied');
     const child = fakeProcess();
     let captured: AudioCaptureError | undefined;
     await opener(child)(request, { onFrame: () => {}, onStopped: (_r, e) => { captured = e; } });
     child.emitStderr('arecord: main:850: audio open error: Permission denied');
     child.close(1);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
     expect(captured?.reason).toBe('permission-denied');
   });
 

@@ -209,6 +209,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
    * run fails the contract with `planning`.
    */
   async function planFix(run: ContractRun, brief: FixBrief, round: number): Promise<void> {
+    if (run.contract.originalSource) { run.control.fail('other', 'Source-bound repair cannot enter unsupported legacy fix planning'); return; }
     const { contract } = run;
     const input = await prepareFixPlannerInput(run);
     assertNativeContractSource(contract);
@@ -414,6 +415,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   }
 
   function toOwner(run: ContractRun, scope: FixScope, targetId: string, reason: 'stalled' | 'fix-rounds-exhausted', unmet: readonly string[], unshown: readonly string[], decisionIds: readonly string[], note?: string): void {
+    if (run.contract.originalSource) { run.control.fail('other', 'Source-bound repair cannot enter an unsupported legacy owner decision'); return; }
     escalations.raise(run, { scope, targetId, reason, unmetCriterionIds: unmet, unshownCriterionIds: unshown, decisionIds, ...(note === undefined ? {} : { note }) });
   }
 

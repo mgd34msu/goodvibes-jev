@@ -1,3 +1,4 @@
+import { captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 /** Captured repair: contained candidates, then the existing parser/Jev acceptance. */
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -28,19 +29,36 @@ export async function healToolFile(
   content: string,
   errors: string[],
   backend?: CapturedAutoHealBackend,
+  assertInvocation?: () => void,
+  invocationSignal?: AbortSignal,
 ): Promise<HealResult & { assertCurrent: () => Promise<void>; assertCurrentSynchronous: () => void }> {
-  if (!hasCapturedToolInvocation()) return { ...await new AutoHealer(config, llm).heal(path, content, errors), assertCurrent: async () => {}, assertCurrentSynchronous: () => {} };
+  assertInvocation?.();
+  if (!hasCapturedToolInvocation()) {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, ...(invocationSignal ? [invocationSignal] : [])]);
+    const assertSource = () => { signal.throwIfAborted(); assertInvocation?.(); };
+    const reading = assertInvocation && config.get('tools.autoHeal') && errors.length ? captureJudgmentPort('tools.auto-heal.acceptance', { signal, assertCurrent: assertSource }) : undefined;
+    const check = () => { assertSource(); reading?.assertCurrent(); };
+    const monitor = setInterval(() => { try { check(); } catch (error) { controller.abort(error); } }, 50);
+    monitor.unref?.();
+    try {
+      const result = await executePolicyCheck(() => new AutoHealer(config, llm, undefined, check, signal, reading).heal(path, content, errors), signal);
+      check();
+      return { ...result, assertCurrent: async () => { check(); }, assertCurrentSynchronous: check };
+    } finally { clearInterval(monitor); }
+  }
   if (!config.get('tools.autoHeal')) return { healed: false, content, assertCurrent: async () => {}, assertCurrentSynchronous: () => {} };
   const binding = backend && backends.get(backend);
   if (!binding) throw new Error('Captured auto-heal requires its construction-owned backend');
   const context = capturedToolPublicationContext();
   const operation = new AbortController();
-  const signal = AbortSignal.any([operation.signal, ...[binding.signal, context.signal].filter((value): value is AbortSignal => value !== undefined)]);
+  const signal = AbortSignal.any([operation.signal, ...[binding.signal, context.signal, invocationSignal].filter((value): value is AbortSignal => value !== undefined)]);
   const target = resolve(path);
   await executePolicyCheck(() => assertCapturedToolReadAccess(target), signal);
   assertCapturedPublicationOwner(context.lease, binding.authority);
   const revision = captureCapturedToolWriteRevision(target, Buffer.from(content, 'utf8'));
   const checkSynchronous = (): void => {
+    assertInvocation?.();
     signal.throwIfAborted();
     assertCapturedToolMutationCurrent(target);
     assertCapturedWriteRevision(revision, binding.authority, context.lease, target);
@@ -51,6 +69,7 @@ export async function healToolFile(
     await executePolicyCheck(() => assertCapturedToolReadAccess(target), signal);
     checkSynchronous();
   };
+  const reading = assertInvocation ? captureJudgmentPort('tools.auto-heal.acceptance', { signal, assertCurrent: checkSynchronous }) : undefined;
   await check();
   const transform = async (stage: 'formatter' | 'linter', file: string, candidate: string, warnings: string[]): Promise<string> => {
     await check();
@@ -66,7 +85,7 @@ export async function healToolFile(
       : `if [ -x ./node_modules/.bin/eslint ]; then ./node_modules/.bin/eslint --no-config-lookup --no-ignore --no-cache --fix --rule 'no-extra-semi:error' -- ${fileArg}; else exit 127; fi`;
     let transformed: string | undefined;
     const result = await runCapturedCommand(binding, command, {}, binding.root, 30_000, signal, 'disabled', {}, {
-      publicationLease: context.lease,
+      publicationLease: context.lease, beforeSpawn: checkSynchronous,
       repairCandidate: { path: target, content: candidate, receive: (value) => { transformed = value; } },
     });
     await check();
@@ -91,7 +110,7 @@ export async function healToolFile(
   monitor.unref?.();
   let result: HealResult;
   try {
-    result = await new AutoHealer(config, llm, { check, checkSynchronous, transform, signal }).heal(target, content, errors);
+    result = await new AutoHealer(config, llm, { check, checkSynchronous, transform, signal }, assertInvocation, signal, reading).heal(target, content, errors);
   } finally {
     clearInterval(monitor);
     await pending;

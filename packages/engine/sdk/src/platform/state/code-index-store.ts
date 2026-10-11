@@ -101,6 +101,8 @@ import {
   type FindDiagnostics,
 } from '../tools/find/shared.js';
 import { openVersionedBunSqliteStore } from './store-versioning.js';
+import { rankLiveCodeInjection } from './code-injection-live.js';
+import type { CodeInjectionAuthorityOptions } from './code-injection-ranking.js';
 import { rankLexicalChunks } from './code-index-lexical.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -394,6 +396,19 @@ export class CodeIndexStore {
       });
     }
     return results;
+  }
+
+  /** Per-invocation live read authority; no session policy or reading is retained on this shared store. */
+  async rankForInjection(query: string, hits: readonly CodeContextResult[], options: CodeInjectionAuthorityOptions = {}) {
+    const epoch = this.epoch, root = this.rootDir, provider = this.embeddingRegistry.getDefaultProviderOrNull();
+    const assertCurrent = (): void => {
+      if (this.authorizedRunUsed || epoch !== this.epoch || root !== this.rootDir || !this.available
+        || provider !== this.embeddingRegistry.getDefaultProviderOrNull() || !this.hasSemanticProvider() || this.getProviderMismatch()) {
+        throw new Error('Code injection source is stale');
+      }
+    };
+    assertCurrent();
+    return rankLiveCodeInjection(root, query, hits, options, assertCurrent);
   }
 
   /** One-shot semantic retrieval over receipt-authorized snapshots in a fresh in-memory store. */

@@ -1,3 +1,4 @@
+import { PostalAddressHeldError } from '../../config/postal-address.js';
 /**
  * checkout-handlers.ts, `payments.checkout.begin` / `payments.checkout.fillCard`.
  *
@@ -274,9 +275,14 @@ async function hasUsableCard(cards: DaemonCardStore, cardId: string): Promise<bo
 }
 
 /** Same reasoning as `hasUsableCard`: an async read, resolved before `GateInput` is built. */
-async function hasShippingAddress(addresses: AddressStore): Promise<boolean> {
-  const stored = await addresses.read('shipping');
-  return checkAddress(stored, 'shipping').ok;
+async function hasShippingAddress(addresses: AddressStore, signal?: AbortSignal): Promise<boolean> {
+  try {
+    const stored = await addresses.read('shipping', { signal });
+    return checkAddress(stored, 'shipping').ok;
+  } catch (error) {
+    if (error instanceof PostalAddressHeldError) throw new HandlerError(error.message, 'FAILED_PRECONDITION', 409);
+    throw error;
+  }
 }
 
 /**
@@ -600,7 +606,7 @@ export function checkoutBeginHandler(deps: PaymentsHandlerDeps, holder: Checkout
 
     const [usableCard, shippingAddress] = await Promise.all([
       hasUsableCard(deps.cards, input.cardId),
-      hasShippingAddress(deps.checkout.addresses),
+      hasShippingAddress(deps.checkout.addresses, context.signal),
     ]);
 
     // Written immediately before the call it applies to, with no `await`
@@ -614,7 +620,7 @@ export function checkoutBeginHandler(deps: PaymentsHandlerDeps, holder: Checkout
     const service = holder.serviceFor(seam);
 
     try {
-      const result = await service.beginCheckout(input);
+      const result = await service.beginCheckout(input, { signal: context.signal });
       return beginResultView(result);
     } catch (error) {
       // `CheckoutRegistryError` (a second `begin` finding one already in

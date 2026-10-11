@@ -1,3 +1,4 @@
+import { createDaemonWorkspaceTrustResolver } from './workspace-trust-composition.js';
 import { nativeHostedConversationOwner } from './native-hosted-conversation-composition.js';
 /**
  * hosted-session-composition.ts, what this daemon states so it may host
@@ -54,7 +55,6 @@ import { nativeHostedConversationOwner } from './native-hosted-conversation-comp
  *    own composition, where a reader can see which spawns hold it. Nothing on
  *    the wire and nothing in a tool argument can reach it.
  */
-import { createShellPathService } from './index.js';
 import { createClientRuntimeServices } from '@goodvibes-jev/engine/sdk/platform/runtime/client-services';
 import { createRuntimeStore } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
 import { createLaunchTolerantProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -64,8 +64,6 @@ import type {
   HostedWorkspaceFloor,
 } from '@goodvibes-jev/engine/sdk/platform/hosted-sessions';
 import { CONVERSATIONAL_DIAGNOSIS_SECTION } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { operations } from '@goodvibes-jev/engine/sdk/platform/runtime';
-const { WorkspaceTrustManager } = operations;
 import { createWorkspaceTrustDecisionAsk, trustGatedApprovalRaiser, type ApprovalRaise } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../config/surface.js';
 import type { RuntimeServices } from './runtime-services-types.js';
@@ -78,8 +76,8 @@ function hostedSystemPrompt(input: { readonly workspaceRoot: string }): string {
       `Your working directory is ${input.workspaceRoot}.`,
       'Someone may be attached and watching this turn, or may have detached and read it later;',
       'write for both. Say what you did and why; never report work you did not do.',
-      'Tool permissions are decided by whoever is attached: an ask you raise may take a while to be',
-      'answered, and an unanswered one is a refusal, not a reason to find another way round.',
+      'Jev decides tool actions from the original goal and criteria within current deterministic constraints.',
+      'Do not wait for an attached human, invent authority, or route around a refusal.',
     ].join(' '),
     // The same contract every other conversational turn is held to, from the
     // SDK rather than restated here, a second copy is a copy that drifts.
@@ -116,18 +114,10 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
    * workspace in one place, so two sessions in one directory cannot end up
    * having been asked the trust question twice.
    */
-  const trustByWorkspace = new Map<string, operations.WorkspaceTrustManager>();
+  const trustFor = createDaemonWorkspaceTrustResolver(services);
 
   const gateFor = (workspaceRoot: string): ApprovalRaise => {
-    const shellPaths = createShellPathService({
-      workingDirectory: workspaceRoot,
-      homeDirectory: services.homeDirectory,
-    });
-    let trust = trustByWorkspace.get(workspaceRoot);
-    if (!trust) {
-      trust = new WorkspaceTrustManager({ shellPaths, surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT });
-      trustByWorkspace.set(workspaceRoot, trust);
-    }
+    const trust = trustFor(workspaceRoot);
     const raise: ApprovalRaise = (input) => services.approvalBroker.requestApproval(input);
     return trustGatedApprovalRaiser(
       trust,
@@ -156,6 +146,7 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
         workingDir: workspaceRoot,
         homeDirectory: services.homeDirectory,
         requestApproval: gateFor(workspaceRoot),
+        workspaceTrust: trustFor(workspaceRoot),
         // A workspace with broken or absent provider credentials must degrade,
         // not take the daemon down on a create call.
         providerRegistryFactory: createLaunchTolerantProviderRegistry,
@@ -173,6 +164,7 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
         if (discovered.length > 0) floor.providerRegistry.registerDiscoveredProviders([...discovered]);
         return {
           services: floor,
+          devicePosture: services.devicePosture,
           // Each workspace floor owns its own contract store and runner.
           contractRunner: floor.contractRunner,
           execPosture: hostedExecPosture,

@@ -81,6 +81,7 @@ export class SQLiteStore {
   private schemaVersion = 1;
   private validateCurrentSchema: ((db: SqlDatabase) => void) | undefined;
   private imageEpoch = 0;
+  private observationEpoch = 0;
   private admission: Promise<void> = Promise.resolve();
   private readonly activeBatches = new Set<Promise<void>>();
   private fenced = false;
@@ -112,11 +113,32 @@ export class SQLiteStore {
   }
 
   run(sql: string, params?: (string | number | Uint8Array | null)[]): void {
+    this.observationEpoch += 1;
     this.getDb().run(sql, params);
   }
 
   exec(sql: string, params?: (string | number)[]): Array<{ columns: string[]; values: unknown[][] }> {
+    this.observationEpoch += 1;
     return this.getDb().exec(sql, params);
+  }
+
+  /**
+   * Restricts a reading to this coordinated image lifetime. Our persistence
+   * protocol atomically replaces the canonical file on every publication;
+   * metadata also fences in-place external writes. No value-only ABA adoption.
+   * This is conservative: unrelated database writes also retire the reading.
+   */
+  captureObservation(): () => void {
+    const epoch = this.observationEpoch, imageEpoch = this.imageEpoch;
+    const identity = this.persistence?.observationIdentity();
+    const local = imageDigest(this.getDb().export());
+    return () => {
+      if (this.observationEpoch !== epoch || this.imageEpoch !== imageEpoch
+        || this.persistence?.observationIdentity() !== identity
+        || imageDigest(this.getDb().export()) !== local) {
+        throw new SQLiteObservationRetiredError();
+      }
+    };
   }
 
   /** Read one current persisted image without replacing pending local state. */
@@ -380,4 +402,8 @@ export class SQLiteStore {
     }
     return this.db;
   }
+}
+
+export class SQLiteObservationRetiredError extends Error {
+  constructor() { super('SQLiteStore: observed publication is no longer current'); }
 }

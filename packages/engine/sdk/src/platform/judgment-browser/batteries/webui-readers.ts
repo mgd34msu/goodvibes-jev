@@ -51,6 +51,29 @@ function decisionIds(ids: readonly (string | undefined)[]): { readonly decisionI
   return present.length === 0 ? {} : { decisionIds: present };
 }
 
+export function snapshotWebuiCode(input: unknown): { readonly code: string; readonly tag: string } {
+  const source = object(snapshotJudgmentInput(input), ['code', 'tag']);
+  return { code: text(source['code'], 8192), tag: text(source['tag'], 128, true) };
+}
+
+/** Screen every complete name before narrowing; credential values are not in this input contract. */
+export function snapshotWebuiCredentialNames(input: unknown): { readonly providerId: string; readonly keys: readonly string[] } {
+  const source = object(snapshotJudgmentInput(input), ['providerId', 'keys']);
+  const names = source['keys'];
+  if (!Array.isArray(names) || names.length < 1 || names.length > 64) return unsupported();
+  const keys = names.map(name => text(name, 256));
+  if (new Set(keys).size !== keys.length) return unsupported();
+  return { providerId: text(source['providerId'], 128), keys };
+}
+
+/** Complete browser metadata only. Protected text holds before source issuance and logging. */
+export function snapshotWebuiInstallPlatform(input: unknown): { readonly userAgent: string; readonly platform: string; readonly maxTouchPoints: number } {
+  const source = object(snapshotJudgmentInput(input), ['userAgent', 'platform', 'maxTouchPoints']);
+  const maxTouchPoints = source['maxTouchPoints'];
+  if (typeof maxTouchPoints !== 'number' || !Number.isInteger(maxTouchPoints) || maxTouchPoints < 0 || maxTouchPoints > 256) return unsupported();
+  return { userAgent: text(source['userAgent'], 2048), platform: text(source['platform'], 128, true), maxTouchPoints };
+}
+
 /** Screen the whole original subject before the cap; never clip, redact, or normalize it. */
 export function snapshotWebuiMailSubject(input: unknown): { readonly subject: string } {
   const source = object(snapshotJudgmentInput(input), ['subject']);
@@ -241,4 +264,14 @@ export async function readCommandRank(port: JudgmentPort | undefined, input: Res
     for (const run of runs) run.recordAction('ready');
     return { status: 'ready', basis: 'judgment', value: { registryVersion: source.registryVersion, accepted, rejected }, ...decisionIds(runs.map((run) => run.decisionId)) };
   } catch (error) { return failure(error, options); }
+}
+
+/** Canonical key names and descriptions only. Values are never part of this source. */
+export function snapshotWebuiConfigKeys(input: unknown): { readonly keys: readonly { readonly key: string; readonly description: string }[] } {
+  const source = object(snapshotJudgmentInput(input), ['keys']);
+  const names = source['keys'];
+  if (!Array.isArray(names) || names.length < 1 || names.length > 64) return unsupported();
+  const keys = names.map(entry => { const item = object(entry, ['key', 'description']); return { key: text(item['key'], 256), description: text(item['description'], 8192, true) }; });
+  if (new Set(keys.map(item => item.key)).size !== keys.length) return unsupported();
+  return { keys };
 }

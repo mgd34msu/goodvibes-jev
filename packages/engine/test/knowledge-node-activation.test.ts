@@ -14,7 +14,7 @@ import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { filterFactsForQuery } from '../sdk/src/platform/knowledge/semantic/answer-fact-selection.js';
-import { isUsefulKnowledgePageFact } from '../sdk/src/platform/knowledge/semantic/fact-quality.js';
+import { isKnowledgePageFactCandidate } from '../sdk/src/platform/knowledge/semantic/fact-quality.js';
 import { readHomeGraphSearchState } from '../sdk/src/platform/knowledge/home-graph/search.js';
 import { registry } from '../sdk/src/platform/knowledge/activation/judgment-registry.js';
 import { nodeServingWithoutReview } from '../sdk/src/platform/knowledge/activation/battery.js';
@@ -285,7 +285,7 @@ describe('synthesized knowledge serving authority', () => {
   test('drafts remain reviewable but cannot enter answer ranking, Home Graph search or passport facts', async () => {
     const { store } = await fixture(); const draft = await store.upsertNode(input());
     const fake = reading(); expect(await filterFactsForQuery('HDMI inputs', [draft])).toEqual([]); expect(fake.requests).toHaveLength(0);
-    expect(isUsefulKnowledgePageFact(draft)).toBe(false);
+    expect(isKnowledgePageFactCandidate(draft)).toBe(false);
     expect(readHomeGraphSearchState(store, 'global').nodes).not.toContainEqual(draft);
     expect(store.getNode(draft.id)).toEqual(draft);
   });

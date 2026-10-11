@@ -10,7 +10,7 @@ separately from the implementation contract below.
 The [autonomous decision contract](autonomous-jev-decisions.md) assigns semantic
 decisions to Jev while retaining authentication, capability, privacy, scope,
 revocation, schema and one-use execution boundaries. The
-[Agent inventory](../inventory/agent.md) classifies the old read filename,
+[Agent inventory](https://linear.app/the-artificery/issue/TA-63/port-the-redesigned-agent-and-preserve-cancellation-authority) classifies the old read filename,
 extension and session-written-path waiver rules as semantic guesses. Its later,
 detailed platform-boundary entries likewise assign platform-path and original
 request interpretation to Jev. The declared limits and the obligation not to
@@ -212,7 +212,7 @@ terminal API rollups are unchanged.
 This maps only the inventory's `agent-read-policy.ts` HOIST obligation. The
 platform guard's read branch is the required adjacent adaptation; its write/edit
 branches and the full tool-policy guard/types remain outstanding. Historical
-`source-reconciliation.json` recovery hashes and materialization records are not
+[`source-reconciliation.json` preserved in Linear](https://linear.app/the-artificery/issue/TA-63/port-the-redesigned-agent-and-preserve-cancellation-authority) recovery hashes and materialization records are not
 rewritten as current implementation evidence. The current baseline partition
 removes only this adopted source from unresolved accounting and counts the new
 bounded mapping once; other pending labels and partial feature claims remain.

@@ -1,3 +1,7 @@
+import { assertSynchronousCurrent, daemonReadingPort } from './reading-lifetime.js';
+import type { CallOptions } from '@goodvibes-jev/judgment/decisions';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { surfaceControl, type SurfaceControlTarget, type SurfaceControlReading } from './batteries/surface-control.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { SecretsManager } from '../config/secrets.js';
 import type { ServiceRegistry } from '../config/service-registry.js';
@@ -47,7 +51,7 @@ interface PendingNtfyChatReply {
 interface DaemonSurfaceActionContext {
   readonly delegatedTelegram?: import('./delegated-telegram-intake.js').DelegatedTelegramIntake | undefined;
   readonly serviceRegistry: ServiceRegistry;
-  readonly secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>;
+  readonly secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'> & Partial<Pick<SecretsManager, 'onDidChange'>>;
   readonly configManager: ConfigManager;
   readonly routeBindings: RouteBindingManager;
   readonly sessionBroker: SharedSessionBroker;
@@ -115,6 +119,8 @@ interface DaemonSurfaceActionContext {
 }
 
 export class DaemonSurfaceActionHelper {
+  private controlAbort = new AbortController();
+  private readonly controlTargets = new WeakMap<SurfaceControlReading, () => void>();
   private static readonly NTFY_CHAT_REPLY_TTL_MS = 10 * 60_000;
   private readonly pendingNtfyChatReplies = new Map<string, PendingNtfyChatReply[]>();
   private ntfyChatReplyUnsubscribers: Array<() => void> = [];
@@ -129,13 +135,26 @@ export class DaemonSurfaceActionHelper {
     this.paymentReplies = context.paymentReplies ?? new PaymentReplyInbox();
   }
 
-  startDelegatedTelegram(): void { this.context.delegatedTelegram?.startLifecycle(); }
-  closeDelegatedTelegram(): void { this.context.delegatedTelegram?.close(); }
+  startDelegatedTelegram(): void {
+    if (this.controlAbort.signal.aborted) this.controlAbort = new AbortController();
+    this.context.delegatedTelegram?.startLifecycle();
+  }
+  closeDelegatedTelegram(): void {
+    this.controlAbort.abort();
+    this.context.delegatedTelegram?.close();
+  }
 
   buildSurfaceAdapterContext(): SurfaceAdapterContext {
     // One cell per inbound message (see SurfaceIngressOrigin). authorizeSurfaceIngress
     // fills it; the gated trySpawnAgent below reads it.
     const origin: { current: SurfaceIngressOrigin | null } = { current: null };
+    const lifecycle = this.controlAbort.signal;
+    const registeredPolicy = (surface: ChannelIngressPolicyInput['surface']) => this.context.channelPolicy.listPolicies().find(policy => policy.surface === surface);
+    // Unconfigured surfaces synthesize a fresh default timestamp on each read.
+    // Compare semantic policy fields plus registered-record identity instead.
+    const policyState = (policy: ChannelPolicyDecision['policy']) => JSON.stringify({ ...policy, updatedAt: undefined });
+    let authorization: { text: string; surface: ChannelIngressPolicyInput['surface']; policy: string; record: ChannelPolicyDecision['policy'] | undefined } | null = null;
+    const commands = new WeakMap<SurfaceControlReading, () => void>();
     return {
       delegatedTelegram: this.context.delegatedTelegram,
       serviceRegistry: this.context.serviceRegistry,
@@ -151,6 +170,7 @@ export class DaemonSurfaceActionHelper {
         }
         : {}),
       authorizeSurfaceIngress: async (input) => {
+        authorization = null;
         origin.current = {
           surface: input.surface,
           ...(input.text !== undefined ? { text: input.text } : {}),
@@ -159,6 +179,7 @@ export class DaemonSurfaceActionHelper {
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         };
         const decision = await this.authorizeSurfaceIngress(input);
+        if (decision.allowed) authorization = { text: input.text ?? '', surface: input.surface, policy: policyState(decision.policy), record: decision.policy };
         // A protected-input refusal must not stay readable from the cell the gated
         // spawn path reads. Every adapter does return early on a not-allowed
         // decision, so this changes no behaviour today, it stops the guarantee
@@ -169,13 +190,53 @@ export class DaemonSurfaceActionHelper {
         }
         return decision;
       },
-      parseSurfaceControlCommand: (text) => this.parseSurfaceControlCommand(text),
-      performSurfaceControlCommand: (command) => this.performSurfaceControlCommand(command),
+      parseSurfaceControlCommand: async (text, options = {}) => {
+        const accepted = authorization;
+        const signal = options.signal ? AbortSignal.any([options.signal, lifecycle]) : lifecycle;
+        const assertCurrent = () => {
+          signal.throwIfAborted();
+          assertSynchronousCurrent(options.beforeAttempt);
+          if (!accepted || accepted !== authorization || accepted.text !== text
+            || (registeredPolicy(accepted.surface) !== undefined && registeredPolicy(accepted.surface) !== accepted.record)
+            || policyState(this.context.channelPolicy.getPolicy(accepted.surface)) !== accepted.policy) {
+            throw new Error('Surface control source is no longer authorized');
+          }
+        };
+        assertCurrent();
+        const command = await this.parseSurfaceControlCommand(text, { ...options, signal, beforeAttempt: assertCurrent });
+        assertCurrent();
+        if (command) commands.set(command, () => {
+          assertCurrent();
+          const targetCurrent = this.controlTargets.get(command);
+          if (!targetCurrent) throw new Error('Surface control target reading is no longer current');
+          targetCurrent();
+        });
+        return command;
+      },
+      performSurfaceControlCommand: (command) => {
+        const assertCurrent = commands.get(command);
+        if (!assertCurrent) throw new Error('Surface control has no current source reading');
+        commands.delete(command);
+        assertCurrent();
+        this.controlTargets.delete(command);
+        return this.performSurfaceControlCommand(command);
+      },
       performInteractiveSurfaceAction: (actionId, surface, request) => this.performInteractiveSurfaceAction(actionId, surface, request),
       // The shared spawn boundary: every channel surface adapter routes its
       // spawn through the conversation-first gate (surface-conversation-gate.ts).
-      trySpawnAgent: (input, logLabel, sessionId) =>
-        gateSurfaceSpawn(this.conversationGateDeps(), origin.current, input, logLabel, sessionId),
+      trySpawnAgent: (input, logLabel, sessionId) => {
+        const accepted = authorization;
+        const capturedOrigin = origin.current;
+        const assertCurrent = () => {
+          lifecycle.throwIfAborted();
+          if (!accepted || accepted !== authorization || capturedOrigin !== origin.current
+            || (registeredPolicy(accepted.surface) !== undefined && registeredPolicy(accepted.surface) !== accepted.record)
+            || policyState(this.context.channelPolicy.getPolicy(accepted.surface)) !== accepted.policy) {
+            throw new Error('Conversation gate source is no longer authorized');
+          }
+        };
+        return gateSurfaceSpawn(this.conversationGateDeps({ signal: lifecycle, beforeAttempt: assertCurrent }), capturedOrigin, input, logLabel, sessionId);
+      },
       queueSurfaceReplyFromBinding: (binding, input) => this.context.queueSurfaceReplyFromBinding(binding, input),
       publishConversationFollowup: (sessionId, envelope) => this.publishConversationFollowup(sessionId, envelope),
       queueNtfyChatReply: (input) => this.queueNtfyChatReply(input),
@@ -200,7 +261,8 @@ export class DaemonSurfaceActionHelper {
 
   /** The slice of this helper's context the conversation gate consults. Public
    * so the shared-session continuation runner gates through the SAME deps. */
-  conversationGateDeps() {
+  conversationGateDeps(readingOptions: CallOptions = {}) {
+    const signal = readingOptions.signal ? AbortSignal.any([readingOptions.signal, this.controlAbort.signal]) : this.controlAbort.signal;
     return {
       configManager: this.context.configManager,
       routeBindings: this.context.routeBindings,
@@ -208,12 +270,33 @@ export class DaemonSurfaceActionHelper {
       trySpawnAgent: this.context.trySpawnAgent,
       queueSurfaceReplyFromBinding: this.context.queueSurfaceReplyFromBinding,
       workProposals: this.context.workProposals,
+      readingOptions: { ...readingOptions, signal },
+      captureReadingSource: (origin: SurfaceIngressOrigin | null) => {
+        const surface = origin?.surface as ChannelIngressPolicyInput['surface'] | undefined;
+        const policy = surface ? this.context.channelPolicy.getPolicy(surface) : undefined;
+        const source = JSON.stringify(policy ? { ...policy, updatedAt: undefined } : null);
+        const record = surface ? this.context.channelPolicy.listPolicies().find(entry => entry.surface === surface) : undefined;
+        return () => {
+          signal.throwIfAborted();
+          if (!surface) return;
+          const current = this.context.channelPolicy.getPolicy(surface);
+          if (this.context.channelPolicy.listPolicies().find(entry => entry.surface === surface) !== record
+            || JSON.stringify({ ...current, updatedAt: undefined }) !== source) throw new Error('Conversation source policy changed');
+        };
+      },
       deliverSurfaceNotice: this.context.deliverSurfaceNotice,
     };
   }
 
   async authorizeSurfaceIngress(input: ChannelIngressPolicyInput): Promise<ChannelPolicyDecision> {
-    // FIRST, before anything below can store, log or transcribe the message
+    // Source admission must precede every semantic reader, including card-talk.
+    // This shares the policy owner's rules but cannot seed, audit or retain text.
+    const preflight = await this.context.channelPolicy.preflightIngress(input);
+    if (!preflight.allowed) {
+      const denial = await this.context.channelPolicy.recordDeniedIngress(input);
+      if (!denial.allowed) return denial;
+    }
+    // Before anything below can store, log or transcribe the message
     // (docs/inbound-email.md §11.0). evaluateIngress writes input.text into the
     // channel policy audit trail and schedules it to disk, and an approval
     // reply's full text becomes a stored steering note, so a card number
@@ -227,14 +310,37 @@ export class DaemonSurfaceActionHelper {
       input,
     );
     if (cardRefusal) return cardRefusal;
-    const decision = await this.context.channelPolicy.evaluateIngress(input);
-    if (!decision.allowed) return decision;
+    const decision = await this.context.channelPolicy.evaluateIngress(input, { recordDenied: false });
+    if (!decision.allowed) { await this.context.channelPolicy.recordDeniedIngress(input); return decision; }
     // An answer to a pending work proposal is consumed here, on the shared
     // ingress hook every surface adapter already calls, which is what makes
     // agreement answerable over whatever channel the proposal went out on,
     // with no per-adapter wiring and no walk to a terminal.
+    const policySource = JSON.stringify({ ...decision.policy, updatedAt: undefined });
+    const lifecycle = this.controlAbort.signal;
+    const assertReplyCurrent = () => {
+      lifecycle.throwIfAborted();
+      const registered = this.context.channelPolicy.listPolicies().find(policy => policy.surface === input.surface);
+      if ((registered && registered !== decision.policy)
+        || JSON.stringify({ ...this.context.channelPolicy.getPolicy(input.surface), updatedAt: undefined }) !== policySource) {
+        throw new Error('Work proposal owner policy is no longer current');
+      }
+    };
     const proposalReply = await tryResolveWorkProposalReplyFromChannel(input, {
+      readingOptions: { signal: lifecycle, beforeAttempt: assertReplyCurrent },
       proposals: this.context.workProposals,
+      captureProposalSource: (proposal) => {
+        const routeState = () => {
+          const route = proposal.routeId ? this.context.routeBindings.getBinding(proposal.routeId) : undefined;
+          if (proposal.routeId && (!route || route.surfaceKind !== proposal.surfaceKind
+            || (route.channelId ?? route.externalId) !== proposal.channelId || route.threadId !== proposal.threadId)) {
+            throw new Error('Work proposal route is no longer current');
+          }
+          return JSON.stringify(route ? [route.id, route.surfaceKind, route.surfaceId, route.externalId, route.channelId, route.threadId, route.sessionId] : null);
+        };
+        const source = routeState();
+        return () => { if (routeState() !== source) throw new Error('Work proposal route changed'); };
+      },
       startAgreedWork: (proposal, note) => startAgreedWork(this.conversationGateDeps(), proposal, note),
       replyOnChannel: async (proposal, text) => {
         const binding = proposal.routeId ? this.context.routeBindings.getBinding(proposal.routeId) : undefined;
@@ -266,14 +372,38 @@ export class DaemonSurfaceActionHelper {
     return decision;
   }
 
-  parseSurfaceControlCommand(text: string): { readonly action: 'status' | 'cancel' | 'retry'; readonly id: string } | null {
-    const trimmed = text.trim();
-    const match = trimmed.match(/^(status|cancel|retry)\s+([a-z0-9:_-]+)/i);
-    if (!match) return null;
-    return {
-      action: (match[1]?.toLowerCase() ?? 'status') as 'status' | 'cancel' | 'retry',
-      id: match[2] ?? ''
+  async parseSurfaceControlCommand(text: string, options: CallOptions = {}): Promise<SurfaceControlReading | null> {
+    options.signal?.throwIfAborted();
+    assertSynchronousCurrent(options.beforeAttempt);
+    assertJudgmentInput(text);
+    // Lexical ID candidates only. No keyword or token position decides intent.
+    // Store equality proves existence; no hidden task/session contents are sent.
+    const targets: SurfaceControlTarget[] = [];
+    const records = new Map<string, object>();
+    const currentTarget = (id: string) => {
+      const run = this.context.automationManager.getRun(id);
+      if (run) return { kind: 'run' as const, record: run };
+      const agent = this.context.agentManager.getStatus(id);
+      if (agent) return { kind: 'agent' as const, record: agent };
+      const session = this.context.sessionBroker.getSession(id);
+      return session ? { kind: 'session' as const, record: session } : undefined;
     };
+    for (const id of new Set(text.match(/[a-z0-9:_-]+/gi) ?? [])) {
+      const target = currentTarget(id);
+      if (target) { targets.push({ id, kind: target.kind }); records.set(id, target.record); }
+    }
+    if (targets.length === 0) return null;
+    const assertCurrent = () => {
+      options.signal?.throwIfAborted();
+      assertSynchronousCurrent(options.beforeAttempt);
+      for (const target of targets) {
+        const current = currentTarget(target.id);
+        if (!current || current.kind !== target.kind || current.record !== records.get(target.id)) throw new Error('Surface control target is no longer available');
+      }
+    };
+    const reading = await surfaceControl.read(daemonReadingPort('daemon.surface-control', assertCurrent, options.signal), text, targets, { ...options, beforeAttempt: assertCurrent });
+    if (reading.command) this.controlTargets.set(reading.command, assertCurrent);
+    return reading.command;
   }
 
   async performSurfaceControlCommand(

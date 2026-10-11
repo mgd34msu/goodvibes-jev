@@ -75,7 +75,7 @@ export function isTransientTtsError(error: unknown): boolean {
   return status === 429;
 }
 
-const SENTENCE_BOUNDARY = /(?<=[.!?…])\s+/;
+export type SpeechSeamReader = (paragraph: string, start: number, end: number, signal: AbortSignal) => Promise<readonly number[]>;
 
 /**
  * coalesceForSpeech, split a reply into the FEWEST synthesis segments each within
@@ -83,7 +83,9 @@ const SENTENCE_BOUNDARY = /(?<=[.!?…])\s+/;
  * is split on paragraph, then sentence, then whitespace boundaries, never mid-word, so
  * the seams fall where a human would pause. Returns [] for empty/whitespace-only text.
  */
-export function coalesceForSpeech(text: string, maxChars = 1800): string[] {
+export async function coalesceForSpeech(text: string, maxChars = 1800, readSeams?: SpeechSeamReader, signal: AbortSignal = new AbortController().signal): Promise<string[]> {
+  signal.throwIfAborted();
+  if (!Number.isInteger(maxChars) || maxChars < 1) throw new RangeError('Invalid speech budget');
   const trimmed = text.trim();
   if (!trimmed) return [];
   if (trimmed.length <= maxChars) return [trimmed];
@@ -92,14 +94,30 @@ export function coalesceForSpeech(text: string, maxChars = 1800): string[] {
   // then over-long sentences into hard word-boundary slices), then GREEDILY re-join
   // adjacent pieces up to maxChars so we emit as few segments as possible.
   const atoms: string[] = [];
-  for (const paragraph of trimmed.split(/\n{2,}/)) {
+  let paragraphOffset = text.indexOf(trimmed);
+  for (const paragraph of trimmed.split(/(\n{2,})/)) {
+    const paragraphStart = paragraphOffset; paragraphOffset += paragraph.length;
     const p = paragraph.trim();
     if (!p) continue;
     if (p.length <= maxChars) {
       atoms.push(p);
       continue;
     }
-    for (const sentence of p.split(SENTENCE_BOUNDARY)) {
+    if (!readSeams) throw new Error('Sentence boundaries are unavailable.');
+    const start = paragraphStart + paragraph.indexOf(p);
+    const rawOffsets: unknown = await readSeams(p, start, start + p.length, signal);
+    signal.throwIfAborted();
+    if (!Array.isArray(rawOffsets)) throw new Error('Invalid sentence boundaries.');
+    const entries: readonly unknown[] = rawOffsets;
+    const offsets: number[] = [];
+    for (const offset of entries) {
+      if (typeof offset !== 'number' || !Number.isInteger(offset) || offset <= (offsets.at(-1) ?? 0) || offset > p.length
+        || (offset < p.length && !/\s/.test(p[offset] ?? ''))) throw new Error('Invalid sentence boundaries.');
+      offsets.push(offset);
+    }
+    let previous = 0;
+    for (const offset of [...offsets, ...(offsets.at(-1) === p.length ? [] : [p.length])]) {
+      const sentence = p.slice(previous, offset); previous = offset;
       const s = sentence.trim();
       if (!s) continue;
       if (s.length <= maxChars) {

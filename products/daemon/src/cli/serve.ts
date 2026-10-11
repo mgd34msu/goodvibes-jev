@@ -17,6 +17,7 @@ import type { RuntimeServicesOptions } from '../runtime/services.js';
 import { runDaemonProcess, type DaemonProcessOptions } from '../daemon/process-lifecycle.js';
 import type { DaemonCliConfiguration } from './configuration.js';
 import type { DaemonCliFlags } from './types.js';
+import { persistDaemonStartupPublicUrl, pruneDaemonStartupTokens, reconcileDaemonStartup } from './startup-maintenance.js';
 import { renderDaemonStartupPairing } from './startup-pairing.js';
 
 /** The launcher supplies real inbox composition and explicitly chooses host-only capabilities. */
@@ -62,6 +63,7 @@ export function runConfiguredDaemonCli(
   return runDaemonProcess(() => {
     let host: ReturnType<typeof createDaemonHost> | undefined;
     let closed = false;
+    const maintenance = new AbortController();
     return {
       async start() {
         if (closed) return undefined;
@@ -77,6 +79,10 @@ export function runConfiguredDaemonCli(
         }
         // An injected reporting port can synchronously request shutdown.
         if (closed) return undefined;
+        if (pruneDaemonStartupTokens(configuration) > 0) {
+          stderr('[goodvibes-daemon] warning: some stale workspace operator-token files could not be pruned.');
+          if (closed) return undefined;
+        }
         const token = env.GOODVIBES_DAEMON_TOKEN ?? companion.token;
         host = createDaemonHost({
           runtime: {
@@ -96,7 +102,24 @@ export function runConfiguredDaemonCli(
         await daemon.waitForRestart();
         if (closed) return undefined;
         requireRunning();
+        try {
+          const receipt = await reconcileDaemonStartup(configuration, env, maintenance.signal);
+          if (closed) return undefined;
+          if (receipt && receipt.reason !== 'no-legacy-unit') {
+            stderr(`[goodvibes-daemon] legacy-unit reconcile: ${receipt.action} (${receipt.reason}).`);
+          }
+        } catch {
+          if (!closed) stderr('[goodvibes-daemon] warning: legacy-unit reconcile failed (non-fatal).');
+        }
+        if (closed) return undefined;
+        await daemon.waitForRestart();
+        if (closed) return undefined;
+        requireRunning();
         const actual = { host: daemon.boundHost, port: daemon.boundPort, scheme: daemon.boundScheme };
+        try { persistDaemonStartupPublicUrl(configuration, actual); }
+        catch { stderr('[goodvibes-daemon] warning: the startup public URL could not be persisted.'); }
+        if (closed) return undefined;
+        requireRunning();
         stdout(renderDaemonBoundEndpoint(version, actual));
         if (closed) return undefined;
         requireRunning();
@@ -121,6 +144,7 @@ export function runConfiguredDaemonCli(
       },
       close() {
         closed = true;
+        maintenance.abort();
         return host?.close() ?? Promise.resolve();
       },
     };

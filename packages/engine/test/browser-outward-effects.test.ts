@@ -1,3 +1,4 @@
+import { liveControlDescriptor } from './_helpers/browser-control-descriptor.js';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -159,7 +160,7 @@ function fakePage(): Page {
       first: () => locator,
       evaluate: async (_fn: unknown, fields?: unknown) => (Array.isArray(fields)
         ? { tag: element?.tag ?? 'div', ...(fields.includes('text') ? { text: 'secret text' } : {}) }
-        : { tag: element?.tag ?? '', name: element?.name ?? '' }),
+        : liveControlDescriptor({ tag: element?.tag ?? '', name: element?.name ?? '', submits: element?.submits ?? false })),
       click: async () => undefined,
       fill: async () => undefined,
       press: async () => undefined,

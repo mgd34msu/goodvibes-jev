@@ -1,3 +1,4 @@
+import { assertCurrentExecInvocation, captureCurrentExecWorkspaceConstraint } from '../registry.js';
 import { startCapturedBackground } from './captured-exec-background.js';
 import { capturedExecUnsupportedOptions, runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
 import { join, resolve, isAbsolute } from 'node:path';
@@ -13,7 +14,7 @@ import { executeFileOperations } from './file-ops.js';
 import { formatResult } from './result-format.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 import { mapWithConcurrency, sleep } from '../../utils/concurrency.js';
-import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
+import { createSafeRegex } from '../../utils/safe-regex.js';
 import {
   resolveCredentialEnvScrub,
   scrubCredentialEnv,
@@ -25,6 +26,7 @@ import {
   resolveRuntimeSandboxPlan,
   brokerSandboxEscalation,
   type ExecSandboxRuntime,
+  type ExecSandboxPlan,
 } from './sandbox.js';
 import {
   shouldRunInteractive,
@@ -237,8 +239,9 @@ async function spawnBackground(
   env: Record<string, string> | undefined,
   scrub: ResolvedCredentialEnvScrub,
   signal?: AbortSignal,
+  beforeSpawn?: () => void,
 ): Promise<ExecCommandResult> {
-  return processManager.spawn(cmd, cwd, env, { credentialEnvScrub: scrub, ...(signal === undefined ? {} : { signal }) });
+  return processManager.spawn(cmd, cwd, env, { credentialEnvScrub: scrub, beforeSpawn, ...(signal === undefined ? {} : { signal }) });
 }
 
 function handleBgSpecialCommand(processManager: ProcessManager, cmd: string): ExecCommandResult | null {
@@ -257,55 +260,74 @@ async function runCommand(
   policy: ExecRunPolicy,
   signal?: AbortSignal,
 ): Promise<ExecCommandResult> {
+  const inputRevision = JSON.stringify(cmdInput);
+  const policyRevision = JSON.stringify(policy.sandbox);
+  const assertCurrent = () => {
+    signal?.throwIfAborted(); policy.assertCurrent?.();
+    if (inputRevision !== JSON.stringify(cmdInput) || policyRevision !== JSON.stringify(policy.sandbox)) throw new Error('Exec command or sandbox policy changed');
+  };
+  const cwd = resolveCwd(cmdInput.cwd, workingDirectory);
+  const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, cwd);
+  assertCurrent();
+  if (!policy.capturedInput) {
+    const uncontained = containmentRefusal(policy, cmdStr, plan);
+    if (uncontained) return attachSandboxMeta(uncontained, plan);
+  }
+  const escalation = await brokerSandboxEscalation(policy.sandbox, plan, cmdStr, cwd, { signal, assertCurrent });
+  if (escalation && 'deniedEscalations' in escalation) return attachSandboxMeta({
+    cmd: cmdStr, exit_code: null, stdout: '', success: false, denied: true,
+    stderr: `Sandbox escalation denied: ${escalation.deniedEscalations.join('; ')}`,
+  }, plan);
+  const admission = escalation?.admission;
+  let spawned = false;
+  const beforeSpawn = () => {
+    assertCurrent();
+    if (spawned) throw new Error('Exec spawn admission already consumed');
+    admission?.claim();
+    spawned = true;
+  };
+  const executionSignal = admission ? AbortSignal.any([admission.signal, ...(signal ? [signal] : [])]) : signal;
+  try {
+    return await runAdmittedCommand(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, plan, beforeSpawn, executionSignal, assertCurrent);
+  } finally { admission?.close(); }
+}
+
+async function runAdmittedCommand(
+  processManager: ProcessManager,
+  overflowHandler: OverflowHandler,
+  featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null,
+  cmdStr: string,
+  cmdInput: ExecCommandInput,
+  workingDirectory: string,
+  globalTimeout: number,
+  scrub: ResolvedCredentialEnvScrub,
+  policy: ExecRunPolicy,
+  sandboxPlan: ExecSandboxPlan | null,
+  beforeSpawn: () => void,
+  signal?: AbortSignal,
+  assertOwnerCurrent?: () => void,
+): Promise<ExecCommandResult> {
   if (policy.capturedInput) {
     // Preserve the existing trusted exec policy's network decision. Captured
     // filesystem authority neither grants network access nor vetoes a grant.
-    const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, resolveCwd(cmdInput.cwd, workingDirectory));
-    const escalation = await brokerSandboxEscalation(policy.sandbox, plan, cmdStr, workingDirectory);
-    signal?.throwIfAborted();
-    if (escalation) return {
-      cmd: cmdStr, exit_code: null, stdout: '', stderr: `Sandbox escalation denied: ${escalation.deniedEscalations.join('; ')}`,
-      success: false, denied: true,
-    };
+    const plan = sandboxPlan;
     const scrubbed = await scrubCredentialEnv(buildCleanEnv(), scrub);
     signal?.throwIfAborted();
     const withheld = scrubbed.withheld.filter((name) => !(cmdInput.env && name in cmdInput.env));
     const network = !plan || plan.network === 'enabled' ? 'enabled' : 'disabled';
     const interactive = await shouldRunInteractive(policy.interaction, cmdInput, cmdStr, signal);
     const result = cmdInput.background || (cmdInput.until && !cmdInput.until.kill_after)
-      ? await startCapturedBackground(processManager, policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env)
-      : await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, interactive && policy.interaction ? { interaction: policy.interaction } : {});
+      ? await startCapturedBackground(processManager, policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, beforeSpawn, policy.assertWorkspaceCurrent)
+      : await runCapturedCommand(policy.capturedInput, cmdStr, cmdInput, workingDirectory, cmdInput.timeout_ms ?? globalTimeout, signal, network, scrubbed.env, { beforeSpawn, beforePublish: policy.assertCurrent, ...(interactive && policy.interaction ? { interaction: policy.interaction } : {}) });
     return withheld.length > 0 ? { ...result, withheld_env: withheld } : result;
   }
-  const sandbox = policy.sandbox;
   const interaction = policy.interaction;
   // The frozen catastrophic block ran in executeResolvedCommand, ahead of every
   // path including the detached one. It is NOT repeated here: one call site for
   // an unconditional block is the point, and a second would let the two drift.
   const cwd = resolveCwd(cmdInput.cwd, workingDirectory);
   const timeoutMs = cmdInput.timeout_ms ?? globalTimeout;
-  // Per-command sandbox plan: when active, argvPrefix wraps the spawn in a bwrap
-  // boundary and the result carries honest sandboxed/boundary/network/escalation
-  // metadata; null or not-sandboxed leaves the argv (and result) untouched.
-  const sandboxPlan = await resolveRuntimeSandboxPlan(sandbox, cmdStr, workingDirectory, cwd);
-  // Containment posture: a composition that REQUIRES the boundary gets a
-  // refusal when no boundary was applied, instead of the silent host fallback
-  // (policy.ts). `host-allowed`, every existing caller, is unchanged.
-  const uncontained = containmentRefusal(policy, cmdStr, sandboxPlan);
-  if (uncontained) return attachSandboxMeta(uncontained, sandboxPlan);
   const sandboxArgv = sandboxPlan?.sandboxed ? sandboxPlan.argvPrefix : [];
-  // Sandbox boundary escalation: a command that runs inside the boundary but
-  // needs host access (network, host-privilege escalation) rides the SAME
-  // approval broker as a permission ask via the injected requestEscalation seam
-  // (see brokerSandboxEscalation). The frozen catastrophic block was already
-  // enforced above (guardExecCommand) and is untouched here.
-  const deniedEscalation = await brokerSandboxEscalation(sandbox, sandboxPlan, cmdStr, workingDirectory);
-  if (deniedEscalation) {
-    return attachSandboxMeta({
-      cmd: cmdStr, exit_code: null, stdout: '', success: false, denied: true,
-      stderr: `Sandbox escalation denied: ${deniedEscalation.deniedEscalations.join('; ')}`,
-    } as ExecCommandResult, sandboxPlan);
-  }
   // Scrub credential-bearing vars out of the inherited base env, then layer the
   // model-supplied per-command env on top (an explicit per-command opt-in that a
   // withheld var is legitimately wanted). withheld_env reports only names the
@@ -326,25 +348,21 @@ async function runCommand(
   if (await shouldRunInteractive(interaction, cmdInput, cmdStr, signal)) {
     return attachWithheld(await runInteractiveCommand({
       cmdStr, cwd, env: mergedEnv, timeoutMs, startTime, sandboxArgv,
-      interaction: interaction!, signal,
+      interaction: interaction!, signal, beforeSpawn,
     }));
   }
 
-  // Cooperative cancellation is wired for the foreground and
-  // progress-streamed paths (the common cases, progress auto-engages once
-  // timeout_ms exceeds PROGRESS_AUTO_THRESHOLD_MS, which the 120s default
-  // timeout always does). `until`-pattern commands are explicitly deferred
-  //, the timeout kill-timer they already have still
-  // applies, just not an external AbortSignal.
+  // The reading, isolated matcher and child share this invocation's lifetime.
   if (cmdInput.until) {
-    return attachWithheld(await runUntil(processManager, overflowHandler, cmdStr, cmdInput, cwd, mergedEnv, timeoutMs, startTime, sandboxArgv));
+    return attachWithheld(await runUntil(processManager, overflowHandler, cmdStr, cmdInput, cwd, mergedEnv, timeoutMs, startTime, sandboxArgv, beforeSpawn, signal, assertOwnerCurrent ?? policy.assertCurrent));
   }
 
   const useProgress = cmdInput.progress === true || timeoutMs > PROGRESS_AUTO_THRESHOLD_MS;
   if (useProgress) {
-    return attachWithheld(await runCommandWithProgress(processManager, overflowHandler, cmdStr, cmdInput, workingDirectory, cwd, mergedEnv, timeoutMs, startTime, sandboxArgv, signal));
+    return attachWithheld(await runCommandWithProgress(processManager, overflowHandler, cmdStr, cmdInput, workingDirectory, cwd, mergedEnv, timeoutMs, startTime, sandboxArgv, signal, beforeSpawn));
   }
 
+  beforeSpawn?.();
   const proc = Bun.spawn([...sandboxArgv, '/bin/sh', '-c', cmdStr], { ...(cwd !== undefined ? { cwd } : {}), env: mergedEnv, stdout: 'pipe', stderr: 'pipe' } as Parameters<typeof Bun.spawn>[1]);
   let timedOut = false;
   let cancelled = false;
@@ -446,8 +464,10 @@ async function runCommandWithProgress(
   startTime: number,
   sandboxArgv: string[],
   signal?: AbortSignal,
+  beforeSpawn?: () => void,
 ): Promise<ExecCommandResult> {
   const progressFile = initProgressFile(cmdStr, workingDirectory);
+  beforeSpawn?.();
   const proc = Bun.spawn([...sandboxArgv, '/bin/sh', '-c', cmdStr], { ...(cwd !== undefined ? { cwd } : {}), env: mergedEnv, stdout: 'pipe', stderr: 'pipe' } as Parameters<typeof Bun.spawn>[1]);
   let timedOut = false;
   let cancelled = false;
@@ -586,71 +606,73 @@ async function runUntil(
   timeoutMs: number,
   startTime: number,
   sandboxArgv: string[],
+  beforeSpawn?: () => void,
+  signal?: AbortSignal,
+  assertOwnerCurrent?: () => void,
 ): Promise<ExecCommandResult> {
   const until = cmdInput.until!;
-  const pattern = compileSafeRegExp(until.pattern, '', { operation: 'exec until pattern' });
-  const untilTimeout = until.timeout_ms ?? timeoutMs;
-  const killAfter = until.kill_after ?? false;
-  const proc = Bun.spawn([...sandboxArgv, '/bin/sh', '-c', cmdStr], { ...(cwd !== undefined ? { cwd } : {}), env, stdout: 'pipe', stderr: 'pipe' } as Parameters<typeof Bun.spawn>[1]);
-
-  let stdoutBuf = '';
-  let stderrBuf = '';
-  let matched = false;
-  const warnings: string[] = [];
-
-  const readStream = async (stream: ReadableStream<Uint8Array>, isStderr: boolean): Promise<void> => {
-    const decoder = new TextDecoder();
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (isStderr) stderrBuf += chunk; else stdoutBuf += chunk;
-        if (!matched && safeRegExpTest(pattern, stdoutBuf + stderrBuf, { operation: 'exec until pattern', maxInputChars: 500_000 })) {
-          matched = true;
-          if (killAfter) {
-            killExecProcess(proc, cmdStr, 'match');
+  const inputRevision = JSON.stringify(cmdInput);
+  const deadline = new AbortController();
+  const active = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+  const current = () => {
+    active.throwIfAborted(); assertOwnerCurrent?.();
+    if (JSON.stringify(cmdInput) !== inputRevision) throw new Error('Exec until request changed');
+  };
+  let proc: ReturnType<typeof Bun.spawn> | undefined;
+  const readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+  const stop = () => {
+    try { proc?.kill('SIGKILL'); } catch { /* Already exited. */ }
+    for (const reader of readers) void reader.cancel().catch(() => {});
+  };
+  const commandTimer = setTimeout(() => deadline.abort(), Math.max(0, timeoutMs - (Date.now() - startTime)));
+  let untilTimer: ReturnType<typeof setTimeout> | undefined;
+  active.addEventListener('abort', stop, { once: true });
+  let streams: Promise<void[]> | undefined;
+  try {
+    current();
+    await using pattern = await createSafeRegex(until.pattern, '', { operation: 'exec until pattern', maxInputChars: 500_000, signal: active, assertCurrent: current });
+    current(); beforeSpawn?.();
+    proc = Bun.spawn([...sandboxArgv, '/bin/sh', '-c', cmdStr], { ...(cwd !== undefined ? { cwd } : {}), env, stdout: 'pipe', stderr: 'pipe' } as Parameters<typeof Bun.spawn>[1]);
+    let stdoutBuf = '', stderrBuf = '', matched = false;
+    untilTimer = setTimeout(() => { if (!matched) deadline.abort(); }, until.timeout_ms ?? timeoutMs);
+    const readStream = async (stream: ReadableStream<Uint8Array>, isStderr: boolean): Promise<void> => {
+      const decoder = new TextDecoder();
+      const reader = stream.getReader(); readers.add(reader);
+      try {
+        while (true) {
+          current();
+          const { done, value } = await reader.read();
+          current();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          if (stdoutBuf.length + stderrBuf.length + chunk.length > 500_000) throw new Error('Exec until regex input exceeds 500000 characters');
+          if (isStderr) stderrBuf += chunk; else stdoutBuf += chunk;
+          if (!matched && await pattern.test(stdoutBuf + stderrBuf)) {
+            current(); matched = true; clearTimeout(untilTimer);
+            if (until.kill_after) stop();
           }
-          reader.releaseLock();
-          return;
         }
-      }
-    } catch (error) {
-      const warning = `${isStderr ? 'stderr' : 'stdout'} stream read failed: ${summarizeError(error)}`;
-      warnings.push(warning);
-      logger.warn('exec run-until stream read failed', {
-        command: cmdStr,
-        stream: isStderr ? 'stderr' : 'stdout',
-        error: summarizeError(error),
-      });
-      reader.releaseLock();
-    }
-  };
-
-  const timeoutPromise = sleep(untilTimeout).then(() => undefined);
-  await Promise.race([Promise.all([readStream(proc.stdout as ReadableStream<Uint8Array>, false), readStream(proc.stderr as ReadableStream<Uint8Array>, true)]), timeoutPromise]);
-
-  if (!killAfter && !matched) {
-    killExecProcess(proc, cmdStr, 'timeout');
+      } catch (error) { stop(); throw error; }
+      finally { readers.delete(reader); reader.releaseLock(); }
+    };
+    streams = Promise.all([
+      readStream(proc.stdout as ReadableStream<Uint8Array>, false),
+      readStream(proc.stderr as ReadableStream<Uint8Array>, true),
+    ]);
+    const [, exitCode] = await Promise.all([streams, proc.exited]);
+    current(); pattern.assertCurrent();
+    const stdoutResult = await truncate(overflowHandler, stdoutBuf, 'stdout', cmdStr);
+    const stderrResult = await truncate(overflowHandler, stderrBuf, 'stderr', cmdStr);
+    current(); pattern.assertCurrent();
+    return { cmd: cmdStr, exit_code: exitCode, stdout: stdoutResult.text, stderr: stderrResult.text,
+      success: matched, duration_ms: Date.now() - startTime, cwd,
+      ...(stdoutResult.truncated && { stdout_truncated: true }), ...(stderrResult.truncated && { stderr_truncated: true }) };
+  } finally {
+    clearTimeout(commandTimer); clearTimeout(untilTimer);
+    active.removeEventListener('abort', stop); stop();
+    await streams?.catch(() => {});
+    await proc?.exited.catch(() => {});
   }
-
-  const exitCode = await proc.exited;
-  const duration = Date.now() - startTime;
-  const stdoutResult = await truncate(overflowHandler, stdoutBuf, 'stdout', cmdStr);
-  const stderrResult = await truncate(overflowHandler, stderrBuf, 'stderr', cmdStr);
-  return {
-    cmd: cmdStr,
-    exit_code: exitCode,
-    stdout: stdoutResult.text,
-    stderr: stderrResult.text,
-    success: matched && warnings.length === 0,
-    duration_ms: duration,
-    cwd,
-    ...(warnings.length > 0 && { warnings }),
-    ...(stdoutResult.truncated && { stdout_truncated: true }),
-    ...(stderrResult.truncated && { stderr_truncated: true }),
-  };
 }
 
 function killExecProcess(proc: ReturnType<typeof Bun.spawn>, command: string, reason: string): void {
@@ -800,6 +822,7 @@ async function executeResolvedCommand(
   const terminalRefusal = await ownerTerminalRefusal(policy, cmdStr, signal);
   signal?.throwIfAborted();
   if (terminalRefusal) return terminalRefusal;
+  policy.assertCurrent?.();
   // A captured command never reaches the host ProcessManager's special commands.
   if (policy.capturedInput) {
     const backgroundResult = await processManager.handleOwnedBoundaryCommand(cmdStr, policy.capturedInput.authority);
@@ -824,7 +847,7 @@ async function executeResolvedCommand(
     // refused here rather than handed the exemption (see policy.ts).
     const uncontainable = backgroundContainmentRefusal(policy, cmdStr);
     if (uncontainable) return uncontainable;
-    return spawnBackground(processManager, cmdStr, resolveCwd(cmdInput.cwd, workingDirectory), cmdInput.env, scrub, signal);
+    return spawnBackground(processManager, cmdStr, resolveCwd(cmdInput.cwd, workingDirectory), cmdInput.env, scrub, signal, policy.assertCurrent);
   }
   return runWithRetry(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
 }
@@ -961,6 +984,9 @@ export function createExecTool(
         const lifecycleSignal = policy.capturedInput?.signal;
         signal = lifecycleSignal && opts?.signal ? AbortSignal.any([lifecycleSignal, opts.signal]) : lifecycleSignal ?? opts?.signal;
         signal?.throwIfAborted();
+        const assertCurrent = () => { signal?.throwIfAborted(); assertCurrentExecInvocation(args, opts); };
+        assertCurrent();
+        const executionPolicy = { ...policy, assertCurrent, assertWorkspaceCurrent: captureCurrentExecWorkspaceConstraint(args, opts) };
         if (!Array.isArray(args['commands']) || (args['commands'] as unknown[]).length === 0) {
           return { success: false, error: 'commands must be a non-empty array' };
         }
@@ -986,14 +1012,14 @@ export function createExecTool(
         if (policy.capturedInput && input.file_ops?.length) {
           let capturedOperations: Awaited<ReturnType<typeof executeFileOperations>> | undefined;
           const applied = await runCapturedCommand(policy.capturedInput, ':', {}, workingDirectory, globalTimeout, signal,
-            'disabled', {}, { fileOps: input.file_ops.map((operation) => ({ ...operation,
+            'disabled', {}, { beforeSpawn: assertCurrent, beforePublish: assertCurrent, fileOps: input.file_ops.map((operation) => ({ ...operation,
               source: resolve(projectRoot, operation.source),
               ...(operation.destination ? { destination: resolve(projectRoot, operation.destination) } : {}),
             })), onFileOperations: (result) => { capturedOperations = result; } });
           if (applied.denied || applied.cancelled || applied.timed_out || !capturedOperations)
             return { success: false, error: applied.stderr || 'Captured file operations did not complete.' };
           fileOperations = capturedOperations;
-        } else fileOperations = await executeFileOperations(input.file_ops, projectRoot);
+        } else fileOperations = await executeFileOperations(input.file_ops, projectRoot, undefined, assertCurrent);
         const { fileOpResults, fileOpError, fileOpWarnings } = fileOperations;
         signal?.throwIfAborted();
         if (fileOpError) {
@@ -1026,7 +1052,7 @@ export function createExecTool(
           globalTimeout,
           failFast,
           credentialEnvScrub,
-          policy,
+          executionPolicy,
           signal,
         );
         const formatted = results.map((r) => formatResult(r, verbosity));

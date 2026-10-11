@@ -55,7 +55,7 @@ blob `117965d4debe0783215f52f9dcc36278aeba6428`.
 Retained digest, markup and MIME fixtures come from
 [mapping.test.ts](https://github.com/mgd34msu/goodvibes-daemon/blob/254699bf5d834cdca41436211ada1ae32bf89258/src/test/daemon/inbox/mapping.test.ts),
 blob `cddb13456910653f1e9a43fffcce04df51a3d0fc`.
-`docs/inventory/daemon.md` continues to account for both source files as partial
+[`docs/inventory/daemon.md` preserved in Linear](https://linear.app/the-artificery/issue/TA-18/port-daemon-composition-and-remote-cluster-infrastructure) continues to account for both source files as partial
 HOIST work. This reconstruction starts from published main
 `96764055a25c2ab292aa772107013befe7972bc5`; it does not claim recovery of the
 unavailable earlier local implementation or reuse its validation results.

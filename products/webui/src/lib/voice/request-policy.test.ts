@@ -10,22 +10,22 @@ const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const immediateSleep = () => Promise.resolve();
 const bytes = (text: string): ArrayBuffer => new TextEncoder().encode(text).buffer as ArrayBuffer;
 
-describe('coalesceForSpeech: fewest requests', () => {
-  test('empty / whitespace text yields no segments', () => {
-    expect(coalesceForSpeech('')).toEqual([]);
-    expect(coalesceForSpeech('   \n  ')).toEqual([]);
+describe('coalesceForSpeech: fewest requests', async () => {
+  test('empty / whitespace text yields no segments', async () => {
+    expect(await coalesceForSpeech('')).toEqual([]);
+    expect(await coalesceForSpeech('   \n  ')).toEqual([]);
   });
 
-  test('a reply within the budget is ONE segment (one request)', () => {
+  test('a reply within the budget is ONE segment (one request)', async () => {
     const reply = 'A short assistant reply that easily fits in a single synthesis request.';
-    expect(coalesceForSpeech(reply, 1800)).toEqual([reply]);
+    expect(await coalesceForSpeech(reply, 1800)).toEqual([reply]);
   });
 
-  test('a long reply splits into the FEWEST segments, each within the budget, never mid-word', () => {
+  test('a long reply splits into the FEWEST segments, each within the budget, never mid-word', async () => {
     // Ten sentences of ~40 chars; budget 100 should greedily pack ~2 sentences/segment.
     const sentences = Array.from({ length: 10 }, (_, i) => `This is sentence number ${i} here.`);
     const reply = sentences.join(' ');
-    const segments = coalesceForSpeech(reply, 100);
+    const segments = await coalesceForSpeech(reply, 100, async () => sentences.map((_, i) => sentences.slice(0, i + 1).join(" ").length));
     expect(segments.length).toBeGreaterThan(1);
     for (const segment of segments) expect(segment.length).toBeLessThanOrEqual(100);
     // Greedy packing => far fewer segments than sentences (fewest-requests property).
@@ -34,9 +34,9 @@ describe('coalesceForSpeech: fewest requests', () => {
     expect(segments.join(' ').split(/\s+/)).toEqual(reply.split(/\s+/));
   });
 
-  test('a single word longer than the budget is emitted whole rather than cut', () => {
+  test('a single word longer than the budget is emitted whole rather than cut', async () => {
     const word = 'x'.repeat(50);
-    expect(coalesceForSpeech(word, 20)).toEqual([word]);
+    expect(await coalesceForSpeech(word, 20, async () => [])).toEqual([word]);
   });
 });
 
@@ -134,5 +134,25 @@ describe('scheduleTtsRequests: bounded policy', () => {
     run.cancel();
     const results = await run.results();
     expect(results.every((r) => r.status === 'skipped')).toBe(true);
+  });
+});
+
+describe('semantic seam ownership', () => {
+  test('contrary offsets preserve abbreviations and closing quotes', async () => {
+    const text = 'Dr. Rivera left. “Next.” Final words.';
+    const seen: unknown[] = [];
+    expect(await coalesceForSpeech(text, 17, async (p, start, end) => { seen.push({ p, start, end }); return [16, 24, text.length]; })).toEqual(['Dr. Rivera left.', '“Next.”', 'Final words.']);
+    expect(seen).toEqual([{ p: text, start: 0, end: text.length }]);
+  });
+  test('missing, malformed and cancelled readings never become word-only fallback', async () => {
+    await expect(coalesceForSpeech('many words here', 5)).rejects.toBeDefined();
+    await expect(coalesceForSpeech('many words here', 5, async () => [2])).rejects.toBeDefined();
+    const abort = new AbortController();
+    await expect(coalesceForSpeech('many words here', 5, async () => { abort.abort(); return []; }, abort.signal)).rejects.toBeDefined();
+  });
+  test('complete paragraph offsets bind to untrimmed message', async () => {
+    const seen: unknown[] = [];
+    await coalesceForSpeech('  many words here\n\nother words here  ', 8, async (p, start, end) => { seen.push([p, start, end]); return []; });
+    expect(seen).toEqual([['many words here', 2, 17], ['other words here', 19, 35]]);
   });
 });

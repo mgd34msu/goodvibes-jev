@@ -67,7 +67,7 @@
     "@goodvibes-jev/engine": "workspace:*",
     "@goodvibes-jev/daemon": "workspace:*",
     "onnxruntime-web": "^1.27.0",
-    "sql.js": "^1.14.1",
+    "sql.js": "^1.14.2",
     "sqlite-vec": "^0.1.9",
     "zustand": "^5.0.12"
   },

@@ -1,3 +1,4 @@
+import { postalConfigKey, readConfigSettingForDisplay } from '@goodvibes-jev/engine/sdk/platform/config';
 import { existsSync, readFileSync } from 'node:fs';
 import { getAgentSettingsSchema, readAgentSettingValue, type AgentConfigSetting } from '../config/settings-catalog.ts';
 import type { PendingSubscriptionLogin, ProviderSubscription } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -377,7 +378,8 @@ export function buildAgentWorkspaceSettingActionEffect(
     return { kind: 'apply', setting, value: action.settingValueHint };
   }
 
-  const currentValue = readAgentSettingValue(configManager, setting);
+  const currentDisplay = readConfigSettingForDisplay(() => readAgentSettingValue(configManager, setting));
+  const currentValue = currentDisplay.held && postalConfigKey(setting.key) ? configManager.getStored(setting.key as never) : currentDisplay.value;
   // The theme cycles through the selectable themes ('system', then the
   // bundled catalog), not the raw schema enum, which also carries the legacy
   // 'vaporwave' alias of goodvibes-neon.
@@ -417,7 +419,8 @@ export function buildAgentWorkspaceSettingActionDisplay(
 
   const setting = agentWorkspaceSettingSchema(context, settingKey);
   if (!setting) return null;
-  const currentValue = readAgentSettingValue(configManager, setting);
+  const currentDisplay = readConfigSettingForDisplay(() => readAgentSettingValue(configManager, setting));
+  const currentValue = currentDisplay.held ?? currentDisplay.value;
 
   return {
     setting: action.label || settingKey,
@@ -598,7 +601,7 @@ function buildTuiSettingsImportPlan(context: CommandContext | null): TuiSettings
   for (const [key, entry] of values) {
     const setting = agentWorkspaceSettingSchema(context, key);
     if (!setting || setting.kind === 'host') continue;
-    const current = configManager.get(setting.key);
+    const current = postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key);
     const status: TuiImportStatus = valuesMatch(current, entry.value) ? 'unchanged' : 'would_import';
     settings.push({
       key: setting.key,
@@ -692,7 +695,7 @@ export async function importAgentWorkspaceTuiSettings(context: CommandContext | 
   for (const entry of values) {
     const setting = agentWorkspaceSettingSchema(context, entry.key);
     if (!setting || setting.kind === 'host') continue;
-    if (entry.status === 'unchanged' || valuesMatch(configManager.get(setting.key), entry.value)) {
+    if (entry.status === 'unchanged' || valuesMatch(postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key), entry.value)) {
       unchanged.push(setting.key);
       continue;
     }

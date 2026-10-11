@@ -133,13 +133,13 @@ export interface CheckoutEngineTarget {
 export interface CheckoutBrowserEngine {
   cardFieldGuard: () => CheckoutGuardHandle | null;
   tabs: (target: CheckoutEngineTarget) => Promise<Record<string, unknown>>;
-  type: (target: CheckoutEngineTarget, args: { readonly ref: string; readonly text: string }) => Promise<Record<string, unknown>>;
+  type: (target: CheckoutEngineTarget, args: { readonly ref: string; readonly text: string }, ownership?: { readonly assertCurrent: () => void; readonly signal?: AbortSignal | undefined }) => Promise<Record<string, unknown>>;
   fillSecretBatch: (
     target: CheckoutEngineTarget,
     args: { readonly fills: readonly { readonly ref: string; readonly value: string }[] },
   ) => Promise<Record<string, unknown>>;
   select: (target: CheckoutEngineTarget, args: { readonly ref: string; readonly values: readonly string[] }) => Promise<Record<string, unknown>>;
-  click: (target: CheckoutEngineTarget, args: { readonly ref: string }) => Promise<Record<string, unknown>>;
+  click: (target: CheckoutEngineTarget, args: { readonly ref: string }, ownership?: { readonly assertCurrent: () => void; readonly signal?: AbortSignal | undefined }) => Promise<Record<string, unknown>>;
 }
 
 /** What the driver landed on after the one outward act, before it is described. */
@@ -283,9 +283,10 @@ class BrowserCheckoutPageDriver implements CheckoutPageDriver {
     );
   }
 
-  async fill(target: string, value: string): Promise<void> {
+  async fill(target: string, value: string, ownership?: { readonly assertCurrent: () => void; readonly signal?: AbortSignal | undefined }): Promise<void> {
     const engine = await this.engine();
-    await engine.type(this.target, { ref: target, text: value });
+    ownership?.assertCurrent();
+    await engine.type(this.target, { ref: target, text: value }, ownership);
   }
 
   async fillSecrets(
@@ -320,7 +321,7 @@ class BrowserCheckoutPageDriver implements CheckoutPageDriver {
     await engine.select(this.target, { ref: target, values: [value] });
   }
 
-  async submitOrder(target: string): Promise<{
+  async submitOrder(target: string, ownership?: { readonly assertCurrent: () => void; readonly signal?: AbortSignal | undefined }): Promise<{
     readonly url: string;
     readonly orderId: string | null;
     readonly challenge?: CheckoutChallenge | null | undefined;
@@ -329,7 +330,11 @@ class BrowserCheckoutPageDriver implements CheckoutPageDriver {
     let result: Record<string, unknown>;
     try {
       const engine = await this.engine();
-      result = await engine.click(this.target, { ref: target });
+      try { ownership?.assertCurrent(); } catch { throw new CheckoutSubmitRefused('The stored address changed before submission.'); }
+      const current = ownership && { ...ownership, assertCurrent: () => {
+        try { ownership.assertCurrent(); } catch { throw new CheckoutSubmitRefused('The stored address changed before submission.'); }
+      } };
+      result = await engine.click(this.target, { ref: target }, current);
     } catch (error) {
       throw asSubmitFailure(error);
     }
@@ -359,7 +364,7 @@ class BrowserCheckoutPageDriver implements CheckoutPageDriver {
  * matters. Anything else, most of all a failure from the click itself, is
  * genuine ambiguity: the merchant may have received it.
  */
-const PRE_CLICK_ERROR_NAMES = new Set(['BrowserSessionError', 'StaleElementError', 'UntrustedEffectError']);
+const PRE_CLICK_ERROR_NAMES = new Set(['BrowserSessionError', 'StaleElementError', 'UntrustedEffectError', 'JudgmentAuthorityRetiredError', 'CheckoutSubmitRefused']);
 
 /**
  * What checkout-flow.ts is told about a pre-click failure of each kind,
@@ -376,6 +381,9 @@ const PRE_CLICK_ERROR_NAMES = new Set(['BrowserSessionError', 'StaleElementError
  */
 function describePreClickFailure(name: string): string {
   switch (name) {
+    case 'JudgmentAuthorityRetiredError':
+    case 'CheckoutSubmitRefused':
+      return 'the stored address or its reading owner changed before submission';
     case 'BrowserSessionError':
       return 'the submit control on this page could not be activated';
     case 'StaleElementError':

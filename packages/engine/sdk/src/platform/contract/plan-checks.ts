@@ -1,4 +1,5 @@
 import { nativeContractSourceData } from './native-source.js';
+import { hasDerivedAcceptanceChecks } from './owned-source.js';
 /**
  * The Jev checks on a plan (docs/design/contract-runner.md section 3.4), run
  * after the code checks pass, all concurrently: each criterion traces to the
@@ -64,6 +65,7 @@ export interface PlanVerdict {
 }
 
 export interface PlanCheckOptions {
+  readonly originalSource?: import('../permissions/autonomous.js').AutonomousToolSource | undefined;
   readonly native?: { readonly contract: Contract; readonly services: NativeContractServices | undefined } | undefined;
   /** Native trace and coverage are exact structural checks, never model-generated requirements. */
   readonly nativeSource?: NativeContractSource | undefined;
@@ -112,7 +114,9 @@ async function checkTrace(port: JudgmentPort, plan: ContractPlan, ask: string, o
   const site = PLAN_CHECK_SITES['criterion-trace'];
   const results = await Promise.all(plan.criteria.map(async (criterion) => ({
     criterion,
-    result: await criterionTrace.check(port, traceClaim(criterion.text), ask, criterion.quote, callOptions(site, options)),
+    result: await criterionTrace.check(port, hasDerivedAcceptanceChecks(options.originalSource)
+      ? `This derived acceptance check faithfully operationalizes the original goal without adding or narrowing requirements: ${criterion.text}`
+      : traceClaim(criterion.text), ask, criterion.quote, callOptions(site, options)),
   })));
   for (const { criterion, result } of results) {
     record(output, result.decisionId, result.usage);
@@ -200,14 +204,14 @@ async function readCriterionShapes(
   const site = PLAN_CHECK_SITES['criterion-shape'];
   const runs = await Promise.all(plan.criteria.map(async (criterion) => ({
     criterion,
-    run: await criterionShape.run(port, { request: ask, criterion: criterion.text, ...(options.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
+    run: await criterionShape.run(port, { request: ask, criterion: criterion.text, ...(options.nativeSource === undefined ? options.originalSource ? { originalSource: { goal: options.originalSource.goal, criteria: [...options.originalSource.criteria] } } : {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
   })));
   for (const { criterion, run } of runs) {
     record(output, run.result.decisionId, run.result.usage);
     const { checkable, topology_only: topologyOnly, solo } = run.readings;
     // A topology-only criterion is met or missed by the plan's shape, so it is
     // never judged; that it cannot be checked from the work is expected.
-    if (options.nativeSource === undefined && topologyOnly.verdict === 'yes' && topologyOnly.outcome === 'act') {
+    if (options.nativeSource === undefined && options.originalSource === undefined && topologyOnly.verdict === 'yes' && topologyOnly.outcome === 'act') {
       const ruling = topologyRuling(plan, shape, solo);
       output.dispositions.set(criterion.id, ruling);
       run.recordAction(ruling.disposition);
@@ -258,7 +262,7 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
   const site = PLAN_CHECK_SITES['unit-shape'];
   const runs = await Promise.all(planUnits(plan).map(async (unit) => ({
     unit,
-    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(options.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
+    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(options.nativeSource === undefined ? options.originalSource ? { originalSource: { goal: options.originalSource.goal, criteria: [...options.originalSource.criteria] } } : {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
   })));
   for (const { unit, run } of runs) {
     record(output, run.decisionId, run.usage);
@@ -316,15 +320,20 @@ function planCheckPort(options: PlanCheckOptions): JudgmentPort {
  */
 export async function runPlanChecks(plan: ContractPlan, ask: string, shape: RequestShape, options: PlanCheckOptions = {}): Promise<PlanVerdict> {
   const port = planCheckPort(options);
+  const derived = hasDerivedAcceptanceChecks(options.originalSource);
+  const checkRootMeaning = options.nativeSource === undefined && (options.originalSource === undefined || derived);
   const [trace, coverage, shapes, units] = await Promise.all([
-    options.nativeSource === undefined ? checkTrace(port, plan, ask, options) : emptyOutput(),
-    options.nativeSource === undefined ? checkCoverage(port, plan, ask, options) : emptyOutput(),
+    checkRootMeaning ? checkTrace(port, plan, ask, options) : emptyOutput(),
+    checkRootMeaning ? checkCoverage(port, plan, ask, options) : emptyOutput(),
     readCriterionShapes(port, plan, ask, shape, options),
     checkUnits(port, plan, options),
   ]);
+  if (derived && !plan.criteria.some(criterion => !shapes.dispositions.has(criterion.id))) {
+    shapes.problems.push({ code: 'no-criteria', message: 'A goal-only source requires nonempty judged planner-derived acceptance checks; structural or absent checks cannot complete its goal.' });
+  }
   const outputs = [trace, coverage, shapes, units];
   const reports = [
-    ...(options.nativeSource === undefined ? [report('criterion-trace', trace), report('plan-coverage', coverage)] : []),
+    ...(checkRootMeaning ? [report('criterion-trace', trace), report('plan-coverage', coverage)] : []),
     report('criterion-shape', shapes),
     report('unit-shape', units),
   ];

@@ -1,3 +1,4 @@
+import { carryKnowledgeRecordClocks, knowledgeRawRepresentation, normalizeKnowledgeStoredView, retainKnowledgeRepresentation, knowledgeDecisionStamp, knowledgeReviewStamp, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
 import { randomUUID } from 'node:crypto';
 import type { KnowledgeNodeRecord } from './types.js';
 
@@ -127,17 +128,17 @@ export function resolveKnowledgeNodeOperatorMutation(
       metadata: {
         ...metadata,
         ...(mutation.facts ? { reviewedFacts: mutation.facts } : {}),
-        review: { id: randomUUID(), action: mutation.action, reviewer: mutation.reviewer, reviewedAt: now, authority: 'operator',
+        review: knowledgeReviewStamp(now, { id: randomUUID(), action: mutation.action, reviewer: mutation.reviewer, authority: 'operator',
           ...(fields ? { scope: 'fields', fields } : { scope: 'node' }),
-        },
-        reviewProvenance: {
+        }),
+        reviewProvenance: knowledgeDecisionStamp(now, {
           state: unreviewed ? (status === 'draft' ? 'pending-review' : 'explicit') : 'reviewed',
-          reviewer: mutation.reviewer, decidedAt: now,
+          reviewer: mutation.reviewer,
           ...(fields ? { scope: 'fields', fields: fields.map(({ path }) => path) } : { scope: 'node' }),
           reason: unreviewed ? `operator issue update by ${mutation.reviewer}; status '${status}' retained; no node fields reviewed` : fields
             ? `reviewed fields: ${fields.map(({ path }) => path.join('.')).join(', ')} by ${mutation.reviewer}`
             : `reviewed: operator ${mutation.action} by ${mutation.reviewer}; status '${status}'`,
-        },
+        }),
       },
     };
   }
@@ -160,8 +161,9 @@ export function resolveKnowledgeNodeOperatorMutation(
 }
 
 /** Protect cache state from aliases to input metadata and mutable getNode results. */
-export function retainKnowledgeNodeRecord(record: KnowledgeNodeRecord): KnowledgeNodeRecord {
-  const detached = JSON.parse(JSON.stringify(record)) as KnowledgeNodeRecord;
+export function retainKnowledgeNodeRecord(record: KnowledgeNodeRecord, clockOrigin?: KnowledgeNodeRecord): KnowledgeNodeRecord {
+  if (clockOrigin) carryKnowledgeRecordClocks(clockOrigin, record);
+  const detached = retainKnowledgeRepresentation(normalizeKnowledgeStoredView(record), normalizeKnowledgeStoredView(knowledgeRawRepresentation(record)));
   deepFreeze(detached);
   return detached;
 }
@@ -196,8 +198,9 @@ export function prepareKnowledgeNodeReplacement(
     ...(mutation && existing ? { createdAt: existing.createdAt, updatedAt: now } : {}),
   };
   const reviewed = resolveKnowledgeNodeOperatorMutation(candidate, existing, mutation, now);
+  if (mutation && existing) prepareKnowledgeOwnedClocks(candidate, existing, now);
   if (reviewed && existing && mutation === undefined) return existing;
-  return retainKnowledgeNodeRecord(reviewed ? { ...candidate, ...reviewed } : candidate);
+  return retainKnowledgeNodeRecord(reviewed ? { ...candidate, ...reviewed } : candidate, candidate);
 }
 
 function validCorrectionPath(path: readonly string[]): boolean {

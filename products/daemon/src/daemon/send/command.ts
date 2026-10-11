@@ -69,6 +69,15 @@ export function prepareSendCommand(argv: readonly string[]): PreparedSendCommand
   return { kind: 'send', args: { channel, to, title, list, words } };
 }
 
+/** Publish only catalog IDs, never configured destinations or borrowed input. */
+function describeConfiguredChannels(config: Pick<ConfigManager, 'get'>): string {
+  const usable = readChannelReadiness(config)
+    .filter((entry) => entry.enabled && entry.destination !== null)
+    .map((entry) => entry.channel.id);
+  return usable.length > 0 ? `Configured and ready: ${usable.join(', ')}.`
+    : 'No channel is currently both switched on and given a destination; run: goodvibes-daemon send --list';
+}
+
 function renderChannelList(config: Pick<ConfigManager, 'get'>): string[] {
   const lines = ['Configured send channels (credentials and provider availability are not verified):'];
   for (const entry of readChannelReadiness(config)) {
@@ -76,8 +85,9 @@ function renderChannelList(config: Pick<ConfigManager, 'get'>): string[] {
       : isDeclaredSecretBearingConfigKey(entry.channel.destinationKey) ? '[configured; withheld]' : entry.destination;
     lines.push(`${entry.channel.id}: ${entry.enabled ? 'on' : 'off'}; ${entry.channel.addressLabel}: ${destination}`);
   }
+  lines.push('Override any channel\'s destination for one message with --to <address>.');
   const resolution = resolveDefaultChannel(config);
-  lines.push(resolution.kind === 'resolved' ? `Default: ${resolution.channel.id}.`
+  lines.push(resolution.kind === 'resolved' ? `Default with no --channel: ${resolution.channel.id} (${resolution.reason}).`
     : resolution.kind === 'none' ? 'No default channel is configured.'
     : 'Multiple channels qualify; --channel is required.');
   return lines;
@@ -91,17 +101,17 @@ export async function runPreparedSendCommand(args: ParsedSendArgs, deps: SendCom
     : findSendChannel(args.channel);
   if (!channel) return answer(2,
     args.channel !== null ? 'Unknown send channel.' : resolution?.kind === 'ambiguous'
-      ? 'Multiple enabled channels have destinations; --channel is required.' : 'No enabled channel has a configured destination.',
-    `Known channels: ${SEND_CHANNELS.map((entry) => entry.id).join(', ')}.`);
-  if (deps.configManager.get(channel.enabledKey) !== true) return answer(1, `${channel.label} is disabled; nothing was sent.`, `Setting: ${channel.enabledKey}.`);
+      ? 'Multiple enabled channels have destinations; --channel is required.' : 'No enabled channel has a configured destination; nothing was sent.',
+    `Known channels: ${SEND_CHANNELS.map((entry) => entry.id).join(', ')}.`, describeConfiguredChannels(deps.configManager));
+  if (deps.configManager.get(channel.enabledKey) !== true) return answer(1, `${channel.label} is disabled; nothing was sent.`, `Setting: ${channel.enabledKey}.`, describeConfiguredChannels(deps.configManager));
   const missing = operations.getMissingSurfaceFeatureFlags(deps.configManager, channel.id);
   if (missing.length) return answer(1, `${channel.label} delivery is disabled; nothing was sent.`,
-    `Required settings: ${operations.surfaceFeatureGateSettingsKeys(missing).join(', ')}.`);
+    `Required settings: ${operations.surfaceFeatureGateSettingsKeys(missing).join(', ')}.`, describeConfiguredChannels(deps.configManager));
   if (args.to !== null && args.to.trim().length === 0) return answer(2, '--to needs a nonempty destination.');
   let message = args.words.join(' ');
   if (message.trim().length === 0) {
     if (deps.stdinIsTty) return answer(2, 'No message given. Pass an argument or pipe text on stdin.');
-    try { message = await deps.readStdin(); }
+    try { message = (await deps.readStdin()).replace(/\n+$/, ''); }
     catch { return answer(1, 'Could not read the message from stdin; nothing was sent.'); }
   }
   if (message.trim().length === 0) return answer(2, 'The message was empty; nothing was sent.');
@@ -112,12 +122,14 @@ export async function runPreparedSendCommand(args: ParsedSendArgs, deps: SendCom
     jobId: 'goodvibes-daemon-send', runId: deps.newRunId?.() ?? `cli-send-${randomUUID()}`,
     includeLinks: false, allowDuplicate: true,
   };
+  const preamble = resolution?.kind === 'resolved'
+    ? [`No channel named; using ${channel.id}: ${resolution.reason}.`] : [];
   try {
     // Await the real owner. No timeout race or retry can report ahead of the request.
     await deps.deliver(request);
-    return answer(0, `${channel.label} send request accepted. Recipient arrival is not verified.`);
+    return answer(0, ...preamble, `${channel.label} send request accepted. Recipient arrival is not verified.`);
   } catch (error) {
-    return answer(1, `Delivery to ${channel.label} was not confirmed.`, describeSendFailure(error));
+    return answer(1, ...preamble, `Delivery to ${channel.label} was not confirmed.`, describeSendFailure(error));
   }
 }
 

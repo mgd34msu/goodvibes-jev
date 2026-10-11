@@ -4,9 +4,9 @@
  * product and engine registrations. Callers must await stop before releasing
  * paths or transferring ownership.
  *
- * This migration is partial: an explicit inbox factory is required until the
- * built-in adapter/triage product composition is restored. Fixture adapters
- * establish the configured graph's behavior, not built-in-provider parity.
+ * This fixture requires an explicit inbox factory so each test states its
+ * source ownership. Use the production factory to prove built-in membership;
+ * injected fixture adapters prove only their explicitly configured graph.
  * No model or external provider is fabricated by this module; tests supply
  * their recorded endpoints and network fixtures explicitly.
  */
@@ -49,7 +49,7 @@ const DAEMON_CAPABILITY_FLAGS: readonly string[] = [
 export interface DaemonFixtureOptions {
   /** Explicit owned boot operations; omitted fixtures do not start boot tasks. */
   readonly createBootOperations?: RuntimeServicesOptions['createBootOperations'];
-  /** Explicit fixture composition; there is no unimplemented production default. */
+  /** Explicit fixture composition; use the production factory for production membership proof. */
   readonly inboxFactory: DaemonInboxFactory;
   /**
    * Root directory for this fixture's home and workspace. Omitted ⇒ a fresh
@@ -146,6 +146,17 @@ export async function startDaemonFixture(options: DaemonFixtureOptions): Promise
     });
     if (options.watchedMailbox !== undefined) {
       configManager.set('surfaces.email.inbound.accounts', JSON.stringify([options.watchedMailbox]));
+    }
+    // The profile resolver gives GOODVIBES_DAEMON_HOME precedence over an
+    // injected home. A fixture must never inherit the operator's live profile.
+    // State the fixture path without mutating the process-wide environment;
+    // callers may still deliberately override it in their configure hook.
+    // A clean restart must not issue a new configuration mutation intent when
+    // the persisted fixture path is already correct: even a no-op set revokes
+    // durable continuation policy.
+    const fixtureProfilePath = join(configDir, 'owner-profile.md');
+    if (configManager.get('profile.path') !== fixtureProfilePath) {
+      configManager.set('profile.path', fixtureProfilePath);
     }
     options.configure?.(configManager);
 

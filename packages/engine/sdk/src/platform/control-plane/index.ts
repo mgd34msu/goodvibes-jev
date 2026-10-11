@@ -25,8 +25,10 @@ export {
 export type { DaemonCompatibilityStatus, DaemonCompatibilityVerdict } from './daemon-compatibility.js';
 export {
   GatewayMethodCatalog,
+  grantedGatewayScopes,
 } from './method-catalog.js';
 export type {
+  GatewayScopePolicyOwner,
   GatewayEventDescriptor,
   GatewayEventListOptions,
   GatewayEventTransport,
@@ -210,3 +212,5 @@ export { createNativeInboundHandoff } from './native-inbound-handoff.js';
 export type { NativeInboundDisposition, NativeInboundAcceptance, NativeInboundProcessingOwner, NativeInboundReceiver } from './native-inbound-handoff.js';
 export type { DelegatedSessionInputBinding, DelegatedSessionTransferReceipt, DelegatedSessionSubmission } from './session-broker-delegated.js';
 export type { OwnerApprovalGuard, RaisedOwnerApproval, ResolveOwnerApprovalInput, ResolveSharedApprovalInput } from './approval-broker-owner.js';
+
+export { prepareGatewayScopePolicyOwner, completeGatewayScopePolicyBootstrap } from './scope-policy-bootstrap.js';

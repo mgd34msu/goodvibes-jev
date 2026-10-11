@@ -12,6 +12,7 @@
  * (provider-status.ts deriveProviderStatus over the merged list record and the
  * freshest providers.get snapshot), only its presentation changed.
  */
+import { useProviderModelOptions } from '../../../../lib/use-provider-model-options';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -110,6 +111,8 @@ export function ModelsSection() {
           provider={selected.value}
           providerId={selected.id}
           modelProviders={data.modelProviders}
+          sourceRevision={`${data.providers.dataUpdatedAt}:${data.modelCatalog.dataUpdatedAt}`}
+          sourceReady={data.providers.isSuccess && data.modelCatalog.isSuccess && !data.providers.isFetching && !data.modelCatalog.isFetching}
           currentRegistryKey={data.current.registryKey}
           onBack={() => setSelectedId('')}
         />
@@ -205,12 +208,16 @@ function ProviderDetail({
   provider,
   providerId,
   modelProviders,
+  sourceRevision,
+  sourceReady,
   currentRegistryKey,
   onBack,
 }: {
   provider: unknown;
   providerId: string;
   modelProviders: unknown[];
+  sourceRevision: string;
+  sourceReady: boolean;
   currentRegistryKey: string;
   onBack: () => void;
 }) {
@@ -232,11 +239,16 @@ function ProviderDetail({
   // names do not overlap, so the shallow merge cannot clobber either.
   const combined = useMemo(() => ({ ...asRecord(provider), ...asRecord(detail.data) }), [provider, detail.data]);
   const status = useMemo(() => deriveProviderStatus(combined), [combined]);
-  const models: ModelOption[] = modelOptionsForProvider(provider, modelProviders);
+  const providerModels = useProviderModelOptions(provider, modelProviders,
+    `${providerId}:${sourceRevision}:${detail.dataUpdatedAt}`, sourceReady && !detail.isFetching);
+  const models: ModelOption[] = providerModels.models;
   const title = bestTitle(provider, providerId);
 
   const selectModel = useMutation({
-    mutationFn: (registryKey: string) => sdk.operator.models.current.set(registryKey),
+    mutationFn: (registryKey: string) => {
+      if (!providerModels.hasCurrentModel(registryKey)) throw new Error('Model options changed. Choose a current model.');
+      return sdk.operator.models.current.set(registryKey);
+    },
     onSuccess: async (_data, registryKey) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['models'] }),

@@ -60,7 +60,7 @@ export interface OccasionsCompositionDeps {
   /** The store that already owns the owner-profile file. */
   readonly ownerProfile: OwnerProfileStore;
   /** Reads the live `occasions.*` and `daemon.timezone` policy. */
-  readonly configManager: Pick<ConfigManager, 'get'>;
+  readonly configManager: Pick<ConfigManager, 'get'> & Partial<Pick<ConfigManager, 'getConfigurationIncarnation'>>;
   /** Absolute path of the machine-owned state file. */
   readonly statePath: string;
   /** Where a nudge is delivered. Absent ⇒ pull-only, through `occasions.pending`. */
@@ -80,16 +80,19 @@ export function composeOccasions(
   const profile = deps.ownerProfile;
   const state = new OccasionStateStore(deps.statePath);
   const router = deps.channelDeliveryRouter;
+  const lifecycle = new AbortController();
 
   const service = new OccasionsService({
+    signal: lifecycle.signal,
     // The three narrow reads, bound to the ONE store that owns the file. The
     // occasions reader deliberately cannot ask for an arbitrary section: the
     // profile store has no such call, and giving it one here would re-open the
     // enumerate-all hole its tier filter exists to close.
     profile: {
+      captureRead: () => profile.captureRead(),
       importantDates: () => profile.importantDates(),
       plans: () => profile.plans(),
-      person: (name) => profile.person(name),
+      person: (name, options) => profile.person(name, options),
       // What the owner calls THEMSELVES, so an occasion about them can be told
       // apart from one about anyone else. Two declared fields and nothing
       // inferred: this is the linkage that lets their own birthday stop being
@@ -108,6 +111,7 @@ export function composeOccasions(
     // rather than a restart-only one. The keys are string-addressed because the
     // ConfigKey union is shrink-only and this narrows to it at the boundary.
     config: {
+      ...(deps.configManager.getConfigurationIncarnation ? { getConfigurationIncarnation: () => deps.configManager.getConfigurationIncarnation!() } : {}),
       get: (key: string): unknown => deps.configManager.get(key as ConfigKey),
       set: (): void => {
         // Settings are written through the ordinary config surface, which is
@@ -179,6 +183,7 @@ export function composeOccasions(
     service,
     state,
     dispose: async (): Promise<void> => {
+      lifecycle.abort();
       ticker.stop();
       // Let every queued write finish before the process tears down. An
       // acknowledgement lost at shutdown means the owner is asked again about
@@ -197,7 +202,7 @@ export function composeOccasions(
  * pieces are needed lives beside the composition that needs them.
  */
 export interface OccasionsInstallDeps {
-  readonly configManager: Pick<ConfigManager, 'get'>;
+  readonly configManager: Pick<ConfigManager, 'get'> & Partial<Pick<ConfigManager, 'getConfigurationIncarnation'>>;
   readonly shellPaths: { resolveUserPath(...segments: string[]): string };
   /** Surface root the state file resolves under; required, never defaulted (control-plane-store-paths.ts). */
   readonly surfaceRoot: string;

@@ -17,7 +17,7 @@
  * system temp dir, must never be touched. This is not a blanket `/tmp`
  * sweep, it only ever looks at entries starting with the caller's prefix.
  */
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, type Stats } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -32,6 +32,7 @@ export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number
   readonly preserveMarker?: string;
   readonly preserve?: (directory: string) => boolean;
 } = {}): void {
+  if (!prefix || /[\\/\0]/.test(prefix) || !Number.isFinite(maxAgeMs) || maxAgeMs < 0) throw new Error('Invalid bounded sweep');
   let entries: string[];
   try {
     entries = readdirSync(root);
@@ -39,20 +40,36 @@ export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number
     return;
   }
   const now = Date.now();
+  const inspect = (path: string): Stats | undefined => {
+    try {
+      const entry = lstatSync(path);
+      if (!entry.isDirectory() || entry.isSymbolicLink() || existsSync(join(path, '.git'))
+        || existsSync(join(path, '.retain')) || existsSync(join(path, '.keep-proof-output'))
+        || (options.preserveMarker !== undefined && existsSync(join(path, options.preserveMarker)))) return undefined;
+      if (prefix === 'goodvibes-sdk-testrun-' || prefix === 'goodvibes-test-heartbeat-') {
+        const owner = JSON.parse(readFileSync(join(path, '.goodvibes-test-owner.json'), 'utf8')) as { version?: number; pid?: number; dev?: number; ino?: number };
+        if (owner.version !== 1 || !Number.isSafeInteger(owner.pid) || owner.pid! <= 0 || owner.dev !== entry.dev || owner.ino !== entry.ino) return undefined;
+        try { process.kill(owner.pid!, 0); return undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return undefined; }
+      }
+      return entry;
+    } catch { return undefined; }
+  };
   for (const name of entries) {
     if (!name.startsWith(prefix)) continue;
     const path = join(root, name);
-    if (options.preserveMarker !== undefined && existsSync(join(path, options.preserveMarker))) continue;
-    try {
-      if (now - statSync(path).mtimeMs <= maxAgeMs) continue;
-    } catch {
-      continue; // vanished between listing and stat
-    }
+    const admitted = inspect(path);
+    if (!admitted || now - admitted.mtimeMs <= maxAgeMs) continue;
     try {
       if (options.preserve?.(path)) continue;
+      // Inspectors may perform work, and another process can replace the path
+      // or record retained evidence meanwhile. Never reuse an earlier grant
+      // for a different inode or a newly live/retained/refreshed candidate.
+      const current = inspect(path);
+      if (!current || current.dev !== admitted.dev || current.ino !== admitted.ino
+        || now - current.mtimeMs <= maxAgeMs) continue;
       rmSync(path, { recursive: true, force: true });
     } catch {
-      // Best effort, another run may have reclaimed it first.
+      // Best effort, including an inspector that throws or a vanished path.
     }
   }
 }

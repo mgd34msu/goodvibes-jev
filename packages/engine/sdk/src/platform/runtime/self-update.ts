@@ -1,26 +1,15 @@
 /**
- * The platform's one binary-update mechanism: download, checksum-verify,
- * atomic swap with a kept previous version, and one-command rollback.
- *
- * Every consumer (the daemon's hourly auto-updater here; interactive
- * client-side update commands in consuming apps) shares these semantics:
- *   - release assets are named `goodvibes[-daemon]-{linux|macos}-{x64|arm64}`,
- *     verified against SHA256SUMS.txt; an artifact with NO manifest entry is
- *     as unverified as a mismatching one, both refuse to install;
- *   - ALL artifacts download and verify BEFORE any file is touched, so a
- *     failure never leaves a mismatched pair installed;
- *   - every swap writes beside the target then renames over it (atomic on
- *     the same filesystem; a running process keeps its old inode) and parks
- *     the outgoing file at `<path>.previous`;
- *   - rollback EXCHANGES each file with its kept `.previous` counterpart in
- *     three same-directory renames, one command back, one more forward.
- *
- * All I/O (fetch, filesystem) is injectable so the policy is provable under
- * test without a network or a real install.
+ * Verified binary updates with owned staging and compensating cohort renames.
+ * Individual same-filesystem renames are atomic; the cohort and the brief gap
+ * between parking and replacing a live file are NOT filesystem-wide atomic.
+ * Failed commits restore their prior state or retain an explicit recovery fence.
+ * Process crashes require inspection of the retained transaction files; this is
+ * not a power-loss durable journal or a guarantee against unrelated writers.
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { chmodSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, resolve, sep } from 'node:path';
+import { compareSemanticVersions, parseSemanticVersion } from './semantic-version.js';
 
 /**
  * The cadence half of the same mechanism, re-exported here so every consumer
@@ -41,42 +30,38 @@ export {
 // ---------------------------------------------------------------------------
 
 export function normalizeVersion(version: string): string {
-  return version.replace(/^v/i, '').trim();
+  return version.trim().replace(/^v/i, '');
 }
 
-/**
- * Compares two version strings component-wise as dotted non-negative
- * integers (a leading "v" is ignored, matching the "vX.Y.Z" release tag
- * format). Returns -1/0/1 for a<b / a==b / a>b. Non-numeric or missing
- * components are treated as 0, so "1.2" and "1.2.0" compare equal.
- */
+/** SemVer precedence, retaining the historical short-core `1.2` == `1.2.0` form. */
 export function compareVersions(a: string, b: string): -1 | 0 | 1 {
-  const partsA = normalizeVersion(a).split('.');
-  const partsB = normalizeVersion(b).split('.');
-  const length = Math.max(partsA.length, partsB.length);
-  for (let i = 0; i < length; i++) {
-    const x = Number.parseInt(partsA[i] ?? '0', 10) || 0;
-    const y = Number.parseInt(partsB[i] ?? '0', 10) || 0;
-    if (x < y) return -1;
-    if (x > y) return 1;
-  }
-  return 0;
+  const parse = (raw: string) => {
+    const normalized = normalizeVersion(raw);
+    const padded = normalized.replace(/^(\d+(?:\.\d+)?)(?=[-+]|$)/, (core) => core + (core.includes('.') ? '.0' : '.0.0'));
+    const parsed = parseSemanticVersion(padded);
+    if (!parsed) throw new Error(`invalid update version: ${raw}`);
+    return parsed;
+  };
+  return compareSemanticVersions(parse(a), parse(b));
 }
 
-/**
- * Extracts the release tag from a GitHub "/releases/latest" redirect
- * Location header (everything after the final slash of the redirect target).
- */
+/** Extract only a valid SemVer tag from a releases/tag path, never a login page. */
 export function parseReleaseTagFromLocation(location: string | null | undefined): string | null {
   if (!location) return null;
-  const segments = location.split('/').filter((segment) => segment.length > 0);
-  const tag = segments[segments.length - 1];
-  return tag && tag.length > 0 ? tag : null;
+  try {
+    const url = new URL(location, 'https://release.invalid');
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
+    const match = /\/releases\/tag\/([^/]+)\/?$/.exec(url.pathname);
+    const tag = match?.[1];
+    return tag && parseSemanticVersion(normalizeVersion(tag)) ? tag : null;
+  } catch {
+    return null;
+  }
 }
 
-/** Minimal fetch shape so tests inject a stub instead of the real network. */
+/** Minimal fetch shape; injected implementations must not make filesystem changes. */
 export interface UpdateFetchLike {
-  (url: string, init?: { method?: string; redirect?: 'manual' | 'follow' | 'error' }): Promise<{
+  (url: string, init?: { method?: string; redirect?: 'manual' | 'follow' | 'error'; signal?: AbortSignal }): Promise<{
     readonly ok: boolean;
     readonly status: number;
     readonly url: string;
@@ -86,21 +71,67 @@ export interface UpdateFetchLike {
   }>;
 }
 
-/**
- * Resolves the latest release tag via a HEAD request with redirects NOT
- * followed, reading the tag out of the redirect Location header. Throws if
- * no tag can be resolved, callers must not silently fall back to
- * "already current".
- */
-export async function resolveLatestReleaseTag(fetchImpl: UpdateFetchLike, releasesLatestUrl: string): Promise<string> {
-  const response = await fetchImpl(releasesLatestUrl, { method: 'HEAD', redirect: 'manual' });
-  const location = response.headers.get('location');
-  const tag = parseReleaseTagFromLocation(location)
-    ?? (response.url !== releasesLatestUrl ? parseReleaseTagFromLocation(response.url) : null);
-  if (!tag) {
-    throw new Error(`could not resolve the latest release tag from ${releasesLatestUrl} (no redirect Location header)`);
+export interface UpdateRequestOptions {
+  readonly signal?: AbortSignal;
+  /** Whole operation budget, including response bodies. Defaults to two minutes. */
+  readonly timeoutMs?: number;
+}
+export const DEFAULT_UPDATE_TIMEOUT_MS = 120_000;
+
+/** Bound even injected fetch/body implementations that ignore AbortSignal. */
+async function withUpdateBudget<T>(options: UpdateRequestOptions, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('update timeoutMs must be positive and finite');
+  const controller = new AbortController();
+  const abort = () => controller.abort(options.signal?.reason ?? new Error('update cancelled'));
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error(`update timed out after ${Math.ceil(timeoutMs)}ms`)), timeoutMs);
+  let rejectAbort: (() => void) | undefined;
+  try {
+    controller.signal.throwIfAborted();
+    return await Promise.race([
+      run(controller.signal),
+      new Promise<never>((_resolve, reject) => {
+        rejectAbort = () => reject(controller.signal.reason);
+        controller.signal.addEventListener('abort', rejectAbort, { once: true });
+        if (controller.signal.aborted) rejectAbort();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
+    if (rejectAbort) controller.signal.removeEventListener('abort', rejectAbort);
+    // Release a native transport/body left unread after a rejected response,
+    // and stop any adapter that is still completing after losing the race.
+    controller.abort(new Error('update request scope ended'));
   }
-  return tag;
+}
+
+/** Validate a manual latest redirect against the caller's exact origin/repository. */
+export async function resolveLatestReleaseTag(
+  fetchImpl: UpdateFetchLike,
+  releasesLatestUrl: string,
+  options: UpdateRequestOptions = {},
+): Promise<string> {
+  const latest = new URL(releasesLatestUrl);
+  if (!['https:', 'http:'].includes(latest.protocol) || latest.username || latest.password || latest.search || latest.hash
+    || !latest.pathname.endsWith('/releases/latest')) throw new Error('invalid releases/latest URL');
+  return await withUpdateBudget(options, async (signal) => {
+    const response = await fetchImpl(releasesLatestUrl, { method: 'HEAD', redirect: 'manual', signal });
+    signal.throwIfAborted();
+    const location = response.headers.get('location');
+    if (![301, 302, 303, 307, 308].includes(response.status) || !location || response.url !== releasesLatestUrl) {
+      throw new Error(`could not resolve the latest release tag from ${releasesLatestUrl} (expected manual release redirect; status ${response.status})`);
+    }
+    const redirected = new URL(location, latest);
+    const tag = parseReleaseTagFromLocation(redirected.href);
+    const prefix = latest.pathname.slice(0, -'latest'.length) + 'tag/';
+    if (!tag || redirected.origin !== latest.origin || redirected.pathname !== `${prefix}${tag}`) {
+      throw new Error('could not resolve the latest release tag: untrusted or malformed release redirect');
+    }
+    return tag;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +202,10 @@ export function parseChecksumFile(contents: string): Map<string, string> {
     if (!line) continue;
     const match = line.match(/^([a-f0-9]{64})\s+\*?(.+)$/i);
     if (!match) continue;
-    checksums.set(match[2]!, match[1]!.toLowerCase());
+    const name = match[2]!;
+    const digest = match[1]!.toLowerCase();
+    if (checksums.has(name) && checksums.get(name) !== digest) throw new Error(`conflicting checksum entries for ${name}`);
+    checksums.set(name, digest);
   }
   return checksums;
 }
@@ -197,116 +231,321 @@ export function verifyChecksum(
 }
 
 // ---------------------------------------------------------------------------
-// Atomic swap with kept previous + one-command rollback
+// Owned staging, reversible cohort commit, and kept-previous rollback
 // ---------------------------------------------------------------------------
 
-/**
- * Suffix under which every swap keeps the file it replaced, right beside the
- * live one. This is what makes rollback a one-command operation instead of a
- * re-download: the version that ran before the last update is always still
- * on disk at `<path>.previous`.
- */
 export const PREVIOUS_FILE_SUFFIX = '.previous';
 
-/** Injectable filesystem surface for the swap/rollback policy. */
+/**
+ * Injectable filesystem surface. Existing adapters remain source compatible,
+ * but mutations fail closed until they implement exclusive claims and cleanup.
+ * rename must either succeed or throw without changing either path. Install
+ * directories must be trusted: unrelated writers and parent symlink changes
+ * cannot be fenced by this interface.
+ */
 export interface UpdateFileIo {
   writeFile(path: string, data: Buffer): void;
   rename(from: string, to: string): void;
   chmod(path: string, mode: number): void;
   exists(path: string): boolean;
   mkdir(path: string): void;
+  /** Atomically create a file, failing without modifying it if it already exists. */
+  writeExclusive?(path: string, data: Buffer): void;
+  /** Remove an owned file; a missing file is a successful no-op. */
+  remove?(path: string): void;
 }
 
 export const realUpdateFileIo: UpdateFileIo = {
   writeFile: (path, data) => writeFileSync(path, data),
+  writeExclusive: (path, data) => writeFileSync(path, data, { flag: 'wx', mode: 0o600 }),
   rename: (from, to) => renameSync(from, to),
   chmod: (path, mode) => chmodSync(path, mode),
-  exists: (path) => existsSync(path),
+  // lstat sees dangling symlinks too; they must never be mistaken for empty slots.
+  exists: (path) => {
+    try { lstatSync(path); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  },
   mkdir: (path) => mkdirSync(path, { recursive: true }),
+  remove: (path) => {
+    try { unlinkSync(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  },
 };
 
+export interface UpdateTarget {
+  readonly label: string;
+  /** Absolute, normalized install path. */
+  readonly path: string;
+  readonly assetName: string;
+  readonly executable: boolean;
+}
+
+export interface UpdateTransactionReceipt {
+  readonly operation: 'update' | 'rollback';
+  readonly phase: 'claim' | 'stage' | 'admission' | 'commit' | 'cleanup';
+  /** True only if the complete requested cohort reached its new state. */
+  readonly committed: boolean;
+  readonly recoveryRequired: boolean;
+  readonly targets: readonly string[];
+  /** Owned paths retained for inspection; never automatically overwrite these. */
+  readonly recoveryPaths: readonly string[];
+  readonly recoveryErrors: readonly string[];
+}
+
+export class UpdateTransactionError extends Error {
+  constructor(readonly receipt: UpdateTransactionReceipt, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`${receipt.operation} ${receipt.phase} failed: ${detail}; `
+      + (receipt.committed ? 'cohort committed' : 'cohort not committed')
+      + (receipt.recoveryRequired ? '; recovery required, blind retry is fenced' : '; prior state restored'), { cause });
+    this.name = 'UpdateTransactionError';
+  }
+}
+
+interface TransactionPaths {
+  readonly target: string;
+  readonly previous: string;
+  readonly stage: string;
+  readonly saved: string;
+  readonly exchange: string;
+  readonly claim: string;
+}
+
+/** Capture adapter methods before asynchronous caller preparation can replace them. */
+export function captureUpdateFileIo(io: UpdateFileIo): UpdateFileIo {
+  return {
+    writeFile: io.writeFile.bind(io), rename: io.rename.bind(io), chmod: io.chmod.bind(io),
+    exists: io.exists.bind(io), mkdir: io.mkdir.bind(io),
+    ...(io.writeExclusive ? { writeExclusive: io.writeExclusive.bind(io) } : {}),
+    ...(io.remove ? { remove: io.remove.bind(io) } : {}),
+  };
+}
+
+function transactionPaths(target: string): TransactionPaths {
+  return { target, previous: `${target}.previous`, stage: `${target}.update-download`,
+    saved: `${target}.update-previous`, exchange: `${target}.rollback-exchange`, claim: `${target}.update-transaction` };
+}
+
+/** Reject duplicate, aliased lexical, ancestor, and reserved-slot target overlap. */
+function validateTargets(targets: readonly { readonly path: string }[]): TransactionPaths[] {
+  const paths = targets.map(({ path }) => {
+    if (!isAbsolute(path) || resolve(path) !== path) throw new Error(`update target must be an absolute normalized path: ${path}`);
+    return transactionPaths(path);
+  });
+  const claimed: string[] = [];
+  for (const path of paths) {
+    for (const value of Object.values(path)) {
+      if (claimed.some((other) => other === value || other.startsWith(value + sep) || value.startsWith(other + sep))) {
+        throw new Error(`overlapping update target namespace: ${value}`);
+      }
+      claimed.push(value);
+    }
+  }
+  return paths;
+}
+
 /**
- * Writes the new file beside the target, then renames over it, an atomic
- * replace on the same filesystem, so a currently-running process that
- * already opened the old file keeps its old inode instead of executing a
- * half-written file. Before the replace, the outgoing file is parked at
- * `<path>.previous` (overwriting any older parked copy).
+ * Synchronous after staging: no await can admit a second operation between
+ * renames. Exclusive per-target claim files also fence cooperating processes.
+ * Claims left by a crash or incomplete undo require inspection, never replay.
+ */
+function transact(
+  operation: 'update' | 'rollback',
+  paths: readonly TransactionPaths[],
+  io: UpdateFileIo,
+  stage: (track: (path: string) => void) => void,
+  beforeCommit: (() => void) | undefined,
+  commit: (rename: (from: string, to: string) => void) => void,
+): void {
+  if (paths.length === 0) return;
+  if (!io.writeExclusive || !io.remove) throw new Error('update I/O adapter must support writeExclusive and remove; refusing mutation');
+  const claims: string[] = [];
+  const staged: string[] = [];
+  const journal: Array<{ from: string; to: string }> = [];
+  let phase: UpdateTransactionReceipt['phase'] = 'claim';
+  let committed = false;
+  let blockedClaim = false;
+  const claimData = Buffer.from(JSON.stringify({ operation, targets: paths, instruction: 'Interrupted transaction: inspect retained files before removing any fence. Do not blindly retry.' }));
+  const rename = (from: string, to: string) => {
+    if (io.exists(to)) throw new Error(`transaction destination is occupied: ${to}`);
+    io.rename(from, to);
+    journal.push({ from, to });
+  };
+  try {
+    for (const path of [...paths].sort((a, b) => a.target.localeCompare(b.target))) {
+      io.mkdir(dirname(path.target));
+      try { io.writeExclusive(path.claim, claimData); }
+      catch (error) {
+        // An exclusive write can fail after creating partial evidence. If even
+        // presence cannot be read, report uncertainty rather than clear retry.
+        blockedClaim = true;
+        try { blockedClaim = io.exists(path.claim); } catch { /* retain uncertainty */ }
+        throw error;
+      }
+      claims.push(path.claim);
+    }
+    // Inspect slots only after all claims, so no cooperating writer can race us.
+    for (const path of paths) {
+      for (const slot of [path.stage, path.saved, path.exchange]) {
+        if (io.exists(slot)) throw new Error(`unresolved update recovery file: ${slot}`);
+      }
+    }
+    phase = 'stage';
+    stage((path) => staged.push(path));
+    phase = 'admission';
+    const admission = beforeCommit?.();
+    if (admission !== undefined) {
+      void Promise.resolve(admission).catch(() => {});
+      throw new Error('beforeCommit must complete synchronously without returning a value');
+    }
+    phase = 'commit';
+    commit(rename);
+    committed = true;
+    phase = 'cleanup';
+    // Superseded backups are disposable ONLY after every target committed.
+    for (const path of paths) if (io.exists(path.saved)) io.remove(path.saved);
+    for (const path of staged) io.remove(path);
+    for (const claim of claims) io.remove(claim);
+  } catch (cause) {
+    const recoveryErrors: string[] = [];
+    const attempt = (action: () => void) => {
+      try { action(); } catch (error) { recoveryErrors.push(error instanceof Error ? error.message : String(error)); }
+    };
+    if (!committed) {
+      // Do not overwrite a destination when an earlier undo failed. Continue
+      // independent targets while retaining all bytes of the blocked chain.
+      for (const { from, to } of [...journal].reverse()) {
+        attempt(() => {
+          if (io.exists(from)) throw new Error(`undo destination occupied: ${from}`);
+          io.rename(to, from);
+        });
+      }
+    }
+    if (recoveryErrors.length === 0 && !committed) {
+      for (const path of staged) attempt(() => io.remove!(path));
+    }
+    // A pre-existing slot belongs to another/interrupted operation. Keep a
+    // fence rather than silently making it eligible for an overwrite/retry.
+    const staleSlot = phase === 'claim' && claims.length === paths.length;
+    const needsFence = committed || recoveryErrors.length > 0 || staleSlot;
+    if (!needsFence) for (const claim of claims) attempt(() => io.remove!(claim));
+    if (committed || recoveryErrors.length > 0 || staleSlot) {
+      // Cleanup may have released some claims before failing. Reacquire those
+      // we released without ever overwriting an existing claimant/journal.
+      for (const claim of claims) attempt(() => {
+        if (!io.exists(claim)) io.writeExclusive!(claim, claimData);
+      });
+    }
+    const recoveryRequired = committed || recoveryErrors.length > 0 || staleSlot || blockedClaim;
+    const recoveryPaths: string[] = [];
+    for (const path of paths) for (const slot of Object.values(path)) {
+      try { if (io.exists(slot)) recoveryPaths.push(slot); }
+      catch { recoveryPaths.push(slot); }
+    }
+    throw new UpdateTransactionError({ operation, phase, committed, recoveryRequired,
+      targets: paths.map((path) => path.target), recoveryPaths: recoveryRequired ? recoveryPaths : [], recoveryErrors }, cause);
+  }
+}
+
+interface StagedUpdate {
+  readonly target: UpdateTarget;
+  readonly buffer: Buffer;
+}
+
+function installVerifiedBuffers(
+  verified: readonly StagedUpdate[], io: UpdateFileIo, platform: NodeJS.Platform, beforeCommit?: () => void,
+): void {
+  const paths = validateTargets(verified.map(({ target }) => target));
+  transact('update', paths, io, (track) => {
+    for (let index = 0; index < verified.length; index += 1) {
+      const { target, buffer } = verified[index]!;
+      const path = paths[index]!;
+      track(path.stage); // A failing write may leave partial bytes; cleanup owns it.
+      io.writeFile(path.stage, buffer);
+      if (platform !== 'win32') io.chmod(path.stage, target.executable ? 0o755 : 0o644);
+    }
+  }, beforeCommit, (rename) => {
+    for (const path of paths) {
+      if (io.exists(path.target)) {
+        if (io.exists(path.previous)) rename(path.previous, path.saved);
+        rename(path.target, path.previous);
+      }
+      rename(path.stage, path.target);
+    }
+  });
+}
+
+/**
+ * Legacy public name. Stages beside the target and compensates failed renames;
+ * parking then installing is NOT a gapless atomic replacement.
  */
 export function swapFileAtomically(
   targetPath: string,
   buffer: Buffer,
   options: { executable: boolean; io?: UpdateFileIo; platform?: NodeJS.Platform },
 ): void {
-  const io = options.io ?? realUpdateFileIo;
-  const platform = options.platform ?? process.platform;
-  io.mkdir(dirname(targetPath));
-  const tempPath = `${targetPath}.update-download`;
-  io.writeFile(tempPath, buffer);
-  if (platform !== 'win32') {
-    io.chmod(tempPath, options.executable ? 0o755 : 0o644);
-  }
-  if (io.exists(targetPath)) {
-    io.rename(targetPath, `${targetPath}${PREVIOUS_FILE_SUFFIX}`);
-  }
-  io.rename(tempPath, targetPath);
+  installVerifiedBuffers([{ target: { label: targetPath, path: targetPath, assetName: '', executable: options.executable }, buffer: Buffer.from(buffer) }],
+    options.io ?? realUpdateFileIo, options.platform ?? process.platform);
 }
 
-export interface UpdateTarget {
-  /** Human label for receipts and errors, e.g. "daemon binary". */
-  readonly label: string;
-  /** Absolute path the artifact installs to. */
-  readonly path: string;
-  /** Release asset name to download and verify for this target. */
-  readonly assetName: string;
-  /** Whether the installed file needs the execute bit. */
-  readonly executable: boolean;
-}
-
-export interface ApplyVerifiedUpdateOptions {
+export interface ApplyVerifiedUpdateOptions extends UpdateRequestOptions {
   readonly fetchImpl: UpdateFetchLike;
-  /** Release download base, e.g. `https://github.com/<owner>/<repo>/releases/download/<tag>`. */
   readonly downloadBaseUrl: string;
   readonly targets: readonly UpdateTarget[];
   readonly io?: UpdateFileIo;
   readonly platform?: NodeJS.Platform;
+  /** Final synchronous admission/cancellation check AFTER all staging, BEFORE live renames. This is not a work-admission lease. */
+  readonly beforeCommit?: () => void;
 }
 
-async function downloadBuffer(fetchImpl: UpdateFetchLike, url: string): Promise<Buffer> {
-  const response = await fetchImpl(url);
-  if (!response.ok) {
-    throw new Error(`download failed (${response.status}) for ${url}`);
-  }
-  return Buffer.from(await response.arrayBuffer());
-}
-
-/**
- * Downloads the checksum manifest and every target artifact, verifies ALL of
- * them, and only then swaps each into place with a kept previous copy. A
- * checksum failure on any artifact means zero files are touched.
- */
+/** Download and verify the entire cohort before staging; stage it all before commit. */
 export async function applyVerifiedUpdate(options: ApplyVerifiedUpdateOptions): Promise<void> {
-  const manifestUrl = `${options.downloadBaseUrl}/${CHECKSUM_MANIFEST_NAME}`;
-  const manifestResponse = await options.fetchImpl(manifestUrl);
-  if (!manifestResponse.ok) {
-    throw new Error(`download failed (${manifestResponse.status}) for ${manifestUrl}`);
-  }
-  const checksums = parseChecksumFile(await manifestResponse.text());
-
-  const verified: Array<{ target: UpdateTarget; buffer: Buffer }> = [];
+  // TypeScript readonly is not runtime ownership. Capture every effect-bearing
+  // value before the first await, including adapter methods and each member.
+  options = { ...options, io: captureUpdateFileIo(options.io ?? realUpdateFileIo),
+    targets: options.targets.map((target) => ({ ...target })) };
+  validateTargets(options.targets);
   for (const target of options.targets) {
-    const buffer = await downloadBuffer(options.fetchImpl, `${options.downloadBaseUrl}/${target.assetName}`);
-    verifyChecksum(target.assetName, sha256(buffer), checksums.get(target.assetName));
-    verified.push({ target, buffer });
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(target.assetName)) throw new Error(`invalid update asset filename: ${target.assetName}`);
   }
-
-  // All downloads verified before any write, an update must not apply partially.
-  for (const { target, buffer } of verified) {
-    swapFileAtomically(target.path, buffer, {
-      executable: target.executable,
-      ...(options.io ? { io: options.io } : {}),
-      ...(options.platform ? { platform: options.platform } : {}),
-    });
-  }
+  const deadline = performance.now() + (options.timeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS);
+  const verified = await withUpdateBudget(options, async (signal) => {
+    const manifestUrl = `${options.downloadBaseUrl}/${CHECKSUM_MANIFEST_NAME}`;
+    const manifestResponse = await options.fetchImpl(manifestUrl, { signal });
+    signal.throwIfAborted();
+    if (!manifestResponse.ok) throw new Error(`download failed (${manifestResponse.status}) for ${manifestUrl}`);
+    const checksums = parseChecksumFile(await manifestResponse.text());
+    signal.throwIfAborted();
+    const verified: StagedUpdate[] = [];
+    for (const target of options.targets) {
+      const url = `${options.downloadBaseUrl}/${target.assetName}`;
+      const response = await options.fetchImpl(url, { signal });
+      signal.throwIfAborted();
+      if (!response.ok) throw new Error(`download failed (${response.status}) for ${url}`);
+      const buffer = Buffer.from(new Uint8Array(await response.arrayBuffer()));
+      signal.throwIfAborted();
+      verifyChecksum(target.assetName, sha256(buffer), checksums.get(target.assetName));
+      verified.push({ target, buffer });
+    }
+    signal.throwIfAborted();
+    return verified;
+  });
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted();
+    if (performance.now() >= deadline) throw new Error('update timed out before commit');
+  };
+  assertCurrent();
+  // The race above owns only read-only asynchronous preparation. A cancellation
+  // during synchronous staging must never mask a transaction recovery receipt.
+  installVerifiedBuffers(verified, options.io ?? realUpdateFileIo, options.platform ?? process.platform, () => {
+    assertCurrent();
+    const result = options.beforeCommit?.();
+    if (result !== undefined) {
+      void Promise.resolve(result).catch(() => {});
+      throw new Error('beforeCommit must complete synchronously without returning a value');
+    }
+    assertCurrent();
+  });
 }
 
 export interface RollbackTarget {
@@ -315,40 +554,34 @@ export interface RollbackTarget {
 }
 
 export interface RollbackResult {
-  /** Targets whose kept previous version is now live. */
   readonly restored: readonly RollbackTarget[];
-  /** Targets with no kept previous version, left untouched. */
   readonly skipped: readonly RollbackTarget[];
 }
 
-/**
- * One-command rollback: every target with a kept `.previous` counterpart is
- * EXCHANGED with it, the previous version becomes live, and the version
- * being rolled back is itself kept at `.previous`, so a second rollback
- * rolls forward again. Three same-directory renames per file (atomic on
- * POSIX), never a copy; nothing is downloaded.
- */
+/** Exchange a kept cohort with reverse compensation; optional synchronous admission runs under all claims before any live rename. */
 export function rollbackKeptPrevious(
-  targets: readonly RollbackTarget[],
-  io: UpdateFileIo = realUpdateFileIo,
+  targets: readonly RollbackTarget[], io: UpdateFileIo = realUpdateFileIo,
+  beforeCommit?: () => void,
 ): RollbackResult {
+  targets = targets.map(target => ({ ...target }));
+  io = captureUpdateFileIo(io);
+  const paths = validateTargets(targets);
   const restored: RollbackTarget[] = [];
   const skipped: RollbackTarget[] = [];
-  for (const target of targets) {
-    const previousPath = `${target.path}${PREVIOUS_FILE_SUFFIX}`;
-    if (!io.exists(previousPath)) {
-      skipped.push(target);
-      continue;
+  transact('rollback', paths, io, () => {}, beforeCommit, (rename) => {
+    for (let index = 0; index < paths.length; index += 1) {
+      const path = paths[index]!;
+      const target = targets[index]!;
+      if (!io.exists(path.previous)) { skipped.push(target); continue; }
+      if (io.exists(path.target)) {
+        rename(path.target, path.exchange);
+        rename(path.previous, path.target);
+        rename(path.exchange, path.previous);
+      } else {
+        rename(path.previous, path.target);
+      }
+      restored.push(target);
     }
-    if (io.exists(target.path)) {
-      const parkingPath = `${target.path}.rollback-exchange`;
-      io.rename(target.path, parkingPath);
-      io.rename(previousPath, target.path);
-      io.rename(parkingPath, previousPath);
-    } else {
-      io.rename(previousPath, target.path);
-    }
-    restored.push(target);
-  }
+  });
   return { restored, skipped };
 }

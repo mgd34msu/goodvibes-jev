@@ -1,3 +1,72 @@
 #!/usr/bin/env bun
-// This launcher exists during frozen installation, before dist is built.
-await import('../dist/cli/entrypoint.js');
+// Exists before frozen installation creates consumer links or dist is built.
+// Default Bun entry imports in-process. Explicit native mode verifies an owned cohort.
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+function isFile(path) {
+  try { return statSync(path).isFile(); }
+  catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return false;
+    throw error;
+  }
+}
+
+function manifest(path) {
+  if (!isFile(path)) return null;
+  try { return JSON.parse(readFileSync(path, 'utf8')); }
+  catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+}
+
+function sourceCheckout() {
+  // A packed package can contain src. That alone never opts it into source mode.
+  if (basename(root) !== 'daemon' || basename(dirname(root)) !== 'products') return false;
+  const workspace = resolve(root, '../..');
+  const product = manifest(join(root, 'package.json'));
+  const repo = manifest(join(workspace, 'package.json'));
+  return product?.name === '@goodvibes-jev/daemon' && product.private === true
+    && repo?.name === 'goodvibes-jev' && repo.private === true
+    && Array.isArray(repo.workspaces) && repo.workspaces.some(path => path === 'products/*' || path === 'products/daemon')
+    && (existsSync(join(workspace, '.git')) || isFile(join(workspace, 'bun.lock')))
+    && isFile(join(root, 'tsconfig.json'));
+}
+
+let entrypoint;
+if (typeof Bun === 'undefined') {
+  console.error('goodvibes-daemon requires a working Bun executable. Invoke this launcher with Bun; see https://bun.sh/docs/installation.');
+  process.exitCode = 1;
+} else {
+  try {
+    const nativePrefix = process.env.GOODVIBES_DAEMON_NATIVE_PREFIX;
+    if (nativePrefix !== undefined) {
+      if (!nativePrefix) throw new Error('GOODVIBES_DAEMON_NATIVE_PREFIX must name an explicit absolute installation prefix');
+      const product = manifest(join(root, 'package.json'));
+      if (product?.name !== '@goodvibes-jev/daemon' || product.private !== true || typeof product.version !== 'string') throw new Error('Native launch requires the private daemon product version owner');
+      const emittedNative = join(root, 'dist/cli/native-launch.js');
+      const sourceNative = join(root, 'src/cli/native-launch.ts');
+      const support = isFile(emittedNative) ? emittedNative : sourceCheckout() && isFile(sourceNative) ? sourceNative : null;
+      if (!support) throw new Error('Native launcher support is missing; build this private daemon package first');
+      const native = await import(pathToFileURL(support).href);
+      native.finishDaemonNativeLaunch(await native.runVerifiedDaemonNative(nativePrefix, product.version, process.argv.slice(2)));
+    } else {
+    const emitted = join(root, 'dist/cli/entrypoint.js');
+    const source = join(root, 'src/cli/entrypoint.ts');
+    if (isFile(emitted)) entrypoint = emitted;
+    else if (sourceCheckout() && isFile(source)) entrypoint = source;
+    else {
+      console.error('goodvibes-daemon: no runnable emitted CLI or verified source checkout is available.');
+      console.error('From the goodvibes-jev repository root, run `bun run build`, then retry this command.');
+      console.error('Installed packages require their built dist/cli/entrypoint.js; this launcher does not download or install artifacts.');
+      process.exitCode = 1;
+    }
+    }
+  } catch (error) {
+    console.error(`goodvibes-daemon: could not inspect the local entrypoint: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+}
+// A broken emitted runtime must fail honestly, never silently retry different code.
+if (entrypoint) await import(pathToFileURL(entrypoint).href);

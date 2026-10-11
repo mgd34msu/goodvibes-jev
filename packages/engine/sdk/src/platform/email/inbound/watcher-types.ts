@@ -15,6 +15,7 @@
  * Re-exported from `watcher.ts`, which remains the name every consumer imports.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import type { ImapBodyProbe } from '../imap-body-probe.js';
 import type {
   InboundCapabilityVerdict,
@@ -31,6 +32,8 @@ import type { BackoffPolicy } from './backoff.js';
 import type { MailboxCursor } from './types.js';
 
 export interface InboundMailboxWatcherDeps {
+  readonly reading?: JudgmentReadingOptions | undefined;
+  readonly disposeReading?: (() => void) | undefined;
   readonly settings: InboundWatcherSettings;
   readonly connections: MailboxConnectionPort;
   readonly cursors: MailboxCursorPort;

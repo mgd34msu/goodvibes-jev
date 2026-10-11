@@ -160,24 +160,29 @@ export function createChannelPaymentNotifier(deps: ChannelPaymentNotifierDeps): 
   const notices: { approval: string; veto: string } = { approval: '', veto: '' };
   return {
     async deliver(input): Promise<readonly ChannelDelivery[]> {
+      const current = () => { input.signal?.throwIfAborted(); input.assertCurrent?.(); };
+      current();
       if (input.kind !== 'notice') notices[input.kind] = input.message;
       const deliveries: ChannelDelivery[] = [];
       for (const target of deps.targets) {
+        current();
         let delivered = false;
         try {
           // The router's request shape belongs to the channels layer; this
           // module carries it through untouched rather than reconstructing it,
           // so a change there does not silently reshape a payment notice.
-          const request = { ...(target.request as Record<string, unknown>), content: input.message };
+          const request = { ...(target.request as Record<string, unknown>), content: input.message, assertCurrent: input.assertCurrent, signal: input.signal };
           await deps.router.deliver(request as never);
+          current();
           delivered = true;
         } catch (error) {
+          current();
           // The notice itself never enters the log line. It contains the
           // merchant, the item and the total, and an operator log is a wider
           // read path than the channel the notice was meant for.
           deps.onDeliveryFailure?.({
             channel: target.channel,
-            reason: sanitizeNoticeField(error instanceof Error ? error.message : 'unknown error', 200),
+            reason: input.assertCurrent || input.signal ? 'The guarded purchase notice could not be delivered.' : sanitizeNoticeField(error instanceof Error ? error.message : 'unknown error', 200),
           });
         }
         deliveries.push({
@@ -186,6 +191,7 @@ export function createChannelPaymentNotifier(deps: ChannelPaymentNotifierDeps): 
           backfillable: target.backfillable,
         });
       }
+      current();
       return deliveries;
     },
 

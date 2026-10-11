@@ -38,6 +38,8 @@
  * asking again sooner cannot clear a limit that our own asking is part of.
  */
 
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { assertImapReadingCurrent, ImapReadingError } from '../imap-readings.js';
 import {
   BackoffSchedule,
   DEFAULT_BACKOFF_POLICY,
@@ -49,7 +51,7 @@ import {
   classifyLocalFailure,
   classifyOpenFailure,
   classifyReadFailure,
-  errorText,
+  type OpenFailureVerdict,
   resolveIdleSupport,
   verdictForOpenConnection,
 } from './capability.js';
@@ -207,11 +209,13 @@ export class InboundMailboxWatcher {
   // -------------------------------------------------------------------------
 
   private async run(): Promise<void> {
-    while (!this.shutdown.signal.aborted) {
+    while (!this.shutdown.signal.aborted && !this.deps.reading?.signal?.aborted) {
       let connection: MailboxConnection;
       try {
-        connection = await this.deps.connections.open();
+        connection = await this.deps.connections.open({ signal: this.shutdown.signal });
+        if (this.shutdown.signal.aborted) { await connection.close(); break; }
       } catch (error) {
+        if (this.shutdown.signal.aborted || this.deps.reading?.signal?.aborted) break;
         await this.handleOpenFailure(error);
         await this.settleTerminal();
         continue;
@@ -236,6 +240,7 @@ export class InboundMailboxWatcher {
         this.mode = 'inactive';
         await connection.close().catch(() => undefined);
       }
+      if (this.shutdown.signal.aborted || this.deps.reading?.signal?.aborted) break;
       if (unexpected !== NOTHING_THREW) await this.handleUnexpectedFailure(unexpected);
       // After the socket is released, never while holding it, see
       // `settleTerminal`.
@@ -253,11 +258,20 @@ export class InboundMailboxWatcher {
    */
   private async handleUnexpectedFailure(error: unknown): Promise<void> {
     this.localFailures += 1;
-    const { verdict, terminal } = classifyLocalFailure(
+    let result: OpenFailureVerdict;
+    try { result = await classifyLocalFailure(
       error,
       this.localFailures,
       MAX_CONSECUTIVE_LOCAL_FAILURES,
+      { signal: this.shutdown.signal },
     );
+      result.assertCurrent?.();
+    } catch {
+      if (this.shutdown.signal.aborted) return;
+      result = { verdict: capabilityVerdict('reconnecting', new ImapReadingError().message), terminal: false, notice: null };
+    }
+    if (this.shutdown.signal.aborted) return;
+    const { verdict, terminal } = result;
     if (terminal) {
       this.reportTerminal(verdict, null);
       return;
@@ -291,6 +305,7 @@ export class InboundMailboxWatcher {
    * drain what arrived while we were away, then hold the chosen loop.
    */
   private async serve(connection: MailboxConnection): Promise<void> {
+    assertImapReadingCurrent(this.readingOptions(connection));
     const status = connection.report.mailbox;
     if (status.uidValidity === null) {
       this.reportTerminal(capabilityVerdict(
@@ -319,11 +334,14 @@ export class InboundMailboxWatcher {
       wire: connection.wire,
       mailbox: this.settings.mailbox,
       timeoutMs: this.settings.operationTimeoutMs,
-      signal: this.shutdown.signal,
+      signal: this.readingOptions(connection).signal,
     });
+    assertImapReadingCurrent(this.readingOptions(connection));
     if (position.outcome === 'search-failed') {
       // A refused SEARCH is routinely transient (§13.1), never terminal here.
-      const search = classifyReadFailure(position.error, 'search');
+      const search = await classifyReadFailure(position.error, 'search', this.readingOptions(connection));
+      assertImapReadingCurrent(this.readingOptions(connection));
+      search.assertCurrent?.();
       if (search.terminal) {
         this.reportTerminal(search.verdict, search.notice);
         return;
@@ -346,6 +364,7 @@ export class InboundMailboxWatcher {
       currentHighestUid: position.highestUid,
       currentMessageCount: position.messageCount,
     });
+    assertImapReadingCurrent(this.readingOptions(connection));
     this.cursor = resolution.cursor;
     if (resolution.kind === 'first-run') {
       this.note('cursor-established',
@@ -410,7 +429,7 @@ export class InboundMailboxWatcher {
       wire: connection.wire,
       clock: this.deps.clock,
       settings: this.settings,
-      signal: this.shutdown.signal,
+      signal: this.readingOptions(connection).signal,
       observer: this.deps.observer,
       onWake: async (_wake: IdleWakeSummary): Promise<'continue' | 'halt'> => {
         const report = await this.drainOnce(connection, 'idle');
@@ -421,13 +440,13 @@ export class InboundMailboxWatcher {
     });
 
     if (halted !== null) {
-      await this.handleDrainFailure(halted);
+      await this.handleDrainFailure(halted, connection);
       return;
     }
     if (result.outcome === 'idle-refused') {
       // The server advertised IDLE and then refused it. Reconnecting would
       // find the same refusal, so this falls back on the SAME connection.
-      this.tracker.record(capabilityVerdict('polling-idle-refused', errorText(result.error)));
+      this.tracker.record(capabilityVerdict('polling-idle-refused', 'The mail command failed; server details withheld.'));
       this.mode = 'polling';
       await this.holdPollLoop(connection);
       return;
@@ -440,7 +459,7 @@ export class InboundMailboxWatcher {
       result.outcome === 'reissue-stalled'
         ? 'The IDLE re-issue did not complete within the operation timeout, so '
           + 'the connection is treated as dead and rebuilt.'
-        : errorText(result.error)));
+        : 'The mail command failed; server details withheld.'));
     await this.pauseBeforeReconnect('reconnecting');
   }
 
@@ -455,7 +474,7 @@ export class InboundMailboxWatcher {
       observer: this.deps.observer,
       cursor: this.requireCursor(),
       via: 'poll',
-      signal: this.shutdown.signal,
+      signal: this.readingOptions(connection).signal,
     });
     this.cursor = result.cursor;
     // Every drain this loop completed counts, not only the one that ended it.
@@ -473,7 +492,7 @@ export class InboundMailboxWatcher {
       error: result.error,
       phase: result.phase,
       unreadableFetch: result.unreadableFetch,
-    });
+    }, connection);
   }
 
   // -------------------------------------------------------------------------
@@ -494,7 +513,7 @@ export class InboundMailboxWatcher {
       observer: this.deps.observer,
       cursor: this.requireCursor(),
       via,
-      signal: this.shutdown.signal,
+      signal: this.readingOptions(connection).signal,
     });
     this.cursor = report.cursor;
     if (report.outcome === 'complete') this.noteDrainCompleted();
@@ -530,7 +549,7 @@ export class InboundMailboxWatcher {
     const report = await this.drainOnce(connection, via);
     if (report.outcome === 'complete') return 'continue';
     if (report.outcome === 'aborted') return 'stop';
-    await this.handleDrainFailure(report);
+    await this.handleDrainFailure(report, connection);
     return 'stop';
   }
 
@@ -544,7 +563,14 @@ export class InboundMailboxWatcher {
    * and will be handed over again, so this pauses on its own escalation rather
    * than re-labelling the connection.
    */
-  private async handleDrainFailure(report: MailboxDeltaReport): Promise<void> {
+  private readingOptions(connection: MailboxConnection): JudgmentReadingOptions & { readonly signal: AbortSignal } {
+    return { signal: AbortSignal.any([this.shutdown.signal, ...(connection.reading?.signal ? [connection.reading.signal] : [])]), assertCurrent: () => {
+      assertImapReadingCurrent({ signal: this.shutdown.signal });
+      assertImapReadingCurrent(connection.reading ?? {});
+    } };
+  }
+
+  private async handleDrainFailure(report: MailboxDeltaReport, connection: MailboxConnection): Promise<void> {
     if (report.outcome === 'delivery-failed') {
       await this.sleep(this.deliveryBackoff.next());
       return;
@@ -553,10 +579,15 @@ export class InboundMailboxWatcher {
       await this.handleUnreadableDrain(report.error);
       return;
     }
-    const { verdict, terminal, notice } = classifyReadFailure(
+    const reading = this.readingOptions(connection);
+    const result = await classifyReadFailure(
       report.error,
       report.phase ?? 'fetch',
+      reading,
     );
+    assertImapReadingCurrent(reading);
+    result.assertCurrent?.();
+    const { verdict, terminal, notice } = result;
     if (terminal) {
       this.reportTerminal(verdict, notice);
       return;
@@ -583,7 +614,7 @@ export class InboundMailboxWatcher {
    */
   private async handleUnreadableDrain(error: unknown): Promise<void> {
     this.unreadableDrains += 1;
-    const text = errorText(error);
+    const text = 'The mail response could not be read; server details withheld.';
     if (this.unreadableDrains >= MAX_CONSECUTIVE_UNREADABLE_DRAINS) {
       this.reportTerminal(capabilityVerdict('fetch-unreadable',
         `${text} This has now happened ${String(this.unreadableDrains)} times in a row with no `
@@ -603,7 +634,9 @@ export class InboundMailboxWatcher {
   // -------------------------------------------------------------------------
 
   private async handleOpenFailure(error: unknown): Promise<void> {
-    const { verdict, terminal, notice } = classifyOpenFailure(error);
+    const result = classifyOpenFailure(error);
+    result.assertCurrent?.();
+    const { verdict, terminal, notice } = result;
 
     // A rejected credential is retried EXACTLY ONCE, to absorb an OAuth token
     // that expired between connections and can be refreshed on the next open.

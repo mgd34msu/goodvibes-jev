@@ -101,6 +101,8 @@ registry.register(healAcceptance);
 
 import { inboxTriage } from '../intake/triage/battery.js';
 registry.register(inboxTriage);
+import { triageTagMeaning } from '../intake/triage/tagger/meaning.js';
+registry.register(triageTagMeaning);
 
 import { sourceScreeningVerification } from '../security/source-screening/verification.js';
 registry.register(sourceScreeningVerification);

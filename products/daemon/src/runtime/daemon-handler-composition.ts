@@ -1,3 +1,5 @@
+import type { DaemonTriagePermissionHost, DaemonTriageTaggingRequest } from './tagged-inbox-composition.js';
+import type { OwnedInboxTagging } from '@goodvibes-jev/engine/sdk/platform/intake';
 /** Product host surfaces over canonical engine implementations. */
 import type { EmailService } from '@goodvibes-jev/engine/sdk/platform/email';
 import { registerOwnedMailInbox } from './owned-inbox-mail.js';
@@ -22,6 +24,8 @@ import type { BrowserCheckoutSeamHolder } from './browser-checkout-seam-holder.j
  * production default and this seam is not evidence of built-in provider parity.
  */
 export interface DaemonInboxControls extends Required<Pick<RegisterInboxSurfaceOptions, 'gatePolling'>> {
+  /** Root-owned capability; only explicit source options request it. */
+  readonly createTriageTagging?: (request: DaemonTriageTaggingRequest) => OwnedInboxTagging;
   /** Explicit awaitable election withdrawal for account-verified clustered owners. */
   readonly gatePollingOwned?: (providerId: string, control: InboxPollingControl) => () => Promise<void>;
   /** Subscribe to local config/credential revocation without exposing secrets. */
@@ -37,6 +41,7 @@ export type DaemonInboxFactory = (
 ) => OwnedHandlerSurface | Promise<OwnedHandlerSurface>;
 
 export interface DaemonHandlerCompositionOptions {
+  readonly triagePermissionHost?: DaemonTriagePermissionHost;
   readonly gatewayMethods: GatewayMethodCatalog;
   readonly secretsManager: SecretsManager;
   readonly configManager: ConfigManager;
@@ -78,7 +83,7 @@ export async function createDaemonHandlerComposition(
       // Each provider is elected separately; standby nodes still serve storage.
       gatePolling: (providerId, control) => options.clusterCoordinator.register(inboxPollerGate(providerId, control)),
       gatePollingOwned: (providerId, control) => options.clusterCoordinator.registerOwned(inboxPollerGate(providerId, control)),
-    }, { configManager: options.configManager, secretsManager: options.secretsManager }),
+    }, { configManager: options.configManager, secretsManager: options.secretsManager }, options.triagePermissionHost),
     registerDrafts: registerDraftMethods,
     registerPayments: () => createPaymentsServices({
       gatewayMethods: options.gatewayMethods,

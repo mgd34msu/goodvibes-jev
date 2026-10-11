@@ -12,7 +12,7 @@
  * declare the fields yet; they ride the node's open index signature).
  */
 import type { FleetProcessNode } from '../../lib/goodvibes';
-import { readHeadline, readReviewSummary, readStallTell, stallTellLabel } from '../../lib/fleet';
+import { readCheckSummary, readHeadline, readReviewSummary, readStallTell, stallTellLabel } from '../../lib/fleet';
 import { whenLabel } from '../../lib/when-label';
 import { Chip } from '../ui/Chip';
 import { StatusDot } from '../ui/StatusDot';
@@ -52,6 +52,39 @@ export function NodeStallNote({ node }: { readonly node: FleetProcessNode }) {
   );
 }
 
+/** The canonical contract adapter owns these readings and counts. This renderer adds no score or pass decision. */
+function NodeCheckSummary({ node }: { readonly node: FleetProcessNode }) {
+  const check = readCheckSummary(node);
+  if (!check) return <p role="note" data-testid="fleet-check-unavailable">Contract check summary unavailable.</p>;
+  return (
+    <div className="fleet-detail__review" data-testid="fleet-detail-check">
+      <div className="fleet-detail__review-head">
+        <strong>Contract checks</strong>
+        <span>{check.met} of {check.judged} criteria met</span>
+        <span className="fleet-detail__review-meta">{check.nudges} correction{check.nudges === 1 ? '' : 's'}</span>
+      </div>
+      {check.lastCheckAt !== undefined && <p>Last check {whenLabel(check.lastCheckAt)}</p>}
+      {check.criteria.length === 0 ? <p role="note">No judged criteria reported.</p> : (
+        <ul className="fleet-detail__review-checklist">
+          {check.criteria.map(criterion => (
+            <li key={criterion.id} data-verdict={criterion.verdict}>
+              <span className="fleet-detail__review-mark" aria-hidden="true">
+                <StatusDot tone={criterion.verdict === 'met' ? 'ok' : criterion.verdict === 'unmet' ? 'bad' : 'idle'} />
+              </span>
+              <span className="fleet-detail__review-body">
+                <span className="fleet-detail__review-req">{criterion.text || criterion.id}</span>
+                <span className="fleet-detail__review-state">{criterion.verdict}</span>
+                {criterion.outcome !== undefined && <span>Recorded outcome: {criterion.outcome}</span>}
+                {criterion.severity !== undefined && <span>Severity: {criterion.severity}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /**
  * NodeReviewSummary, the latest review's verdict, score, cycles, and acceptance
  * checklist for a reviewed wrfc-chain / wrfc-subtask node (readReviewSummary,
@@ -64,6 +97,8 @@ export function NodeStallNote({ node }: { readonly node: FleetProcessNode }) {
  * verdict with no acceptance items is not an accepted deliverable.
  */
 export function NodeReviewSummary({ node }: { readonly node: FleetProcessNode }) {
+  // A malformed canonical projection must never fall back to obsolete review evidence.
+  if (Object.hasOwn(node, 'check')) return <NodeCheckSummary node={node} />;
   const review = readReviewSummary(node);
   if (!review) return null;
   const verdictTone = review.passed ? 'ok' : 'bad';

@@ -1,3 +1,4 @@
+import { knowledgeSourceCrawledNow } from '../store-record-representation.js';
 import { registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
 import { ConfigurationError, GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { ArtifactStore } from '../../artifacts/index.js';
@@ -81,6 +82,7 @@ import type {
 } from './types.js';
 
 export class HomeGraphService {
+  private readonly autoLinkController = new AbortController();
   private activeReindex: Promise<HomeGraphReindexResult> | null = null;
   private pendingSyncSelfImprove = new Set<string>();
   private syncSelfImproveControllers = new Map<string, AbortController>();
@@ -109,6 +111,7 @@ export class HomeGraphService {
   }
 
   dispose(): void {
+    this.autoLinkController.abort();
     this.cancelSyncSelfImprovement();
   }
 
@@ -122,6 +125,7 @@ export class HomeGraphService {
       store: this.store,
       artifactStore: this.artifactStore,
       snapshot: input,
+      signal: this.autoLinkController.signal,
     });
     this.scheduleSyncSelfImprovement(result.spaceId, result.installationId);
     return result;
@@ -301,6 +305,7 @@ export class HomeGraphService {
       const extraction = await storeHomeGraphArtifactExtraction(this.store, source, artifact, spaceId, installationId, prepared);
       if (extraction) {
         await autoLinkHomeGraphSource({
+          signal: this.autoLinkController.signal,
           store: this.store,
           spaceId,
           installationId,
@@ -487,7 +492,7 @@ export class HomeGraphService {
       artifactStore: this.artifactStore,
       reportBackgroundError: this.reportBackgroundError.bind(this),
     }, sourceId, input.artifact, input.spaceId);
-    const source = await this.store.upsertSource({
+    const source = await this.store.upsertSource(knowledgeSourceCrawledNow({
       id: sourceId,
       connectorId: HOME_GRAPH_CONNECTOR_ID,
       sourceType: input.sourceType,
@@ -497,18 +502,18 @@ export class HomeGraphService {
       tags: uniqueStrings(input.tags),
       status: 'indexed',
       artifactId: input.artifact.id,
-      lastCrawledAt: Date.now(),
       metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
         ...input.metadata,
         artifactMimeType: input.artifact.mimeType,
       }),
-    });
+    }));
     registerGeneratedKnowledgeSourceReferences(this.store, source, { id: sourceId, canonicalUri,
       ...(!input.sourceUri && !input.artifact.sourceUri && source.sourceUri === canonicalUri ? { sourceUri: canonicalUri } : {}) });
     const extraction = await storeHomeGraphArtifactExtraction(this.store, source, input.artifact, input.spaceId, input.installationId, prepared);
     const linked = input.target
       ? (await this.linkKnowledge({ knowledgeSpaceId: input.spaceId, sourceId: source.id, target: input.target })).edge
       : (await autoLinkHomeGraphSource({
+          signal: this.autoLinkController.signal,
           store: this.store,
           spaceId: input.spaceId,
           installationId: input.installationId,
@@ -552,7 +557,7 @@ export class HomeGraphService {
     installationId: string,
     sourceIds?: readonly string[],
   ) {
-    return autoLinkExistingHomeGraphSources(this.store, spaceId, installationId, sourceIds);
+    return autoLinkExistingHomeGraphSources(this.store, spaceId, installationId, sourceIds, this.autoLinkController.signal);
   }
 
   private async refreshQualityIssues(spaceId: string, installationId: string): Promise<readonly KnowledgeIssueRecord[]> {

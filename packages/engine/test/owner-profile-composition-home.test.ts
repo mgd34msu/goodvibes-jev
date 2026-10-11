@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { redactSensitiveData } from '../sdk/src/platform/utils/redaction.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 import { composeOwnerProfile } from '../sdk/src/platform/control-plane/routes/owner-profile-composition.ts';
+import { resolveOwnerProfilePath } from '../sdk/src/platform/owner-profile/paths.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
 import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
 
@@ -54,7 +55,7 @@ function seedProfile(home: string, marker: string): string {
   const dir = join(home, '.goodvibes', 'daemon');
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'owner-profile.md');
-  writeFileSync(path, `# Owner profile\n\n- name: ${marker}\n`, 'utf-8');
+  writeFileSync(path, `# Owner profile\n\n## Identity\nname: ${marker}\n`, 'utf-8');
   return path;
 }
 
@@ -82,35 +83,20 @@ describe('owner-profile composition honours an injected home', () => {
 
     try {
       expect(composed.store.path).toBe(expected);
+      expect(composed.store.get('identity.name')?.value).toBe('injected-home-owner');
     } finally {
       composed.dispose();
     }
   });
 
-  test('the document actually read is the one under the injected home', () => {
-    const home = makeProjectTempDir('gv-profile-home-content');
-    seedProfile(home, 'injected-home-owner');
-
-    const composed = composeOwnerProfile(new GatewayMethodCatalog(), {
-      configManager: configFor(),
-      homeDir: home,
-    });
-
-    try {
-      const state = composed.store.loadSync();
-      expect(state.path).toContain(home);
-    } finally {
-      composed.dispose();
-    }
-  });
-
-  test('no injected home still resolves: the login home remains the last resort', () => {
-    const composed = composeOwnerProfile(new GatewayMethodCatalog(), { configManager: configFor() });
-    try {
-      expect(composed.store.path.length).toBeGreaterThan(0);
-    } finally {
-      composed.dispose();
-    }
+  test('without an injected home, the redirected tree wins over the login home fallback', () => {
+    const loginHome = makeProjectTempDir('gv-profile-login-home');
+    const treeHome = makeProjectTempDir('gv-profile-tree-home');
+    // Pure resolution with an isolated environment never opens a real profile.
+    expect(resolveOwnerProfilePath({ env: { HOME: loginHome } }))
+      .toBe(join(loginHome, '.goodvibes', 'daemon', 'owner-profile.md'));
+    expect(resolveOwnerProfilePath({ env: { HOME: loginHome, GOODVIBES_HOME: treeHome } }))
+      .toBe(join(treeHome, '.goodvibes', 'daemon', 'owner-profile.md'));
   });
 
   test('an explicit profile.path still wins over the injected home', () => {

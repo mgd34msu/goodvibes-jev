@@ -301,6 +301,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
   });
 
   test('self-improvement promotes accepted repair evidence into typed subject facts', async () => {
+    answerReadings.set({ authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']] });
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const official = await store.upsertSource({

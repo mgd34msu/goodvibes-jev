@@ -33,7 +33,8 @@
  */
 
 import { dirname, isAbsolute, resolve } from 'path';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'fs';
 import { acquireCrossProcessLock } from '../workspace/checkpoint/cross-process-lock.js';
 import { writeJsonFileAtomic } from '../utils/atomic-json-store.js';
 import type { ConfigManager } from './manager.js';
@@ -49,7 +50,7 @@ import {
   type EncryptedStoreEnvelope,
 } from './secrets-keyfile.js';
 export { SecretStoreUnreadableError } from './secrets-keyfile.js';
-import { getSecretRefSource, isSecretRefInput, resolveSecretRef } from './secret-refs.js';
+import { getSecretRefSource, isSecretRefInput, normalizeSecretRef, resolveSecretRef } from './secret-refs.js';
 import { listMigratableSecrets, migratableStores } from './secrets-migration-view.js';
 import { logger } from '../utils/logger.js';
 import { requireSurfaceRoot, resolveSharedDirectory } from '../runtime/surface-root.js';
@@ -83,7 +84,28 @@ export interface SecretRecord {
   readonly refSource?: string | undefined;
 }
 
+export class SecretWriteCommittedError extends Error {
+  constructor() { super('The credential write committed, but its owner changed afterward.'); this.name = 'SecretWriteCommittedError'; }
+}
+
+declare const secretWriteTransitionBrand: unique symbol;
+export interface SecretWriteTransition { readonly [secretWriteTransitionBrand]: true }
+export interface SecretWriteTransitionFacts {
+  readonly key: string;
+  readonly scope: SecretScope;
+  readonly paths: readonly string[];
+  readonly beforeGeneration: number;
+  readonly phase: 'prepared' | 'pending' | 'committed';
+}
+export interface SecretWriteEffectOwner {
+  readonly assertCurrent: () => void;
+  readonly committed: () => void;
+}
 export interface SecretWriteOptions {
+  /** Optional exact effect transaction; never grants permission by itself. */
+  readonly effect?: ((transition: SecretWriteTransition) => SecretWriteEffectOwner) | undefined;
+  /** Retained caller authority, checked again after queued store-lock acquisition. */
+  readonly assertCurrent?: (() => void) | undefined;
   readonly scope?: SecretScope | undefined;
   readonly medium?: SecretStorageMedium | undefined;
 }
@@ -236,6 +258,31 @@ export function describeSecretWriteScope(key: string): string {
   return describeCredentialScope(key);
 }
 
+declare const scopedDeletionBrand: unique symbol;
+export interface PreparedScopedSecretDeletion { readonly [scopedDeletionBrand]: true; }
+export interface PreparedScopedSecretDeletionFacts {
+  readonly operation: 'delete'; readonly key: string; readonly scope: SecretScope;
+  readonly destinations: readonly { readonly path: string; readonly operation: 'remove'; readonly tier: SecretScope }[];
+}
+interface ScopedDeletionRecord {
+  readonly facts: PreparedScopedSecretDeletionFacts;
+  readonly generation: number;
+  readonly policy: SecretStorageMode;
+  readonly observations: readonly { path: string; stamp: string }[];
+  readonly publications: readonly { path: string; payload: unknown }[];
+  spent: boolean;
+  completed?: { generation: number; observations: readonly { path: string; stamp: string }[] };
+}
+function deletionFileObservation(path: string): { stamp: string; raw: string | null } {
+  try {
+    const before = statSync(path, { bigint: true }); const raw = readFileSync(path, 'utf8');
+    const after = statSync(path, { bigint: true });
+    const identity = (value: typeof before) => [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs].join(':');
+    if (identity(before) !== identity(after)) throw new Error('Secret store changed.');
+    return { stamp: identity(after) + ':' + raw, raw };
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { stamp: 'absent', raw: null }; throw error; }
+}
+
 export class SecretsManager {
   /** Change listeners, fired after a successful set() or delete() so credential consumers (e.g. the provider registry) re-resolve LIVE, no restart. */
   private readonly changeListeners = new Set<(key: string) => void>();
@@ -257,17 +304,151 @@ export class SecretsManager {
   private readonly ownedMutationPaths = new Set<string>();
   // An owner must not admit the old credential while its replacement/revoke
   // waits for filesystem ownership. Counts keep overlapping writes fenced.
+  private credentialMutationGeneration = 0;
+  private readonly credentialInvalidationListeners = new Set<() => void>();
   private readonly pendingLocalMutations = new Map<string, number>();
 
+  /** Value-free local owner state; no credential names, paths, bytes or hashes. */
+  getCredentialMutationState(): Readonly<{ generation: number; pending: boolean }> {
+    return Object.freeze({ generation: this.credentialMutationGeneration, pending: this.pendingLocalMutations.size > 0 });
+  }
+
+  /** Pre-effect and settlement notifications, including failed or no-op writes. */
+  onDidInvalidateCredentials(listener: () => void): () => void {
+    this.credentialInvalidationListeners.add(listener);
+    return () => { this.credentialInvalidationListeners.delete(listener); };
+  }
+
+  private notifyCredentialInvalidation(): void {
+    for (const listener of [...this.credentialInvalidationListeners]) {
+      try { listener(); } catch { /* An observer cannot defeat credential revocation. */ }
+    }
+  }
+
   private async withCredentialMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    this.credentialMutationGeneration++;
     this.pendingLocalMutations.set(key, (this.pendingLocalMutations.get(key) ?? 0) + 1);
+    this.notifyCredentialInvalidation();
     try { return await operation(); }
     finally {
+      this.credentialMutationGeneration++;
       const remaining = this.pendingLocalMutations.get(key)! - 1;
       if (remaining === 0) this.pendingLocalMutations.delete(key);
       else this.pendingLocalMutations.set(key, remaining);
+      this.notifyCredentialInvalidation();
     }
   }
+  private readonly preparedScopedDeletions = new WeakMap<PreparedScopedSecretDeletion, ScopedDeletionRecord>();
+
+  /** Exact physical scope only. Capture never resolves refs, repairs stores or creates a keyfile. */
+  prepareScopedDeletion(key: string, scope: SecretScope): PreparedScopedSecretDeletion {
+    if (!key || !['project', 'user', 'daemon'].includes(scope)) throw new Error('Invalid scoped secret deletion.');
+    const state = this.getCredentialMutationState();
+    if (state.pending) throw new Error('Credential owner is busy.');
+    const policy = this.getPolicy();
+    const stores = this.getAllCandidateStores().filter(store => store.scope === scope);
+    const observations: { path: string; stamp: string }[] = [];
+    const publications: { path: string; payload: unknown }[] = [];
+    const keyObservation = deletionFileObservation(this.keyFilePath);
+    observations.push({ path: this.keyFilePath, stamp: keyObservation.stamp });
+    for (const store of stores) {
+      const observed = deletionFileObservation(store.path); observations.push({ path: store.path, stamp: observed.stamp });
+      if (observed.raw === null) continue;
+      const parsed = JSON.parse(observed.raw) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Secret store unavailable.');
+      let values: Record<string, string>; let encryptionKey: Buffer | undefined;
+      if (store.secure) {
+        if (parsed.version === undefined) encryptionKey = deriveLegacyEncryptionKey(this.options.legacyIdentity);
+        else {
+          if (parsed.version !== SECRETS_STORE_FORMAT_VERSION || !keyObservation.raw || !/^[0-9a-f]{64}$/i.test(keyObservation.raw.trim())) throw new Error('Secret store unavailable.');
+          encryptionKey = Buffer.from(keyObservation.raw.trim(), 'hex');
+        }
+        values = JSON.parse(decrypt(parsed as unknown as EncryptedStoreEnvelope, encryptionKey)) as Record<string, string>;
+      } else values = ('version' in parsed && 'secrets' in parsed ? parsed.secrets : parsed) as Record<string, string>;
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('Secret store unavailable.');
+      if (!Object.hasOwn(values, key)) continue;
+      const next = { ...values }; delete next[key];
+      let payload: unknown = { version: 1, secrets: next };
+      if (encryptionKey) {
+        const encrypted = encrypt(JSON.stringify(next), encryptionKey);
+        if (parsed.version === undefined) { delete encrypted.version; delete encrypted.keyId; }
+        payload = encrypted;
+      }
+      publications.push({ path: store.path, payload });
+    }
+    const handle = Object.freeze({}) as PreparedScopedSecretDeletion;
+    const facts = Object.freeze({ operation: 'delete' as const, key, scope, destinations: Object.freeze(publications.map(item => Object.freeze({ path: item.path, operation: 'remove' as const, tier: scope }))) });
+    this.preparedScopedDeletions.set(handle, { facts, generation: state.generation, policy, observations, publications, spent: false });
+    this.assertPreparedScopedDeletion(handle); return handle;
+  }
+
+  inspectPreparedScopedDeletion(handle: PreparedScopedSecretDeletion): PreparedScopedSecretDeletionFacts {
+    const entry = this.preparedScopedDeletions.get(handle); if (!entry) throw new Error('Secret deletion is not authentic.'); return entry.facts;
+  }
+  assertPreparedScopedDeletion(handle: PreparedScopedSecretDeletion): void {
+    const entry = this.preparedScopedDeletions.get(handle);
+    if (!entry || entry.spent || this.getCredentialMutationState().pending || this.credentialMutationGeneration !== entry.generation || this.getPolicy() !== entry.policy) throw new Error('Secret deletion is stale.');
+    for (const observation of entry.observations) if (deletionFileObservation(observation.path).stamp !== observation.stamp) throw new Error('Secret deletion store changed.');
+  }
+
+  /** Acquire the captured file namespace outside the synchronous final owner boundary. */
+  async withPreparedScopedDeletion<T>(handle: PreparedScopedSecretDeletion,
+    operation: (finish: (assertCurrent: () => void) => import('./prepared-mutation.js').PreparedConfigMutationReceipt) => T): Promise<T> {
+    this.assertPreparedScopedDeletion(handle);
+    const entry = this.preparedScopedDeletions.get(handle)!; entry.spent = true;
+    return this.withStoreMutations(entry.publications.map(item => item.path), () => {
+      let consumed = false; let active = true;
+      try { return operation((assertCurrent) => {
+        if (!active || consumed) throw new Error('Secret deletion is spent.'); consumed = true;
+        const completedPaths: string[] = []; let uncertainPath: string | undefined;
+        const observations = entry.observations.map(item => ({ ...item }));
+        let begun = false;
+        try {
+          assertCurrent();
+          if (this.credentialMutationGeneration !== entry.generation || this.pendingLocalMutations.size || this.getPolicy() !== entry.policy) throw new Error('Credential owner changed.');
+          this.credentialMutationGeneration++; this.pendingLocalMutations.set(entry.facts.key, 1); begun = true;
+          this.notifyCredentialInvalidation();
+          const current = () => {
+            assertCurrent();
+            if (this.credentialMutationGeneration !== entry.generation + 1 || this.pendingLocalMutations.size !== 1 || this.pendingLocalMutations.get(entry.facts.key) !== 1 || this.getPolicy() !== entry.policy) throw new Error('Credential owner changed.');
+            for (const observation of observations) if (deletionFileObservation(observation.path).stamp !== observation.stamp) throw new Error('Secret deletion store changed.');
+          };
+          current();
+          for (const publication of entry.publications) {
+            current();
+            writeJsonFileAtomic(publication.path, publication.payload, { mode: 0o600, cleanupStaleTemps: false });
+            completedPaths.push(publication.path);
+            observations.find(item => item.path === publication.path)!.stamp = deletionFileObservation(publication.path).stamp;
+          }
+        } catch {
+          uncertainPath = entry.publications[completedPaths.length]?.path;
+          return Object.freeze({ status: completedPaths.length ? 'partial' : 'unknown', completedPaths: Object.freeze(completedPaths), ...(uncertainPath ? { uncertainPath } : {}) });
+        } finally {
+          if (begun) {
+            this.credentialMutationGeneration++;
+            const remaining = (this.pendingLocalMutations.get(entry.facts.key) ?? 1) - 1;
+            if (remaining) this.pendingLocalMutations.set(entry.facts.key, remaining); else this.pendingLocalMutations.delete(entry.facts.key);
+            this.notifyCredentialInvalidation();
+          }
+          if (completedPaths.length) { try { this.notifyChanged(entry.facts.key); } catch { /* Receipt stays truthful. */ } }
+        }
+        entry.completed = { generation: entry.generation + 2, observations };
+        return Object.freeze({ status: 'committed', completedPaths: Object.freeze(completedPaths) });
+      }); } finally { active = false; }
+    });
+  }
+
+  /** Restriction-only post-effect fence; never re-captures a changed credential as this plan's effect. */
+  assertCompletedScopedDeletion(handle: PreparedScopedSecretDeletion): void {
+    const entry = this.preparedScopedDeletions.get(handle); const completed = entry?.completed;
+    if (!entry || !completed || this.credentialMutationGeneration !== completed.generation || this.pendingLocalMutations.size || this.getPolicy() !== entry.policy) throw new Error('Completed secret deletion changed.');
+    for (const observation of completed.observations) if (deletionFileObservation(observation.path).stamp !== observation.stamp) throw new Error('Completed secret deletion store changed.');
+  }
+
+  applyPreparedScopedDeletion(handle: PreparedScopedSecretDeletion, assertCurrent: () => void): Promise<import('./prepared-mutation.js').PreparedConfigMutationReceipt> {
+    return this.withPreparedScopedDeletion(handle, finish => finish(assertCurrent));
+  }
+
   private encKey: Buffer | null = null;
   private readonly keyFilePath: string;
   private readonly options: SecretsManagerOptions;
@@ -364,6 +545,37 @@ export class SecretsManager {
     return { state: 'absent' };
   }
 
+  /** Local alias-aware observation. Private credential bytes never become judgment facts. */
+  resolveLocalCredentialSnapshot(key: string):
+    | { readonly state: 'resolved'; readonly value: string; readonly revision: string }
+    | { readonly state: 'absent'; readonly revision: string }
+    | { readonly state: 'unsupported' } {
+    const chain: unknown[] = [this.getPolicy(), this.credentialMutationGeneration];
+    const seen = new Set<string>();
+    const revision = () => createHash('sha256').update(JSON.stringify(chain)).digest('hex');
+    let current = key;
+    for (let depth = 0; depth < 32; depth++) {
+      if (seen.has(current) || this.pendingLocalMutations.has(current) || process.env[current] !== undefined) return { state: 'unsupported' };
+      seen.add(current);
+      let value: string | undefined;
+      for (const path of this.getReadOrder()) {
+        const result = path.secure ? this.readEncryptedStore(path.path) : this.readPlaintextStore(path.path);
+        if (result.status === 'unreadable') return { state: 'unsupported' };
+        const found = result.status === 'ok' && Object.hasOwn(result.secrets, current);
+        chain.push([current, path.path, path.secure, found]);
+        if (found) { value = result.secrets[current]; break; }
+      }
+      if (value === undefined) return depth === 0 ? { state: 'absent', revision: revision() } : { state: 'unsupported' };
+      if (typeof value !== 'string') return { state: 'unsupported' };
+      chain.push(value);
+      if (!isSecretRefInput(value)) return { state: 'resolved', value, revision: revision() };
+      const ref = normalizeSecretRef(value);
+      if (!ref || ref.source !== 'goodvibes') return { state: 'unsupported' };
+      current = ref.id;
+    }
+    return { state: 'unsupported' };
+  }
+
   /**
    * Read `key` from ONE tier, ignoring the read order and the environment.
    *
@@ -437,16 +649,85 @@ export class SecretsManager {
     }
   }
 
+  private readonly writeTransitions = new WeakMap<SecretWriteTransition, { readonly assertCurrent: () => void; readonly facts: () => SecretWriteTransitionFacts }>();
+  assertWriteTransition(transition: SecretWriteTransition): void {
+    const record = this.writeTransitions.get(transition);
+    if (!record) throw new Error('Secret write transition is not authentic.');
+    record.assertCurrent();
+  }
+  inspectWriteTransition(transition: SecretWriteTransition): SecretWriteTransitionFacts {
+    this.assertWriteTransition(transition);
+    return this.writeTransitions.get(transition)!.facts();
+  }
+
   async set(key: string, value: string, options: SecretWriteOptions = {}): Promise<void> {
+    const assertCurrent = options.assertCurrent;
+    const current = () => {
+      const result: unknown = assertCurrent?.();
+      if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Secret write ownership must be checked synchronously.'); }
+    };
+    current();
     const scope = resolveSecretWriteScope(key, options.scope);
     const policy = this.getPolicy();
     const medium = options.medium ?? this.getDefaultWriteMedium(policy);
     if (policy === 'require_secure' && medium === 'plaintext') throw new Error('Secret policy require_secure forbids plaintext persistence');
     const paths = this.writeStorePaths(scope, medium, policy);
-    await this.withCredentialMutation(key, () => this.withStoreMutations(paths, () => {
-      if (this.getPolicy() !== policy) throw new Error('Secret storage policy changed during acquisition');
-      this.setOwned(key, value, { ...options, medium });
-    }, paths.slice(1)));
+    const effect = options.effect;
+    if (!effect) {
+      await this.withCredentialMutation(key, () => this.withStoreMutations(paths, () => {
+        current();
+        if (this.getPolicy() !== policy) throw new Error('Secret storage policy changed during acquisition');
+        this.setOwned(key, value, { ...options, medium });
+      }, paths.slice(1)));
+      return;
+    }
+    const before = this.getCredentialMutationState();
+    if (before.pending) throw new Error('Credential owner is busy.');
+    const observed = [...new Set([...paths, this.keyFilePath])].map(path => ({ path, stamp: deletionFileObservation(path).stamp }));
+    let phase: 'prepared' | 'pending' | 'committed' | 'failed' = 'prepared';
+    const transition = Object.freeze({}) as SecretWriteTransition;
+    const assertTransition = () => {
+      const state = this.getCredentialMutationState();
+      const offset = phase === 'pending' ? 1 : phase === 'committed' ? 2 : 0;
+      if (phase === 'failed' || this.getPolicy() !== policy || state.generation !== before.generation + offset
+        || (phase === 'pending' ? this.pendingLocalMutations.size !== 1 || this.pendingLocalMutations.get(key) !== 1 : state.pending)) throw new Error('Secret write owner changed.');
+      for (const item of observed) if (deletionFileObservation(item.path).stamp !== item.stamp) throw new Error('Secret write destination changed.');
+    };
+    this.writeTransitions.set(transition, { assertCurrent: assertTransition,
+      facts: () => Object.freeze({ key, scope, paths: Object.freeze([...paths]), beforeGeneration: before.generation, phase: phase as 'prepared' | 'pending' | 'committed' }),
+    });
+    let published = false;
+    try {
+      assertTransition();
+      const owner = effect(transition), assertEffect = owner.assertCurrent, committed = owner.committed;
+      const checkEffect = () => {
+        const result: unknown = assertEffect();
+        if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new Error('Secret write effect ownership must be synchronous.'); }
+      };
+      checkEffect(); assertTransition();
+      phase = 'pending';
+      await this.withCredentialMutation(key, () => {
+        assertTransition(); checkEffect(); assertTransition();
+        return this.withStoreMutations(paths, () => {
+        // Intent and its invalidation notifications already happened. Only this
+        // exact +1 mutation may remain pending; listeners cannot add a rival.
+        assertTransition(); checkEffect(); assertTransition();
+        this.setOwned(key, value, { scope, medium }, {
+          beforeWrite: () => { assertTransition(); checkEffect(); assertTransition(); },
+          committed: () => { published = true; for (const item of observed) item.stamp = deletionFileObservation(item.path).stamp; },
+        });
+        }, paths.slice(1));
+      });
+      phase = 'committed'; assertTransition();
+      // Receipt is consumed only after the matching settlement generation.
+      const settled: unknown = committed();
+      if (settled !== undefined) { void Promise.resolve(settled).catch(() => {}); throw new Error('Secret write settlement must be synchronous.'); }
+    } catch (error) {
+      phase = 'failed';
+      if (published) throw new SecretWriteCommittedError();
+      throw error;
+    }
+
   }
 
   /** A legacy read rewrites a whole file too. Re-read after acquiring its
@@ -495,7 +776,7 @@ export class SecretsManager {
     }
   }
 
-  private setOwned(key: string, value: string, options: SecretWriteOptions): void {
+  private setOwned(key: string, value: string, options: SecretWriteOptions, effect?: { readonly beforeWrite: () => void; readonly committed: () => void }): void {
     const policy = this.getPolicy();
     const medium = options.medium ?? this.getDefaultWriteMedium(policy);
     const scope = resolveSecretWriteScope(key, options.scope);
@@ -520,11 +801,13 @@ export class SecretsManager {
     existing[key] = value;
 
     try {
+      effect?.beforeWrite();
       if (target.secure) {
         this.writeEncryptedFile(target.path, existing);
       } else {
         this.writePlaintextFile(target.path, existing);
       }
+      effect?.committed();
       logger.debug('SecretsManager: stored secret', { key, source: target.source });
       this.notifyChanged(key);
       return;
@@ -534,7 +817,9 @@ export class SecretsManager {
         if (!this.ownedMutationPaths.has(fallback.path)) throw error;
         const fallbackExisting = this.readStoreForWrite(fallback);
         fallbackExisting[key] = value;
+        effect?.beforeWrite();
         this.writePlaintextFile(fallback.path, fallbackExisting);
+        effect?.committed();
         logger.warn('SecretsManager: secure write failed, fell back to plaintext', {
           key,
           path: fallback.path,

@@ -1,3 +1,4 @@
+import type { RegexReadingCapability, ContractRegexReadingFactory } from '@goodvibes-jev/engine/errors';
 import { ContractError } from '@goodvibes-jev/engine/errors';
 import type { PeerContractManifest, PeerEndpointContract } from '@goodvibes-jev/engine/contracts';
 import type {
@@ -7,7 +8,7 @@ import type {
 } from '@goodvibes-jev/engine/contracts';
 import type { HttpTransport } from '@goodvibes-jev/engine/transport-http';
 import {
-  firstJsonSchemaFailure,
+  firstJsonSchemaFailureAsync,
   invokeContractRoute,
   mergeClientInput,
   requireContractRoute,
@@ -31,6 +32,10 @@ export interface PeerRemoteClientOptions {
    * @defaultValue true
    */
   readonly validateResponses?: boolean | undefined;
+  /** Authenticated request-owned regex reader supplied by browser composition. */
+  readonly regexReading?: RegexReadingCapability | undefined;
+  /** Creates a reader bound to this exact method/schema/request; required for browser compositions without an installed port. */
+  readonly getRegexReading?: ContractRegexReadingFactory | undefined;
 }
 
 /**
@@ -133,8 +138,25 @@ export function createPeerRemoteClient(
     options: PeerRemoteClientInvokeOptions = {},
   ): Promise<T> {
     const endpoint = requireEndpoint(contract, endpointId);
-    return invokeContractRoute<T>(transport, endpoint, input, options).then((body) => {
-      if (clientOptions.validateResponses !== false) validateJsonSchemaResponse(endpoint, body);
+    const validateResponse = clientOptions.validateResponses !== false;
+    const getRegexReading = clientOptions.getRegexReading, configuredReading = clientOptions.regexReading;
+    const outputSchema = endpoint.outputSchema;
+    const schemaIdentity = JSON.stringify(outputSchema);
+    const assertValidationCurrent = () => {
+      options.signal?.throwIfAborted();
+      if (requireEndpoint(contract, endpointId) !== endpoint || clientOptions.getRegexReading !== getRegexReading || clientOptions.regexReading !== configuredReading || endpoint.id !== endpointId || endpoint.outputSchema !== outputSchema || JSON.stringify(outputSchema) !== schemaIdentity)
+        throw new ContractError('Response schema owner changed during the request.');
+    };
+    return invokeContractRoute<T>(transport, endpoint, input, options).then(async (body) => {
+      if (validateResponse) {
+        assertValidationCurrent();
+        const reading = getRegexReading && outputSchema
+          ? getRegexReading({ kind: 'peer', methodId: endpointId, outputSchema: structuredClone(outputSchema) as Record<string, unknown>, signal: options.signal, assertCurrent: assertValidationCurrent })
+          : configuredReading;
+        assertValidationCurrent();
+        await validateJsonSchemaResponse(endpoint, body, { signal: options.signal, reading, assertCurrent: assertValidationCurrent });
+        assertValidationCurrent();
+      }
       return body;
     });
   }
@@ -171,10 +193,10 @@ export function createPeerRemoteClient(
   return client;
 }
 
-function validateJsonSchemaResponse(endpoint: PeerEndpointContract, body: unknown): void {
+async function validateJsonSchemaResponse(endpoint: PeerEndpointContract, body: unknown, options: { readonly signal?: AbortSignal | undefined; readonly reading?: RegexReadingCapability | undefined; readonly assertCurrent: () => void }): Promise<void> {
   const schema = endpoint.outputSchema;
   if (!schema || typeof schema !== 'object') return;
-  const failure = firstJsonSchemaFailure(schema as Record<string, unknown>, body);
+  const failure = await firstJsonSchemaFailureAsync(schema as Record<string, unknown>, body, options);
   if (!failure) return;
   throw new ContractError(
     `Response validation failed for peer endpoint "${endpoint.id}": field "${failure.path}" expected ${failure.expected} but received ${failure.received}. Ensure the peer endpoint and client are using the same GoodVibes contract package version.`,

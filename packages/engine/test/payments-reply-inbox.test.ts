@@ -124,7 +124,7 @@ describe('who may answer over a channel', () => {
     const inbox = new PaymentReplyInbox();
     const wait = inbox.waitForAnswer({ kind: 'approval', deadlineMs: soon(), channels: ['telegram'], notice: APPROVAL_NOTICE });
     const helper = new DaemonSurfaceActionHelper({
-      channelPolicy: { evaluateIngress: async () => decision() },
+      channelPolicy: { preflightIngress: async () => decision(), evaluateIngress: async () => decision() },
       configManager: { get: () => undefined, getCategory: () => undefined },
       routeBindings: { getBinding: () => undefined },
       paymentReplies: inbox,

@@ -94,6 +94,7 @@ export function securityPort(overrides: SecurityAnswers = {}): { port: JudgmentP
   const answers = { ...DEFAULT_SECURITY_ANSWERS, ...overrides };
   return fakePort((name: string, _question: unknown, state: EntryType) => {
     switch (name) {
+      case 'personLine': return noulAnswer(recordedProfilePerson(state) ? 0.99 : 0.01);
       case 'derives': return noulAnswer(probability(answers.derives(state as unknown as DerivationState, false)));
       case 'reply_derives': return noulAnswer(probability(answers.derives(state as unknown as DerivationState, true)));
       case 'boilerplate_only': return noulAnswer(probability(answers.boilerplate(state as unknown as DerivationState)));
@@ -138,4 +139,21 @@ export async function withSecurityReadings<T>(overrides: SecurityAnswers, body: 
   } finally {
     installJudgmentPort(previous);
   }
+}
+
+/** Exact recorded People fixtures only, not a test-side semantic heuristic. */
+function recordedProfilePerson(state: EntryType): boolean {
+  const input = state as { name?: string; line?: string };
+  const recorded: Readonly<Record<string, readonly string[]>> = {
+    Sarah: [
+      '- Sarah, sister, sarah@example.com', '- Sarah, sister',
+      '- Sarah Whitfield, sister, sarah@example.com',
+      '- Sarah, sister. She loves pottery.',
+      '- Sarah is my sister. She has been doing pottery all year and loves it.',
+    ],
+    Dave: ['- Dave from work', '- Dave from work, handles the Pellux contracts'],
+    Tom: ['- Tom, dentist'],
+    'Natalie Sons': ['- Natalie Sons, my wife.'],
+  };
+  return (recorded[input.name ?? ''] ?? []).includes(input.line ?? '');
 }
