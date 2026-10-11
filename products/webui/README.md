@@ -4,16 +4,20 @@ The browser product in the GoodVibes Jev monorepo. The app, responsive shell, PW
 assets and behavior tests originate at upstream `goodvibes-webui` revision
 `dadf57700668fe4500b17b0b0b4520715ab25ef4` (WebUI 2.0.0).
 
-This is a migration in progress. Importing the workspace does not close the
-semantic judgment, contract-tree or gate-preset obligations in the platform
-inventory. Arbitrary status classification, the other existing JEV readers, and
-the authenticated browser judgment boundary must be integrated before completion.
-The current unit/browser harness uses synthetic responses and does not prove a
-live daemon or provider path.
+The app consumes the engine's contract inspection, session gate presets and
+authenticated browser judgment transport. Declared status catalogs remain exact
+producer facts; unknown metadata requires its canonical reader or stays held.
+Native requests use daemon-owned Jev admission and execution, with cancellation
+and recorded outcomes visible in Work.
+
+Source integration and tests with scripted responses do not establish full
+connected-daemon parity or live-provider accuracy. The default browser matrix
+uses a synthetic daemon. Connected runtime and provider qualification require
+their own receipts for the tested source and configuration.
 
 ## Development
 
-Install dependencies from the monorepo root and build the engine there with
+Install dependencies from the monorepo root and build the workspace with
 `bun run build`. This product uses only declared `@goodvibes-jev/engine` exports;
 its production browser build consumes compiled engine artifacts. Standalone SDK
 overlays and independent package pins are not supported.

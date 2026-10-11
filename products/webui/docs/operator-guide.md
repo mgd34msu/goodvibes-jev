@@ -2,6 +2,9 @@
 
 This guide describes the WebUI from an operator point of view.
 
+Available actions depend on the selected daemon and its current authority. Native
+work uses Jev admission and recorded outcomes.
+
 ## Navigation
 
 GoodVibes has four places: Chat, Work, Library and Personal. The sidebar lists
@@ -141,8 +144,9 @@ visible near the composer. Large outputs open in the artifacts slide-over.
 
 ## Markdown responses
 
-Assistant and Knowledge responses support Markdown rendering. Code blocks are
-syntax highlighted when a supported language is detected.
+Assistant and Knowledge responses support Markdown rendering. Registered language
+tags use their declared grammar. Untagged or unsupported fences require a current
+daemon-owned language reading; unavailable or held readings leave escaped plaintext.
 
 Code block line numbers are optional and controlled from Settings, General. They are
 decorative and are not copied.
@@ -182,12 +186,12 @@ file) are reported verbatim as limitations rather than silently ignored.
 ## Work
 
 Work is one list of everything running for you, in three groups: Needs you
-(pending approvals, questions the agent is waiting on, pick-a-winner and merge
-conflicts), Running, and Finished. A segmented control filters the list to All,
+(the daemon's attention states and retained compatibility records), Running, and
+Finished. A segmented control filters the list to All,
 Sessions, Agents or Processes, and a search box and a status filter narrow it.
 The header line counts what is running and what needs you. Select a row to open
-its detail beside the list (over the page on a phone). New starts a task, a
-hosted session or a CI watch.
+its detail beside the list (over the page on a phone). New offers Native request,
+task, hosted session, CI watch and a one-off CI status check.
 
 What the list brings together:
 
@@ -195,8 +199,20 @@ What the list brings together:
   sessions
 - the live process tree: agents, workstreams, watchers, background processes
   and observed external agents, with per-agent state
-- approvals, tasks and pick-a-winner decisions
+- native contracts, task records and legacy approval/attempt records
 - standing CI watches
+
+### Native requests and contracts
+
+Choose New, Native request to submit the original request to the daemon. The
+daemon owns Jev admission and the continuation into native work or a hosted
+conversation. The form shows pending, held, failed and completed states and
+provides cancellation. A refusal or uncertain reading does not ask you to approve
+a semantic decision.
+
+Contract details show the original ask, criteria, recorded readings, checks,
+attempts and terminal result. Inspection is read-only. Recorded confirmation or
+escalation history does not create a new approval or owner-reply action.
 
 Cost shows on a row only when the daemon priced it; an unpriced item shows no
 cost rather than a fabricated zero. Changes arrive over a live subscription,
@@ -215,7 +231,8 @@ rather than implying completeness. In a session's detail you can:
 - tell reaped sessions apart by their badge: an idle-reaped session reopens
   automatically on the next activity, so it is labeled differently from a
   deliberate close
-- read and set the session's permission mode. The mode is session-scoped, and
+- read and set the session's gate preset through the permission-mode picker.
+  Labels and choices come from the engine. The preset is session-scoped, and
   a session the daemon cannot answer for shows an honest unavailable state; the
   read-only `custom` mode is shown but never offered as a choice
 - read the context-usage figure, an estimate marked with `~`, and the
@@ -250,9 +267,9 @@ you ask for them, and show the daemon's own termination reason.
 
 ### Agents and processes
 
-The process tree refreshes on live events. A node the daemon flagged as blocked
-on a human is listed under Needs you, and the Work item in the sidebar carries
-the count. You can steer or detach a node where a live session backs it and
+The process tree refreshes on live events. Nodes retain the daemon's attention
+state and recorded reasons; timestamp quietness does not decide semantic status.
+You can steer or detach a node where a live session backs it and
 stop watcher nodes; a capability the wire cannot address gets an honest note
 instead of a fabricated button. Observed foreign-agent nodes carry a liveness
 tell that states what `quiet` does and does not mean. Orchestration runs
@@ -260,21 +277,18 @@ tell that states what `quiet` does and does not mean. Orchestration runs
 carry no fabricated usage or cost. On a phone the tree stays fully browsable;
 the mutation actions are desktop-only and an honest note says so.
 
-### Approvals and tasks
+### Legacy records and tasks
 
-An approval in Needs you shows what was asked and enough context to decide:
-
-- an edit approval renders its hunks individually; Approve selected sends only
-  the chosen hunk indexes, and Approve all keeps whole-request behavior
-- Remember lets a decision apply just once or be remembered
-- Claim locks a pending approval; an approval claimed by another surface
-  renders as claimed and is not actionable here
-- Withdraw cancels a pending approval without deciding it
-- resolved approvals render as history, never with action buttons
+Legacy approval details preserve the recorded request, hunks, attribution and
+audit trail. Resolved records render as history. A legacy pending record may
+still show compatibility controls, and legacy attempt groups may show their
+comparison view. These controls are separate from native contract admission;
+they do not supply a human fallback for held Jev decisions.
 
 Tasks show the daemon task queue with create, cancel and retry; cancel appears
 only when a task reports itself cancellable, and retry only for failed or
-cancelled tasks. A pick-a-winner decision compares the attempts side by side.
+cancelled tasks. The daemon reports the resulting state; a browser click alone
+does not establish that a mutation completed.
 
 ### CI watches
 
@@ -320,7 +334,7 @@ should be fixed in SDK/daemon, not filtered in the WebUI.
 
 ### Review
 
-Review is everything that waits for a human call, in one list: consolidation
+Review presents daemon-selected records in one list: consolidation
 proposals (contradictions, cross-scope duplicates, stale deletes) first, then
 the memory review queue, then knowledge candidates. Selecting a proposal also
 highlights the queue rows it points at.

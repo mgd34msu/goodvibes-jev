@@ -6,12 +6,12 @@ lands, add one.
 
 ## Rules
 
-- Import browser code from published `@pellux/*` npm packages only. A test
-  resolves every imported subpath against the installed packages and refuses
-  `dist/` deep reaches.
-- Prefer `@pellux/goodvibes-sdk/browser/knowledge` as the client entry point.
+- Import browser code through declared public `@goodvibes-jev/engine` exports
+  from the `workspace:*` dependency. The production build consumes compiled
+  engine artifacts; external overlays and private `dist/` imports are unsupported.
+- Prefer `@goodvibes-jev/engine/sdk/browser/knowledge` as the client entry point.
 - Never hand-write a method route. The route table derives from
-  `@pellux/goodvibes-contracts/generated/webui-facade`'s `WEBUI_METHOD_ROUTES`
+  `@goodvibes-jev/engine/contracts/generated/webui-facade`'s `WEBUI_METHOD_ROUTES`
   minus the methods the browser SDK routes natively, and a drift test pins the
   derivation.
 - Do not use Home Assistant Home Graph routes for regular Knowledge/Wiki.
@@ -26,7 +26,7 @@ lands, add one.
 | Login | daemon `/login` through the SDK/fetch facade | Sign-in gate, Admin | Daemon local auth | Username/password auth remains daemon-owned; no cookies. |
 | Token store | `createBrowserTokenStore({ key: 'goodvibes.webui.token' })` | SDK client setup | Browser SDK storage | Do not read daemon auth files. |
 | Pairing hand-off | `#pair=` fragment + `pairing.handoff.complete`, `pairing.posture.get` | Sign-in gate, hand-off offers modal | Daemon pairing service | Fragment stripped immediately; offers (push/relay/passkey) reported per outcome. |
-| Relay transport | `@pellux/goodvibes-transport-realtime` `createRelayClient` | `relay-connection.ts` | Stored relay pairing | Opt-in, probe-driven; tunnels unary calls and SSE, end to end encrypted. |
+| Relay transport | `@goodvibes-jev/engine/transport-realtime` `createRelayClient` | `relay-connection.ts` | Stored relay pairing | Opt-in, probe-driven; tunnels unary calls and SSE, end to end encrypted. |
 | Step-up | WebAuthn ceremony + step-up assertion header | `stepup.ts`, Admin, relay mutations | Daemon verifier | Mutating relay calls retry once with a fresh assertion; a refusal surfaces honestly. |
 | Control status | `control.status` | app boot, Admin | Daemon | Version/service posture. |
 | Control snapshot | `control.snapshot` | Admin diagnostics | Daemon | Diagnostic JSON, not editable state. |
@@ -45,7 +45,7 @@ lands, add one.
 | Knowledge projections/ingest | projection and ingest method ids via typed invoke | Knowledge/Wiki | Regular Knowledge store | Only regular contracts; separate from chat attachments. |
 | Sessions union | `sessions.list` (+ `sessions.get`, `sessions.messages.list` via browser SDK) | Sessions | Daemon session spine | Daemon-capped at 50 most recent, stated in the UI; `includeClosed` is an explicit toggle. |
 | Steer / follow-up / detach | `sessions.steer`, `sessions.followUp`, `sessions.detach` | Sessions, Fleet, Hosted | Daemon session spine | Steer only while live; follow-up on closed sessions is offered AS a follow-up; steer stamps this surface. |
-| Permission mode | `sessions.permissionMode.get/set` | Sessions toolbar | Daemon session runtime | Session-scoped; `custom` is read-only; `SESSION_NOT_LOCAL` renders as unavailable. |
+| Session gate preset | `sessions.permissionMode.get/set`, public `GATE_PRESETS` | Sessions toolbar | Daemon session runtime | Shared engine labels and choices; `custom` is read-only; `SESSION_NOT_LOCAL` renders as unavailable. |
 | Context usage | `sessions.contextUsage.get` | Sessions detail chip | Daemon token estimator | Always estimated, marked `~`; a live compaction check only triggers a refetch. |
 | Session cost | `cost.attribution.get` (24h, session dimension) | Sessions detail chip | Daemon cost attribution | No row means "no cost recorded", never a fabricated zero. |
 | Session changes | `sessions.changes.get` | Sessions detail | Daemon workspace diff | Per-hunk review with comment/revert sheets. |
@@ -60,8 +60,10 @@ lands, add one.
 | CI | `ci.watches.list/create/delete/run`, `ci.status` | CI view | Daemon CI service | Every job's conclusion is listed; violations render verbatim. |
 | Check-in | `checkin.config.get/set`, `checkin.run`, `checkin.receipts.list` | Check-in view | Daemon check-in service | Saves are confirmed because config can enable proactive contact. |
 | Principals | `principals.list/create/update/delete`, `channels.profiles.list/set/delete` | Principals view | Daemon identity registry | Deletes are permanent and confirmed; an honest `deleted` boolean, never a phantom 200. |
-| Tasks | `tasks.*` | Approvals view | Daemon | Cancel only when cancellable; retry only for failed/cancelled. |
-| Approvals | `approvals.*` (+ `selectedHunks` on approve) | Approvals view, Fleet inline | Daemon | Per-hunk approve sends an index array; the daemon computes the applied result. |
+| Native requests | `workLedger.intake.*` and engine native execution/turn clients | Work, Native request | Authenticated daemon native owners | Original input, Jev admission, current source/authority and cancellation; no human semantic approval fallback. |
+| Contract inspection | `contracts.list`, `contracts.get` | Work, contract detail | Engine contract runner | Read-only criteria, recorded outcomes, checks and provenance; inspection grants no effect authority. |
+| Tasks | `tasks.*` | Work, task detail | Daemon task queue | Cancel only when cancellable; retry only for failed/cancelled. |
+| Legacy approvals | `approvals.*` | Work compatibility detail, Fleet inline | Daemon legacy records | Pending compatibility records can show legacy controls. These do not authorize native work or replace Jev admission. |
 | Realtime invalidation | raw multiplexed `/api/control-plane/events?domains=...` + session stream | app-wide | Daemon runtime bus | Invalidate off frames, never render from them; snapshots/lists stay authoritative. |
 | Voice | `voice.status`, `voice.providers.list`, `voice.voices.list`, `voice.stt`, `voice.tts`, `voice.tts.stream` | Chat composer, Voice settings | Daemon voice routes | One shared voice config tier across surfaces. |
 | Local voice | `voice.local.status`, `voice.local.install` | Voice settings | Daemon-managed local engines | Install progress polls while the mutation is in flight. |
@@ -80,4 +82,8 @@ lands, add one.
 | `sessions.followUp` as a companion-chat send path | It is a legitimate Sessions-view surface for continuing a closed operator session (see matrix above), but it can spawn/queue agent work, never use it to send plain companion chat. |
 | `sessions.messages.create` fallback | Can persist a user message without a daemon-owned assistant turn. |
 | `~/.goodvibes` browser reads | Private daemon/TUI implementation state. |
-| local SDK checkout | Does not validate the installed npm contract; the build refuses to ship while the overlay is linked. |
+| External SDK checkout overlay | Replaces the canonical engine workspace dependency and is unsupported. |
+
+This matrix identifies current owners and callers. Method availability, fixture
+tests or generated route agreement do not establish connected-runtime parity or
+genuine provider accuracy.

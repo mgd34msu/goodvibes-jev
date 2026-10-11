@@ -58,8 +58,8 @@ mistaken for hidden contracts.
 - The WebUI uses regular Knowledge/Wiki routes only. Home Assistant Home Graph
   remains a separate daemon extension surface and should not be mixed into this
   page.
-- Projection and ingest affordances depend on the public SDK/daemon methods that
-  are available in the installed npm package.
+- Projection and ingest affordances depend on the declared engine exports and
+  methods available on the selected daemon.
 - If regular Knowledge results contain Home Graph records by default, that is an
   SDK/daemon scoping issue. WebUI should report exact endpoints and ids rather
   than adding client-side filters.
@@ -92,14 +92,14 @@ mistaken for hidden contracts.
   checkpoints, CI watches, check-in, principals, memory, local-voice status).
   Their freshness comes from mutation-driven invalidation, polling, and
   manual refresh, not realtime push.
-- Permission mode and context usage answer only for the session that is the
+- Session gate presets and context usage answer only for the session that is the
   daemon's own live local runtime; other sessions show an honest unavailable
   state.
 
 ## Route shims
 
 - Hand-written per-route shims stay retired. The method-to-route table is
-  generated from the published `@pellux/goodvibes-contracts` facade artifact,
+  generated from `@goodvibes-jev/engine/contracts/generated/webui-facade`,
   and a drift test pins the derived table against it so a hand-written row
   can never shadow a generated one. Method types remain contract-derived
   (`src/lib/contract-bridge-types.ts`).
@@ -109,3 +109,14 @@ mistaken for hidden contracts.
 - Documentation screenshots are captured against the end-to-end suite's seeded
   mock daemon. They prove layout, not authenticated daemon data, provider
   catalog content, or operator chat history.
+
+## Native work and verification
+
+- Native requests use daemon-owned Jev admission and execution. Held or rejected
+  readings do not become human approval requests or manual winner selection.
+- Legacy approval and attempt-comparison records remain separate compatibility
+  views. Their controls do not authorize native work.
+- Unit and synthetic browser tests exercise bounded behavior with fixtures.
+  Connected-daemon tests and genuine provider calibration require separate
+  receipts. The connected-browser smoke covers status, configuration and session
+  lifecycle without model calls; it does not establish chat, account or relay parity.

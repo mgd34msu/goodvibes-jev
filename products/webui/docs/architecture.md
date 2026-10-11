@@ -11,9 +11,10 @@ GoodVibes daemon. It should:
 - make chat the primary surface, at parity with a modern chat application
 - expose the operator surfaces over the same typed wire the terminal UI uses,
   as four places: Chat, Work (sessions, hosted sessions, the fleet,
-  checkpoints, approvals, tasks, workstreams, CI watches), Library (memory,
-  knowledge, review) and Personal (calendar, mail, occasions), with models,
-  providers, sign-in, devices, check-ins and diagnostics in a settings dialog
+  checkpoints, contracts, legacy approval records, tasks, workstreams and CI
+  watches), Library (memory, knowledge, review) and Personal (calendar, mail,
+  occasions), with models, providers, sign-in, devices, check-ins and diagnostics
+  in a settings dialog
 - expose regular Knowledge/Wiki without leaking extension-specific Home Graph UI
 - serve desktop and phone from one app: the phone gets a drawer layout of the
   same places, never a different mental model
@@ -30,34 +31,36 @@ The WebUI has two important origins in development:
 - Daemon/control-plane API: `3421`
 
 Vite binds to the resolved WebUI host and port, then proxies API routes to the
-daemon. The resolved WebUI binding comes from launch environment, `goodvibes web
---json`, or TUI settings fallback. See [Development](development.md) for exact
-precedence.
+daemon. Binding discovery first checks `goodvibes-daemon --help --json` for the
+declared `webui status --json` query. Launch environment overrides and the bounded
+legacy terminal/settings fallback remain supported. See
+[Development](development.md) for the settings and environment precedence.
 
 The browser should usually talk to `window.location.origin`. Direct backend
 origins are only for explicit development overrides.
 
 ## SDK boundary
 
-Application code imports only published `@pellux/*` packages. The main seams:
+Application code imports declared public `@goodvibes-jev/engine` exports through
+the product's `workspace:*` dependency. The main imports are:
 
-- `@pellux/goodvibes-sdk/browser/knowledge` for the scoped browser SDK client
-- `@pellux/goodvibes-sdk/auth` for `createBrowserTokenStore`
-- `@pellux/goodvibes-sdk/contracts` for operator method input/output types
-- `@pellux/goodvibes-contracts/generated/webui-facade` for the generated
+- `@goodvibes-jev/engine/sdk/browser/knowledge` for the scoped browser SDK client
+- `@goodvibes-jev/engine/sdk/auth` for `createBrowserTokenStore`
+- `@goodvibes-jev/engine/contracts` for operator method input/output types
+- `@goodvibes-jev/engine/contracts/generated/webui-facade` for the generated
   method-to-route table the transport layer is built from
-- `@pellux/goodvibes-sdk/platform/voice/capture` and
-  `.../platform/voice/wake/runtime` for browser audio capture and wake-word
-  settings resolution
-- `@pellux/goodvibes-sdk/platform/payments` and `.../platform/config` for
+- `@goodvibes-jev/engine/sdk/platform/voice/capture` and
+  `@goodvibes-jev/engine/sdk/platform/voice/wake/runtime` for browser audio capture
+  and wake-word settings resolution
+- `@goodvibes-jev/engine/sdk/platform/payments/browser` and
+  `@goodvibes-jev/engine/sdk/platform/config` for
   payment-entry policy and config-key helpers
-- `@pellux/goodvibes-transport-realtime` for the relay client
+- `@goodvibes-jev/engine/transport-realtime` for the relay client
 
-The WebUI does not deep-import package internals (`dist/` reaches are pinned
-out by a test that resolves every imported subpath against the installed
-packages) and does not point to a local SDK checkout for validation. The npm
-packages in `node_modules` are the dependency under test, and the build
-refuses to ship while the local SDK overlay (`bun run sdk:link`) is active.
+The engine workspace is the dependency under test. The production browser build
+uses its compiled public artifacts. The Vite workspace guard checks the resolved
+package identity, and the product release gate checks declared exports. Private
+`dist/` imports, independent SDK pins and external checkout overlays are unsupported.
 
 `src/lib/goodvibes.ts` is the local client facade. It wraps auth, chat,
 artifacts, realtime, and knowledge, plus one ergonomic `sdk.operator.*`
@@ -69,14 +72,14 @@ duplicate it.
 The transport under those helpers is generated, not hand-maintained. Which
 operator methods have a plain REST binding, and at what path, comes from the
 contract-emitted `WEBUI_METHOD_ROUTES` table in
-`@pellux/goodvibes-contracts/generated/webui-facade`. The facade derives its
+`@goodvibes-jev/engine/contracts/generated/webui-facade`. The facade derives its
 route table from that artifact minus the methods the browser SDK already
 routes natively, so no route path or HTTP method is written by hand, and a
 drift test pins the derived table against the generated artifact. Method
-input/output types derive from the SDK's generated
-`OperatorMethodInputMap`/`OperatorMethodOutputMap` via
+input/output types derive from the engine's public
+`OperatorMethodInput` and `OperatorMethodOutput` aliases via
 `src/lib/contract-bridge-types.ts`, no hand-typed wire shapes, pinned against
-the installed SDK's `operator-contract.json`.
+the engine's public contract and compiled artifacts.
 
 Presentation tokens are generated, not hand-maintained:
 `scripts/generate-presentation-tokens.ts` renders the SDK's shared presentation
@@ -90,7 +93,7 @@ Auth belongs to the daemon.
 
 - Session login posts through the daemon login route.
 - Explicit tokens are accepted from the user and validated with the daemon.
-- A `#pair=<token>` link (the QR from `goodvibes pair`) hands the token off
+- A `#pair=<token>` link (the QR from `goodvibes-daemon pair`) hands the token off
   automatically. The fragment is captured and stripped before the router can
   normalize the URL, the token is validated via `auth.current`, and a token
   the daemon rejects self-clears.
@@ -198,7 +201,9 @@ default while a full list shows them.
 A session's detail in Work surfaces per-session runtime state built directly against
 the daemon wire:
 
-- Permission mode (`src/lib/permission-mode.ts`) is session-scoped:
+- The session picker consumes `GATE_PRESETS` and `SESSION_GATE_PRESET_NAMES`
+  from `@goodvibes-jev/engine/sdk/platform/gate/presets`. Permission mode is
+  session-scoped:
   `sessions.permissionMode.get`/`.set` answer only for the session that is the
   daemon's own live local runtime, and any other session id gets an honest
   `SESSION_NOT_LOCAL` unavailable state rather than a silent daemon-wide
@@ -206,7 +211,7 @@ the daemon wire:
   the `permissions` domain invalidation in `useRealtimeInvalidation.ts`,
   which revalidates the session-prefixed queries because the
   `PERMISSION_MODE_CHANGED` event carries no `sessionId`. The wire's mode
-  vocabulary, mirrored from the contract's own enums:
+  vocabulary and labels come from that shared preset table:
 
   | Mode | Label | Settable |
   | --- | --- | --- |
@@ -218,7 +223,8 @@ the daemon wire:
 
 - Context usage comes from `sessions.contextUsage.get`. The percentage is the
   token estimator's figure, always flagged `estimated` on the wire, and the
-  chip's `~` prefix says so at a glance. A live `COMPACTION_CHECK` frame for
+  chip's `~` prefix says so at a glance. Unknown context limits do not produce
+  invented percentages. A live `COMPACTION_CHECK` frame for
   the session is used only as a refresh trigger for that query, never
   rendered directly.
 - Per-session cost comes from `cost.attribution.get`, windowed to the last 24
@@ -313,7 +319,11 @@ Provider and model selection must follow daemon/provider registry semantics.
 - Current daemon model selection is updated through daemon model APIs, not by
   attaching provider/model to chat message sends.
 
-Provider/model helper logic lives in `src/lib/provider-models.ts`.
+Provider/model helper logic lives in `src/lib/provider-models.ts` and
+`src/lib/use-provider-model-options.ts`. Exact wire identities remain facts.
+Unknown catalog relationships require a current canonical provider reading;
+names and suffixes cannot authorize a match. Model families come from the
+engine's model-family producer, with unclassified rows shown as ungrouped.
 
 ## Navigation and the settings dialog
 
@@ -391,7 +401,7 @@ Two transports can answer a request (`src/lib/relay-connection.ts`):
 
 - direct, an ordinary `fetch` against the WebUI origin (or a configured
   backend origin), the unchanged LAN/co-located path
-- relay, `createRelayClient` from `@pellux/goodvibes-transport-realtime`,
+- relay, `createRelayClient` from `@goodvibes-jev/engine/transport-realtime`,
   which tunnels calls end to end encrypted through a rendezvous relay when
   this device cannot reach the daemon directly. It requires a stored relay
   pairing (`src/lib/relay-pairing.ts`, delivered by QR or a `#relay=`
@@ -408,14 +418,28 @@ honestly.
 ## Non-goals and boundaries
 
 - Do not read TUI or daemon private files from browser code.
-- Do not point WebUI to a local SDK checkout.
+- Use the engine workspace through its declared public exports.
 - Do not add client-side Home Graph filtering as a fix for regular Knowledge
   scoping issues.
 - Do not create a second durable config or knowledge store in WebUI.
 - Do not silently move the dev server to another port.
 - Do not use storage-only message APIs as chat send fallbacks.
 
-## Contract inspection in Work
+## Native requests and contract inspection in Work
+
+Work's New menu includes Native request. `NativeIntakeForm` preserves the original
+submission and calls the authenticated daemon intake owner. Jev admission continues
+into native work execution or hosted conversation delivery through their separate
+native owners. Pending, held, failed and completed results remain distinct, and
+cancellation is available while a request is pending. A browser source handle or
+recorded receipt does not grant execution authority. See
+[original-source admission](../../../docs/design/webui-native-intake.md) and
+[native execution](../../../docs/design/webui-native-execution.md).
+
+Legacy approval and attempt-comparison components remain compatibility consumers
+of their daemon records. A legacy pending record can render its old controls;
+these controls do not approve native requests or replace Jev admission. Recorded
+approval, confirmation and escalation history remains inspectable.
 
 Native inspection uses the same closed engine-generated contract schema as ordinary
 records. It preserves original native goals and ordered criteria, recorded Jev

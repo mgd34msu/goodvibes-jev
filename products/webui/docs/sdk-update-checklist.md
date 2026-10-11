@@ -1,148 +1,92 @@
-# SDK update checklist
+# Update WebUI with the workspace engine
 
-Use this checklist for routine `@pellux/goodvibes-sdk` updates.
+WebUI depends on `@goodvibes-jev/engine` through `workspace:*`. Update the engine
+and its browser callers in the same monorepo checkout. The root owns versions,
+the lockfile, CI and releases; WebUI has no independent npm SDK update or tag job.
 
-## Preconditions
+## Prepare the workspace
 
-- The SDK version is published on npm.
-- If the update depends on daemon/TUI runtime behavior, wait for a TUI/daemon
-  handoff confirming the installed daemon reports the expected SDK version.
-- Do not use a local SDK checkout. If the local overlay was linked for
-  development, restore it first (`bun run sdk:status`, then
-  `bun run sdk:restore`); the build refuses to ship while the overlay is
-  active.
-- Do not edit package versions by hand and assume the install happened.
-
-## Commands
-
-Check npm latest:
+From the repository root, install the declared dependencies:
 
 ```bash
-npm view @pellux/goodvibes-sdk version
+bun install --frozen-lockfile
 ```
 
-Install the exact version:
+Review engine API, schema and route changes before adapting the browser. Use
+declared public exports. External SDK overlays and private `dist/` imports are
+unsupported.
+
+If the operator contract changed, regenerate and review its root-owned artifacts:
 
 ```bash
-bun add @pellux/goodvibes-sdk@<version>
+bun run refresh:contracts
+bun run contracts:check
+bun run webui-facade:check
 ```
 
-Verify the installed package:
+Build the engine's compiled public artifacts after reviewing any regenerated
+contract changes:
 
 ```bash
-node -p "require('./node_modules/@pellux/goodvibes-sdk/package.json').version"
+bun packages/engine/scripts/build.ts
 ```
 
-Verify `package.json`:
+## Regenerate browser data
+
+From `products/webui`, regenerate the configuration, ownership, presentation and
+contract-inspection snapshots, then check them:
 
 ```bash
-node -p "require('./package.json').dependencies['@pellux/goodvibes-sdk']"
+bun run release:prepare
+bun run generated:check
+bun run release:gate
 ```
 
-Verify `bun.lock`:
+`release:prepare` also updates the asset cache stamps in `index.html` from the
+declared WebUI version. It does not bump versions, write a changelog, install a
+package, tag or publish. Review all generated changes before continuing.
+
+## Check the browser changes
+
+From `products/webui`, run the actual product checks and build:
 
 ```bash
-rg -n "<version>|@pellux/goodvibes-sdk" bun.lock package.json
-```
-
-Clear Vite optimized deps:
-
-```bash
-rm -rf node_modules/.vite
-```
-
-Regenerate what the SDK and the version feed (below), then check the change
-locally; CI runs the full suites:
-
-```bash
-bun run test:changed
 bun run typecheck
+bun run test
+bun run lint
+bun run build
+bun run e2e --project=phone --project=desktop
 ```
 
-## Version and changelog
+The default Playwright projects serve the production bundle with a synthetic
+daemon and local refusal stub. They cover browser behavior and layout, not
+authenticated account processing or genuine provider accuracy.
 
-Bump the version and regenerate everything derived from the SDK and the
-version (the config schema and ownership modules, the presentation tokens, the
-`index.html` cache-bust values, the README badges, the CHANGELOG section):
+From the repository root, check the workspace and public artifact agreement:
 
 ```bash
-bun run release:prepare --patch
+bun run products:check
+bun run exports:check
+bun run contracts:check
+bun run dist:check
 ```
 
-Write the scaffolded `CHANGELOG.md` entry:
+Review the affected public imports and generated routes. Keep regular Knowledge
+separate from Home Graph. Native Work requests retain engine-owned Jev admission;
+legacy approval or attempt controls do not supply a semantic fallback.
 
-```md
-## [<webui-version>] - YYYY-MM-DD
+## Qualify the intended runtime
 
-### Changed
+Restart the development server with `bun run dev` from `products/webui` after the
+compiled engine or generated browser data changes. Check the selected daemon and
+the changed user flow, with source and runtime identity recorded in its receipt.
 
-- Updated `@pellux/goodvibes-sdk` to `<version>`.
-```
+`bun run test:connected-browser` requires an isolated daemon serving the built
+bundle and explicit connection settings. It checks status, configuration and
+session lifecycle without model calls. It does not establish chat, relay,
+configured-account or live-provider parity. Provider calibration and any wider
+connected scenario need their own configured runs and receipts.
 
-
-## Source checks
-
-Confirm no accidental local SDK or extension-specific code was introduced:
-
-```bash
-rg -n "file:|link:|\\.\\./.*goodvibes-sdk" package.json bun.lock
-rg -n "homeassistant|homeGraph|HomeGraph|includeAllSpaces|knowledgeSpaceId" src || true
-rg -n "wrfc|workmap|owner_decision|owner decision|route selector|resume hooks" src || true
-```
-
-The second and third checks are not always errors, but they force an explicit
-review. Do not add WRFC/workmap surfaces unless there is a WebUI-facing product
-request and SDK handoff. Do not add Home Graph behavior to regular Knowledge.
-
-## Commit and push (CI cuts the tag)
-
-```bash
-git add CHANGELOG.md README.md bun.lock index.html package.json src/lib/generated src/styles/generated
-git commit -m "Update GoodVibes SDK to <version>"
-git push origin main
-```
-
-Do not tag by hand. The auto-release job tags the commit after a green CI run
-and attaches the built bundle to the GitHub Release; a manually pushed tag
-makes that job skip the release, which ships no bundle asset for the
-installer.
-
-If code changes are required by the SDK handoff, include those files in the
-commit and use a message that names the behavior, not only the dependency bump.
-
-## Restart dev server
-
-Stop existing Vite processes and restart with fresh optimized deps:
-
-```bash
-pgrep -af "node .*vite|vite --force|bun.*vite" || true
-kill <pid>
-rm -rf node_modules/.vite
-setsid node ./node_modules/.bin/vite --force > /tmp/goodvibes-webui-vite.log 2>&1 < /dev/null &
-```
-
-Verify:
-
-```bash
-sed -n '1,120p' /tmp/goodvibes-webui-vite.log
-ss -ltnp | rg ':3423'
-curl -sS --max-time 3 http://127.0.0.1:3423/ | rg '<webui-version>'
-node -p "require('./node_modules/@pellux/goodvibes-sdk/package.json').version"
-```
-
-## GitHub CI
-
-Check the pushed run:
-
-```bash
-gh run list --limit 5
-gh run watch <run-id> --exit-status
-```
-
-Do not call an SDK update complete until:
-
-- `node_modules` reports the new SDK version
-- `bun.lock` changed
-- local CI passed
-- GitHub CI passed
-- the dev server was restarted and is serving the new WebUI version
+The root CI and release workflow own integration and artifact delivery. Passing
+product checks or creating a bundle does not imply that a release is available
+or that the whole project is complete.
