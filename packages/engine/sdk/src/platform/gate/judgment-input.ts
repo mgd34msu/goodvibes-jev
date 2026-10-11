@@ -216,9 +216,9 @@ function literalValue(text: string): boolean {
  * HTTP authentication headers. Refusing the entire call avoids pretending a
  * redacted shell program has the same effects as the original program.
  */
-function inlineProblem(text: string): JudgmentInputProblem | undefined {
+function inlineProblem(text: string, cardOnly = false): JudgmentInputProblem | undefined {
   if (findCardNumberShapes(text, 1).length > 0) return 'card-material';
-  if (/-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/.test(text)) return 'credential-material';
+  if (!cardOnly && /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/.test(text)) return 'credential-material';
   const assignments = /(?:^|[\s{[,;&?"'])--?([A-Za-z_][A-Za-z0-9_.-]*)\s*(?:=|\s)\s*(?=([^\s,;}]+))/g;
   const fields = /(?:^|[\s{[,;&?"'])([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[:=]\s*(?=([^\s,;}]+))/g;
   for (const pattern of [assignments, fields]) {
@@ -229,7 +229,7 @@ function inlineProblem(text: string): JudgmentInputProblem | undefined {
       // retaining the exact declaration grammar and advancing on every match.
       pattern.lastIndex = match.index + 1;
       const problem = protectedKey(match[1]!);
-      if (problem && literalValue(match[2]!)) return problem;
+      if (problem && (!cardOnly || problem === 'card-material') && literalValue(match[2]!)) return problem;
     }
   }
   // Start once per contiguous scheme-character run, rather than restarting a
@@ -239,10 +239,10 @@ function inlineProblem(text: string): JudgmentInputProblem | undefined {
   for (const match of text.matchAll(/(?<![A-Za-z0-9+.-])[0-9+.-]*([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+)/g)) {
     try {
       const url = new URL(match[1]!);
-      if (url.password.length > 0) return 'credential-material';
+      if (!cardOnly && url.password.length > 0) return 'credential-material';
       for (const [key, value] of url.searchParams) {
         const problem = protectedKey(key);
-        if (problem && present(value) && !reference(value)) return problem;
+        if (problem && (!cardOnly || problem === 'card-material') && present(value) && !reference(value)) return problem;
       }
     } catch { /* Not a URL; its meaning remains Jev's question. */ }
   }
@@ -254,7 +254,7 @@ function inlineProblem(text: string): JudgmentInputProblem | undefined {
  * are inspected even in nested tool/params wrappers and JSON-encoded bodies.
  * Empty credential fields and goodvibes secret references carry no raw value.
  */
-function snapshotProblem(value: unknown, toolName: string): JudgmentInputProblem | undefined {
+function snapshotProblem(value: unknown, toolName: string, cardOnly = false): JudgmentInputProblem | undefined {
   let nodes = 0;
   let chars = 0;
   const ancestors = new Set<object>();
@@ -266,15 +266,15 @@ function snapshotProblem(value: unknown, toolName: string): JudgmentInputProblem
       const trimmed = entry.trim();
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         let decoded: unknown;
-        try { decoded = JSON.parse(entry); } catch { return inlineProblem(entry); }
+        try { decoded = JSON.parse(entry); } catch { return inlineProblem(entry, cardOnly); }
         return visit(decoded, path, operation, depth + 1);
       }
-      return inlineProblem(entry);
+      return inlineProblem(entry, cardOnly);
     }
     if (entry === null || entry === undefined || typeof entry === 'boolean') return undefined;
     if (typeof entry === 'number') {
       if (!Number.isFinite(entry)) return 'unsupported-input';
-      return inlineProblem(String(entry));
+      return inlineProblem(String(entry), cardOnly);
     }
     if (typeof entry !== 'object' || ancestors.has(entry)) return 'unsupported-input';
     const array = Array.isArray(entry);
@@ -300,26 +300,39 @@ function snapshotProblem(value: unknown, toolName: string): JudgmentInputProblem
       if (present(typedValue) && !reference(typedValue)) {
         if (typeof targetField === 'string' && (CARD_FIELD_NAMES as readonly string[]).includes(targetField)) return 'card-material';
         const control = declaredControl(fields['selector']);
-        if (control) return control;
-        if (fields['type'] === 'password') return 'credential-material';
+        if (control && (!cardOnly || control === 'card-material')) return control;
+        if (!cardOnly && fields['type'] === 'password') return 'credential-material';
         if (typeof fields['autocomplete'] === 'string' && fields['autocomplete'].split(/\s+/).some((token) => CARD_FIELDS.has(token))) return 'card-material';
       }
       const namedKey = fields['key'] ?? fields['configKey'] ?? fields['secretKey'] ?? fields['name'];
-      if (present(fields['value']) && !reference(fields['value']) && !fieldDeclaration(fields['value']) && (op === CREDENTIAL_SET || (typeof namedKey === 'string' && protectedKey(namedKey) !== undefined))) return 'credential-material';
+      if (cardOnly && present(fields['value']) && !reference(fields['value']) && !fieldDeclaration(fields['value'])
+        && typeof namedKey === 'string' && protectedKey(namedKey) === 'card-material') return 'card-material';
+      if (!cardOnly && present(fields['value']) && !reference(fields['value']) && !fieldDeclaration(fields['value']) && (op === CREDENTIAL_SET || (typeof namedKey === 'string' && protectedKey(namedKey) !== undefined))) return 'credential-material';
       for (const [key, child] of Object.entries(fields)) {
-        const keyProblem = inlineProblem(key);
+        const keyProblem = inlineProblem(key, cardOnly);
         if (keyProblem) return keyProblem;
         const fullPath = [...path, key];
         const cardField = (path.at(-1) === 'cardMaterial' && (CARD_FIELD_NAMES as readonly string[]).includes(key)) || (path.at(-1) === 'card' && (key === 'number' || key === 'expiry'));
         const declared = (cardField ? 'card-material' : protectedKey(key)) ?? fullPath.map((_, index) => fullPath.slice(index).join('.')).map(protectedKey).find(Boolean);
-        if (declared && present(child) && !reference(child) && !fieldDeclaration(child)) return declared;
+        if (declared && (!cardOnly || declared === 'card-material') && present(child) && !reference(child) && !fieldDeclaration(child)) return declared;
         const problem = visit(child, fullPath, op, depth + 1);
         if (problem) return problem;
       }
       return undefined;
     } finally { ancestors.delete(entry); }
   }
-  return inlineProblem(toolName) ?? visit(value, [], toolName, 0);
+  return inlineProblem(toolName, cardOnly) ?? visit(value, [], toolName, 0);
+}
+
+/** Native evidence inspection only: no credential exception, projection or admission is produced. */
+export function judgmentInputCardProblem(value: unknown, toolName = ''): 'card-material' | 'unsupported-input' | undefined {
+  try {
+    const problem = snapshotProblem(captureOwnedJson(value), toolName, true);
+    return problem === 'card-material' || problem === 'unsupported-input' ? problem : undefined;
+  } catch (error) {
+    if (error instanceof JudgmentInputError) return 'unsupported-input';
+    throw error;
+  }
 }
 
 /** Immutable, fully inspected data for consumers that will project or serialize it. */

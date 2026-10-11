@@ -31,10 +31,12 @@ export interface ToolInputProjectionRequest {
   readonly nativeReferenceContext?: object | undefined;
 }
 
-/** Only existing native string references may be substituted before semantic privacy checks. */
+/** Only explicitly selected existing string leaves may become native references. */
 export interface ToolNativeReferencesCapture {
   readonly args: Record<string, unknown>;
   readonly fields: readonly string[];
+  /** Own JSON paths to nested string leaves; every unselected value stays unchanged. */
+  readonly paths?: readonly (readonly string[])[] | undefined;
   readonly assertCurrent: () => void;
   readonly executionContext?: object | undefined;
   readonly release?: (() => Promise<void>) | undefined;

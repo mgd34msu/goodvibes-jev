@@ -7,7 +7,7 @@ import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platf
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
 import type { HookDispatcher } from '../sdk/src/platform/hooks/index.ts';
 import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.ts';
-import { judgmentInputProblem, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.ts';
+import { judgmentInputProblem, judgmentInputCardProblem, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.ts';
 import { readToolCall, readSideEffectKind, readCatastrophic, readingArguments } from '../sdk/src/platform/gate/reading.ts';
 import { readTouchesSecrets } from '../sdk/src/platform/permissions/credential-read-defaults.ts';
 import { grantOwnerApproval } from '../sdk/src/platform/security/owner-approval.ts';
@@ -21,6 +21,32 @@ import { McpPermissionManager } from '../sdk/src/platform/runtime/mcp/permission
 const SECRET = 'SYNTHETIC_PROTECTED_VALUE_DO_NOT_TRANSMIT';
 const PAN = '4111111111111111';
 const REF = 'goodvibes://secrets/goodvibes/OPENAI_API_KEY';
+
+test('native card inspection sees complete evidence beyond earlier credentials without granting a credential exemption', () => {
+  const evidence = { first: `Authorization: Bearer ${SECRET}`, second: `${'ordinary '.repeat(1_100)}${PAN}` };
+  expect(judgmentInputProblem(evidence)).toBe('credential-material');
+  expect(judgmentInputCardProblem(evidence)).toBe('card-material');
+  for (const value of [
+    { apiKey: SECRET, nested: { cvv: '123' } },
+    JSON.stringify({ apiKey: SECRET, cardMaterial: { expiryMonth: '07', expiryYear: '2031' } }),
+    { apiKey: SECRET, method: 'payments.cards.create', number: 'synthetic', expiryMonth: '07' },
+    { apiKey: SECRET, selector: 'input[autocomplete="cc-csc"]', value: '123' },
+    { apiKey: SECRET, name: 'cvv', value: '123' },
+    `password=${SECRET} cvv=123`,
+  ]) expect(judgmentInputCardProblem(value)).toBe('card-material');
+  expect(judgmentInputCardProblem({ apiKey: SECRET })).toBeUndefined();
+  expect(judgmentInputProblem({ apiKey: SECRET })).toBe('credential-material');
+  expect(judgmentInputCardProblem({ content: 'Ordinary smoke result.', cardId: 'stored-card' })).toBeUndefined();
+});
+
+test('native card inspection rejects unsupported complete input without reading accessors', () => {
+  let calls = 0;
+  const value = { apiKey: SECRET };
+  Object.defineProperty(value, 'late', { enumerable: true, get() { calls++; return PAN; } });
+  expect(judgmentInputCardProblem(value)).toBe('unsupported-input');
+  expect(calls).toBe(0);
+  expect(judgmentInputCardProblem({ apiKey: SECRET, content: 'a'.repeat(1_000_001) })).toBe('unsupported-input');
+});
 
 function hiddenArrayValue(value: unknown, index = 0): unknown[] {
   const items: unknown[] = [];

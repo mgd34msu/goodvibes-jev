@@ -311,3 +311,73 @@ test('native reference captures are synchronous and cannot alter unlisted action
   await expect(changedRegistry.projectCall('changed-native-ref', CHILD, { draftId: 'draft-20261011123456', body: 'Original action content' })).rejects.toThrow();
   expect(projects).toBe(0);
 });
+
+test('nested native string references keep their exact schema, private source, and separate child proof', async () => {
+  const privateValue = 'Authorization: Bearer synthetic-native-evidence';
+  const token = Object.freeze({}); let released = 0;
+  const f = fixture(undefined, {
+    captureNativeReferences(request) {
+      return { fields: [], paths: [['fields', 'output']], args: { ...request.args,
+        fields: { ...(request.args.fields as Record<string, unknown>), output: 'native-evidence:one' },
+        nativeReferenceSubjects: { purpose: 'local-redacted-evidence', text: 'Complete cleared smoke output.' } },
+        executionContext: token, assertCurrent: request.assertCurrent, async release() { released++; } };
+    },
+    async project(request) { return { status: 'projected', args: request.args }; },
+  });
+  const schema = { type: 'object', properties: { fields: { type: 'object', properties: {
+    output: { type: 'string' }, ordinary: { type: 'string' } }, required: ['output', 'ordinary'], additionalProperties: false } },
+    required: ['fields'], additionalProperties: false };
+  f.child.definition.parameters = schema;
+  f.parent.execute = (_args, options) => f.registry.executeNested('nested-evidence', CHILD,
+    { fields: { output: privateValue, ordinary: 'Unchanged sibling' } }, options);
+  f.child.execute = async (args, options) => {
+    expect(args.fields).toEqual({ output: 'native-evidence:one', ordinary: 'Unchanged sibling' });
+    expect(options?.inputProjectionContext).toBe(token);
+    expect(assertCurrentToolEffect(args, options, 'write')).toBe(true);
+    return { success: true };
+  };
+  expect(await f.run()).toMatchObject({ success: true });
+  expect(released).toBe(1); expect(states).toHaveLength(2);
+  expect(JSON.stringify(states)).not.toContain(privateValue);
+  expect(JSON.stringify(states)).toContain('Complete cleared smoke output.');
+  expect(f.registry.getToolDefinitions().find(definition => definition.name === CHILD)?.parameters).toEqual(schema);
+});
+
+test.each(['non-string', 'missing', 'overlap', 'duplicate', 'capacity', 'sibling', 'unlisted-credential', 'subject-credential'] as const)(
+  'nested native reference %s fails before child reading or execution', async kind => {
+    let projects = 0, released = 0;
+    const originalFields: Record<string, unknown> = { output: kind === 'non-string' ? { content: 'ordinary' } : 'private-native-output', ordinary: 'Unchanged sibling' };
+    if (kind === 'capacity') for (let index = 0; index < 9; index++) originalFields[`extra-${index}`] = `source-${index}`;
+    const f = fixture(undefined, {
+      captureNativeReferences(request) {
+        let paths = [['fields', 'output']];
+        if (kind === 'missing') paths = [['fields', 'absent']];
+        if (kind === 'overlap') paths.push(['fields']);
+        if (kind === 'duplicate') paths.push(['fields', 'output']);
+        if (kind === 'capacity') paths = Array.from({ length: 9 }, (_, index) => ['fields', `extra-${index}`]);
+        const fields: Record<string, unknown> = { ...originalFields, output: 'native-evidence:one', ...(kind === 'sibling' ? { ordinary: 'Changed sibling' } : {}) };
+        if (kind === 'capacity') for (let index = 0; index < 9; index++) fields[`extra-${index}`] = `native-evidence:${index}`;
+        return { fields: [], paths, args: { ...request.args, fields,
+          nativeReferenceSubjects: { text: kind === 'subject-credential' ? 'Authorization: Bearer private' : 'Cleared output.' } },
+          assertCurrent() {}, async release() { released++; } };
+      },
+      async project(request) { projects++; return { status: 'projected', args: request.args }; },
+    });
+    f.parent.execute = (_args, options) => f.registry.executeNested('bad-nested-evidence', CHILD,
+      { fields: originalFields, ...(kind === 'unlisted-credential' ? { unrelated: 'Authorization: Bearer unselected' } : {}) }, options);
+    await expect(f.run()).rejects.toThrow(); expect(projects).toBe(0); expect(f.effects).toBe(0); expect(released).toBe(1);
+    expect(states).toHaveLength(1);
+  });
+
+test('nested native references cannot inspect source accessors or proxies', async () => {
+  let accesses = 0, captures = 0;
+  const fields: Record<string, unknown> = {};
+  Object.defineProperty(fields, 'output', { enumerable: true, get() { accesses++; return 'private'; } });
+  const proxy = new Proxy({ output: 'private' }, { ownKeys() { accesses++; return ['output']; } });
+  const f = fixture(undefined, { captureNativeReferences() { captures++; return undefined; }, async project(request) { return { status: 'projected', args: request.args }; } });
+  f.parent.execute = async (_args, options) => {
+    for (const source of [fields, proxy]) await expect(f.registry.executeNested('unsafe-nested-evidence', CHILD, { fields: source }, options)).rejects.toThrow();
+    return { success: true };
+  };
+  expect(await f.run()).toMatchObject({ success: true }); expect(accesses).toBe(0); expect(captures).toBe(0); expect(f.effects).toBe(0);
+});
