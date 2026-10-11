@@ -86,10 +86,18 @@ async function promoteRepairSourcesWithinBudget(
     if (context.store !== requestStore || context.enrichSource !== requestEnrich || context.shouldStop !== requestStop
       || JSON.stringify(requestData()) !== requestVersion) throw new KnowledgeRepairSourceAuthorityHeldError('stale');
   };
+  const beginNextPass = async () => {
+    assertRequestCurrent();
+    // The preceding pass has settled all of its publications. Let cancellation
+    // and observers run before the next pass captures its complete read set.
+    await yieldToEventLoop();
+    assertRequestCurrent();
+  };
   const targetUsableFactCount = repairTargetUsableFactCount(gap);
   const usefulness = createRepairFactUsefulnessReader({ signal });
   const generatedClaims = createGeneratedClaimReferenceScope(context.store);
   const countUsable = async (ids: readonly string[]) => {
+    await beginNextPass();
     // Zero structurally eligible facts is an exact count, not a semantic no.
     // Keep the complete count read-set live through subsequent task bookkeeping.
     const emptyGuard = createRepairUsefulnessGuard(context.store, spaceId, gap, [], signal, context.shouldStop);
@@ -106,10 +114,16 @@ async function promoteRepairSourcesWithinBudget(
     const assertCurrent = () => { context.store.assertRecordSnapshotFrame(() => { assertRequestCurrent(); selected.assertCurrent(); prepared.assertCurrent(); }); };
     assertCurrent(); return { ...prepared, assertCurrent };
   };
-  const linkSubjects = (ids: readonly string[]) => linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
-    usefulness, signal, context.shouldStop, generatedClaims.relinking);
-  const promote = (ids: readonly string[]) => promoteRepairEvidenceFacts(context.store, spaceId, gap, ids,
-    usefulness, signal, context.shouldStop, generatedClaims.rememberGenerated, assertRequestCurrent);
+  const linkSubjects = async (ids: readonly string[]) => {
+    await beginNextPass();
+    return linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
+      usefulness, signal, context.shouldStop, generatedClaims.relinking);
+  };
+  const promote = async (ids: readonly string[]) => {
+    await beginNextPass();
+    return promoteRepairEvidenceFacts(context.store, spaceId, gap, ids,
+      usefulness, signal, context.shouldStop, generatedClaims.rememberGenerated, assertRequestCurrent);
+  };
   const processedSourceIds: string[] = [];
   if (context.enrichSource) {
     for (const [index, sourceId] of sourceIds.entries()) {
