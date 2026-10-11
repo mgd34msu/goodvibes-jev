@@ -15,7 +15,7 @@ import {
 } from './input-projection.js';
 import { captureNativeReferenceProjection } from './native-reference-projection.js';
 import { canonicalJson, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
-import { captureOwnedJson, retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { autonomousRevision } from '../permissions/autonomous.js';
 import { assertAutonomousConfigTransition, completeAutonomousConfigTransition, bindAutonomousNestedAdmission, readAutonomousSettingsPresentation, readAutonomousWorkspaceConstraint, readAutonomousEffectConstraint, readAutonomousNestedOwner, consumeAutonomousAdmission, type AutonomousNestedOwner, type AutonomousPermissionAdmission, type PermissionManager } from '../permissions/manager.js';
 import type { AutonomousChoiceProjection } from '../permissions/autonomous-input-projection.js';
@@ -270,6 +270,63 @@ function plainMetadata(value: unknown, name: string, seen = new Set<object>()): 
   }
 }
 
+const metadataKeys = Reflect.ownKeys;
+const metadataDescriptor = Object.getOwnPropertyDescriptor;
+const metadataPrototype = Object.getPrototypeOf;
+const sameMetadataValue = Object.is;
+
+interface MetadataSlot {
+  readonly key: string | symbol;
+  readonly value: unknown;
+  readonly writable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
+  readonly configurable: boolean | undefined;
+}
+interface MetadataObject {
+  readonly value: object;
+  readonly prototype: unknown;
+  readonly slots: readonly MetadataSlot[];
+}
+
+/** Pin the complete original graph, including descendants omitted from JSON.
+ * The checker only compares fresh descriptors; a change returns to full capture.
+ */
+function retainPlainMetadata(value: unknown, name: string): () => void {
+  const objects: MetadataObject[] = [];
+  const seen = new Set<object>();
+  const unsupported = (): never => { throw new ToolError('Changed autonomous metadata requires full capture', name); };
+  const capture = (entry: unknown): void => {
+    if (!entry || typeof entry !== 'object' || seen.has(entry)) return;
+    if (nodeTypes.isProxy(entry)) return unsupported();
+    seen.add(entry);
+    const prototype: unknown = metadataPrototype(entry);
+    const slots = metadataKeys(entry).map(key => {
+      const descriptor = metadataDescriptor(entry, key);
+      if (!descriptor || !('value' in descriptor)) return unsupported();
+      return { key, value: descriptor.value, writable: descriptor.writable,
+        enumerable: descriptor.enumerable, configurable: descriptor.configurable };
+    });
+    objects.push({ value: entry, prototype, slots });
+    for (const slot of slots) capture(slot.value);
+  };
+  capture(value);
+  return () => {
+    for (const record of objects) {
+      if (metadataPrototype(record.value) !== record.prototype) return unsupported();
+      const keys = metadataKeys(record.value);
+      if (keys.length !== record.slots.length) return unsupported();
+      for (let index = 0; index < keys.length; index++) {
+        const slot = record.slots[index];
+        if (!slot || keys[index] !== slot.key) return unsupported();
+        const descriptor = metadataDescriptor(record.value, slot.key);
+        if (!descriptor || !('value' in descriptor) || !sameMetadataValue(descriptor.value, slot.value)
+          || descriptor.writable !== slot.writable || descriptor.enumerable !== slot.enumerable
+          || descriptor.configurable !== slot.configurable) return unsupported();
+      }
+    }
+  };
+}
+
 function preparationData(tool: Tool, name: string, freshness = false): { executor: Tool['execute']; definition: ToolDefinition; rawDefinition: unknown } {
   const definition = dataProperty(tool, 'definition', name);
   const execute = dataProperty(tool, 'execute', name);
@@ -417,7 +474,7 @@ export class ToolRegistry {
     if (registration.projector === null) throw new ToolInputProjectionError('unconfigured');
     const captured = registration.captureNativeReferences ? captureProjectionStructure(args) : captureProjectionArgs(args, name);
     const { executor, definition, rawDefinition } = preparationData(registration.tool, name);
-    const { assertCurrent: assertDefinitionCurrent } = retainOwnedJson(rawDefinition, nodeTypes.isProxy);
+    const assertDefinitionCurrent = retainPlainMetadata(rawDefinition, name);
     const definitionRevision = autonomousRevision(definition);
     const combined = combineProjectionSignals(signal, registration.signal);
     const skeleton = { registration, tool: registration.tool, executor, definition, rawDefinition, assertDefinitionCurrent, definitionRevision, captureCurrent, preparationGuards: { callbacks: new Set<() => void>(), revision: 0 }, ownsProjectionSlot: registration.projector !== undefined, executionStarted: false,
@@ -590,9 +647,6 @@ export class ToolRegistry {
     const rawDefinition = dataProperty(record.tool, 'definition', call.name);
     const execute = dataProperty(record.tool, 'execute', call.name);
     if (typeof execute !== 'function' || nodeTypes.isProxy(execute)) throw new ToolError('Autonomous executor must be a data-backed function', call.name);
-    // Hidden descendants are also metadata, even though canonical JSON omits
-    // them. Keep their complete accessor/proxy check on every observation.
-    plainMetadata(rawDefinition, call.name);
     let unchanged = rawDefinition === record.rawDefinition;
     if (unchanged) {
       try { record.assertDefinitionCurrent(); }
