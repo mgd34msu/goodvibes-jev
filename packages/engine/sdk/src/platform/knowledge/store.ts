@@ -21,7 +21,7 @@ import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPrepare
 export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
 import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
-import { SQLiteStore, SQLiteObservationRetiredError, type PersistedKnowledgeRecordSelector } from '../state/sqlite-store.js';
+import { SQLiteStore, SQLiteObservationRetiredError, type PersistedKnowledgeRecordSelector, type ExpectedKnowledgeRecordReadsetInput } from '../state/sqlite-store.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -536,6 +536,14 @@ export class KnowledgeStore {
 
   getRecordGenerations(selectors: readonly PersistedKnowledgeRecordSelector[]): readonly (string | null)[] {
     return this.sqlite.readPersistedRecordGenerations(selectors);
+  }
+
+  captureExpectedRecordReadset(selectors: readonly PersistedKnowledgeRecordSelector[]) {
+    return this.sqlite.captureExpectedRecordReadset(selectors);
+  }
+
+  matchesExpectedRecordReadsets(inputs: readonly ExpectedKnowledgeRecordReadsetInput[]): readonly boolean[] {
+    return this.sqlite.matchesExpectedRecordReadsets(inputs);
   }
 
   /** Compare and write synchronously after init; a hold has no durable effects. */

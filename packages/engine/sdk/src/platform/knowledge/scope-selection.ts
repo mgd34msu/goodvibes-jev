@@ -261,19 +261,20 @@ export async function prepareKnowledgeScopeSelection(
   };
   const retained = new Map<string, () => void>();
   type RecordSelector = Parameters<KnowledgeStore['getRecordGenerations']>[0][number];
-  const generationSelectors = new Map<() => void, readonly RecordSelector[]>();
-  let currentGenerations: ReadonlyMap<string, string | null> | undefined;
-  const currentGeneration = (selector: RecordSelector) => {
-    const key = `${selector.kind}:${selector.id}`;
-    return currentGenerations?.has(key) ? currentGenerations.get(key)!
-      : selector.kind === 'source' ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(selector.kind, selector.id);
-  };
+  type ExpectedReadset = Parameters<KnowledgeStore['matchesExpectedRecordReadsets']>[0][number];
+  const generationReadsets = new Map<() => void, ExpectedReadset>();
+  let currentReadsetMatches: ReadonlyMap<() => void, boolean> | undefined;
+  const currentGeneration = (selector: RecordSelector) => selector.kind === 'source'
+    ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(selector.kind, selector.id);
   withRecordGenerations = (checks, body) => {
-    const selectors = [...new Map([...checks].flatMap(check => generationSelectors.get(check) ?? [])
-      .map(selector => [`${selector.kind}:${selector.id}`, selector] as const)).values()];
-    const generations = store.getRecordGenerations(selectors), previous = currentGenerations;
-    currentGenerations = new Map(selectors.map((selector, index) => [`${selector.kind}:${selector.id}`, generations[index]!]));
-    try { return body(); } finally { currentGenerations = previous; }
+    const retainedChecks = [...checks].flatMap(check => {
+      const readset = generationReadsets.get(check);
+      return readset ? [{ check, readset }] : [];
+    });
+    const matches = retainedChecks.length ? store.matchesExpectedRecordReadsets(retainedChecks.map(value => value.readset)) : [];
+    const previous = currentReadsetMatches;
+    currentReadsetMatches = new Map(retainedChecks.map((value, index) => [value.check, matches[index] === true]));
+    try { return body(); } finally { currentReadsetMatches = previous; }
   };
   const retain = (value: ScopeRecord) => {
     const key = keyFor(value);
@@ -307,13 +308,30 @@ export async function prepareKnowledgeScopeSelection(
       return snapshot.generation;
     })() : undefined;
     const originalExtractionGeneration = extractionGeneration(true);
+    const extraction = value.kind === 'source' ? store.getExtractionBySourceId(value.record.id) : null;
+    const selectors: RecordSelector[] = [...(value.kind === 'issue' ? [] : [{ kind: value.kind, id: value.record.id }]),
+      ...(extraction ? [{ kind: 'extraction' as const, id: extraction.id }] : [])];
+    const expectedGenerations = [...(value.kind === 'issue' ? [] : [originalGeneration]),
+      ...(extraction ? [originalExtractionGeneration] : [])];
+    const compiled = selectors.length ? store.captureExpectedRecordReadset(selectors) : undefined;
+    if (compiled && (compiled.originalGenerations.length !== expectedGenerations.length
+      || compiled.originalGenerations.some((generation, index) => generation !== expectedGenerations[index]))) {
+      throw new KnowledgeScopeSelectionHeldError('stale');
+    }
     const check = addCheck(key, () => {
       const current = readRecord(value);
-      if (!current || current.record !== original || generation() !== originalGeneration || extractionGeneration() !== originalExtractionGeneration || !matchesSignature(current)) throw new KnowledgeScopeSelectionHeldError('stale');
+      if (!current || current.record !== original) throw new KnowledgeScopeSelectionHeldError('stale');
+      const physicalMatch = currentReadsetMatches?.get(check);
+      if (physicalMatch === false || (physicalMatch !== true && generation() !== originalGeneration)) throw new KnowledgeScopeSelectionHeldError('stale');
+      // The original owning extraction lookup still runs on every check. A
+      // different current ID requires a fresh physical read, never an old hash.
+      const currentExtraction = value.kind === 'source' ? store.getExtractionBySourceId(value.record.id) : null;
+      const extractionMatch = value.kind !== 'source' || (currentExtraction === null ? originalExtractionGeneration === null
+        : physicalMatch === true && currentExtraction.id === extraction?.id
+          || currentGeneration({ kind: 'extraction', id: currentExtraction.id }) === originalExtractionGeneration);
+      if (!extractionMatch || !matchesSignature(current)) throw new KnowledgeScopeSelectionHeldError('stale');
     });
-    const extraction = value.kind === 'source' ? store.getExtractionBySourceId(value.record.id) : null;
-    generationSelectors.set(check, [...(value.kind === 'issue' ? [] : [{ kind: value.kind, id: value.record.id }]),
-      ...(extraction ? [{ kind: 'extraction' as const, id: extraction.id }] : [])]);
+    if (compiled) generationReadsets.set(check, { expected: compiled.expected, selectors });
     retained.set(key, check); return check;
   };
   const membership = (value: ScopeRecord, scope: KnowledgeSpaceScopeInput, currentLookup = frameLookup) => {

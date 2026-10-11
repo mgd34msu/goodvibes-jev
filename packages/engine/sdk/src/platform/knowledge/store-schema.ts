@@ -1,3 +1,4 @@
+import { knowledgeRecordTableSql } from './store-schema-validation-data.js';
 import { knowledgeClockNumber, knowledgeNodeMetadataView, knowledgeSourceMetadataView, retainKnowledgeRepresentation } from './store-record-representation.js';
 import { createNativeCiContinuationTable } from './store-native-ci-continuation.js';
 import { createKnowledgeEdgeChanges } from './store-edge-generations.js';
@@ -85,47 +86,10 @@ export function createSchema(db: { run(sql: string): void }): void {
   createNativeWorkExecutionIntentTable(db);
   createNativeWorkSettlementTable(db);
   createNativeCiContinuationTable(db);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS knowledge_sources (
-      id TEXT PRIMARY KEY,
-      connector_id TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      title TEXT,
-      source_uri TEXT,
-      canonical_uri TEXT,
-      summary TEXT,
-      description TEXT,
-      tags TEXT NOT NULL DEFAULT '[]',
-      folder_path TEXT,
-      status TEXT NOT NULL,
-      artifact_id TEXT,
-      content_hash TEXT,
-      last_crawled_at INTEGER,
-      crawl_error TEXT,
-      session_id TEXT,
-      metadata TEXT NOT NULL DEFAULT '{}',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `);
+  db.run(knowledgeRecordTableSql.knowledge_sources);
   db.run(`CREATE INDEX IF NOT EXISTS idx_knowledge_sources_canonical_uri ON knowledge_sources(canonical_uri)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_knowledge_sources_updated_at ON knowledge_sources(updated_at)`);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS knowledge_nodes (
-      id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
-      slug TEXT NOT NULL,
-      title TEXT NOT NULL,
-      summary TEXT,
-      aliases TEXT NOT NULL DEFAULT '[]',
-      status TEXT NOT NULL,
-      confidence INTEGER NOT NULL,
-      source_id TEXT,
-      metadata TEXT NOT NULL DEFAULT '{}',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `);
+  db.run(knowledgeRecordTableSql.knowledge_nodes);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_nodes_kind_slug ON knowledge_nodes(kind, slug)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_knowledge_nodes_updated_at ON knowledge_nodes(updated_at)`);
   db.run(`
@@ -159,25 +123,7 @@ export function createSchema(db: { run(sql: string): void }): void {
     )
   `);
   db.run(`CREATE INDEX IF NOT EXISTS idx_knowledge_issues_code ON knowledge_issues(code)`);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS knowledge_extractions (
-      id TEXT PRIMARY KEY,
-      source_id TEXT NOT NULL,
-      artifact_id TEXT,
-      extractor_id TEXT NOT NULL,
-      format TEXT NOT NULL,
-      title TEXT,
-      summary TEXT,
-      excerpt TEXT,
-      sections TEXT NOT NULL DEFAULT '[]',
-      links TEXT NOT NULL DEFAULT '[]',
-      estimated_tokens INTEGER NOT NULL DEFAULT 0,
-      structure TEXT NOT NULL DEFAULT '{}',
-      metadata TEXT NOT NULL DEFAULT '{}',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `);
+  db.run(knowledgeRecordTableSql.knowledge_extractions);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_extractions_source_id ON knowledge_extractions(source_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_knowledge_extractions_format ON knowledge_extractions(format)`);
   db.run(`

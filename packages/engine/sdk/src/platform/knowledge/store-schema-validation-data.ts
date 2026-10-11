@@ -70,3 +70,65 @@ const edgeChangeTriggers = [
 ] as const;
 for (const entry of edgeChangeTriggers) Object.freeze(entry);
 export const knowledgeEdgeChangeTriggers = Object.freeze(edgeChangeTriggers);
+
+/** These exact ordinary table definitions also bound closed raw-row equality. */
+export const knowledgeRecordTableSql = Object.freeze({
+  knowledge_sources: `
+    CREATE TABLE IF NOT EXISTS knowledge_sources (
+      id TEXT PRIMARY KEY,
+      connector_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      title TEXT,
+      source_uri TEXT,
+      canonical_uri TEXT,
+      summary TEXT,
+      description TEXT,
+      tags TEXT NOT NULL DEFAULT '[]',
+      folder_path TEXT,
+      status TEXT NOT NULL,
+      artifact_id TEXT,
+      content_hash TEXT,
+      last_crawled_at INTEGER,
+      crawl_error TEXT,
+      session_id TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `,
+  knowledge_nodes: `
+    CREATE TABLE IF NOT EXISTS knowledge_nodes (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT,
+      aliases TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL,
+      confidence INTEGER NOT NULL,
+      source_id TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `,
+  knowledge_extractions: `
+    CREATE TABLE IF NOT EXISTS knowledge_extractions (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      artifact_id TEXT,
+      extractor_id TEXT NOT NULL,
+      format TEXT NOT NULL,
+      title TEXT,
+      summary TEXT,
+      excerpt TEXT,
+      sections TEXT NOT NULL DEFAULT '[]',
+      links TEXT NOT NULL DEFAULT '[]',
+      estimated_tokens INTEGER NOT NULL DEFAULT 0,
+      structure TEXT NOT NULL DEFAULT '{}',
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `,
+});

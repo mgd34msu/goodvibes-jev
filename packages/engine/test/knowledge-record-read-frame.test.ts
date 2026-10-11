@@ -1284,3 +1284,418 @@ test.each(['clone', 'changed-origin'] as const)('source restoration never suppli
     expect(() => prepareKnowledgeRecordAdmission(store, 'source', restored)).toThrow(JudgmentInputError);
   } finally { clock.mockRestore(); }
 });
+
+
+function observeExpectedRawRows(sqlite: SQLiteStore) {
+  const original: unknown = Reflect.get(sqlite, 'readPrivatePersistedRows');
+  if (typeof original !== 'function') throw new Error('No private row reader');
+  let count = 0;
+  Object.defineProperty(sqlite, 'readPrivatePersistedRows', { configurable: true, writable: true,
+    value: (...args: unknown[]) => {
+      if (typeof args[0] === 'string' && /^SELECT \* FROM knowledge_(sources|nodes|extractions) WHERE id/.test(args[0])) count++;
+      return Reflect.apply(original, sqlite, args);
+    } });
+  return { count: () => count, reset: () => { count = 0; }, restore: () => { Reflect.deleteProperty(sqlite, 'readPrivatePersistedRows'); } };
+}
+
+test('compiled expected readsets return equality only and still open a fresh physical frame', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }, { kind: 'extraction' as const, id: extraction.id }];
+  const captured = store.captureExpectedRecordReadset(selectors), rows = observeExpectedRawRows(sqlite), physical = observePhysicalReads();
+  try {
+    expect(captured.originalGenerations).toEqual(store.getRecordGenerations(selectors));
+    rows.reset();
+    const input = [{ expected: captured.expected, selectors }];
+    expect(store.matchesExpectedRecordReadsets(input)).toEqual([true]);
+    expect(rows.count()).toBe(0);
+    const first = physical.count();
+    await Promise.resolve();
+    expect(store.matchesExpectedRecordReadsets(input)).toEqual([true]);
+    expect(rows.count()).toBe(0);
+    expect(physical.count() - first).toBe(2);
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(Object.isFrozen(captured.expected)).toBe(true);
+    expect(Object.isFrozen(captured.originalGenerations)).toBe(true);
+    // The existing actual-current API still selects and hashes original rows.
+    expect(store.getRecordGenerations(selectors)).toEqual(captured.originalGenerations);
+    expect(rows.count()).toBe(2);
+    expect(Reflect.get(sqlite, 'expectedRecordReadsets')).toBeUndefined();
+  } finally { rows.restore(); physical.restore(); }
+});
+
+test('compiled expected readsets allow unrelated persistence and reject changed complete raw content', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }, { kind: 'extraction' as const, id: extraction.id }];
+  const captured = store.captureExpectedRecordReadset(selectors), rows = observeExpectedRawRows(sqlite);
+  const input = [{ expected: captured.expected, selectors }];
+  try {
+    await store.upsertSource({ id: 'unrelated', connectorId: 'frame-test', sourceType: 'document', title: 'Separate project notes', status: 'indexed' });
+    expect(store.matchesExpectedRecordReadsets(input)).toEqual([true]);
+    expect(rows.count()).toBe(0);
+    sqlite.run('UPDATE knowledge_extractions SET sections = ? WHERE id = ?', [' ["Router reference"]', extraction.id]);
+    await sqlite.save();
+    expect(store.getExtraction(extraction.id)).toBe(extraction);
+    expect(store.matchesExpectedRecordReadsets(input)).toEqual([false]);
+    expect(rows.count()).toBe(0);
+  } finally { rows.restore(); }
+});
+
+test.each(['copy', 'proxy', 'cross-store', 'wrong-id', 'wrong-kind', 'selector-accessor', 'expected-accessor', 'index-accessor', 'named-array'] as const)(
+  'compiled expected readsets reject %s before raw consumption', async mode => {
+    const first = await fixture(), second = mode === 'cross-store' ? await fixture() : first;
+    const selectors = [{ kind: 'source' as const, id: first.source.id }];
+    const captured = first.store.captureExpectedRecordReadset(selectors);
+    let expected = captured.expected, getters = 0;
+    if (mode === 'copy') expected = { ...expected };
+    if (mode === 'proxy') expected = new Proxy(expected, {});
+    if (mode === 'wrong-id') selectors[0]!.id = 'unowned';
+    const input = [{ expected, selectors }];
+    if (mode === 'wrong-kind') Object.defineProperty(selectors[0], 'kind', { value: 'node', enumerable: true, writable: true, configurable: true });
+    if (mode === 'selector-accessor') Object.defineProperty(selectors[0], 'id', { get() { getters++; return first.source.id; }, enumerable: true });
+    if (mode === 'expected-accessor') Object.defineProperty(input[0], 'expected', { get() { getters++; return expected; }, enumerable: true });
+    if (mode === 'index-accessor') Object.defineProperty(input, '0', { get() { getters++; return { expected, selectors }; }, enumerable: true });
+    if (mode === 'named-array') Object.defineProperty(input, 'meaning', { value: 'extra input', enumerable: true });
+    const rows = observeExpectedRawRows(second.sqlite), physical = observePhysicalReads();
+    try {
+      expect(() => second.store.matchesExpectedRecordReadsets(input)).toThrow(TypeError);
+      expect(rows.count()).toBe(0); expect(physical.count()).toBe(0); expect(getters).toBe(0);
+    } finally { rows.restore(); physical.restore(); }
+  });
+
+test.each(['view', 'generated-column', 'custom-validator', 'native-method'] as const)(
+  'compiled expected readsets preserve exact fresh fallback for %s', async mode => {
+    const { store, source, sqlite } = await fixture(path(), mode === 'custom-validator' ? () => {} : undefined);
+    if (mode === 'view') {
+      sqlite.run('ALTER TABLE knowledge_sources RENAME TO source_rows');
+      sqlite.run('CREATE VIEW knowledge_sources AS SELECT * FROM source_rows');
+      await sqlite.save();
+    }
+    if (mode === 'generated-column') {
+      sqlite.run('ALTER TABLE knowledge_sources ADD COLUMN generated TEXT GENERATED ALWAYS AS (lower(title)) VIRTUAL');
+      await sqlite.save();
+    }
+    const selectors = [{ kind: 'source' as const, id: source.id }];
+    if (mode === 'generated-column') {
+      expect(() => store.captureExpectedRecordReadset(selectors)).toThrow('unsupported local observation shape');
+      return;
+    }
+    const captured = store.captureExpectedRecordReadset(selectors), rows = observeExpectedRawRows(sqlite);
+    const SQL = await loadSqlJsEngine(), execute = SQL.Database.prototype.exec;
+    const changed = mode === 'native-method' ? spyOn(SQL.Database.prototype, 'exec').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql, params, config) {
+      return execute.call(this, sql, params, config);
+    }) : undefined;
+    try {
+      expect(store.matchesExpectedRecordReadsets([{ expected: captured.expected, selectors }])).toEqual([true]);
+      expect(rows.count()).toBe(0);
+    } finally { changed?.mockRestore(); rows.restore(); }
+  });
+
+test.each(['row rollback', 'native alias restore', 'identical file replacement', 'DDL', 'pragma shadow'] as const)(
+  'compiled expected readsets keep the complete native and physical %s exit fences', async mutation => {
+    const { store, source, sqlite } = await fixture();
+    let writer: SqlDatabase | undefined;
+    await sqlite.transactPersisted(db => { writer = db; db.run('UPDATE knowledge_sources SET summary=summary WHERE id=?', [source.id]); return { changed: true, value: undefined }; }, () => {});
+    const selectors = [{ kind: 'source' as const, id: source.id }], captured = store.captureExpectedRecordReadset(selectors);
+    const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+    const main = writer!.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+    if (typeof main !== 'string') throw new Error('No original native main');
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    const original: unknown = Reflect.get(sqlite, 'readPrivatePersistedRows');
+    if (typeof original !== 'function') throw new Error('No private reader');
+    let changed = false, consumed = false;
+    Object.defineProperty(sqlite, 'readPrivatePersistedRows', { configurable: true, writable: true,
+      value: (...args: unknown[]) => {
+        const value: unknown = Reflect.apply(original, sqlite, args);
+        if (!changed && args[0] === 'SELECT 1') {
+          changed = true;
+          if (mutation === 'row rollback') { writer!.run('BEGIN'); writer!.run('UPDATE knowledge_sources SET title=? WHERE id=?', ['Temporary title', source.id]); writer!.run('ROLLBACK'); }
+          else if (mutation === 'native alias restore') { alias.run('UPDATE original.knowledge_sources SET title=? WHERE id=?', ['Temporary title', source.id]); alias.run('UPDATE original.knowledge_sources SET title=? WHERE id=?', [source.title ?? null, source.id]); }
+          else if (mutation === 'identical file replacement') { copyFileSync(store.storagePath, `${store.storagePath}.replacement`); renameSync(`${store.storagePath}.replacement`, store.storagePath); }
+          else if (mutation === 'DDL') { writer!.run('CREATE TABLE temporary_schema (value TEXT)'); writer!.run('DROP TABLE temporary_schema'); }
+          else { writer!.run('CREATE TABLE pragma_data_version(data_version INTEGER)'); writer!.run('DROP TABLE pragma_data_version'); }
+        }
+        return value;
+      } });
+    try {
+      expect(() => store.matchesExpectedRecordReadsets([{ expected: captured.expected, selectors }]) && (consumed = true)).toThrow(SQLiteObservationRetiredError);
+      expect(changed).toBe(true); expect(consumed).toBe(false);
+    } finally { Reflect.deleteProperty(sqlite, 'readPrivatePersistedRows'); alias.close(); }
+  });
+
+
+test('compiled expected readsets do not trust an intercepted modified private constructor image', async () => {
+  const { store, source, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }], captured = store.captureExpectedRecordReadset(selectors);
+  const restore = interceptPrivateImage(sqlite, (open, args) => {
+    const image: unknown = open(...args);
+    if (!image || typeof image !== 'object') throw new Error('No private image');
+    const run: unknown = Reflect.get(image, 'run');
+    if (typeof run !== 'function') throw new Error('No native facade write');
+    Reflect.apply(run, image, ['UPDATE knowledge_sources SET title=? WHERE id=?', ['Intercepted constructor meaning', source.id]]);
+    return image;
+  });
+  try {
+    expect(() => store.matchesExpectedRecordReadsets([{ expected: captured.expected, selectors }])).toThrow(SQLiteObservationRetiredError);
+    expect(store.getSource(source.id)?.title).toBe(source.title);
+  } finally { restore(); }
+});
+
+
+test('compiled expected readsets retain missing rows and every actual node selector', async () => {
+  const { store, source } = await fixture();
+  const node = await store.upsertNode({ kind: 'topic', slug: 'bounded-record', title: 'Bounded record', status: 'active', confidence: 0.9, sourceId: source.id });
+  const selectors = [{ kind: 'node' as const, id: node.id }, { kind: 'extraction' as const, id: 'missing-extraction' }];
+  const captured = store.captureExpectedRecordReadset(selectors);
+  expect(captured.originalGenerations).toEqual([store.getRecordSnapshot('node', node.id).generation, null]);
+  expect(store.matchesExpectedRecordReadsets([{ expected: captured.expected, selectors }])).toEqual([true]);
+  await store.upsertNode({ ...node, title: 'Changed bounded record' });
+  expect(store.matchesExpectedRecordReadsets([{ expected: captured.expected, selectors }])).toEqual([false]);
+});
+
+test('actual scope adoption rejects a compiler capture that disagrees with the original snapshot before dispatch', async () => {
+  const { store } = await fixture(), fake = fakePort(() => noulAnswer(0.99));
+  const previous = installJudgmentPort(fake.port), capture = store.captureExpectedRecordReadset.bind(store);
+  const observing = spyOn(store, 'captureExpectedRecordReadset').mockImplementation(selectors => {
+    const original = capture(selectors);
+    return { expected: original.expected, originalGenerations: original.originalGenerations.map(() => null) };
+  });
+  try {
+    await expect(prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] })).rejects.toMatchObject({ reason: 'stale' });
+    expect(fake.requests).toHaveLength(0);
+  } finally { observing.mockRestore(); installJudgmentPort(previous); }
+});
+
+test('actual scope compiled equality preserves mutable borrowed-view checks before later dispatch', async () => {
+  const { store, source } = await fixture(), fake = fakePort(() => noulAnswer(0.99));
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] });
+    const requests = fake.requests.length;
+    Object.defineProperty(source.metadata, 'hidden', { value: 'A new consumed private meaning', enumerable: false, configurable: true, writable: true });
+    expect(() => selection.assertCurrent()).toThrow(KnowledgeScopeSelectionHeldError);
+    expect(fake.requests).toHaveLength(requests);
+  } finally { installJudgmentPort(previous); }
+});
+
+
+function expectedFrameCache(sqlite: SQLiteStore, key: 'rows' | 'generations'): Map<unknown, unknown> {
+  const frame: unknown = Object.getOwnPropertyDescriptor(sqlite, 'persistedReadFrame')?.value;
+  if (!frame || typeof frame !== 'object') throw new Error('No actual frame');
+  const cache: unknown = Object.getOwnPropertyDescriptor(frame, key)?.value;
+  if (!(cache instanceof Map)) throw new Error('No actual frame cache');
+  return cache;
+}
+
+test('compiled expected readsets ignore substituted original generation memos', async () => {
+  const { store, source, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }];
+  let compiled: ReturnType<KnowledgeStore['captureExpectedRecordReadset']> | undefined;
+  store.assertRecordSnapshotFrame(() => {
+    store.getRecordGenerations(selectors);
+    expectedFrameCache(sqlite, 'generations').set(JSON.stringify(['knowledge_sources', 'id', source.id]), 'f'.repeat(64));
+    compiled = store.captureExpectedRecordReadset(selectors);
+  });
+  if (!compiled) throw new Error('No compiled original');
+  expect(compiled.originalGenerations).toEqual(store.getRecordGenerations(selectors));
+  expect(store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }])).toEqual([true]);
+});
+
+test.each(['generations', 'rows'] as const)('compiled expected readsets ignore substituted current %s memos', async cache => {
+  const { store, source, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }];
+  const originalRows = sqlite.readPersistedRow('knowledge_sources', 'id', source.id), compiled = store.captureExpectedRecordReadset(selectors);
+  await store.upsertSource({ ...source, title: 'Changed physical source meaning' });
+  let matched: boolean | undefined;
+  store.assertRecordSnapshotFrame(() => {
+    store.getRecordGenerations(selectors);
+    const generations = expectedFrameCache(sqlite, 'generations');
+    if (cache === 'generations') generations.set(JSON.stringify(['knowledge_sources', 'id', source.id]), compiled.originalGenerations[0]);
+    else {
+      generations.clear();
+      expectedFrameCache(sqlite, 'rows').set(JSON.stringify(['SELECT * FROM knowledge_sources WHERE id = ? LIMIT 1', [source.id]]), originalRows);
+    }
+    matched = store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }])[0];
+  });
+  expect(matched).toBe(false);
+});
+
+test('compiled expected readsets retire a canonical private image restored to obsolete physical rows', async () => {
+  const { store, source, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }], compiled = store.captureExpectedRecordReadset(selectors);
+  sqlite.run('UPDATE knowledge_sources SET title=? WHERE id=?', ['Changed physical source meaning', source.id]);
+  await sqlite.save();
+  const restore = interceptPrivateImage(sqlite, (open, args) => {
+    const image: unknown = open(...args);
+    if (!image || typeof image !== 'object') throw new Error('No private image');
+    const run: unknown = Reflect.get(image, 'run');
+    if (typeof run !== 'function') throw new Error('No native facade write');
+    Reflect.apply(run, image, ['UPDATE knowledge_sources SET title=? WHERE id=?', [source.title, source.id]]);
+    return image;
+  });
+  try {
+    expect(() => store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }])).toThrow(SQLiteObservationRetiredError);
+  } finally { restore(); }
+  expect(store.getSourceSnapshot({ id: source.id }).source?.title).toBe('Changed physical source meaning');
+});
+
+
+test('compiled expected readsets never borrow a substituted schema-layout row memo', async () => {
+  const { store, source, sqlite } = await fixture();
+  const sql = "SELECT type,name,sql FROM main.sqlite_schema WHERE name IN ('knowledge_sources','knowledge_nodes','knowledge_extractions')";
+  const canonical = sqlite.readPersisted(db => db.exec(sql));
+  sqlite.run('ALTER TABLE knowledge_sources RENAME TO source_rows');
+  sqlite.run('CREATE VIEW knowledge_sources AS SELECT *,hex(randomblob(16)) AS dynamic FROM source_rows');
+  await sqlite.save();
+  const selectors = [{ kind: 'source' as const, id: source.id }];
+  let compiled: ReturnType<KnowledgeStore['captureExpectedRecordReadset']> | undefined;
+  store.assertRecordSnapshotFrame(() => {
+    store.getRecordGenerations(selectors);
+    expectedFrameCache(sqlite, 'rows').set(JSON.stringify([sql, []]), canonical);
+    compiled = store.captureExpectedRecordReadset(selectors);
+  });
+  if (!compiled) throw new Error('No compiled dynamic view');
+  // The same bytes cannot prove equality for a runtime-computed view column.
+  expect(store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }])).toEqual([false]);
+});
+
+
+test('actual scope never reauthorizes a false raw equality result through a substituted legacy memo', async () => {
+  const { store, source, sqlite } = await fixture(), fake = fakePort(() => noulAnswer(0.99));
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] });
+    const requests = fake.requests.length, generation = store.getSourceGeneration(source.id);
+    sqlite.run('UPDATE knowledge_sources SET title=? WHERE id=?', ['Changed persisted source meaning', source.id]);
+    await sqlite.save();
+    const match = store.matchesExpectedRecordReadsets.bind(store);
+    const observing = spyOn(store, 'matchesExpectedRecordReadsets').mockImplementation(inputs => {
+      const current = match(inputs);
+      expect(current).toContain(false);
+      expectedFrameCache(sqlite, 'generations').set(JSON.stringify(['knowledge_sources', 'id', source.id]), generation);
+      return current;
+    });
+    try {
+      expect(() => selection.assertCurrent()).toThrow(KnowledgeScopeSelectionHeldError);
+      expect(fake.requests).toHaveLength(requests);
+    } finally { observing.mockRestore(); }
+  } finally { installJudgmentPort(previous); }
+});
+
+
+test.each(['compiler', 'matcher'] as const)('compiled expected readsets reject a copied retired frame in the %s', async operation => {
+  const { store, source, sqlite } = await fixture();
+  const selectors = [{ kind: 'source' as const, id: source.id }], compiled = store.captureExpectedRecordReadset(selectors);
+  sqlite.run('UPDATE knowledge_sources SET title=? WHERE id=?', ['Changed physical source meaning', source.id]);
+  await sqlite.save();
+  expect(() => sqlite.assertPersistedReadFrame(() => {
+    store.getRecordGenerations(selectors);
+    const descriptor = Object.getOwnPropertyDescriptor(sqlite, 'persistedReadFrame'), frame: unknown = descriptor?.value;
+    if (!descriptor || !frame || typeof frame !== 'object') throw new Error('No actual frame');
+    const image: unknown = Object.getOwnPropertyDescriptor(frame, 'db')?.value;
+    if (!image || typeof image !== 'object') throw new Error('No actual image');
+    const run: unknown = Reflect.get(image, 'run');
+    if (typeof run !== 'function') throw new Error('No native facade write');
+    Reflect.apply(run, image, ['UPDATE knowledge_sources SET title=? WHERE id=?', [source.title, source.id]]);
+    const copy: unknown = Object.create(Object.getPrototypeOf(frame), Object.getOwnPropertyDescriptors(frame));
+    Object.defineProperty(sqlite, 'persistedReadFrame', { ...descriptor, value: copy });
+    try {
+      if (operation === 'compiler') store.captureExpectedRecordReadset(selectors);
+      else store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }]);
+    } finally { Object.defineProperty(sqlite, 'persistedReadFrame', descriptor); }
+  })).toThrow(SQLiteObservationRetiredError);
+});
+
+test.each(['compiler', 'matcher'] as const)('compiled expected readsets reject another store genuine custom-validator frame in the %s', async operation => {
+  const first = await fixture(), second = await fixture(path(), () => {});
+  const selectors = [{ kind: 'source' as const, id: first.source.id }], compiled = first.store.captureExpectedRecordReadset(selectors);
+  let rejected = false;
+  expect(() => first.sqlite.assertPersistedReadFrame(() => {
+    second.sqlite.assertPersistedReadFrame(() => {
+      second.store.getRecordGenerations(selectors);
+      const descriptor = Object.getOwnPropertyDescriptor(first.sqlite, 'persistedReadFrame');
+      const foreign: unknown = Object.getOwnPropertyDescriptor(second.sqlite, 'persistedReadFrame')?.value;
+      if (!descriptor || !foreign || typeof foreign !== 'object') throw new Error('No genuine owner frames');
+      Object.defineProperty(first.sqlite, 'persistedReadFrame', { ...descriptor, value: foreign });
+      try {
+        expect(() => operation === 'compiler' ? first.store.captureExpectedRecordReadset(selectors)
+          : first.store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }])).toThrow(SQLiteObservationRetiredError);
+        rejected = true;
+      } finally { Object.defineProperty(first.sqlite, 'persistedReadFrame', descriptor); }
+    });
+  })).toThrow(SQLiteObservationRetiredError);
+  expect(rejected).toBe(true);
+});
+
+for (const operation of ['compiler', 'matcher'] as const) {
+  test.each(['constructor', 'prototype', 'constructor-accessor'] as const)(
+    `compiled expected readsets retire changed native %s identity before the ${operation}`, async mutation => {
+      const { store, source, sqlite } = await fixture();
+      const selectors = [{ kind: 'source' as const, id: source.id }], compiled = store.captureExpectedRecordReadset(selectors);
+      const originalTitle = source.title;
+      if (typeof originalTitle !== 'string') throw new Error('No authored original title');
+      sqlite.run('UPDATE knowledge_sources SET title=? WHERE id=?', ['Changed physical source meaning', source.id]);
+      await sqlite.save();
+      const engine = await loadSqlJsEngine(), OriginalDatabase = engine.Database;
+      const constructorDescriptor = Object.getOwnPropertyDescriptor(engine, 'Database');
+      const prototypeDescriptor = Object.getOwnPropertyDescriptor(OriginalDatabase, 'prototype');
+      if (!constructorDescriptor || !prototypeDescriptor) throw new Error('No original native identity');
+      let constructorCalls = 0, getterCalls = 0;
+      const replacement = function(data?: Uint8Array | Buffer) {
+        constructorCalls++;
+        const image = new OriginalDatabase(data);
+        image.run('UPDATE knowledge_sources SET title=? WHERE id=?', [originalTitle, source.id]);
+        return image;
+      };
+      Object.defineProperty(replacement, 'prototype', { value: OriginalDatabase.prototype });
+      if (mutation === 'constructor') Object.defineProperty(engine, 'Database', { ...constructorDescriptor, value: replacement });
+      else if (mutation === 'prototype') Object.defineProperty(OriginalDatabase, 'prototype', {
+        ...prototypeDescriptor, value: Object.create(OriginalDatabase.prototype),
+      });
+      else Object.defineProperty(engine, 'Database', { configurable: true, enumerable: true,
+        get() { getterCalls++; return OriginalDatabase; },
+      });
+      try {
+        expect(() => operation === 'compiler' ? store.captureExpectedRecordReadset(selectors)
+          : store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }])).toThrow(SQLiteObservationRetiredError);
+        expect(constructorCalls).toBe(0); expect(getterCalls).toBe(0);
+      } finally {
+        Object.defineProperty(engine, 'Database', constructorDescriptor);
+        Object.defineProperty(OriginalDatabase, 'prototype', prototypeDescriptor);
+      }
+      expect(store.getSourceSnapshot({ id: source.id }).source?.title).toBe('Changed physical source meaning');
+    });
+}
+
+for (const operation of ['compiler', 'matcher'] as const) {
+  test.each(['assertCurrent', 'identity'] as const)(
+    `compiled expected readsets retain original physical ownership despite reflected %s in the ${operation}`, async slot => {
+      const { store, source, sqlite } = await fixture();
+      const selectors = [{ kind: 'source' as const, id: source.id }], compiled = store.captureExpectedRecordReadset(selectors);
+      let consumed = false;
+      expect(() => sqlite.assertPersistedReadFrame(() => {
+        store.getRecordGenerations(selectors);
+        const frame: unknown = Object.getOwnPropertyDescriptor(sqlite, 'persistedReadFrame')?.value;
+        if (!frame || typeof frame !== 'object') throw new Error('No actual frame');
+        const original = Object.getOwnPropertyDescriptor(frame, slot);
+        if (!original || !('value' in original)) throw new Error('No actual frame slot');
+        copyFileSync(store.storagePath, `${store.storagePath}.replacement`);
+        renameSync(`${store.storagePath}.replacement`, store.storagePath);
+        if (slot === 'assertCurrent') Object.defineProperty(frame, slot, { ...original, value: () => {} });
+        else {
+          const persistence: unknown = Object.getOwnPropertyDescriptor(sqlite, 'persistence')?.value;
+          if (!persistence || typeof persistence !== 'object') throw new Error('No actual persistence');
+          const observe: unknown = Reflect.get(persistence, 'observationIdentity');
+          if (typeof observe !== 'function') throw new Error('No physical identity observer');
+          const replacement: unknown = Reflect.apply(observe, persistence, []);
+          if (typeof replacement !== 'string') throw new Error('No replacement physical identity');
+          Object.defineProperty(frame, slot, { ...original, value: replacement });
+        }
+        try {
+          if (operation === 'compiler') store.captureExpectedRecordReadset(selectors);
+          else store.matchesExpectedRecordReadsets([{ expected: compiled.expected, selectors }]);
+          consumed = true;
+        } finally { Object.defineProperty(frame, slot, original); }
+      })).toThrow(SQLiteObservationRetiredError);
+      expect(consumed).toBe(false);
+    });
+}
