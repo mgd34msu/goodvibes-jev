@@ -1,9 +1,12 @@
-import { postalConfigKey, readConfigSettingForDisplay, observeImportFile, assertImportFileCurrent, type SubscriptionImportEntry } from '@goodvibes-jev/engine/sdk/platform/config';
-import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { postalConfigKey, readConfigSettingForDisplay, observeImportFile, assertImportFileCurrent, isSecretBearingConfigKey, type SubscriptionImportEntry } from '@goodvibes-jev/engine/sdk/platform/config';
+import { captureStrictJudgmentJson, judgmentInputCardProblem, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { containsIssuerCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { existsSync, readFileSync } from 'node:fs';
 import { getAgentSettingsSchema, readAgentSettingValue, type AgentConfigSetting } from '../config/settings-catalog.ts';
 import type { PendingSubscriptionLogin, ProviderSubscription } from '@goodvibes-jev/engine/sdk/platform/config';
-import { setHarnessSetting } from '../agent/harness-control.ts';
+import { bindSettingSchemaDescriptors, setHarnessSetting } from '../agent/harness-control.ts';
+import { captureCatalogMethods } from '../tools/agent-harness-catalog-ranking.ts';
 import { applyThemeModeSettingChange, applyThemeNameSettingChange, THEME_MODE_CONFIG_KEY, THEME_NAME_CONFIG_KEY } from '../renderer/theme-mode-config.ts';
 import { listThemeChoices, normalizeThemeName } from '../renderer/theme.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from './agent-workspace-snapshot.ts';
@@ -700,6 +703,106 @@ export function previewAgentWorkspaceTuiSettingsImport(context: CommandContext |
       boundary: 'Preview does not mutate state. Apply imports only Agent-owned settings and provider subscriptions from published GoodVibes platform sources.',
     },
   };
+}
+
+/** Apply the same native credential floors before any preview reader starts. */
+export function assertAgentWorkspaceImportPreviewPrivacy(value: unknown): void {
+  let captured: unknown;
+  try { captured = snapshotJudgmentInput(value); }
+  catch { throw new ToolInputProjectionError('held'); }
+  const issuerMaterial = (entry: unknown): boolean => {
+    if (typeof entry === 'string') return containsIssuerCredential(entry);
+    if (Array.isArray(entry)) return entry.some(issuerMaterial);
+    if (entry !== null && typeof entry === 'object') return Object.entries(entry)
+      .some(([key, child]) => containsIssuerCredential(key) || issuerMaterial(child));
+    return false;
+  };
+  if (issuerMaterial(captured)) throw new ToolInputProjectionError('held');
+}
+
+/** Read-only native capture. Raw files and credentials never leave this owner. */
+export function captureAgentWorkspaceTuiSettingsImportPreview(context: CommandContext): {
+  readonly preview: TuiSettingsImportPreview;
+  readonly sourceViews: readonly unknown[];
+  readonly assertCurrent: () => void;
+} {
+  const assertContext = captureCatalogMethods(context, ['workspace', 'platform', 'session']);
+  const workspace = context.workspace, platform = context.platform, session = context.session;
+  const assertWorkspace = captureCatalogMethods(workspace, ['shellPaths']);
+  const assertPlatform = captureCatalogMethods(platform, ['configManager', 'subscriptionManager']);
+  const assertSession = captureCatalogMethods(session, ['runtime']);
+  const runtime = session.runtime;
+  const assertRuntime = captureCatalogMethods(runtime, ['sessionId']);
+  const paths = workspace.shellPaths, config = platform.configManager, subscriptions = platform.subscriptionManager;
+  if (!paths || !config) throw new ToolInputProjectionError('unconfigured');
+  const assertPaths = captureCatalogMethods(paths, ['resolveUserPath', 'resolveProjectPath', 'workingDirectory', 'homeDirectory']);
+  const assertConfig = captureCatalogMethods(config, ['getSchema', 'getHostSettingsSchema', 'getConfigurationIncarnation', 'get', 'getStored']);
+  const assertSubscriptions = subscriptions ? captureCatalogMethods(subscriptions, ['list', 'listPending', 'get', 'getPending']) : () => {};
+  const builtin = config.getSchema(), host = config.getHostSettingsSchema();
+  const assertSchema = bindSettingSchemaDescriptors([builtin, host]);
+  const incarnation = config.getConfigurationIncarnation();
+  const subscriptionValues = () => JSON.stringify(captureStrictJudgmentJson(subscriptions ? [subscriptions.list(), subscriptions.listPending()] : []));
+  const originalSubscriptions = subscriptionValues();
+  const sourcePaths = [paths.resolveUserPath(GOODVIBES_TUI_SURFACE_ROOT, 'settings.json'),
+    paths.resolveProjectPath(GOODVIBES_TUI_SURFACE_ROOT, 'settings.json'), paths.resolveUserPath(GOODVIBES_TUI_SURFACE_ROOT, 'subscriptions.json')];
+  const sources = sourcePaths.map(path => ({ path, observation: observeImportFile(path) }));
+  const assertCurrent = () => {
+    assertContext(); assertWorkspace(); assertPlatform(); assertSession(); assertRuntime();
+    assertPaths(); assertConfig(); assertSubscriptions(); assertSchema();
+    if (config.getConfigurationIncarnation() !== incarnation || config.getSchema() !== builtin || config.getHostSettingsSchema() !== host
+      || subscriptionValues() !== originalSubscriptions) throw new ToolInputProjectionError('stale');
+    for (const source of sources) {
+      try { assertImportFileCurrent(source.path, source.observation); }
+      catch { throw new ToolInputProjectionError('stale'); }
+    }
+  };
+  // Inspect complete original bytes, including ignored settings and malformed
+  // JSON. Private credential slots do not exempt payment card material.
+  for (const { observation } of sources) {
+    const problem = judgmentInputCardProblem(observation.raw);
+    if (problem) throw new ToolInputProjectionError(problem === 'card-material' ? 'held' : 'invalid');
+  }
+  const sourceViews = sources.map(({ observation }, index) => {
+    if (observation.raw === null) return { status: 'missing' };
+    let record: unknown;
+    try { record = captureStrictJudgmentJson(JSON.parse(observation.raw)); }
+    catch { return { status: 'invalid', content: observation.raw }; }
+    const privatePaths = new Set<string>();
+    if (index < 2) {
+      for (const setting of builtin) if (canImportTuiSetting(setting.key) && isSecretBearingConfigKey(setting.key)) privatePaths.add(JSON.stringify(setting.key.split('.')));
+    } else if (isRecord(record)) {
+      const active = record.subscriptions, pending = record.pending;
+      if (isRecord(active)) for (const [provider, entry] of Object.entries(active)) if (isProviderSubscription(entry)) {
+        privatePaths.add(JSON.stringify(['subscriptions', provider, 'accessToken']));
+        privatePaths.add(JSON.stringify(['subscriptions', provider, 'refreshToken']));
+      }
+      if (isRecord(pending)) for (const [provider, entry] of Object.entries(pending)) if (isPendingSubscriptionLogin(entry)) {
+        privatePaths.add(JSON.stringify(['pending', provider, 'state']));
+        privatePaths.add(JSON.stringify(['pending', provider, 'verifier']));
+      }
+    }
+    const redactions: { readonly path: readonly string[]; readonly configured: boolean; readonly redacted: true }[] = [];
+    const project = (value: unknown, path: readonly string[]): unknown => {
+      if (Array.isArray(value)) return value.map((entry, position) => project(entry, [...path, String(position)]));
+      if (!isRecord(value)) return value;
+      return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+        const selected = [...path, key];
+        if (privatePaths.has(JSON.stringify(selected))) {
+          if (entry !== null && typeof entry !== 'string') throw new ToolInputProjectionError('invalid');
+          redactions.push({ path: selected, configured: typeof entry === 'string' && entry.length > 0, redacted: true });
+          return [];
+        }
+        return [[key, project(entry, selected)]];
+      }));
+    };
+    return { status: 'loaded', content: project(record, []), redactions };
+  });
+  assertCurrent();
+  const preview = previewAgentWorkspaceTuiSettingsImport(context);
+  if (!preview) throw new ToolInputProjectionError('unavailable');
+  assertAgentWorkspaceImportPreviewPrivacy({ preview, sources: sourceViews });
+  assertCurrent();
+  return { preview, sourceViews, assertCurrent };
 }
 
 export async function importAgentWorkspaceTuiSettings(context: CommandContext | null): Promise<TuiSettingsImportOutcome> {

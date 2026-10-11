@@ -14,7 +14,7 @@ import { bindSettingSchemaDescriptors, coerceHarnessSettingValue } from '../agen
 import { getAgentSettingsSchema } from '../config/settings-catalog.ts';
 import { agentDaemonConfigClient, agentDaemonConfigClientRevision, buildAgentConfigRouting } from '../config/daemon-config-routing.ts';
 import { buildSecretBackedConfigUpdate, defaultSecretBackedScope, isSecretConfigKey } from '../config/secret-config.ts';
-import { captureAgentWorkspaceTuiSettingsImport } from '../input/agent-workspace-settings.ts';
+import { assertAgentWorkspaceImportPreviewPrivacy, captureAgentWorkspaceTuiSettingsImport } from '../input/agent-workspace-settings.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { resolveWorkspaceActionDetail } from './agent-harness-workspace-actions.ts';
 import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
@@ -28,7 +28,23 @@ export function isAgentSettingsImportMutation(name: string, args: Record<string,
   if (name === 'settings') return imports.has(action) && action !== 'apply' && action !== 'confirm';
   if (name !== 'agent_harness' || args.mode !== 'run_workspace_action') return false;
   const resolved = resolveWorkspaceActionDetail(args);
-  return !!resolved && resolved.status !== 'ambiguous' && resolved.action.kind === 'settings-import';
+  return !!resolved && resolved.status !== 'ambiguous' && resolved.action.kind === 'settings-import'
+    && action !== 'preview' && (imports.has(action) || args.confirm === true);
+}
+
+/** Select only the native import preview after inspecting the complete caller input. */
+export function isAgentWorkspaceSettingsImportPreview(input: Record<string, unknown>): boolean {
+  let args: Record<string, unknown>;
+  try { args = captureModelReadingInput(input); }
+  catch (error) {
+    if (error instanceof ToolInputProjectionError) throw error;
+    throw new ToolInputProjectionError('held');
+  }
+  assertAgentWorkspaceImportPreviewPrivacy(args);
+  if (args.mode !== 'run_workspace_action') return false;
+  const resolved = resolveWorkspaceActionDetail(args);
+  return !!resolved && resolved.status !== 'ambiguous' && resolved.action.kind === 'settings-import'
+    && !isAgentSettingsImportMutation('agent_harness', args);
 }
 interface ImportCapture {
   readonly commandContext: CommandContext;

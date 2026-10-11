@@ -5,10 +5,12 @@ import { types as nodeTypes } from 'node:util';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { assertCurrentToolExecution, assertCurrentToolInvocation, assertCurrentToolEffect, ToolInputProjectionError, type ToolInputProjector, type ToolRegistry, type ToolExecutionEffect } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
-import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogData, captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+import { isAgentWorkspaceSettingsImportPreview } from './agent-settings-import-admission.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import { createChannelDraftReferenceCapture } from './agent-channel-draft-reference.ts';
 import { createSetupSmokeReferenceCapture } from './agent-setup-smoke-reference.ts';
+import { captureAgentWorkspaceTuiSettingsImportPreview } from '../input/agent-workspace-settings.ts';
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
 
@@ -19,6 +21,23 @@ const PROTECTED_COMMS_EFFECT_MODES = new Set(['channel_draft_save', 'channel_dra
 const projectionGuards = new WeakMap<object, () => void>();
 const forwardedGuards = new WeakMap<object, { readonly options: ToolExecuteOptions | undefined; readonly assertCurrent: () => void; readonly assertInvocation: () => boolean; readonly assertEffect: (effect: ToolExecutionEffect) => boolean }>();
 const publicationGuards = new WeakMap<object, Map<string | (() => void), () => void>>();
+interface SettingsPreviewBinding {
+  readonly context: CommandContext;
+  readonly registry: ToolRegistry;
+  readonly capture: ReturnType<typeof captureAgentWorkspaceTuiSettingsImportPreview>;
+  readonly aliases: Set<object>;
+  released: boolean;
+}
+const settingsPreviewBindings = new WeakMap<object, SettingsPreviewBinding>();
+
+/** The body reads the exact native source acquired by its original projection. */
+export function capturedHarnessSettingsImportPreview(args: Record<string, unknown>, options: ToolExecuteOptions | undefined,
+  context: CommandContext, registry: ToolRegistry): ReturnType<typeof captureAgentWorkspaceTuiSettingsImportPreview> {
+  const binding = settingsPreviewBindings.get(args);
+  if (!binding || binding.released || binding.context !== context || binding.registry !== registry) throw new ToolInputProjectionError('stale');
+  harnessCatalogExecutionGuard(args, options)(); binding.capture.assertCurrent();
+  return binding.capture;
+}
 function retainedGuards(args: object): Map<string | (() => void), () => void> {
   let guards = publicationGuards.get(args);
   if (!guards) { guards = new Map(); publicationGuards.set(args, guards); }
@@ -77,15 +96,28 @@ function registeredTool(registry: ToolRegistry, name: string): Tool | undefined 
 }
 
 function catalogContextGuard(registry: ToolRegistry, context?: CommandContext, settings = false): () => void {
-  const config = settings ? context?.platform.configManager : undefined;
+  const assertPlatform = settings && context ? captureCatalogMethods(context, ['platform']) : () => {};
+  assertPlatform();
+  const platform = settings ? context?.platform : undefined;
+  const assertConfigHolder = platform ? captureCatalogMethods(platform, ['configManager']) : () => {};
+  assertConfigHolder();
+  const config = platform?.configManager;
+  const assertConfigMethods = config ? captureCatalogMethods(config, ['getConfigurationIncarnation']) : () => {};
+  const assertSettings = () => { assertPlatform(); assertConfigHolder(); assertConfigMethods(); };
+  assertSettings();
   const incarnation = config?.getConfigurationIncarnation();
+  assertSettings();
   const clientRevision = settings ? agentDaemonConfigClientRevision() : undefined;
   const session = modelReadingServicePath(context, ['session', 'runtime']);
   const sessionId = modelReadingServicePath(session, ['sessionId']);
   const owner = agentResearchSourceOwner(registry);
   const api = modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry']);
   return () => {
-    if ((settings && (context?.platform.configManager !== config || config?.getConfigurationIncarnation() !== incarnation || agentDaemonConfigClientRevision() !== clientRevision))
+    assertSettings();
+    const currentConfig = settings ? context?.platform.configManager : undefined;
+    const currentIncarnation = config?.getConfigurationIncarnation();
+    assertSettings();
+    if ((settings && (currentConfig !== config || currentIncarnation !== incarnation || agentDaemonConfigClientRevision() !== clientRevision))
       || modelReadingServicePath(context, ['session', 'runtime']) !== session || modelReadingServicePath(session, ['sessionId']) !== sessionId
       || agentResearchSourceOwner(registry) !== owner
       || (modelReadingServicePath(context, ['clients', 'mcpApi']) ?? modelReadingServicePath(context, ['extensions', 'mcpRegistry'])) !== api) throw new ToolInputProjectionError('stale');
@@ -102,11 +134,22 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
     const protectedQuery = selected(request.args);
     const retained = retainedGuards(request.args);
     const routing = catalogRoutingInput(request.args);
-    const settingsInspection = request.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting';
+    const previewInspection = routing.mode === 'run_workspace_action' && isAgentWorkspaceSettingsImportPreview(request.args);
+    const settingsInspection = request.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting' || previewInspection;
     const assertContext = protectedQuery ? catalogContextGuard(registry, context, settingsInspection) : () => {};
     const modelInspection = routing.mode === 'model_routing' || routing.mode === 'model_route' || request.name === 'models';
     const original = protectedQuery && (modelInspection || settingsInspection) ? captureModelReadingInput(request.args) : undefined;
     const originalJson = original && JSON.stringify(original);
+    let previewBinding: SettingsPreviewBinding | undefined;
+    if (protectedQuery && previewInspection) {
+      if (!context) throw new ToolInputProjectionError('unconfigured');
+      request.assertCurrent(); request.signal?.throwIfAborted(); assertContext();
+      const native = captureAgentWorkspaceTuiSettingsImportPreview(context);
+      const view = captureModelReadingInput({ preview: native.preview, sources: native.sourceViews });
+      native.assertCurrent(); assertContext(); request.assertCurrent(); request.signal?.throwIfAborted();
+      previewBinding = { context, registry, capture: { preview: view.preview, sourceViews: view.sources, assertCurrent: native.assertCurrent }, aliases: new Set(), released: false };
+      retained.set('settings-import.preview-source', native.assertCurrent);
+    }
     const guarded = protectedQuery ? { ...request, ...(original ? { args: original } : {}), assertCurrent: () => {
       request.assertCurrent(); assertContext();
       for (const guard of retained.values()) guard();
@@ -115,6 +158,10 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
     const result = await projector.project(guarded);
     if (!protectedQuery || result.status !== 'projected') return result;
     publicationGuards.set(result.args, retained);
+    const bindPreview = (args: object) => {
+      if (previewBinding) { settingsPreviewBindings.set(args, previewBinding); previewBinding.aliases.add(args); }
+    };
+    bindPreview(result.args);
     let released = false;
     const assertCurrent = () => {
       if (released) throw new ToolInputProjectionError('stale');
@@ -129,15 +176,23 @@ export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallb
         // The registry supplies this exact final argument object to execute.
         // A structural copy cannot inherit a protected invocation's lifetime.
         projectionGuards.set(candidate, assertCurrent); publicationGuards.set(candidate, retained);
+        bindPreview(candidate);
       },
       async release() {
         // Engine cleanup retires the one-use execution before releasing its
         // projection. Only retained source/backend facts survive that lease.
         released = true;
-        await result.release?.();
-        assertContext();
-        if (original) assertModelReadingInputCurrent(request.args, originalJson);
-        for (const guard of retained.values()) guard();
+        if (previewBinding) previewBinding.released = true;
+        try {
+          await result.release?.();
+          assertContext();
+          if (original) assertModelReadingInputCurrent(request.args, originalJson);
+          for (const guard of retained.values()) guard();
+        } finally {
+          if (previewBinding) for (const args of previewBinding.aliases) {
+            if (settingsPreviewBindings.get(args) === previewBinding) settingsPreviewBindings.delete(args);
+          }
+        }
       },
     };
   } };
@@ -197,16 +252,19 @@ export function protectHarnessCatalogTool(tool: Tool, registry: ToolRegistry, se
   const projector = createHarnessCatalogInputProjector(registry, undefined, selected, context);
   return { ...tool, async execute(input, options) {
     if (!selected(input)) return tool.execute(input, options);
+    const routing = catalogRoutingInput(input);
+    const previewInspection = routing.mode === 'run_workspace_action' && isAgentWorkspaceSettingsImportPreview(input);
+    const assertOptions = previewInspection && options ? captureCatalogMethods(options, ['signal', 'assertCurrent', 'inputProjectionContext']) : () => {};
     if (!forwardedGuards.has(input) && !projectionGuards.has(input)) { publicationGuards.set(input, new Map()); }
     const guard = harnessCatalogExecutionGuard(input, options);
     const registration = registeredTool(registry, tool.definition.name);
-    const routing = catalogRoutingInput(input);
-    const assertContext = catalogContextGuard(registry, context, tool.definition.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting');
+    const assertContext = catalogContextGuard(registry, context, tool.definition.name === 'settings' || routing.mode === 'settings' || routing.mode === 'get_setting'
+      || previewInspection);
     const assertRegistrationCurrent = () => {
       assertContext();
       if (registeredTool(registry, tool.definition.name) !== registration) throw new ToolInputProjectionError('stale');
     };
-    const assertCurrent = () => { guard(); assertRegistrationCurrent(); };
+    const assertCurrent = () => { assertOptions(); guard(); assertOptions(); assertRegistrationCurrent(); assertOptions(); };
     assertCurrent();
     if (projectionGuards.has(input)) {
       // Forwarding already invokes this exact input's execution/projection
