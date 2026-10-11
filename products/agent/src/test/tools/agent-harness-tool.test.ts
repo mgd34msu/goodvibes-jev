@@ -555,7 +555,7 @@ async function refusePreparedHarnessSetting(fixture: HarnessFixture, id: string,
   const credential = fakePort((name, question, state) => {
     expect(name).toBe('credential_material');
     expect<unknown>(question).toEqual(credentialQuestions[name]);
-    expect(credentialStates).toContainEqual(state);
+    expect<unknown>(credentialStates).toContainEqual(state);
     if (owned.key !== 'provider.reasoningEffort' || name !== 'credential_material' || question.type !== 'noul') {
       throw new Error('Unexpected exact settings negative value observation.');
     }
@@ -600,11 +600,11 @@ async function refusePreparedHarnessSetting(fixture: HarnessFixture, id: string,
     sourceOf: () => source, schemaRevision: call.schemaRevision, preparedCall: { registry: fixture.toolRegistry, call },
     decoratePort: base => withDecisionLog({ model: base.model, ask(request) {
       if (request.context?.battery === 'engine.gate.settings-hazard') {
-        expect(request.context.site).toBe('engine.gate.settings-write'); expect(request.questions).toEqual(hazardQuestions);
+        expect(request.context.site).toBe('engine.gate.settings-write'); expect<unknown>(request.questions).toEqual(hazardQuestions);
         return settings.port.ask(request);
       }
       if (request.context?.battery === 'engine.tools.credential-value') {
-        expect(request.context.site).toBe('tools.goodvibes-runtime.credential-value'); expect(request.questions).toEqual(credentialQuestions);
+        expect(request.context.site).toBe('tools.goodvibes-runtime.credential-value'); expect<unknown>(request.questions).toEqual(credentialQuestions);
         return credential.port.ask(request);
       }
       if (request.context?.battery === 'engine.gate.autonomous-disposition') {
@@ -13012,7 +13012,7 @@ describe('agent_harness tool', () => {
       const scoped: JudgmentPort = { model: base.model, ask(request) {
         if (request.context?.battery !== 'engine.gate.settings-hazard') return base.ask(request);
         if (request.context.site !== 'engine.gate.settings-write') throw new Error('Unexpected settings import observation site.');
-        expect(request.questions).toEqual(questions);
+        expect<unknown>(request.questions).toEqual(questions);
         expect<unknown>(request.state).toEqual(expectedSettingsProposal);
         return settingsReadings.port.ask(request);
       } };
@@ -14066,7 +14066,7 @@ describe('agent_harness tool', () => {
       });
       const syntheticTranslationObserver: Tool = {
         definition: nativeComparison.definition,
-        execute(rawArgs, options) {
+        async execute(rawArgs, options) {
           options?.signal?.throwIfAborted();
           expect(assertCurrentToolExecution(rawArgs, options)).toBe(true);
           const mode = rawArgs.mode;
