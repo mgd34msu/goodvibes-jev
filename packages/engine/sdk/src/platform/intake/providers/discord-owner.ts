@@ -120,8 +120,11 @@ export async function createDiscordInboxOwner(
   const observeCredential = context.credentials.resolveConfigCredentialSnapshot?.bind(context.credentials);
   if (!observeCredential) throw new Error('Discord inbox requires exact local credential ownership');
   const resolveRouteId = context.resolveRouteId;
-  const scopeId = digest(JSON.stringify(['discord-inbox', 1, account.userId, channels.channelIds, channels.revision,
-    options.screening.authority.ownerId, options.screening.authority.revision]));
+  const scopeId = digest(JSON.stringify('kind' in options.screening
+    ? ['discord-inbox-hosted', 1, account.userId, channels.channelIds, channels.revision,
+      'abacus-route-llm+typesafe-jev-1.13.0', 'provider-managed-zero-retention-unverified']
+    : ['discord-inbox', 1, account.userId, channels.channelIds, channels.revision,
+      options.screening.authority.ownerId, options.screening.authority.revision]));
   const lifetime = new AbortController();
   const signal = AbortSignal.any([lifetime.signal, channels.signal, options.screening.authority.signal, ...(options.signal ? [options.signal] : [])]);
   const assertScope = options.assertCurrent;
