@@ -27,6 +27,8 @@ const tree = join(root, 'tree'), daemon = join(root, 'selected-daemon');
 const token = 'synthetic-native-memory-token';
 let judgment, judgmentError, host, hostStopped, hostExited = false, hostPid;
 const requests = [];
+const requestShapes = { modelFactShape: 0, fieldNameShape: 0, settingFormShape: 0, other: 0 };
+const phaseObservations = retainStartupPhases();
 let cleanupRefused = false;
 const childEnv = { PATH: '/usr/bin:/bin', HOME: home, TMPDIR: join(root, 'tmp'), XDG_CONFIG_HOME: join(root, 'xdg'),
   GOODVIBES_HOME: tree, GOODVIBES_DAEMON_HOME: daemon, GOODVIBES_WORKING_DIR: work, NO_COLOR: '1',
@@ -35,6 +37,69 @@ const childEnv = { PATH: '/usr/bin:/bin', HOME: home, TMPDIR: join(root, 'tmp'),
   GOODVIBES_SKIP_WAKE_MODEL_DOWNLOAD: '1' };
 const writeJson = (path, value) => writeFileSync(path, JSON.stringify(value));
 const wait = ms => new Promise(yes => setTimeout(yes, ms));
+// These wire shapes are advisory counts, never decision-site attribution.
+function exactKeys(value, keys) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
+function textCriteria(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.values(value).every(entry => entry === null || typeof entry === 'string');
+}
+function textQuestion(question, type) {
+  return exactKeys(question, ['type', 'instructions', 'criteria']) && question.type === type
+    && typeof question.instructions === 'string' && textCriteria(question.criteria);
+}
+function nativeRequestShape(body) {
+  const state = body.state, questions = body.questions;
+  if (exactKeys(state, ['provider', 'model_id']) && typeof state.provider === 'string' && typeof state.model_id === 'string') {
+    if ((exactKeys(questions, ['chat']) && textQuestion(questions.chat, 'noul') && exactKeys(questions.chat.criteria, ['true', 'false']))
+      || (exactKeys(questions, ['route']) && textQuestion(questions.route, 'choice'))) return 'modelFactShape';
+  }
+  if (exactKeys(state, ['field']) && typeof state.field === 'string' && exactKeys(questions, ['kind'])
+    && textQuestion(questions.kind, 'choice') && exactKeys(questions.kind.criteria, ['secret', 'owner_profile', 'content', 'other'])) return 'fieldNameShape';
+  if (exactKeys(state, ['context', 'candidates']) && exactKeys(state.context, ['section', 'name'])
+    && typeof state.context.section === 'string' && typeof state.context.name === 'string' && Array.isArray(state.candidates)
+    && state.candidates.length > 0 && state.candidates.every(candidate => exactKeys(candidate, ['id', 'content'])
+      && typeof candidate.id === 'string' && (candidate.content === null || typeof candidate.content === 'string'))
+    && exactKeys(questions, ['pick', ...state.candidates.map((_, index) => `fits_${index}`)])
+    && textQuestion(questions.pick, 'choice')
+    && exactKeys(questions.pick.criteria, ['none', ...state.candidates.map(candidate => candidate.id)])
+    && state.candidates.every((_, index) => {
+      const fit = questions[`fits_${index}`];
+      return exactKeys(fit, ['type', 'instructions']) && fit.type === 'noul'
+        && exactKeys(fit.instructions, ['question', 'candidate'])
+        && typeof fit.instructions.question === 'string' && typeof fit.instructions.candidate === 'string';
+    })) return 'settingFormShape';
+  return 'other';
+}
+const startupPhases = ['runtime-base', 'handler-surfaces', 'contract-recovery', 'provider-preload', 'listener-construction',
+  'secondary-listener-construction', 'cluster-startup', 'device-recovery', 'listener-startup', 'secondary-listener-startup',
+  'boot-tasks', 'foreground-ready'];
+function retainStartupPhases() {
+  const history = [], seen = new Set();
+  let line = '', discard = false;
+  return {
+    append(chunk, delayMs, requestCount) {
+      for (const character of String(chunk)) {
+        if (character !== '\n') {
+          if (!discard) { line += character; if (line.length > 128) { line = ''; discard = true; } }
+          continue;
+        }
+        if (!discard && history.length < startupPhases.length) {
+          const prefix = '[goodvibes-daemon:native-startup-phase] ';
+          const phase = line.startsWith(prefix) ? line.slice(prefix.length) : '';
+          if (startupPhases.includes(phase) && !seen.has(phase)) {
+            seen.add(phase); history.push(Object.freeze({ phase, delayMs, requestCount }));
+          }
+        }
+        line = ''; discard = false;
+      }
+    },
+    snapshot() { return Object.freeze([...history]); },
+  };
+}
+
 // Advisory reachability only: a connection never proves listener ownership.
 // This runs after qualification already failed, sends no bytes, and cannot
 // turn a late startup into a pass or extend the original readiness budget.
@@ -116,6 +181,7 @@ try {
       assert.equal(request.url, '/v1/systemone'); assert.equal(request.method, 'POST');
       let text = ''; for await (const chunk of request) { text += chunk; assert(text.length < 1_048_576); }
       const body = JSON.parse(text); assert.equal(body.model, 'jev-1.13.0'); assert(requests.length < 5_000, 'Unexpected native boot judgment loop'); requests.push(body);
+      requestShapes[nativeRequestShape(body)]++;
       const answers = syntheticSystemOneAnswers(body.questions);
       for (const [name, question] of Object.entries(body.questions)) {
         if (question.type === 'noul') answers[name] = { type: 'noul', noul: name === 'native_addon_failure' ? 0.01 : 0.99 };
@@ -132,7 +198,7 @@ try {
   const port = lease.address().port; await closeServer(lease);
   original.retained.assertCurrent(); relocated.assertCurrent();
   host = spawn(binary, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
-    cwd: work, env: { ...childEnv, ...judgmentEnv, GOODVIBES_DAEMON_TOKEN: token }, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: work, env: { ...childEnv, ...judgmentEnv, GOODVIBES_DAEMON_TOKEN: token, GOODVIBES_NATIVE_STARTUP_OBSERVATION: '1' }, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
   hostPid = host.pid; let output = '', errors = '', startupBannerObservedAt;
   host.stdout.on('data', chunk => {
@@ -140,7 +206,11 @@ try {
     if (startupBannerObservedAt === undefined && output.includes(' starting:')) startupBannerObservedAt = Date.now();
     if (output.length + errors.length > 1_048_576) signalNativeProcessGroup(host);
   });
-  host.stderr.on('data', chunk => { errors += chunk; if (output.length + errors.length > 1_048_576) signalNativeProcessGroup(host); });
+  host.stderr.on('data', chunk => {
+    errors += chunk;
+    if (output.length + errors.length > 1_048_576) { signalNativeProcessGroup(host); return; }
+    phaseObservations.append(chunk, Date.now() - started, requests.length);
+  });
   hostStopped = new Promise((yes, no) => {
     host.once('error', no); host.once('close', (code, signal) => { hostExited = true; yes({ code, signal }); });
   }); void hostStopped.catch(() => {});
@@ -153,6 +223,7 @@ try {
       // fixed booleans/counts; no settings, paths, request text or errors enter it.
       const failureOutput = output, failureErrors = errors;
       const observation = { elapsedMs, processClosed: hostExited, requestCount: requests.length,
+        requestShapes: Object.freeze({ ...requestShapes }), phases: phaseObservations.snapshot(),
         startupBannerDelayMs: startupBannerObservedAt === undefined ? null : startupBannerObservedAt - started,
         startupBannerObserved: output.includes(' starting:'), boundBannerObserved: output.includes(' bound:'),
         readyBannerObserved: output.includes('host started') };

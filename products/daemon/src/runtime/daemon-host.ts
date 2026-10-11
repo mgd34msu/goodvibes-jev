@@ -7,6 +7,7 @@ import { createDaemonBootOperations } from './boot-composition.js';
 import type { DaemonBootSnapshot } from './boot-tasks.js';
 import { createHostedSessionOptions } from './hosted-session-composition.js';
 import { createRuntimeServices, type RuntimeServices, type RuntimeServicesOptions } from './services.js';
+import { observeNativeStartupPhase } from './startup-observation.js';
 
 export interface DaemonHostBinding {
   readonly host?: string;
@@ -123,6 +124,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       if (!runtime.bootTasks) throw new Error('Daemon boot owner missing');
 
       phase = 'provider preload';
+      observeNativeStartupPhase('provider-preload');
       // Custom providers finish their tolerant initial load first, so cached
       // discoveries cannot take their names. Host work owns this admission wait.
       await runtime.providerRegistry.ready();
@@ -139,6 +141,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       discovery.start();
 
       phase = 'server construction';
+      observeNativeStartupPhase('listener-construction');
       const binding = options.daemon;
       daemon = (factories.createServer ?? ((config) => new DaemonServer(config)))({
         host: binding?.host, port: binding?.port,
@@ -158,6 +161,7 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
 
       if (options.httpListener) {
         phase = 'HTTP listener construction';
+        observeNativeStartupPhase('secondary-listener-construction');
         const http = options.httpListener;
         listener = (factories.createListener ?? ((config) => new HttpListener(config)))({
           host: http.host, port: http.port, configManager: runtime.configManager,
@@ -171,26 +175,32 @@ export function createDaemonHost(options: DaemonHostOptions, factories: DaemonHo
       }
 
       phase = 'cluster startup';
+      observeNativeStartupPhase('cluster-startup');
       await runtime.startCluster();
       fence();
       phase = 'device housekeeping';
+      observeNativeStartupPhase('device-recovery');
       // Await the recovery sweep instead of detaching a startup promise.
       await runtime.devicePosture.startHousekeeping();
       fence();
       phase = 'server startup';
+      observeNativeStartupPhase('listener-startup');
       await daemon.start();
       fence();
       if (!daemon.isRunning) throw new Error('Daemon server did not start');
       if (listener) {
         phase = 'HTTP listener startup';
+        observeNativeStartupPhase('secondary-listener-startup');
         await listener.start();
         fence();
         if (!listener.isRunning) throw new Error('HTTP listener did not start');
       }
       phase = 'boot startup';
+      observeNativeStartupPhase('boot-tasks');
       const boot = await runtime.bootTasks.start();
       fence();
       state = boot.state === 'ready' ? 'ready' : 'degraded';
+      observeNativeStartupPhase('foreground-ready');
     } catch (error) {
       if (error === INTERRUPTED) return;
       startupFailure = new Error(`Daemon host ${phase} failed`);

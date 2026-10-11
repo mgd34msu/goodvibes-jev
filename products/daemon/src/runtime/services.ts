@@ -6,6 +6,7 @@ import { createDaemonHandlerComposition } from './daemon-handler-composition.js'
 import { resumeContracts } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { createDaemonBootController, type DaemonBootController } from './boot-tasks.js';
 import type { RuntimeServicesOptions, RuntimeServices } from './runtime-services-types.js';
+import { observeNativeStartupPhase } from './startup-observation.js';
 export type { RuntimeServicesOptions, RuntimeServices } from './runtime-services-types.js';
 export { startDeviceHousekeeping } from './device-posture-composition.js';
 
@@ -14,6 +15,7 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
   if (typeof options.inboxFactory !== 'function') {
     throw new Error('An explicit daemon inbox factory is required until built-in provider composition is restored.');
   }
+  observeNativeStartupPhase('runtime-base');
   const { services, handlerOptions, closeWorkLedger, closeBrowserJudgment, closeAutonomousPermissions, retireContinuationScope } = await createRuntimeBaseServices(options);
   const scope = createDisposalScope('Daemon runtime acquisition');
   let shutdownRequested = false;
@@ -38,8 +40,10 @@ export async function createRuntimeServices(options: RuntimeServicesOptions): Pr
   });
   void distributedRuntimeReady.catch(() => {});
   try {
+    observeNativeStartupPhase('handler-surfaces');
     const daemonHandlers = await createDaemonHandlerComposition({ ...handlerOptions, distributedRuntimeReady });
     scope.registry.add('daemon handler surfaces', daemonHandlers.close);
+    observeNativeStartupPhase('contract-recovery');
     await resumeContracts(services.contractRunner, services.workingDirectory);
     let bootTasks: DaemonBootController | undefined;
     const runtime: RuntimeServices = { ...services, daemonHandlers, get bootTasks() { return bootTasks; }, close, dispose };
