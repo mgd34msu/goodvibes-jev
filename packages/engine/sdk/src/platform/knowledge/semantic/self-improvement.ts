@@ -1,3 +1,4 @@
+import { bindWebGapRepairInvocation, assertWebGapRepairResultCurrent } from './web-gap-repair/ownership.js';
 import { yieldToEventLoop } from '../cooperative.js';
 import { getKnowledgeSpaceId, normalizeKnowledgeSpaceId } from '../spaces.js';
 import type { KnowledgeStore } from '../store.js';
@@ -141,7 +142,8 @@ export async function runKnowledgeSemanticSelfImprovement(
       break;
     }
     state.processedGaps += 1;
-    const gapContext = buildGapContext(context.store, spaceId, gap, objectProfiles);
+    const gapContext = await buildGapContext(context.store, spaceId, gap, objectProfiles,
+      { signal: input.signal, shouldStop: context.shouldStop });
     const lifecycleStopped = captureGapRepairLifecycle(context.store, gap);
     // A missing usefulness reader must not rewrite an existing task merely to
     // discover that its previous repaired-fact decision cannot be revalidated.
@@ -360,7 +362,7 @@ async function repairCandidateGap(options: {
   readonly spaceId: string;
   readonly objectProfiles: readonly KnowledgeObjectProfilePolicy[];
   readonly gap: KnowledgeNodeRecord;
-  readonly gapContext: ReturnType<typeof buildGapContext>;
+  readonly gapContext: Awaited<ReturnType<typeof buildGapContext>>;
   readonly task: KnowledgeRefinementTaskRecord;
   readonly startedAt: number;
   readonly maxRunMs: number;
@@ -405,14 +407,17 @@ async function persistGapRepairFailure(context: SelfImproveContext, gap: Knowled
   failure: RepairFailureConclusion): Promise<GapRepairOutcome> {
   const owner = captureRepairFailureWrites(context.store, gap, task, failure.isOwnerCurrent);
   const { isCurrent: _isCurrent, isOwnerCurrent: _isOwnerCurrent, ...failureCause } = failure;
-  const nextRepairAttemptAt = (failure.cause === 'run_budget' || failure.cause === 'request_timeout')
-    ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS : undefined;
+  const deferRetry = failure.cause === 'run_budget' || failure.cause === 'request_timeout';
   try {
     owner.assertCurrent();
-    if (nextRepairAttemptAt) {
-      owner.acceptGap(await markGapRepairAttempt(context.store, gap, spaceId, {
-        status: 'deferred', reason, nextRepairAttemptAt, assertCurrent: owner.assertCurrent,
-      }));
+    if (deferRetry) {
+      // The gap writer owns the retry stamp. Reuse its numeric public view for
+      // task scheduling rather than passing an unowned numeric clock into it.
+      const deferredGap = await markGapRepairAttempt(context.store, gap, spaceId, {
+        status: 'deferred', reason, assertCurrent: owner.assertCurrent,
+      });
+      owner.acceptGap(deferredGap);
+      const nextRepairAttemptAt = deferredGap.metadata.nextRepairAttemptAt as number;
       owner.acceptTask(await updateRefinementTask(context.store, task, 'blocked', failure.cause === 'run_budget'
         ? 'Repair was deferred after exhausting the current run budget.'
         : 'Repair was deferred after a request timed out.', {
@@ -444,7 +449,7 @@ async function executeGapRepair(options: {
   readonly spaceId: string;
   readonly objectProfiles: readonly KnowledgeObjectProfilePolicy[];
   readonly gap: KnowledgeNodeRecord;
-  readonly gapContext: ReturnType<typeof buildGapContext>;
+  readonly gapContext: Awaited<ReturnType<typeof buildGapContext>>;
   readonly task: KnowledgeRefinementTaskRecord;
   readonly startedAt: number;
   readonly maxRunMs: number;
@@ -463,13 +468,15 @@ async function executeGapRepair(options: {
     gapContext,
     gapRepairer,
     remainingMs,
+    store: context.store,
+    assertCurrent: () => { if (options.shouldStop() || context.gapRepairer !== gapRepairer) throw new Error('Gap repair caller retired'); },
   });
   if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   const assessment = await recordGapRepairAssessment(context.store, task, gap, result);
   task = assessment.task;
   if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   if (assessment.acceptedSourceIds.length) {
-    task = await updateRefinementTask(context.store, task, 'applying', 'Linking accepted repair sources into the graph.');
+    task = await updateRefinementTask(context.store, task, 'applying', 'Linking accepted repair sources into the graph.', {}, () => assertWebGapRepairResultCurrent(result));
   }
   return applyGapRepairEvidence({
     context,
@@ -481,7 +488,8 @@ async function executeGapRepair(options: {
     acceptedSourceIds: assessment.acceptedSourceIds,
     ingestedSourceIds: assessment.ingestedSourceIds,
     deadlineAt: startedAt + maxRunMs,
-    shouldStop: options.shouldStop,
+    signal: input.signal,
+    shouldStop: () => { assertWebGapRepairResultCurrent(result); return options.shouldStop(); },
   });
 }
 
@@ -489,12 +497,14 @@ async function runGapRepairerWithBudget(input: {
   readonly input: KnowledgeSemanticSelfImproveInput;
   readonly spaceId: string;
   readonly gap: KnowledgeNodeRecord;
-  readonly gapContext: ReturnType<typeof buildGapContext>;
+  readonly gapContext: Awaited<ReturnType<typeof buildGapContext>>;
   readonly gapRepairer: KnowledgeSemanticGapRepairer;
   readonly remainingMs: number;
+  readonly store: KnowledgeStore;
+  readonly assertCurrent: () => void;
 }): Promise<GapRepairerResult> {
   const { input: runInput, spaceId, gap, gapContext, gapRepairer, remainingMs } = input;
-  return runWithRepairBudget((signal) => gapRepairer({
+  return runWithRepairBudget((signal) => gapRepairer(bindWebGapRepairInvocation(input.store, gapRepairer, {
     spaceId,
     query: gap.title,
     gaps: [gap],
@@ -504,7 +514,7 @@ async function runGapRepairerWithBudget(input: {
     maxSources: 5,
     deadlineAt: Date.now() + remainingMs,
     signal,
-  }), remainingMs, runInput.signal);
+  }, input.assertCurrent)), remainingMs, runInput.signal);
 }
 
 async function recordGapRepairAssessment(
@@ -517,6 +527,7 @@ async function recordGapRepairAssessment(
   readonly ingestedSourceIds: readonly string[];
   readonly acceptedSourceIds: readonly string[];
 }> {
+  assertWebGapRepairResultCurrent(result);
   const ingestedSourceIds = result?.ingestedSourceIds ?? [];
   const acceptedSourceIds = uniqueStrings([...(result?.acceptedSourceIds ?? []), ...ingestedSourceIds]);
   const updatedTask = await updateRefinementTask(store, task, 'evaluating', result?.reason ?? 'Source discovery completed.', {
@@ -525,7 +536,7 @@ async function recordGapRepairAssessment(
     ingestedSourceIds,
     acceptedSourceIds,
     skippedUrls: result?.skippedUrls ?? [],
-  });
+  }, () => assertWebGapRepairResultCurrent(result));
   return { task: updatedTask, ingestedSourceIds, acceptedSourceIds };
 }
 
@@ -539,11 +550,12 @@ async function applyGapRepairEvidence(input: {
   readonly acceptedSourceIds: readonly string[];
   readonly ingestedSourceIds: readonly string[];
   readonly deadlineAt: number;
+  readonly signal?: AbortSignal | undefined;
   readonly shouldStop: () => boolean;
 }): Promise<GapRepairOutcome> {
   const { context, objectProfiles, spaceId, gap, task, result, acceptedSourceIds, ingestedSourceIds, deadlineAt } = input;
   if (input.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
-  const linkedRepairs = await linkRepairSources(context.store, spaceId, gap, acceptedSourceIds, result?.query ?? gap.title, objectProfiles, input.shouldStop);
+  const linkedRepairs = await linkRepairSources(context.store, spaceId, gap, acceptedSourceIds, result?.query ?? gap.title, objectProfiles, input.shouldStop, input.signal);
   if (input.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   let promotedFactCount = 0;
   let repairComplete = false;

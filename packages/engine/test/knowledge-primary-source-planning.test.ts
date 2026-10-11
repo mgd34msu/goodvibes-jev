@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
 import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/activation/types.js';
@@ -24,6 +25,7 @@ beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
 function readings(value: (purpose: string, title: string) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['Synthetic TV-123', 0.99], ['Old TV-987', 0.99]]));
     if (name === 'wanted' || name === 'selected' || name === 'profileSupported') return noulAnswer(0.01); // Profile selection is unrelated to these authored primary-source claims.
     if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, [], [
       ['Input and output ports', 'Input and output ports: HDMI inputs.',
@@ -86,10 +88,18 @@ describe('primary source persistence preplanning', () => {
       const { store, subject, source, a } = await fixture();
       const fact = claim('First claim'); await seedFact(store, subject, fact, [a]);
       const before = graph(store);
-      if (mode === 'uncertain') readings(() => 0.65);
+      let primaryEntered = false;
+      if (mode === 'uncertain') readings(() => { primaryEntered = true; return 0.65; });
       else if (mode === 'missing') installJudgmentPort(undefined);
-      else { const fake = readings(); installJudgmentPort({ ...fake.port, async ask() { throw new Error('Synthetic unavailable port'); } }); }
-      await expect(enrich(store, source, [fact])).rejects.toThrow();
+      else { const fake = readings(); installJudgmentPort({ ...fake.port, async ask(request) {
+        if ('useful' in request.questions) { primaryEntered = true; throw new Error('Synthetic primary-source unavailable'); }
+        return fake.port.ask(request);
+      } }); }
+      const pending = mode === 'missing'
+        ? createSemanticPrimarySourcePlanner(store, createSemanticWriteGuard(store)).prepare(spaceId, { ...fact, subjects: [subject] }, [source.id, a.id])()
+        : enrich(store, source, [fact]);
+      await expect(pending).rejects.toThrow();
+      if (mode !== 'missing') expect(primaryEntered).toBe(true);
       expect(graph(store)).toBe(before);
       expect(store.getSemanticEnrichmentState(source.id)).toBeNull();
     }
@@ -139,7 +149,10 @@ describe('primary source persistence preplanning', () => {
     expect(requests).toContain('Exact display claim'); expect(requests).toContain(subject.title);
     const before = graph(store); const writes = readings();
     await expect(enrich(store, source, [fact])).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
-    expect(writes.requests).toHaveLength(0); expect(graph(store)).toBe(before);
+    expect(writes.requests).toHaveLength(2);
+    expect(writes.requests.every(request => Object.keys(request.questions).length === 1 && 'repairSubjectSelected' in request.questions)).toBe(true);
+    expect(JSON.stringify(writes.requests)).not.toContain('FOREIGN_PRIVATE_SOURCE_MARKER');
+    expect(graph(store)).toBe(before);
   });
 
   test('identical claim/support sets reuse readings while distinct claims select independent winners', async () => {
@@ -157,10 +170,11 @@ describe('primary source persistence preplanning', () => {
     const fact = claim('Versioned claim'); await seedFact(store, subject, fact, [a]);
     const before = graph(store); const fake = readings(); let changed = false;
     installJudgmentPort({ ...fake.port, async ask(request) {
-      if (!changed) { changed = true; await store.replaceSourceRecord({ ...a, summary: 'Changed during the reading.' }); }
+      if (!changed && 'useful' in request.questions) { changed = true; await store.replaceSourceRecord({ ...a, summary: 'Changed during the reading.' }); }
       return fake.port.ask(request);
     } });
     await expect(enrich(store, source, [fact])).rejects.toThrow('changed');
+    expect(changed).toBe(true);
     expect(graph(store)).toBe(before);
   });
 
@@ -170,7 +184,7 @@ describe('primary source persistence preplanning', () => {
       const fact = claim('Versioned claim'); const original = await seedFact(store, subject, fact, [a]);
       const fake = readings(); let changed = false, concurrentGraph = '';
       installJudgmentPort({ ...fake.port, async ask(request) {
-        if (!changed) { changed = true;
+        if (!changed && 'useful' in request.questions) { changed = true;
           if (changedRecord === 'fact') await store.upsertNode({ ...original, summary: 'Concurrent corrected claim.' });
           else await store.upsertEdge({ fromKind: 'source', fromId: a.id, toKind: 'node', toId: original.id, relation: 'supports_fact', weight: 0.1, metadata: { knowledgeSpaceId: spaceId, changed: true } });
           concurrentGraph = graph(store);
@@ -178,6 +192,7 @@ describe('primary source persistence preplanning', () => {
         return fake.port.ask(request);
       } });
       await expect(enrich(store, source, [fact])).rejects.toThrow('changed');
+      expect(changed).toBe(true);
       expect(graph(store)).toBe(concurrentGraph);
     }
   });
@@ -306,7 +321,10 @@ describe('primary source persistence preplanning', () => {
     await seedFact(store, subject, first, [a]); await seedFact(store, subject, later, [a]);
     const before = graph(store); const fake = readings();
     await expect(enrich(store, source, [first, later])).rejects.toBeInstanceOf(JudgmentInputError);
-    expect(fake.requests).toHaveLength(0); expect(graph(store)).toBe(before);
+    expect(fake.requests).toHaveLength(1);
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['repairSubjectSelected']);
+    expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private-value');
+    expect(graph(store)).toBe(before);
   });
 
   test('prepared write rechecks source and operator state without relying on its caller', async () => {

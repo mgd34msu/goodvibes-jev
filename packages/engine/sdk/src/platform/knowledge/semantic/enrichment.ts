@@ -83,7 +83,7 @@ export async function enrichKnowledgeSource(
   generationGuard.watch(`source:${source.id}`, () => context.store.getSource(source.id), source);
   const extraction = generationGuard.extraction(source.id);
   generationGuard.watch('source-subject-edges', () => context.store.listEdges().filter((edge) => edge.fromKind === 'source' && edge.fromId === source.id));
-  linkedObjectsForSource(context.store, source, new Set(), (id) => generationGuard.node(id));
+  repairSubjectCandidatesForSource(context.store, source, (id) => generationGuard.node(id));
   generationGuard.assertCurrent();
   if (!extraction) return emptyResult(source, true, 'semantic enrichment requires extracted source evidence');
   const uris = knowledgeSourceJudgmentUris(source);
@@ -111,12 +111,16 @@ export async function enrichKnowledgeSource(
     return emptyResult(source, true, 'source has too little extracted text');
   }
 
+  // Admit the complete original source, extraction and candidates before any
+  // generation request. The reading remains live through the persistence pass.
+  const generationSubjects = await linkedObjectsForSource(context.store, source, new Set(), options.signal, options.shouldStop);
+  generationGuard.watch('generation-subject-selection', () => { generationSubjects.assertCurrent(); return true; });
   // Minimize and protect the complete generation input before any display cap.
   assertJudgmentInput({ source: generationSource, text, extraction: { format: extraction.format, title: extraction.title, summary: extraction.summary, sections: extraction.sections } });
   const llmExtraction = await extractSemanticsWithLlm(context.llm ?? null, generationSource, extraction, text, options.signal);
   generationGuard.assertCurrent();
   const extracted = normalizeSemanticExtraction(llmExtraction)
-    ?? await deterministicSemanticExtraction(context.store, source, extraction, text, options.signal);
+    ?? await deterministicSemanticExtraction(context.store, source, extraction, text, options.signal, options.shouldStop, generationGuard);
   generationGuard.assertCurrent();
   const semantic = freezeSupport(structuredClone(extracted));
   const persisted = await persistSemanticExtraction(context.store, source, extraction, semantic, {
@@ -216,13 +220,17 @@ async function deterministicSemanticExtraction(
   extraction: KnowledgeExtractionRecord | null,
   text: string,
   signal?: AbortSignal,
+  shouldStop?: () => boolean,
+  generationGuard?: ReturnType<typeof createSemanticWriteGuard>,
 ): Promise<KnowledgeSemanticExtraction> {
   const factText = cleanDeterministicSourceText(deterministicFactSourceText(extraction) || text);
   const sentences = splitSentences(factText);
+  const selection = await linkedObjectsForSource(store, source, new Set(), signal, shouldStop);
+  generationGuard?.watch('deterministic-subject-selection', () => { selection.assertCurrent(); return true; });
   const profileFacts = (await deriveRepairProfileFacts({
     query: 'complete features specifications capabilities', source, extraction,
     text: repairProfileSourceText(extraction) || text,
-    subjects: linkedObjectsForSource(store, source).map(repairProfileSubject),
+    subjects: selection.nodes.map(repairProfileSubject),
     structuralReferences: captureKnowledgeSourceReferences(store, source, extraction),
   }, { signal })).map((fact) => ({
     kind: fact.kind, title: fact.title, value: fact.value, summary: fact.summary,
@@ -364,7 +372,9 @@ async function persistSemanticExtraction(
   guard.watch('source-subject-edges', () => store.listEdges().filter((edge) => edge.fromKind === 'source' && edge.fromId === source.id));
   // An entity-ID collision overlays semanticKind=entity, which excludes that old
   // object from canonical subjects just as the former write-then-read order did.
-  const sourceLinkedObjects = linkedObjectsForSource(store, source, entityIds, (id) => guard.node(id));
+  const subjectSelection = await linkedObjectsForSource(store, source, entityIds, options.signal, options.shouldStop);
+  guard.watch('source-subject-selection', () => { subjectSelection.assertCurrent(); return true; });
+  const sourceLinkedObjects = subjectSelection.nodes;
   const proposedEntities: KnowledgeNodeRecord[] = entityPlans.map((plan) => {
     const existing = guard.node(plan.id);
     return { ...plan, aliases: plan.aliases ?? existing?.aliases ?? [], status: existing?.status ?? 'draft',
@@ -381,7 +391,7 @@ async function persistSemanticExtraction(
   const qualitySubjects = sourceLinkedObjects.map((subject) => ({ subject, current: store.getNode(subject.id), version: JSON.stringify(subject) }));
   const evidenceVersion = JSON.stringify({ source, extraction });
   const assertQualityCurrent = () => {
-    assertSemanticWriteAllowed(options.signal, options.shouldStop); qualityReader.assertCurrent();
+    assertSemanticWriteAllowed(options.signal, options.shouldStop); qualityReader.assertCurrent(); subjectSelection.assertCurrent();
     if (store.getSource(source.id) !== qualitySource || store.getExtractionBySourceId(source.id) !== qualityExtraction
       || JSON.stringify({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) }) !== evidenceVersion
       || qualitySubjects.some(({ subject, current, version }) => store.getNode(subject.id) !== current || JSON.stringify(store.getNode(subject.id)) !== version)) {
@@ -692,9 +702,8 @@ function readArray(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function linkedObjectsForSource(
+function repairSubjectCandidatesForSource(
   store: KnowledgeStore, source: KnowledgeSourceRecord,
-  entityOverlayIds: ReadonlySet<string> = new Set(),
   readNode: (id: string) => KnowledgeNodeRecord | null = (id) => store.getNode(id),
 ): KnowledgeNodeRecord[] {
   const discovery = readRecord(source.metadata.sourceDiscovery);
@@ -713,13 +722,22 @@ function linkedObjectsForSource(
   const nodes: KnowledgeNodeRecord[] = [];
   for (const id of ids) {
     const node = readNode(id);
-    if (entityOverlayIds.has(id)) continue;
-    if (node && node.status !== 'stale') nodes.push(node);
+    if (node) nodes.push(node);
   }
-  return canonicalRepairSubjectNodes({
-    nodes,
-    text: `${source.title ?? ''} ${source.summary ?? ''} ${source.description ?? ''}`,
-  });
+  return nodes;
+}
+
+async function linkedObjectsForSource(store: KnowledgeStore, source: KnowledgeSourceRecord,
+  entityOverlayIds: ReadonlySet<string>, signal?: AbortSignal, shouldStop?: () => boolean) {
+  const guard = createSemanticWriteGuard(store, signal, shouldStop);
+  guard.watch('source-subject-edges', () => store.listEdges().filter(edge => edge.fromKind === 'source' && edge.fromId === source.id && edge.relation === 'source_for'));
+  const nodes = repairSubjectCandidatesForSource(store, source, id =>
+    entityOverlayIds.has(id) ? store.getNode(id) : guard.node(id));
+  const selected = await canonicalRepairSubjectNodes({ store, spaceId: sourceKnowledgeSpace(source), context: { source },
+    nodes, excludedNodeIds: [...entityOverlayIds], signal, shouldStop,
+    text: `${source.title ?? ''} ${source.summary ?? ''} ${source.description ?? ''}` });
+  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  assertCurrent(); return { nodes: selected.nodes, assertCurrent };
 }
 
 function isFact(value: KnowledgeSemanticFactInput | null): value is KnowledgeSemanticFactInput {

@@ -1449,6 +1449,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   });
   const projectPlanningProjectId = projectPlanningProjectIdFromPath(workingDirectory);
   const projectPlanningService = new ProjectPlanningService(agentKnowledgeStore, {
+    waitForStartup: () => agentKnowledgeService.whenReady(),
     defaultProjectId: projectPlanningProjectId,
   });
   const workPlanStore = new WorkPlanStore({

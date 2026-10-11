@@ -323,7 +323,7 @@ The default-selection receipt retains its preamble and unique-destination reason
 Unconfirmed delivery retains a nonzero structural status diagnostic. Borrowed
 provider prose, token URLs and unvalidated identifiers are not republished. This
 is the explicit send diagnostic projection, not a content-classification or
-secret-detection heuristic. The [standalone-send contract](../../../docs/audit/daemon-standalone-send.md)
+secret-detection heuristic. The [standalone-send contract](cli-and-package-contracts.md#standalone-send)
 retains credential/fetch/body drainage, explicit-repeat and no-hidden-retry rules.
 
 ### `cluster`

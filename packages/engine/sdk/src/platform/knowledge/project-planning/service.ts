@@ -78,12 +78,15 @@ type WorkPlanTaskCandidate = {
 };
 
 export interface ProjectPlanningServiceOptions {
+  /** Composition-owned startup writes on this same store, before any reading. */
+  readonly waitForStartup?: (() => Promise<void>) | undefined;
   readonly defaultProjectId?: string | undefined;
   readonly runtimeBus?: RuntimeEventBus | null | undefined;
 }
 
 export class ProjectPlanningService {
   private readonly defaultProjectId: string;
+  private readonly waitForStartup: (() => Promise<void>) | undefined;
   private runtimeBus: RuntimeEventBus | null;
   private runtimeBusEpoch = 0;
   private readonly readinessOwners = new WeakMap<ProjectPlanningEvaluation, () => void>();
@@ -95,6 +98,12 @@ export class ProjectPlanningService {
     const defaultProjectId = snapshotJudgmentInput(options.defaultProjectId) as string | undefined;
     this.defaultProjectId = normalizeProjectId(defaultProjectId ?? 'default');
     this.runtimeBus = options.runtimeBus ?? null;
+    this.waitForStartup = options.waitForStartup;
+  }
+
+  private async initialize(): Promise<void> {
+    await this.store.init();
+    await this.waitForStartup?.();
   }
 
   attachRuntimeBus(runtimeBus: RuntimeEventBus | null | undefined): void {
@@ -103,7 +112,7 @@ export class ProjectPlanningService {
   }
 
   async status(input: ProjectPlanningSpaceInput = {}): Promise<ProjectPlanningStatus> {
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const sources = this.sourcesForSpace(space.knowledgeSpaceId);
     return {
@@ -134,7 +143,7 @@ export class ProjectPlanningService {
   }
 
   async getState(input: ProjectPlanningSpaceInput & { readonly planningId?: string | undefined } = {}): Promise<ProjectPlanningStateResult> {
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const planningId = normalizePlanningId(input.planningId);
     const snapshot = this.getArtifactSnapshot(space.knowledgeSpaceId, 'state', planningId);
@@ -169,7 +178,7 @@ export class ProjectPlanningService {
     if (captured.action?.kind !== 'approve' && captured.action?.kind !== 'answer' && captured.action?.kind !== 'dismiss') throw new TypeError('Invalid planning state action');
     if (captured.action.kind === 'answer' && typeof captured.action.answer !== 'string') throw new TypeError('Invalid planning answer');
     Object.freeze(captured.action);
-    await this.store.init();
+    await this.initialize();
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const space = this.resolveSpace(captured);
     const observation = this.store.captureSourcePublication();
@@ -243,7 +252,7 @@ export class ProjectPlanningService {
     options = { signal: options.signal, assertCurrent: options.assertCurrent };
     const captured = snapshotJudgmentInput(input) as ProjectPlanningStateUpsertInput;
     options.signal?.throwIfAborted(); options.assertCurrent?.();
-    await this.store.init();
+    await this.initialize();
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const space = this.resolveSpace(captured);
     const state = normalizeState(captured.state, space.projectId, space.knowledgeSpaceId);
@@ -259,7 +268,7 @@ export class ProjectPlanningService {
     const captured = snapshotJudgmentInput(input) as ProjectPlanningEvaluateInput;
     const signal = options.signal, callerCurrent = options.assertCurrent;
     const check = () => { signal?.throwIfAborted(); callerCurrent?.(); };
-    check(); await this.store.init(); check();
+    check(); await this.initialize(); check();
     const space = this.resolveSpace(captured);
     const observed = this.store.captureSourcePublication();
     const current = () => { check(); observed(); };
@@ -316,7 +325,7 @@ export class ProjectPlanningService {
   }
 
   async listDecisions(input: ProjectPlanningSpaceInput = {}): Promise<ProjectPlanningDecisionsResult> {
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const decisions = this.sourcesForSpace(space.knowledgeSpaceId)
       .filter((source) => artifactKind(source) === 'decision')
@@ -333,7 +342,7 @@ export class ProjectPlanningService {
 
   async recordDecision(input: ProjectPlanningDecisionRecordInput): Promise<ProjectPlanningDecisionResult> {
     input = snapshotJudgmentInput(input) as ProjectPlanningDecisionRecordInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const now = Date.now();
     const decision: ProjectPlanningDecision = {
@@ -360,7 +369,7 @@ export class ProjectPlanningService {
   }
 
   async getLanguage(input: ProjectPlanningSpaceInput = {}): Promise<ProjectPlanningLanguageResult> {
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const source = this.getArtifactSource(space.knowledgeSpaceId, 'language', 'current');
     const language = source ? readLanguage(source) : null;
@@ -375,7 +384,7 @@ export class ProjectPlanningService {
 
   async upsertLanguage(input: ProjectPlanningLanguageUpsertInput): Promise<ProjectPlanningLanguageResult> {
     input = snapshotJudgmentInput(input) as ProjectPlanningLanguageUpsertInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const now = Date.now();
     const existing = await this.getLanguage(space);
@@ -402,7 +411,7 @@ export class ProjectPlanningService {
   }
 
   async getWorkPlanSnapshot(input: ProjectWorkPlanTaskListInput = {}): Promise<ProjectWorkPlanSnapshot> {
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const workPlan = this.getWorkPlanArtifact(space, normalizeWorkPlanId(input.workPlanId));
     return snapshotFromWorkPlan(space, workPlan, {
@@ -415,7 +424,7 @@ export class ProjectPlanningService {
   }
 
   async getWorkPlanTask(input: ProjectWorkPlanTaskGetInput): Promise<ProjectWorkPlanTaskResult> {
-    await this.store.init();
+    await this.initialize();
     const snapshot = await this.getWorkPlanSnapshot(input);
     return {
       ok: true,
@@ -429,7 +438,7 @@ export class ProjectPlanningService {
 
   async createWorkPlanTask(input: ProjectWorkPlanTaskCreateInput): Promise<ProjectWorkPlanMutationResult> {
     input = snapshotJudgmentInput(input) as ProjectWorkPlanTaskCreateInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const workPlanId = normalizeWorkPlanId(input.workPlanId);
     const existing = this.getWorkPlanArtifact(space, workPlanId);
@@ -462,7 +471,7 @@ export class ProjectPlanningService {
 
   async updateWorkPlanTask(input: ProjectWorkPlanTaskUpdateInput): Promise<ProjectWorkPlanMutationResult> {
     input = snapshotJudgmentInput(input) as ProjectWorkPlanTaskUpdateInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const workPlanId = normalizeWorkPlanId(input.workPlanId);
     const existing = this.getWorkPlanArtifact(space, workPlanId);
@@ -525,7 +534,7 @@ export class ProjectPlanningService {
 
   async reorderWorkPlanTasks(input: ProjectWorkPlanTaskReorderInput): Promise<ProjectWorkPlanSnapshot> {
     input = snapshotJudgmentInput(input) as ProjectWorkPlanTaskReorderInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const workPlanId = normalizeWorkPlanId(input.workPlanId);
     const existing = this.getWorkPlanArtifact(space, workPlanId);
@@ -558,7 +567,7 @@ export class ProjectPlanningService {
 
   async deleteWorkPlanTask(input: ProjectWorkPlanTaskDeleteInput): Promise<ProjectWorkPlanMutationResult> {
     input = snapshotJudgmentInput(input) as ProjectWorkPlanTaskDeleteInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const workPlanId = normalizeWorkPlanId(input.workPlanId);
     const existing = this.getWorkPlanArtifact(space, workPlanId);
@@ -584,7 +593,7 @@ export class ProjectPlanningService {
 
   async clearCompletedWorkPlanTasks(input: ProjectWorkPlanClearCompletedInput = {}): Promise<ProjectWorkPlanMutationResult> {
     input = snapshotJudgmentInput(input) as ProjectWorkPlanClearCompletedInput;
-    await this.store.init();
+    await this.initialize();
     const space = this.resolveSpace(input);
     const workPlanId = normalizeWorkPlanId(input.workPlanId);
     const existing = this.getWorkPlanArtifact(space, workPlanId);

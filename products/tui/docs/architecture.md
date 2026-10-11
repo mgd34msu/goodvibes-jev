@@ -258,3 +258,14 @@ Node/Bun-import rejection; do not replace it with in-process bundling. Validate
 compiled Node consumers against the public provider-health, gate-preset and
 EvalRegistry exports, alongside focused eval commands, provider-health ownership,
 settings-provider surfaces, modal liveness and provider repair behavior.
+
+## Runtime consumer contracts
+
+See [runtime consumer contracts](runtime-consumer-contracts.md) for Changes
+comments, eval state, picker/Gist lifetime, memory receipts, provider health/setup,
+scheduling, native workstream intake, host notification settings and private
+workspace validation boundaries.
+
+Canonical [conversation and runtime semantics](../../../docs/contracts/conversation-runtime-semantics.md)
+cover typed outcomes, context-window evidence, channel capabilities, presentation
+readers and source-bound model readings shared with other products.

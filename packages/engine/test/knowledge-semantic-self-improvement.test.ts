@@ -440,6 +440,9 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('web gap repair rejects low-confidence search results', async () => {
+    answerReadings.set({ webGapQueries: ['LG 86NANO90UNA full specifications'], webGapSources: [
+      ['https://example.com/generic-tv-buying-guide', 0.01, 'secondary'], ['https://example.org/hdmi-cables', 0.01, 'secondary'],
+    ] });
     const ingested: unknown[] = [];
     const repairer = createWebKnowledgeGapRepairer({
       searchService: {
@@ -521,6 +524,11 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('web gap repair can accept high-confidence subject sources without model numbers', async () => {
+    answerReadings.set({ webGapQueries: ['Cloudflare Queues capabilities and limits'], webGapSources: [
+      ['https://developers.cloudflare.com/queues/', 0.99, 'official-vendor'],
+      ['https://developers.cloudflare.com/queues/platform/limits/', 0.99, 'official-vendor'],
+      ['https://blog.cloudflare.com/queues-ga/', 0.99, 'official-vendor'],
+    ] });
     const ingested: Array<{ url: string; metadata?: Record<string, unknown> | undefined }> = [];
     const repairer = createWebKnowledgeGapRepairer({
       searchService: {
@@ -607,8 +615,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
 
     expect(result?.searched).toBe(true);
     expect(result?.ingestedSourceIds.length).toBeGreaterThanOrEqual(2);
-    expect(result?.sourceAssessments?.[0]?.reasons).toContain('subject:Cloudflare');
-    expect((ingested[0]?.metadata?.sourceDiscovery as Record<string, unknown>).confidenceReasons).toContain('subject:Cloudflare');
+    expect(result?.sourceAssessments?.[0]?.reasons).toContain('semantic-relevance');
+    expect((ingested[0]?.metadata?.sourceDiscovery as Record<string, unknown>).confidenceReasons).toContain('semantic-relevance');
   });
 
   test('semantic gap repair is idempotent once a repair source is linked', async () => {

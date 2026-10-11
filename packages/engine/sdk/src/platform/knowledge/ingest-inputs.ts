@@ -49,22 +49,37 @@ export async function ingestKnowledgeUrl(
     readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
   },
+  ownership: KnowledgeIngestOwnership = {},
 ): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
-  const { signal, ...values } = input;
+  const { assertCurrent: callerCurrent, signal: callerSignal, onCommitted, deferSemanticEnrichment } = ownership;
+  const { signal: inputSignal, ...values } = input;
+  const signal = ownership.signal && inputSignal ? AbortSignal.any([ownership.signal, inputSignal]) : ownership.signal ?? inputSignal;
+  const assertOwned = () => {
+    try {
+      if (ownership.assertCurrent !== callerCurrent || ownership.signal !== callerSignal || ownership.onCommitted !== onCommitted
+        || ownership.deferSemanticEnrichment !== deferSemanticEnrichment) throw new Error('retired');
+      signal?.throwIfAborted(); callerCurrent?.();
+    }
+    catch { throw new KnowledgeEntityAliasHoldError(); }
+  };
+  assertOwned();
   input = { ...snapshotNodeInput(values), signal };
   await context.store.init();
+  assertOwned();
   const canonicalUri = canonicalizeUri(input.url) ?? undefined;
   const sourceId = reserveSourceId(context, canonicalUri);
   const connectorId = input.connectorId ?? (input.sourceType === 'bookmark' ? 'bookmark' : 'url');
-  const assertCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
+  const sourceCurrent = knowledgeIngestGuard(context, sourceId, canonicalUri, signal);
+  const assertCurrent = () => { assertOwned(); sourceCurrent(); };
   assertCurrent();
   const preparation = await capturePreparation(async () => {
     const artifact = await context.artifactStore.create({
       uri: input.url,
       allowPrivateHosts: input.allowPrivateHosts,
       metadata: { sourceConnector: connectorId, requestedAt: Date.now() },
-    });
-    return prepareKnowledgeExtraction(context, sourceId, artifact.id);
+    }, { signal, assertCurrent });
+    assertCurrent();
+    return prepareKnowledgeExtraction(context, sourceId, artifact.id, { signal, assertCurrent });
   });
   assertCurrent();
   const pending = stageKnowledgePendingSource(context, {
@@ -103,7 +118,7 @@ export async function ingestKnowledgeUrl(
         ...pending.metadata,
         ...(input.metadata ?? {}),
       },
-    });
+    }, { ...ownership, signal, assertCurrent: assertOwned });
     const issues = await context.lint();
     context.emitIfReady((bus, ctx) => emitKnowledgeIngestCompleted(bus, ctx, {
       sourceId: result.source.id,
@@ -113,6 +128,7 @@ export async function ingestKnowledgeUrl(
     }), result.source.sessionId);
     return { ...result, issues };
   } catch (error) {
+    if (ownership.assertCurrent || ownership.onCommitted || ownership.signal) throw error;
     if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
     const failed = await context.store.upsertSource({
       id: pending.id,

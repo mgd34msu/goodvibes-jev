@@ -1,12 +1,8 @@
 # SETTINGS admission: existing-owner plan for review
 
-Historical design record. The narrowed same-owner plan was approved and is now
-implemented in an isolated follow-up to the reviewed READ owner at
-`a8a6f214617e4a610fcf4cf256264fbde99112ba`. The frozen READ checkout and successor
-union remain untouched. See [the implementation contract](agent-settings-autonomous-admission.md)
-for current behavior, review findings/corrections and qualification status.
-The future-tense seams and source-only test status below record the proposal at
-its review boundary, rather than claiming the implementation is still absent.
+Historical design record. See [the implementation contract](agent-settings-autonomous-admission.md)
+for the current same-owner behavior. The future-tense seams below describe the
+proposal at its design boundary.
 
 ## Bounded entry and compatibility
 
@@ -259,7 +255,7 @@ checkout. It does not enable the proposed adopted settings path.
 
 ## Test-first evidence plan
 
-Source-only drafts exist; they have NOT been run in this checkout:
+The test design covers these source-owned boundaries:
 
 - Agent actual-composition suite promoted from the preserved pending settings
   spec, with added reentrant invalidation/cancellation and truthful own-commit
@@ -290,14 +286,8 @@ work. This preserves supported legacy payloads and current auth behavior.
 red controls for shared and paired revocation, session/cookie revocation and
 expiry, user deletion, shared-token replacement, unchanged authenticated
 success, initial non-admin refusal, malformed-body response and pre-workspace
-dispatch. The setting effect is intercepted; no socket is opened. This patch
-does not claim strict persisted shared-error handling, mutation-callback
-currentness, server incarnation or persisted CAS. Independent review has cleared
-this specific two-check ordering and its isolated implementation at
-`1637a2ac1f8e90652fd90900bcf8d76be3b79fb1`. In that separate checkout the actual
-HTTP fixture went from 6 pass / 10 fail (each negative observed an effect) to
-16 pass / 0 fail, then 20 pass / 0 fail with the existing source-facing auth
-helper suite. No compiler, native build, socket, real credential or live service
-was used. Built-dist auth suites remain unrun locally. Only the four handler
-lines and this test may be extracted onto verified current main; the READ
-ancestry and these unresolved SETTINGS drafts are not part of that repair.
+dispatch. The setting effect is intercepted; no socket is opened. This bounded
+two-check ordering does not establish strict persisted shared-error handling,
+mutation-callback currentness, server incarnation or persisted CAS. Those belong
+to the conditional SETTINGS protocol rather than the ordinary HTTP auth repair.
+The actual-handler controls require no real credential or live service.

@@ -1,3 +1,8 @@
+import { KnowledgeWebGapRepairHeldError } from '../semantic/web-gap-repair/types.js';
+import { createHash } from 'node:crypto';
+import { sameKnowledgeRecord } from '../store-record-representation.js';
+import { captureStrictRepairJson } from '../semantic/web-gap-repair/admission.js';
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from '../extraction-ownership.js';
 import { registerGeneratedKnowledgeExtractionReferences } from '../source-structural-references.js';
 import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { KnowledgeExtractionJudgmentHoldError } from '../extraction-policy.js';
@@ -22,15 +27,25 @@ export async function prepareHomeGraphArtifactExtraction(
   sourceId: string,
   artifact: ArtifactDescriptor,
   spaceId: string,
+  owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner(),
 ): Promise<KnowledgeExtractionResult | undefined> {
   try {
+    owner.assertCurrent();
     const record = context.artifactStore.getRecord(artifact.id);
     if (!record) return undefined;
+    const original = captureStrictRepairJson(record);
+    owner.retain(() => {
+      if (!sameKnowledgeRecord(captureStrictRepairJson(context.artifactStore.getRecord(artifact.id)), original)) throw new KnowledgeExtractionJudgmentHoldError();
+    });
     const { buffer } = await context.artifactStore.readContent(artifact.id);
-    return await extractKnowledgeArtifact(record, buffer);
+    owner.assertCurrent();
+    if (createHash('sha256').update(buffer).digest('hex') !== record.sha256) throw new KnowledgeExtractionJudgmentHoldError();
+    const result = await extractKnowledgeArtifact(record, buffer, owner);
+    owner.assertCurrent();
+    return result;
   } catch (error) {
     // Never turn a held judgment into a missing extraction and continue graph writes.
-    if (error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof JudgmentInputError) throw error;
+    if (error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof JudgmentInputError || error instanceof KnowledgeWebGapRepairHeldError) throw error;
     context.reportBackgroundError('homegraph-extract-artifact', error, { spaceId, sourceId, artifactId: artifact.id });
     return undefined;
   }

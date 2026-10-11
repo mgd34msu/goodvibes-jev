@@ -19,8 +19,9 @@ place.
 
 The store and bridge contract remains in
 [host channel/profile routing](daemon-remote-and-cluster.md#persisted-channel-and-profile-bindings).
-Provider intake contracts remain in the [Slack](../audit/daemon-slack-inbox-composition.md)
-and [email](../audit/daemon-email-inbox-composition.md) references.
+Provider intake contracts remain in the [Slack](daemon-inbox-and-triage.md#slack-account-and-transport)
+and [email](daemon-inbox-and-triage.md#email-complete-source-reads) sections of the
+[inbox and triage contract](daemon-inbox-and-triage.md).
 
 ## Verification boundary
 

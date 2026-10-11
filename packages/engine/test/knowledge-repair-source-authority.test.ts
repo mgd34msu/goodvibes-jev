@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -165,6 +166,7 @@ function prepare(item: Fixture) {
 function snapshot(store: KnowledgeStore) { return JSON.stringify({ nodes: store.listNodes(), edges: store.listEdges(), tasks: store.listRefinementTasks() }); }
 function promotionReadings() {
   const fake = fakePort((name, question, state) => {
+    if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const value = state as { category?: { title: string }; candidate?: { text: string } };
     if (name === 'authority') return choiceAnswer(question, 'secondary', 0.99);
     if (name === 'wanted') return noulAnswer(value.category?.title === category ? 0.99 : 0.01);

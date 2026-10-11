@@ -102,7 +102,7 @@ export async function finalizeKnowledgeIngestedSource(
       const source = stage.sources[0]!;
       const extraction = stage.extractions[0]!;
       committed = { source, extraction };
-      const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction, signal, (guard) => { assertAliasesCurrent = guard; });
+      const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction, signal, (guard) => { assertAliasesCurrent = guard; }, () => { ownership.assertCurrent?.(); assertCurrent(); assertExtractionCurrent(); });
       const check = () => { assertPrepared(); stage.assertCurrent(); };
       const draft = stagedCompileWriter(context, check);
       await compileKnowledgeSourceRecords(context, source, extraction, entityHints, draft.writer);
@@ -118,7 +118,9 @@ export async function finalizeKnowledgeIngestedSource(
       sourceId: source.id, nodeCount: Math.max(0, finalStatus.nodeCount - initialStatus.nodeCount),
       edgeCount: Math.max(0, finalStatus.edgeCount - initialStatus.edgeCount),
     }), source.sessionId);
-    void Promise.resolve(context.semanticEnrichSource?.(source.id, readKnowledgeSpaceId(source.metadata))).catch((error: unknown) => {
+    // Host-owned repair consumers promote under their retained read set. Do not
+    // launch an unowned second publisher after the guarded source commit.
+    if (!ownership.deferSemanticEnrichment) void Promise.resolve(context.semanticEnrichSource?.(source.id, readKnowledgeSpaceId(source.metadata))).catch((error: unknown) => {
       logger.warn('Knowledge semantic enrichment after ingest failed', {
         sourceId: source.id,
         error: summarizeError(error),
@@ -449,6 +451,7 @@ async function prepareKnowledgeStructuredEntityHints(
   extraction: Pick<KnowledgeExtractionRecord, 'summary' | 'sections'> | null | undefined,
   signal?: AbortSignal,
   retainGuard?: (assertCurrent: () => void) => void,
+  ownerCurrent?: () => void,
 ): Promise<readonly CompiledEntityHint[]> {
   const metadata = source.metadata ?? {};
   const entitySpecs: Array<{
@@ -529,7 +532,7 @@ async function prepareKnowledgeStructuredEntityHints(
   const aliases = await readKnowledgeEntityAliases(entities, {
     title: source.title ?? '', summary: source.summary ?? '',
     extractionSummary: extraction?.summary ?? '', sections: extraction?.sections ?? [],
-  }, signal, retainGuard);
+  }, signal, retainGuard, ownerCurrent);
   return entities.map((entity, index) => ({ ...entity, aliases: aliases[index]! }));
 }
 

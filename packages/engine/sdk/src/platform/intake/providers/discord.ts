@@ -1,7 +1,7 @@
 /**
  * Private Discord REST intake prerequisite, never registered by default.
  * HTTP, complete account-scoped DM discovery, and privacy admission belong to
- * explicit host ports. Source/repairs: docs/audit/daemon-discord-inbox-adapter.md.
+ * explicit host ports. Source/repairs: docs/contracts/daemon-inbox-and-triage.md#discord-complete-history-window.
  */
 import type { AdapterContext, InboundChannelItem, InboundProviderAdapter, ProviderPollOptions, ProviderPollResult } from '../provider-adapter.js';
 import { POLL_CADENCE_MS } from '../provider-adapter.js';

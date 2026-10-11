@@ -12,6 +12,7 @@ import { ChoiceReading } from '@goodvibes-jev/judgment/decisions';
 import type { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import type { JudgmentPort as JudgmentPort_2 } from '@goodvibes-jev/judgment';
+import type { Questions } from '@goodvibes-jev/judgment/decisions';
 import { YesNoItem } from '@goodvibes-jev/judgment';
 import { YesNoItem as YesNoItem_2 } from '@goodvibes-jev/judgment/decisions';
 import { YesNoReading } from '@goodvibes-jev/judgment/decisions';
@@ -2631,6 +2632,13 @@ export class JudgmentPortMissingError extends Error {
 export interface JudgmentReadingOptions {
     // (undocumented)
     readonly assertCurrent?: (() => void) | undefined;
+    readonly assertResult?: ((result: unknown) => void) | undefined;
+    readonly captureResult?: (<T extends Awaited<ReturnType<JudgmentPort['ask']>>>(result: T) => T) | undefined;
+    readonly prepareResultCapture?: ((questions: Questions) => {
+        readonly questions: Questions;
+        readonly capture: <T extends Awaited<ReturnType<JudgmentPort['ask']>>>(result: T) => T;
+        readonly assertCurrent: () => void;
+    }) | undefined;
     // (undocumented)
     readonly signal?: AbortSignal | undefined;
 }

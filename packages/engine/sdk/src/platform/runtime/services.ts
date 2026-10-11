@@ -693,6 +693,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     admitExpensiveWork,
   });
   const projectPlanningService = new ProjectPlanningService(knowledgeStore, {
+    waitForStartup: () => knowledgeService.whenReady(),
     defaultProjectId: projectPlanningProjectIdFromPath(workingDirectory),
     runtimeBus: options.runtimeBus,
   });

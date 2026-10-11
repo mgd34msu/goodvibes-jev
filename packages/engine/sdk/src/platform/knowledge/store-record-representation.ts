@@ -173,21 +173,26 @@ export function knowledgeReviewStamp<T extends Record<string, unknown>>(now: num
 }
 /** Exact canonical metadata is decoded only for the compatibility view. Raw SQL
  * remains the admission source; arbitrary numeric metadata stays numeric. */
-function metadataClockView(raw: Record<string, unknown>, container: string, field: string): Record<string, unknown> {
+function metadataClockView(raw: Record<string, unknown>, container: string | undefined, field: string): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-  const descriptors = Object.getOwnPropertyDescriptors(raw), child = descriptors[container]?.value;
+  const descriptors = Object.getOwnPropertyDescriptors(raw), child = container === undefined ? raw : descriptors[container]?.value;
   if (!child || typeof child !== 'object' || Array.isArray(child)) return raw;
   const fields = Object.getOwnPropertyDescriptors(child), clock = fields[field]?.value;
   // Decoder-only immutable projection. Do not invoke accessors or impose the
   // semantic capture budget on ordinary legacy hydration/writes.
   if ([...Object.values(descriptors), ...Object.values(fields)].some(item => !('value' in item))
     || typeof clock !== 'string' || !isKnowledgeClock(clock)) return raw;
-  const view = retainKnowledgeRepresentation({ ...raw, [container]: { ...child, [field]: knowledgeClockNumber(clock) } }, raw);
+  const view = retainKnowledgeRepresentation(container === undefined
+    ? { ...raw, [field]: knowledgeClockNumber(clock) }
+    : { ...raw, [container]: { ...child, [field]: knowledgeClockNumber(clock) } }, raw);
   return known(view) === undefined ? raw : view;
 }
 export function knowledgeNodeMetadataView(raw: Record<string, unknown>): Record<string, unknown> {
   const decision = metadataClockView(raw, 'reviewProvenance', 'decidedAt');
-  const view = metadataClockView(decision, 'review', 'reviewedAt');
+  let view = metadataClockView(decision, 'review', 'reviewedAt');
+  // Actual repair/supersession writers emit canonical strings before snapshotting. Decode
+  // only those strings; a caller's numeric lookalike remains an original number.
+  for (const field of ['lastRepairAttemptAt', 'nextRepairAttemptAt', 'repairedAt', 'supersededAt', 'sourceDetachedAt']) view = metadataClockView(view, undefined, field);
   return retainKnowledgeRepresentation(view, raw);
 }
 export function knowledgeSourceMetadataView(raw: Record<string, unknown>): Record<string, unknown> {

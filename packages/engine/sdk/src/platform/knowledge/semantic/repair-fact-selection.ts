@@ -64,24 +64,29 @@ export async function prepareRepairSourceAuthorities(input: {
   sameSpace(snapshot.gap);
   for (const subject of snapshot.subjects) sameSpace(subject);
   const assertOriginalCurrent = () => {
-    if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
-    if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
-      || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord({ gap: input.gap, subjects: input.subjects, sources: input.sources }, snapshot)
-      || store.getNode(input.gap.id) !== gapRecord) throw new Held('stale');
-    ownerCurrent?.();
-    for (const admission of admissions) {
-      try { admission.assertCurrent(); } catch (error) {
-        // Preserve the declared reader failure vocabulary without treating a
-        // retired raw-record generation as an operational/model outage.
-        if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
-        throw error;
+    try { store.assertRecordSnapshotFrame(() => {
+      if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
+      if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
+        || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord({ gap: input.gap, subjects: input.subjects, sources: input.sources }, snapshot)
+        || store.getNode(input.gap.id) !== gapRecord) throw new Held('stale');
+      ownerCurrent?.();
+      for (const admission of admissions) {
+        try { admission.assertCurrent(); } catch (error) {
+          // Preserve the declared reader failure vocabulary without treating a
+          // retired raw-record generation as an operational/model outage.
+          if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
+          throw error;
+        }
       }
-    }
-    for (const subject of originals.subjects) if (store.getNode(subject.id) !== subject) throw new Held('stale');
-    for (const { source, extraction } of originals.sources) {
-      // Object identity detects delete/reinsert and ABA replacements even when
-      // the restored row has identical values and timestamps.
-      if (store.getSource(source.id) !== source || store.getExtractionBySourceId(source.id) !== extraction) throw new Held('stale');
+      for (const subject of originals.subjects) if (store.getNode(subject.id) !== subject) throw new Held('stale');
+      for (const { source, extraction } of originals.sources) {
+        // Object identity detects delete/reinsert and ABA replacements even when
+        // the restored row has identical values and timestamps.
+        if (store.getSource(source.id) !== source || store.getExtractionBySourceId(source.id) !== extraction) throw new Held('stale');
+      }
+    }); } catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError) throw new Held(error.reason);
+      throw error;
     }
   };
   const selected: RepairSourceAuthorityInput[] = snapshot.sources.map(({ source, extraction, text }, index) => {

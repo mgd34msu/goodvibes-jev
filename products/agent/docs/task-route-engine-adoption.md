@@ -6,24 +6,11 @@ entrypoint. Runtime bootstrap supplies the same live channel plugin registry to
 both consumers. The existing runtime-installed judgment port owns the readings;
 this adapter neither creates provider authority nor installs a default reader.
 
-## Evidence-backed successor mappings
+## Legacy compatibility boundary
 
-- `agent-route-planner-candidates-setup.ts` → engine task-route `catalog-setup`,
-  `route-selector`, and `slots`
-- `agent-route-planner-candidates-surfaces.ts` → engine `catalog-surfaces`,
-  `route-selector`, and `slots`
-- `agent-route-planner-candidates-work.ts` → engine `catalog-work`,
-  `route-selector`, and `slots`
-- `agent-route-planner-helpers.ts` → engine `named-ids`, `slots`, and `text`
-- `agent-route-planner.ts` → engine `planner`, `route-selector`, and `slots`
-- `agent-route-tool.ts` → product adapter of the engine task-route tool/planner
-  contract, retaining Agent registration and status presentation
-
-The four legacy builder/helper files remain physically retained for source
-accountability. Their only imports are within that disconnected legacy group;
+The legacy builder/helper group is disconnected from both live consumers;
 neither live consumer imports or invokes its substring predicates or hand-set
-scores. This is six scoped HOIST mappings, not full Agent parity or permission to
-retire unrelated upstream source.
+scores. Product adapters retain Agent registration and status presentation.
 
 ## Product composition
 
@@ -49,43 +36,30 @@ Scores are now engine fit probabilities and confidence is an engine reading
 outcome. The direct tool rejects unavailable readings; the existing harness
 error envelope reports them as `success:false`.
 
-## Verification (2026-10-03)
+## Validation
 
-All commands used the normal guarded test runner and explicit local fixture
-readers. No live provider calls or network-guard relaxations were used.
+Use the normal guarded test runner and explicit local fixture readers, without
+live provider calls or network-guard relaxations. Cover the Agent route adapter,
+engine integration, harness mode catalog and existing engine task-route suites.
+The runtime/bootstrap composition fixture must assert the installed settings-driven
+judgment port identity, replace only its ask I/O boundary with local readings,
+and invoke both bootstrap-registered consumers through real provider and channel
+registries while the binding remains installed. Preserve route-adapter assertions
+with explicit local selector/slot/named-ID/catalog readings.
 
-- Agent route adapter, engine integration, and harness mode catalog suites:
-  **87 passed, 0 failed, 303 assertions** across four files.
-- Actual runtime/bootstrap composition fixture asserts the existing installed
-  settings-driven judgment port identity, replaces only its ask I/O boundary
-  with local readings, then invokes both bootstrap-registered consumers using
-  real provider and channel registries. The binding stays installed throughout.
-- Existing engine task-route suite: **35 passed, 0 failed, 107 assertions**.
-- All 49 existing route-adapter tests retain their original assertions, now
-  supplied with explicit local selector/slot/named-ID/catalog readings.
-- Eighteen both-caller regressions exercise reading-vs-keyword disagreement,
-  output schema, reading-ranked real catalog IDs, async completion, forwarded
-  signals, missing/failed readers, catalog reading failure, live channel registry
-  mutation and invented-ID rejection, actual ProviderRegistry candidate IDs,
-  and cancellation before/during reading.
-- Changed TypeScript syntax and unbound-name checks passed. These are bounded
-  source checks, not a full compiler pass.
-- `products:check` passed: three products present, TUI remains pending.
-- Full Agent test typechecking was attempted once by the fixture worker and
-  terminated with Node heap OOM (exit 134, approximately 2 GiB). No retry.
-- Full build, aggregate Agent tests, connected/live parity, and CI were not run
-  for this change. They are not implied by the focused checks.
+Both-caller controls cover reading-vs-keyword disagreement, output schema,
+reading-ranked real catalog IDs, async completion, forwarded signals, missing or
+failed readers, catalog reading failure, live channel registry mutation and
+invented-ID rejection, actual ProviderRegistry candidate IDs, and cancellation
+before/during reading. Keep syntax/unbound-name, product-boundary, full Agent test
+typechecking, build and aggregate test gates. Focused checks do not establish
+connected/live parity or exact-head CI, and bounded syntax checks are not a full
+compiler pass.
 
-## Accounting limits
+## Effect boundary
 
-The original baseline pin `9e225a349667632bb550e9c270d922b985848eaa` and refresh
-pin `f05fe636c120baa469037efe7d7391c3d9503635` are unchanged. All 1,650 refreshed
-source paths remain present. Only modified source materialization rows are
-refreshed, and only the six proven task-route mappings leave the unresolved
-list: 1,157 mapped / 445 unresolved, including 197 retained HOIST rows and 248
-upstream-deleted rows. No upstream-deleted file is marked DROP. Other JEV/HOIST
-obligations, native UI work, PR56, and ledger-to-runner admission are outside
-this change. No command execution or permission policy changed.
+Task routing does not change command execution or permission policy. Native UI,
+PR56 and ledger-to-runner admission have separate contracts.
 
 ## Cancellation review repair (2026-10-03)
 
@@ -105,9 +79,7 @@ still precedes planning; no keyword gate or heuristic shortlist was added.
 
 Both callers have pre-aborted-source and held-source regressions, including
 late fulfillment and late rejection. The four held-source tests fail with the
-old no-signal planner call (negative-control exit 1) and pass with the repair.
-The final guarded run passed **97 tests, 0 failures, 337 assertions** across the
-route adapter, engine integration, actual bootstrap, mode catalog, and existing
-memory-tool suites. Syntax/unbound and whitespace checks also pass. This repair
-does not change the six successor mappings or reduce unresolved accounting.
-Full type/build/aggregate/CI verification limitations above remain unchanged.
+old no-signal planner call as a negative control. Preserve the route adapter,
+engine integration, actual bootstrap, mode catalog and existing memory-tool
+regressions alongside syntax/unbound-name and whitespace checks. Full type,
+build, aggregate, CI and live validation remain separate from focused controls.

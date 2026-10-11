@@ -1,669 +1,201 @@
-import { knowledgeSearchStamp } from '../store-record-representation.js';
-import type {
-  WebSearchRequest,
-  WebSearchResponse,
-  WebSearchResult,
-} from '../../web-search/types.js';
+import { captureStrictRepairJson, admitRepairJson } from './web-gap-repair/admission.js';
+import { knowledgeSearchStamp, sameKnowledgeRecord } from '../store-record-representation.js';
+import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { canonicalizeUri } from '../shared.js';
-import { sleep } from '../cooperative.js';
-import { summarizeError } from '../../utils/error-display.js';
-import { logger } from '../../utils/logger.js';
+import type { KnowledgeIngestOwnership } from '../ingest-context.js';
 import type { KnowledgeSourceType } from '../types.js';
-import type {
-  KnowledgeSemanticGapRepairer,
-  KnowledgeSemanticGapRepairRequest,
-  KnowledgeSemanticGapRepairResult,
-} from './types.js';
-import { withTimeout } from './timeouts.js';
-import { readString, scoreSemanticText, tokenizeSemanticQuery, uniqueStrings } from './utils.js';
-
-interface GapRepairSearch {
-  search(request: WebSearchRequest): Promise<WebSearchResponse>;
-}
-
+import type { WebSearchRequest, WebSearchResponse, WebSearchResult } from '../../web-search/types.js';
+import type { KnowledgeSemanticGapRepairer, KnowledgeSemanticGapRepairRequest, KnowledgeSemanticGapRepairResult } from './types.js';
+import { repairProfileSubject } from './repair-profile.js';
+import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
+import { uniqueStrings } from './utils.js';
+import { freezeSupport } from './verification/projection.js';
+import { captureWebGapRepairRequest, ownWebGapRepairResult, registerWebGapRepairer } from './web-gap-repair/ownership.js';
+import { createWebGapReadings } from './web-gap-repair/reader.js';
+import { KnowledgeWebGapRepairHeldError as Held, WEB_GAP_REPAIR_LIMITS as LIMITS } from './web-gap-repair/types.js';
+export { KnowledgeWebGapRepairHeldError } from './web-gap-repair/types.js';
+interface GapRepairSearch { search(request: WebSearchRequest): Promise<WebSearchResponse>; }
 interface GapRepairIngest {
   ingestUrl(input: {
-    readonly url: string;
-    readonly knowledgeSpaceId?: string | undefined;
-    readonly title?: string | undefined;
-    readonly tags?: readonly string[] | undefined;
-    readonly sourceType?: KnowledgeSourceType | undefined;
-    readonly connectorId?: string | undefined;
-    readonly allowPrivateHosts?: boolean | undefined;
+    readonly url: string; readonly knowledgeSpaceId?: string | undefined; readonly title?: string | undefined;
+    readonly tags?: readonly string[] | undefined; readonly sourceType?: KnowledgeSourceType | undefined;
+    readonly connectorId?: string | undefined; readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
-  }): Promise<{ readonly source: { readonly id: string; readonly status: string } }>;
+  }, ownership?: KnowledgeIngestOwnership): Promise<{ readonly source: { readonly id: string; readonly status: string } }>;
 }
-
 export interface WebGapRepairOptions {
-  readonly searchService: GapRepairSearch;
-  readonly ingestService: GapRepairIngest;
-  readonly maxResults?: number | undefined;
-  readonly maxSearches?: number | undefined;
-  readonly maxSources?: number | undefined;
-  readonly minDistinctDomains?: number | undefined;
-  readonly minConfidence?: number | undefined;
-  readonly maxIngest?: number | undefined;
-  readonly searchTimeoutMs?: number | undefined;
-  readonly ingestTimeoutMs?: number | undefined;
+  readonly searchService: GapRepairSearch; readonly ingestService: GapRepairIngest;
+  readonly maxResults?: number | undefined; readonly maxSearches?: number | undefined;
+  readonly maxSources?: number | undefined; readonly minDistinctDomains?: number | undefined;
+  /** Explicit caller policy applied to canonical relevance probability, never a point score. */
+  readonly minConfidence?: number | undefined; readonly maxIngest?: number | undefined;
+  readonly searchTimeoutMs?: number | undefined; readonly ingestTimeoutMs?: number | undefined;
 }
-
-interface GapRepairSearchResult extends WebSearchResult {
-  readonly searchQuery: string;
-  readonly searchProviderId?: string | undefined;
+interface Candidate extends WebSearchResult {
+  readonly reference: string; readonly searchQuery: string; readonly existingSourceId?: string | undefined;
+  readonly confidence: number; readonly authority: 'official-vendor' | 'vendor' | 'secondary';
+  readonly relevant: boolean; readonly existingStatus?: string | undefined;
 }
-
-interface GapRepairCandidate extends GapRepairSearchResult {
-  readonly existingSourceId?: string | undefined;
-  readonly confidence: number;
-  readonly reasons: readonly string[];
-}
-
-interface GapRepairSourceAssessment {
-  readonly url: string;
-  readonly title?: string | undefined;
-  readonly domain?: string | undefined;
-  readonly rank?: number | undefined;
-  readonly query?: string | undefined;
-  readonly accepted: boolean;
-  readonly confidence: number;
-  readonly reasons: readonly string[];
-  readonly trustReason?: string | undefined;
-  readonly rejectionReason?: string | undefined;
-}
-
+const domain = (url: string): string | undefined => { try { const uri = new URL(url); return ['http:', 'https:'].includes(uri.protocol) && !uri.username && !uri.password ? uri.hostname.toLowerCase() : undefined; } catch { return undefined; } };
+const policyKeys = ['maxResults', 'maxSearches', 'maxSources', 'minDistinctDomains', 'minConfidence', 'maxIngest', 'searchTimeoutMs', 'ingestTimeoutMs'] as const;
 export function createWebKnowledgeGapRepairer(options: WebGapRepairOptions): KnowledgeSemanticGapRepairer {
-  return async (request) => repairKnowledgeGapsWithWeb(request, options);
+  return registerWebGapRepairer(request => repair(request, options));
 }
-
-async function repairKnowledgeGapsWithWeb(
-  request: KnowledgeSemanticGapRepairRequest,
-  options: WebGapRepairOptions,
-): Promise<KnowledgeSemanticGapRepairResult> {
-  const queries = buildGapRepairQueries(request);
-  if (queries.length === 0) {
-    return {
-      searched: false,
-      ingestedSourceIds: [],
-      skippedUrls: [],
-      reason: 'No concrete subject was available for gap repair.',
+async function repair(request: KnowledgeSemanticGapRepairRequest, options: WebGapRepairOptions): Promise<KnowledgeSemanticGapRepairResult> {
+  const owned = captureWebGapRepairRequest(request), input = owned.snapshot;
+  const searchService = options.searchService, ingestService = options.ingestService, search = searchService.search, ingest = ingestService.ingestUrl;
+  const policy = Object.fromEntries(policyKeys.map(key => [key, options[key]]));
+  for (const value of Object.values(policy)) if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Held('malformed');
+  if (input.maxSources !== undefined && (!Number.isInteger(input.maxSources) || input.maxSources < 0)) throw new Held('malformed');
+  const sourceLimit = Math.max(2, Math.min(5, input.maxSources ?? options.maxSources ?? options.maxIngest ?? 5));
+  const searchLimit = Math.max(1, Math.min(5, options.maxSearches ?? 5));
+  const minConfidence = Math.max(1, Math.min(100, options.minConfidence ?? 70));
+  const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, ...(owned.signal ? [owned.signal] : [])]);
+  const deadlineAt = Math.min(owned.deadlineAt ?? Infinity, Date.now() + LIMITS.timeoutMs);
+  const responses: { original: WebSearchResponse; snapshot: WebSearchResponse }[] = [];
+  let timedOut = false, finished = false;
+  const ownerCurrent = () => {
+    if (timedOut || Date.now() >= deadlineAt) throw new Held('budget');
+    owned.assertCurrent();
+    if (finished || signal.aborted) throw new Held('aborted');
+    if (options.searchService !== searchService || options.ingestService !== ingestService || searchService.search !== search || ingestService.ingestUrl !== ingest
+      || policyKeys.some(key => options[key] !== policy[key])) throw new Held('stale');
+    for (const response of responses) if (!sameKnowledgeRecord(captureStrictRepairJson(response.original), response.snapshot)) throw new Held('stale');
+  };
+  const reader = createWebGapReadings({ signal, assertCurrent: ownerCurrent });
+  const check = () => { ownerCurrent(); reader.assertCurrent(); };
+  let rejectStop: (error: Error) => void = () => {};
+  const stopped = new Promise<never>((_, reject) => { rejectStop = reject; });
+  const abort = () => rejectStop(new Held(timedOut ? 'budget' : 'aborted'));
+  signal.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, Math.max(1, deadlineAt - Date.now()));
+  const queries: string[] = [], all: Candidate[] = [], ingested: string[] = [], skipped: string[] = [];
+  let searched = false;
+  const result = (selected: readonly Candidate[], sufficient: boolean, reason?: string): KnowledgeSemanticGapRepairResult => {
+    check();
+    const selectedRefs = new Set(selected.map(candidate => candidate.reference));
+    const acceptedSourceIds = uniqueStrings([...selected.flatMap(candidate => candidate.existingSourceId ? [candidate.existingSourceId] : []), ...ingested]);
+    // Result ownership retains original request/configuration/reading captures. Operation
+    // cleanup retires pending effects, not the completed receipt consumed by the caller.
+    return ownWebGapRepairResult(freezeSupport({ searched, query: queries[0], evidenceSufficient: sufficient, acceptedSourceIds,
+      ingestedSourceIds: [...ingested], skippedUrls: [...skipped], sourceAssessments: all.map(candidate => ({
+        url: candidate.url, title: candidate.title, domain: domain(candidate.url), rank: candidate.rank, query: candidate.searchQuery,
+        accepted: selectedRefs.has(candidate.reference), confidence: candidate.confidence,
+        reasons: [candidate.relevant ? 'semantic-relevance' : 'semantic-mismatch', `publisher:${candidate.authority}`, ...(candidate.existingSourceId ? ['already-indexed'] : [])],
+        trustReason: `Canonical publisher reading: ${candidate.authority}`,
+        ...(!selectedRefs.has(candidate.reference) ? { rejectionReason: candidate.relevant ? 'not-selected' : 'query-mismatch' } : {}),
+      })), ...(reason ? { reason } : {}) }), check);
+  };
+  const run = async () => {
+    // No IDs, clocks or arbitrary source metadata are sent. Complete originals have
+    // already passed raw-row or ordinary input admission, including rejected rows.
+    const subjects = input.linkedObjects.map(repairProfileSubject);
+    const context = { purpose: 'knowledge-gap-repair', query: input.query, gaps: input.gaps.map(gap => ({ title: gap.title, summary: gap.summary, reason: gap.metadata.reason })), subjects,
+      sources: request.sources.map(source => ({ title: source.title, summary: source.summary, description: source.description, sourceType: source.sourceType, ...knowledgeSourceJudgmentUris(source) })),
+      facts: input.facts.map(fact => ({ title: fact.title, summary: fact.summary, value: fact.metadata.value })) };
+    reader.preflight(context);
+    const subjectText = subjects.map(subject => [subject.title, ...Object.values(subject.identity ?? {})].join(' ')).join('\n');
+    // Preserve every original character and field separator. The generic
+    // uniqueStrings helper normalizes whitespace/case and is not query identity.
+    const queryTexts = [...new Set([input.query, ...input.gaps.map(gap => [gap.title, gap.summary].filter(value => value !== undefined).join('\n'))])].filter(query => query.length > 0);
+    const offered = [...new Set(queryTexts.flatMap(query => subjectText ? [query, `${subjectText}\n${query}`] : [query]))];
+    // No lexical window: oversize candidate sets hold in full after admission.
+    if (offered.length > 30 || input.sources.length > LIMITS.candidates) throw new Held('budget');
+    const candidates = offered.map((text, index) => ({ id: `query-${index + 1}`, content: text }));
+    const first = await reader.query(context, candidates); check();
+    if (!first) return result([], false, 'No grounded web query was selected.');
+    const canonical = new Set<string>();
+    const assess = async (source: WebSearchResult, searchQuery: string, existingSourceId?: string, existingStatus?: string) => {
+      const reference = `source-${all.length + 1}`;
+      const reading = await reader.source(context, { title: source.title, snippet: source.snippet, url: source.url,
+        claimedDomain: source.domain, evidence: source.evidence, rank: source.rank, searchQuery });
+      check(); all.push({ ...source, reference, searchQuery, existingSourceId, existingStatus, ...reading });
     };
-  }
-
-  const existing = existingSources(request);
-  const sourceLimit = Math.max(2, Math.min(5, request.maxSources ?? options.maxSources ?? options.maxIngest ?? 5));
-  const searchLimit = Math.max(1, Math.min(5, options.maxSearches ?? queries.length));
-  const existingCandidates = selectExistingRepairSources(request, options, sourceLimit);
-  const acceptedExisting = candidateCanonicalUris(existingCandidates);
-  const searchResults = new Map<string, GapRepairSearchResult>();
-  const providerIds = new Set<string>();
-  let lastError: string | undefined;
-  for (const query of queries.slice(0, searchLimit)) {
-    if (request.signal?.aborted || deadlineExceeded(request.deadlineAt)) break;
-    try {
-      const timeoutMs = operationTimeout(request.deadlineAt, options.searchTimeoutMs ?? 8_000);
-      if (timeoutMs <= 0) break;
-      const response = await withTimeout(options.searchService.search({
-        query,
-        maxResults: Math.max(sourceLimit, Math.min(8, options.maxResults ?? sourceLimit)),
-        verbosity: 'snippets',
-        safeSearch: 'moderate',
-        trustedHosts: trustedHostsForRepair(request),
-        metadata: {
-          purpose: 'knowledge-gap-repair',
-          knowledgeSpaceId: request.spaceId,
-        },
-      }), Math.max(1_000, timeoutMs), 'Semantic gap repair search timed out.');
-      if (response.providerId) providerIds.add(response.providerId);
-      for (const result of response.results) {
-        const canonical = canonicalizeUri(result.url);
-        if (!canonical || searchResults.has(canonical)) continue;
-        searchResults.set(canonical, { ...result, searchQuery: query, searchProviderId: response.providerId });
+    for (const source of input.sources) {
+      if ((source.status !== 'indexed' && source.status !== 'pending') || source.tags.includes('generated-page')
+        || source.metadata.projectionKind === 'device-passport' || source.metadata.projectionKind === 'room-page') continue;
+      const url = source.url ?? source.sourceUri ?? source.canonicalUri;
+      if (!url || !domain(url)) continue;
+      const key = canonicalizeUri(url); if (!key || canonical.has(key)) continue;
+      canonical.add(key);
+      await assess({ rank: 0, url, title: source.title, snippet: [source.summary, source.description, ...source.tags].filter(value => value !== undefined).join('\n'),
+        type: 'organic', providerId: 'indexed', metadata: {} }, input.query, source.id, source.status);
+    }
+    // Existing rejected/ineligible URLs cannot be refreshed under the old read receipt.
+    for (const source of input.sources) for (const url of [source.url, source.sourceUri, source.canonicalUri]) { const key = canonicalizeUri(url ?? ''); if (key) canonical.add(key); }
+    const select = () => {
+      const domains = new Set<string>();
+      // Declared consumer preference over settled publisher categories, not semantic scoring.
+      const authorityOrder = ['official-vendor', 'vendor', 'secondary'];
+      return all.filter(candidate => candidate.relevant && candidate.confidence >= minConfidence
+          && (candidate.existingStatus !== 'pending' || candidate.authority !== 'secondary'))
+        .sort((a, b) => authorityOrder.indexOf(a.authority) - authorityOrder.indexOf(b.authority) || b.confidence - a.confidence || a.rank - b.rank)
+        .filter(candidate => { const host = domain(candidate.url)!; if (domains.has(host)) return false; domains.add(host); return true; }).slice(0, sourceLimit);
+    };
+    const enough = (selected: readonly Candidate[]) => selected.some(candidate => candidate.authority === 'official-vendor')
+      || new Set(selected.map(candidate => domain(candidate.url))).size >= Math.max(2, options.minDistinctDomains ?? 2);
+    let next: string | undefined = first;
+    while (next && queries.length < searchLimit) {
+      check(); const query = candidates.find(candidate => candidate.id === next)?.content;
+      if (typeof query !== 'string') throw new Held('malformed');
+      queries.push(query); searched = true;
+      const response = await bounded(() => search.call(searchService, { query, maxResults: Math.max(sourceLimit, Math.min(8, options.maxResults ?? sourceLimit)),
+        verbosity: 'snippets', safeSearch: 'moderate', metadata: { purpose: 'knowledge-gap-repair', knowledgeSpaceId: input.spaceId } }), options.searchTimeoutMs ?? 8_000);
+      check();
+      // Full raw response privacy comes before cap, deduplication, eligibility or projection.
+      const snapshot = admitRepairJson(response) as WebSearchResponse;
+      responses.push({ original: response, snapshot });
+      if (!Array.isArray(snapshot.results) || snapshot.results.length + all.length > LIMITS.candidates) throw new Held('budget');
+      for (const source of snapshot.results) {
+        if (typeof source.url !== 'string' || typeof source.rank !== 'number' || !Number.isFinite(source.rank)) throw new Held('malformed');
+        const key = canonicalizeUri(source.url);
+        if (!key || !domain(source.url) || canonical.has(key)) continue;
+        canonical.add(key); await assess(source, query);
       }
-      const partial = mergeRepairCandidates(existingCandidates, selectGapRepairCandidates([...searchResults.values()], acceptedExisting, options, request, sourceLimit), sourceLimit);
-      if (hasEnoughRepairEvidence(partial, options)) break;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-      if (deadlineExceeded(request.deadlineAt)) break;
+      if (enough(select())) break;
+      const remaining = candidates.filter(candidate => !queries.includes(candidate.content));
+      next = remaining.length ? await reader.query(context, remaining) : undefined;
     }
-  }
-
-  const allResults = [...searchResults.values()];
-  const candidates = mergeRepairCandidates(existingCandidates, selectGapRepairCandidates(allResults, acceptedExisting, options, request, sourceLimit), sourceLimit);
-  if (!hasEnoughRepairEvidence(candidates, options)) {
-    return {
-      searched: true,
-      query: queries[0],
-      evidenceSufficient: false,
-      acceptedSourceIds: existingCandidates.map((candidate) => candidate.existingSourceId).filter((id): id is string => Boolean(id)),
-      ingestedSourceIds: [],
-      skippedUrls: allResults.map((result) => result.url),
-      sourceAssessments: [
-        ...existingCandidates.map((candidate) => candidateToAssessment(candidate, true)),
-        ...buildSourceAssessments(allResults, candidates, existing, options, request),
-      ],
-      reason: lastError ?? 'Insufficient distinct source-backed evidence was found for gap repair.',
-    };
-  }
-
-  const ingestedSourceIds: string[] = [];
-  const skippedUrls: string[] = [];
-  const existingSourceIds = candidates.map((candidate) => candidate.existingSourceId).filter((id): id is string => Boolean(id));
-  const newCandidates = candidates.filter((candidate) => !candidate.existingSourceId);
-  for (const result of newCandidates.slice(0, Math.max(0, Math.min(sourceLimit - existingSourceIds.length, options.maxIngest ?? sourceLimit)))) {
-    if (request.signal?.aborted || deadlineExceeded(request.deadlineAt)) break;
-    try {
-      const timeoutMs = operationTimeout(request.deadlineAt, options.ingestTimeoutMs ?? 10_000);
-      if (timeoutMs <= 0) break;
-      const ingested = await withTimeout(options.ingestService.ingestUrl({
-        url: result.url,
-        knowledgeSpaceId: request.spaceId,
-        ...(result.title ? { title: result.title } : {}),
-        sourceType: 'url',
-        connectorId: 'semantic-gap-repair',
-        tags: ['semantic-gap-repair', 'gap-repair', ...gapRepairTags(request)],
-        metadata: {
-          knowledgeSpaceId: request.spaceId,
-          sourceDiscovery: knowledgeSearchStamp({
-            purpose: 'semantic-gap-repair',
-            query: result.searchQuery,
-            searchQueries: queries.slice(0, searchLimit),
-            providerId: result.searchProviderId ?? [...providerIds][0],
-            gapIds: request.gaps.map((gap) => gap.id),
-            gapQuestions: request.gaps.map((gap) => gap.title),
-            originalSourceIds: request.sources.map((source) => source.id),
-            linkedObjectIds: request.linkedObjects.map((node) => node.id),
-            confidence: result.confidence,
-            confidenceReasons: result.reasons,
-            sourceRank: result.rank,
-            sourceDomain: result.domain ?? safeDomain(result.url),
-            trustReason: result.reasons.join(', '),
-            agreementSourceCount: candidates.length,
-            checkedSourceLimit: sourceLimit,
-            selectedUrl: result.url,
-          }),
-        },
-      }), Math.max(1_000, timeoutMs), 'Semantic gap repair source ingest timed out.');
-      if (ingested.source.status === 'indexed' || ingested.source.status === 'pending') {
-        ingestedSourceIds.push(ingested.source.id);
-      }
-    } catch (error) {
-      logger.warn('Semantic gap repair: failed to ingest accepted source', {
-        url: result.url,
-        error: summarizeError(error),
-      });
-      skippedUrls.push(result.url);
+    const selected = select();
+    if (!enough(selected)) { skipped.push(...all.filter(candidate => !candidate.existingSourceId).map(candidate => candidate.url)); return result(selected.filter(candidate => candidate.existingSourceId), false, 'Insufficient distinct source-backed evidence was found for gap repair.'); }
+    const existingCount = selected.filter(candidate => candidate.existingSourceId).length;
+    for (const candidate of selected.filter(candidate => !candidate.existingSourceId).slice(0, Math.max(0, Math.min(sourceLimit - existingCount, options.maxIngest ?? sourceLimit)))) {
+      check();
+      let committed: string | undefined, effectOpen = true;
+      const effectCurrent = () => { if (!effectOpen) throw new Held('stale'); check(); };
+      let ingestedResult: { readonly source: { readonly id: string; readonly status: string } };
+      try { ingestedResult = await bounded(() => ingest.call(ingestService, {
+        url: candidate.url, knowledgeSpaceId: input.spaceId, ...(candidate.title ? { title: candidate.title } : {}),
+        sourceType: 'url', connectorId: 'semantic-gap-repair', tags: ['semantic-gap-repair', 'gap-repair', ...uniqueStrings([...input.linkedObjects.flatMap(node => [node.kind, node.title]), ...input.sources.flatMap(source => source.tags)]).slice(0, 12)],
+        metadata: { knowledgeSpaceId: input.spaceId, sourceDiscovery: knowledgeSearchStamp({ purpose: 'semantic-gap-repair', query: candidate.searchQuery,
+          searchQueries: queries, providerId: candidate.providerId, gapIds: input.gaps.map(gap => gap.id), gapQuestions: input.gaps.map(gap => gap.title),
+          originalSourceIds: input.sources.map(source => source.id), linkedObjectIds: input.linkedObjects.map(node => node.id), confidence: candidate.confidence,
+          confidenceReasons: ['semantic-relevance', `publisher:${candidate.authority}`], sourceRank: candidate.rank, sourceDomain: domain(candidate.url),
+          trustReason: `Canonical publisher reading: ${candidate.authority}`, agreementSourceCount: selected.length, checkedSourceLimit: sourceLimit, selectedUrl: candidate.url }) },
+      }, { signal, assertCurrent: effectCurrent, deferSemanticEnrichment: true, onCommitted: id => { committed = id; } }), options.ingestTimeoutMs ?? 10_000);
+      } finally { effectOpen = false; }
+      check();
+      if (committed && committed !== ingestedResult.source.id) throw new Held('stale');
+      if (ingestedResult.source.status === 'indexed' || ingestedResult.source.status === 'pending') ingested.push(ingestedResult.source.id);
+      else skipped.push(candidate.url);
     }
-    await yieldToEventLoop();
-  }
-
-  return {
-    searched: true,
-    query: queries[0],
-    evidenceSufficient: true,
-    acceptedSourceIds: uniqueStrings([...existingSourceIds, ...ingestedSourceIds]),
-    ingestedSourceIds,
-    skippedUrls,
-    sourceAssessments: [
-      ...existingCandidates.map((candidate) => candidateToAssessment(candidate, candidates.some((entry) => entry.url === candidate.url))),
-      ...buildSourceAssessments(allResults, candidates, existing, options, request),
-    ],
-    ...(existingSourceIds.length + ingestedSourceIds.length < 1 ? { reason: 'Gap repair searched but did not accept usable sources.' } : {}),
+    return result(selected, true, existingCount + ingested.length ? undefined : 'Gap repair searched but did not accept usable sources.');
   };
-}
-
-function buildGapRepairQueries(request: KnowledgeSemanticGapRepairRequest): readonly string[] {
-  const subject = bestSubject(request);
-  if (!subject) return [];
-  const gapTerms = clampSearchTerms(uniqueStrings(request.gaps.flatMap((gap) => [
-    gap.title,
-    gap.summary,
-    readString(gap.metadata.reason),
-  ])).join(' '));
-  const profileTerms = inferGapProfileTerms(request);
-  return uniqueStrings([
-    [subject, gapTerms, 'official specifications'].filter(Boolean).join(' '),
-    [subject, profileTerms, 'product specifications'].filter(Boolean).join(' '),
-    [subject, profileTerms, 'features ports connectivity audio display'].filter(Boolean).join(' '),
-    [subject, 'manufacturer product page specifications'].join(' '),
-    [subject, 'datasheet manual specifications'].join(' '),
-  ].map((query) => query.replace(/\s+/g, ' ').trim()).filter(Boolean));
-}
-
-function bestSubject(request: KnowledgeSemanticGapRepairRequest): string | null {
-  const linked = request.linkedObjects[0]!;
-  const source = request.sources[0]!;
-  const metadata = linked?.metadata ?? {};
-  const identity = uniqueStrings([
-    readString(metadata.manufacturer),
-    readString(metadata.model),
-  ]).join(' ');
-  if (identity) return identity;
-  return uniqueStrings([
-    linked?.title,
-    source?.title,
-  ]).join(' ') || null;
-}
-
-function inferGapProfileTerms(request: KnowledgeSemanticGapRepairRequest): string {
-  const text = request.gaps.map((gap) => `${gap.title} ${gap.summary ?? ''}`).join(' ').toLowerCase();
-  const terms: string[] = [];
-  if (/\b(port|ports|hdmi|usb|optical|rf|antenna|ethernet|rs-?232|composite|component|input|output|i\/o)\b/.test(text)) {
-    terms.push('ports inputs outputs connectivity');
+  async function bounded<T>(work: () => Promise<T>, timeoutMs: number): Promise<T> {
+    check();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => { timeout = setTimeout(() => { timedOut = true; controller.abort(); reject(new Held('budget')); }, Math.min(timeoutMs, Math.max(1, deadlineAt - Date.now()))); });
+    try { return await Promise.race([work(), stopped, expired]); }
+    finally { clearTimeout(timeout); }
   }
-  if (/\b(bluetooth|wifi|wi-fi|wireless|network)\b/.test(text)) terms.push('wireless bluetooth wi-fi network');
-  if (/\b(refresh|hz|hdr|dolby|vision|gaming|vrr|allm|freesync)\b/.test(text)) terms.push('refresh rate hdr gaming vrr allm');
-  if (/\b(audio|speaker|sound|earc|arc)\b/.test(text)) terms.push('audio speakers earc arc');
-  if (/\b(display|screen|resolution|panel|lcd|led|oled|qled|mini[- ]?led)\b/.test(text)) terms.push('display resolution panel');
-  return uniqueStrings([
-    ...terms,
-    ...tokenizeSemanticQuery(text)
-      .filter((token) => token.length >= 3)
-      .filter((token) => !['what', 'does', 'have', 'which', 'with', 'from', 'that', 'this', 'current', 'source', 'text'].includes(token))
-      .slice(0, 12),
-  ]).join(' ');
-}
-
-function clampSearchTerms(value: string): string {
-  return tokenizeSemanticQuery(value).slice(0, 24).join(' ');
-}
-
-function existingSources(request: KnowledgeSemanticGapRepairRequest): ReadonlySet<string> {
-  return new Set(request.sources.flatMap((source) => [
-    canonicalizeUri(source.url ?? ''),
-    canonicalizeUri(source.canonicalUri ?? ''),
-    canonicalizeUri(source.sourceUri ?? ''),
-  ].filter((value): value is string => Boolean(value))));
-}
-
-function selectGapRepairCandidates(
-  results: readonly GapRepairSearchResult[],
-  existingCanonicalUris: ReadonlySet<string>,
-  options: WebGapRepairOptions,
-  request: KnowledgeSemanticGapRepairRequest,
-  sourceLimit: number,
-): GapRepairCandidate[] {
-  const tokens = tokenizeSemanticQuery([bestSubject(request), inferGapProfileTerms(request)].filter(Boolean).join(' '));
-  const minimumConfidence = Math.max(1, Math.min(100, options.minConfidence ?? 70));
-  const byDomain = new Map<string, GapRepairCandidate>();
-  for (const result of results) {
-    const canonical = canonicalizeUri(result.url);
-    if (!canonical || existingCanonicalUris.has(canonical)) continue;
-    const searchable = [result.title, result.snippet, result.url, result.domain].filter(Boolean).join(' ');
-    if (tokens.length > 0 && scoreSemanticText(searchable, tokens) === 0) continue;
-    const domain = result.domain ?? safeDomain(result.url);
-    if (!domain || byDomain.has(domain)) continue;
-    const assessment = assessGapRepairSource(result, result.searchQuery, request);
-    if (assessment.confidence < minimumConfidence) continue;
-    byDomain.set(domain, { ...result, confidence: assessment.confidence, reasons: assessment.reasons });
+  try { return await Promise.race([run(), stopped]); }
+  catch (error) {
+    finished = true; controller.abort();
+    throw error instanceof Held || error instanceof JudgmentInputError ? error : new Held('unavailable');
+  } finally {
+    clearTimeout(timer); signal.removeEventListener('abort', abort);
+    // Keep completed evidence current through the consumer's synchronous receipt checks;
+    // errors retire all late asynchronous effects immediately.
   }
-  return [...byDomain.values()]
-    .sort(compareRepairCandidates)
-    .slice(0, sourceLimit);
-}
-
-function selectExistingRepairSources(
-  request: KnowledgeSemanticGapRepairRequest,
-  options: WebGapRepairOptions,
-  sourceLimit: number,
-): GapRepairCandidate[] {
-  const minimumConfidence = Math.max(1, Math.min(100, options.minConfidence ?? 70));
-  const byDomain = new Map<string, GapRepairCandidate>();
-  for (const source of request.sources) {
-    if ((source.status !== 'indexed' && source.status !== 'pending') || isGeneratedOrSyntheticSource(source)) continue;
-    const url = source.url ?? source.sourceUri ?? source.canonicalUri;
-    if (!url) continue;
-    const domain = safeDomain(url);
-    if (!domain || byDomain.has(domain)) continue;
-    const snippet = [source.summary, source.description, source.tags.join(' ')].filter(Boolean).join(' ');
-    const result: GapRepairSearchResult = {
-      rank: 0,
-      url,
-      domain,
-      displayUrl: url,
-      type: 'organic',
-      providerId: 'indexed',
-      metadata: source.metadata,
-      searchQuery: request.query,
-      searchProviderId: 'indexed',
-      ...(source.title ? { title: source.title } : {}),
-      ...(snippet ? { snippet } : {}),
-    };
-    const assessment = assessGapRepairSource(result, request.query, request);
-    const officialOrVendor = isOfficialOrVendorSource(assessment.reasons);
-    if (source.status !== 'indexed' && !officialOrVendor) continue;
-    if (assessment.confidence < minimumConfidence && !officialOrVendor) continue;
-    byDomain.set(domain, {
-      ...result,
-      existingSourceId: source.id,
-      confidence: Math.max(assessment.confidence, isOfficialOrVendorSource(assessment.reasons) ? 82 : assessment.confidence),
-      reasons: uniqueStrings([...assessment.reasons, 'already-indexed']),
-    });
-  }
-  return [...byDomain.values()].sort(compareRepairCandidates).slice(0, sourceLimit);
-}
-
-function candidateCanonicalUris(candidates: readonly GapRepairCandidate[]): ReadonlySet<string> {
-  return new Set(candidates.map((candidate) => canonicalizeUri(candidate.url)).filter((value): value is string => Boolean(value)));
-}
-
-function assessGapRepairSource(
-  result: GapRepairSearchResult,
-  query: string,
-  request: KnowledgeSemanticGapRepairRequest,
-): Omit<GapRepairSourceAssessment, 'accepted' | 'rejectionReason'> {
-  const searchable = [result.title, result.snippet, result.url, result.domain].filter(Boolean).join(' ').toLowerCase();
-  const reasons: string[] = [];
-  let score = Math.max(0, 12 - result.rank);
-  const identities = sourceIdentityHints(request);
-  for (const model of identities.models) {
-    if (hasIdentity(searchable, model)) {
-      score += model.length >= 8 ? 42 : 28;
-      reasons.push(`model:${model}`);
-      break;
-    }
-  }
-  for (const manufacturer of identities.manufacturers) {
-    if (hasIdentity(searchable, manufacturer)) {
-      score += 14;
-      reasons.push(`manufacturer:${manufacturer}`);
-      break;
-    }
-  }
-  for (const subject of identities.subjects) {
-    if (subject.length >= 4 && hasIdentity(searchable, subject)) {
-      score += 30;
-      reasons.push(`subject:${subject}`);
-      break;
-    }
-  }
-  const queryScore = scoreSemanticText(searchable, tokenizeSemanticQuery(query));
-  if (queryScore > 0) {
-    score += Math.min(18, queryScore);
-    reasons.push('query-match');
-  }
-  const gapScore = scoreSemanticText(searchable, tokenizeSemanticQuery(request.gaps.map((gap) => `${gap.title} ${gap.summary ?? ''}`).join(' ')));
-  if (gapScore > 0) {
-    score += Math.min(14, gapScore);
-    reasons.push('gap-match');
-  }
-  const domain = (result.domain ?? safeDomain(result.url) ?? '').toLowerCase();
-  if (/\b(specifications?|features?|manual|support|product|documentation|datasheet)\b/.test(searchable)) {
-    score += 10;
-    reasons.push('source-purpose');
-  }
-  if (domain && identities.manufacturers.some((manufacturer) => manufacturer.length >= 2 && domain.includes(manufacturer.toLowerCase()))) {
-    score += 28;
-    reasons.push('manufacturer-domain');
-  }
-  if (domain && isOfficialVendorDomain(domain, identities.manufacturers)) {
-    score += 28;
-    reasons.push('official-vendor-domain');
-  }
-  return {
-    url: result.url,
-    ...(result.title ? { title: result.title } : {}),
-    ...(domain ? { domain } : {}),
-    rank: result.rank,
-    query: result.searchQuery,
-    confidence: Math.max(0, Math.min(100, score)),
-    reasons,
-    ...(reasons.length > 0 ? { trustReason: reasons.join(', ') } : {}),
-  };
-}
-
-function mergeRepairCandidates(
-  existingCandidates: readonly GapRepairCandidate[],
-  searchCandidates: readonly GapRepairCandidate[],
-  sourceLimit: number,
-): GapRepairCandidate[] {
-  const byCanonical = new Map<string, GapRepairCandidate>();
-  for (const candidate of [...existingCandidates, ...searchCandidates]) {
-    const key = canonicalizeUri(candidate.url) ?? candidate.url;
-    const current = byCanonical.get(key);
-    if (!current || compareRepairCandidates(candidate, current) < 0) byCanonical.set(key, candidate);
-  }
-  return [...byCanonical.values()].sort(compareRepairCandidates).slice(0, sourceLimit);
-}
-
-function hasEnoughRepairEvidence(candidates: readonly GapRepairCandidate[], options: WebGapRepairOptions): boolean {
-  if (candidates.some((candidate) => candidate.reasons.includes('official-vendor-domain'))) return true;
-  const required = Math.max(2, options.minDistinctDomains ?? 2);
-  return new Set(candidates.map((candidate) => candidate.domain ?? safeDomain(candidate.url)).filter(Boolean)).size >= required;
-}
-
-function compareRepairCandidates(left: GapRepairCandidate, right: GapRepairCandidate): number {
-  return sourceAuthorityScore(right) - sourceAuthorityScore(left)
-    || right.confidence - left.confidence
-    || left.rank - right.rank;
-}
-
-function sourceAuthorityScore(candidate: GapRepairCandidate): number {
-  if (candidate.reasons.includes('official-vendor-domain')) return 3;
-  if (candidate.reasons.includes('manufacturer-domain')) return 2;
-  if (candidate.existingSourceId) return 1;
-  return 0;
-}
-
-function buildSourceAssessments(
-  results: readonly GapRepairSearchResult[],
-  candidates: readonly GapRepairCandidate[],
-  existingCanonicalUris: ReadonlySet<string>,
-  options: WebGapRepairOptions,
-  request: KnowledgeSemanticGapRepairRequest,
-): readonly GapRepairSourceAssessment[] {
-  const accepted = new Set(candidates.map((candidate) => canonicalizeUri(candidate.url)));
-  const acceptedDomains = new Set(candidates.map((candidate) => candidate.domain ?? safeDomain(candidate.url)).filter(Boolean));
-  const minimumConfidence = Math.max(1, Math.min(100, options.minConfidence ?? 70));
-  const tokens = tokenizeSemanticQuery([bestSubject(request), inferGapProfileTerms(request)].filter(Boolean).join(' '));
-  return results.map((result) => {
-    const assessment = assessGapRepairSource(result, result.searchQuery, request);
-    const canonical = canonicalizeUri(result.url);
-    const domain = result.domain ?? safeDomain(result.url);
-    const isAccepted = Boolean(canonical && accepted.has(canonical));
-    let rejectionReason: string | undefined;
-    if (!isAccepted) {
-      if (canonical && existingCanonicalUris.has(canonical)) rejectionReason = 'already-indexed';
-      else if (tokens.length > 0 && scoreSemanticText([result.title, result.snippet, result.url, domain].filter(Boolean).join(' '), tokens) === 0) rejectionReason = 'query-mismatch';
-      else if (assessment.confidence < minimumConfidence) rejectionReason = 'below-confidence-threshold';
-      else if (domain && acceptedDomains.has(domain)) rejectionReason = 'duplicate-domain';
-      else rejectionReason = 'not-selected';
-    }
-    return {
-      ...assessment,
-      accepted: isAccepted,
-      ...(rejectionReason ? { rejectionReason } : {}),
-    };
-  });
-}
-
-function candidateToAssessment(candidate: GapRepairCandidate, accepted: boolean): GapRepairSourceAssessment {
-  return {
-    url: candidate.url,
-    ...(candidate.title ? { title: candidate.title } : {}),
-    ...(candidate.domain ? { domain: candidate.domain } : {}),
-    rank: candidate.rank,
-    query: candidate.searchQuery,
-    accepted,
-    confidence: candidate.confidence,
-    reasons: candidate.reasons,
-    trustReason: candidate.reasons.join(', '),
-    ...(accepted ? {} : { rejectionReason: 'not-selected' }),
-  };
-}
-
-function sourceIdentityHints(request: KnowledgeSemanticGapRepairRequest): {
-  readonly models: readonly string[];
-  readonly manufacturers: readonly string[];
-  readonly subjects: readonly string[];
-} {
-  const subjects = uniqueStrings([
-    ...request.linkedObjects.flatMap((node) => [node.title, ...node.aliases]),
-    ...request.sources.flatMap((source) => [source.title, source.summary]),
-  ]).filter((subject) => !isGenericSubject(subject));
-  const models = uniqueStrings(request.linkedObjects.flatMap((node) => [
-    readString(node.metadata.model),
-    readString(node.metadata.modelId),
-    readString(node.metadata.model_id),
-    ...modelLikeTokens(`${node.title} ${node.aliases.join(' ')}`),
-  ]).concat(request.sources.flatMap((source) => modelLikeTokens(`${source.title ?? ''} ${source.url ?? ''} ${source.sourceUri ?? ''} ${source.canonicalUri ?? ''}`))));
-  const manufacturers = uniqueStrings(request.linkedObjects.flatMap((node) => [
-    readString(node.metadata.manufacturer),
-    readString(node.metadata.vendor),
-  ]).concat(request.sources.flatMap((source) => manufacturerHints(`${source.title ?? ''} ${source.url ?? ''} ${source.sourceUri ?? ''} ${source.canonicalUri ?? ''}`)))
-    .map((manufacturer) => manufacturer?.trim().toLowerCase())
-    .filter((manufacturer): manufacturer is string => Boolean(manufacturer)));
-  return { models, manufacturers, subjects };
-}
-
-function trustedHostsForRepair(request: KnowledgeSemanticGapRepairRequest): readonly string[] {
-  const manufacturers = sourceIdentityHints(request).manufacturers;
-  return uniqueStrings(manufacturers.flatMap(candidateOfficialHostsForManufacturer));
-}
-
-function isGenericSubject(value: string): boolean {
-  return /^(tv|television|device|manual|user guide|owner manual|home assistant|service|provider|integration)$/i.test(value.trim());
-}
-
-function modelLikeTokens(value: string): readonly string[] {
-  return uniqueStrings(value.match(/\b[A-Z]{2,}[-_ ]?[0-9][A-Z0-9._-]{2,}\b/g) ?? []);
-}
-
-function manufacturerHints(value: string): readonly string[] {
-  return uniqueStrings([
-    ...domainManufacturerHints(value),
-    ...titleManufacturerHints(value),
-  ]);
-}
-
-function isGeneratedOrSyntheticSource(source: KnowledgeSemanticGapRepairRequest['sources'][number]): boolean {
-  return source.tags.includes('generated-page')
-    || source.metadata.projectionKind === 'device-passport'
-    || source.metadata.projectionKind === 'room-page';
-}
-
-function isOfficialVendorDomain(domain: string, manufacturers: readonly string[]): boolean {
-  const lower = domain.toLowerCase();
-  return manufacturers.some((manufacturer) => domainMatchesManufacturer(lower, manufacturer));
-}
-
-function candidateOfficialHostsForManufacturer(manufacturer: string): readonly string[] {
-  const slug = manufacturerDomainSlug(manufacturer);
-  if (!slug || isGenericManufacturerSlug(slug)) return [];
-  return [
-    `${slug}.com`,
-    `www.${slug}.com`,
-    `support.${slug}.com`,
-    `docs.${slug}.com`,
-    `developer.${slug}.com`,
-  ];
-}
-
-function domainMatchesManufacturer(domain: string, manufacturer: string): boolean {
-  const slug = manufacturerDomainSlug(manufacturer);
-  if (!slug || isGenericManufacturerSlug(slug)) return false;
-  const normalizedDomain = domain.replace(/^www\./, '');
-  const domainPattern = new RegExp(`(^|\\.)${escapeRegExp(slug)}\\.(?:com|net|org|io|dev|tv|ca|co\\.uk)$`);
-  return domainPattern.test(normalizedDomain)
-    || normalizedDomain.includes(slug) && /\b(support|docs?|developer|product)\b/.test(normalizedDomain);
-}
-
-function manufacturerDomainSlug(value: string): string {
-  return value.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '').trim();
-}
-
-function domainManufacturerHints(value: string): readonly string[] {
-  const hints: string[] = [];
-  for (const match of value.toLowerCase().matchAll(/\b(?:https?:\/\/)?(?:www\.|support\.|docs\.|developer\.)?([a-z0-9-]+)\.(?:com|net|org|io|dev|tv|ca|co\.uk)\b/g)) {
-    const label = match[1]?.replace(/-/g, ' ').trim();
-    const slug = manufacturerDomainSlug(label ?? '');
-    if (label && !isGenericManufacturerSlug(slug) && !isGenericDomainManufacturerSlug(slug)) hints.push(label);
-  }
-  return hints;
-}
-
-function titleManufacturerHints(value: string): readonly string[] {
-  const hints: string[] = [];
-  const modelMatches = [...value.matchAll(/\b([A-Z][A-Za-z0-9&.-]{1,}(?:\s+[A-Z][A-Za-z0-9&.-]{1,}){0,2})\s+[A-Z]{2,}[-_ ]?[0-9][A-Z0-9._-]{2,}\b/g)];
-  for (const match of modelMatches) {
-    const hint = match[1]?.trim();
-    if (hint && !isGenericManufacturerSlug(manufacturerDomainSlug(hint))) hints.push(hint.toLowerCase());
-  }
-  return hints;
-}
-
-function isGenericManufacturerSlug(slug: string): boolean {
-  return slug.length < 2 || [
-    'www',
-    'support',
-    'docs',
-    'developer',
-    'manual',
-    'manuals',
-    'review',
-    'reviews',
-    'product',
-    'products',
-    'shop',
-    'store',
-    'home',
-    'assistant',
-  ].includes(slug);
-}
-
-function isGenericDomainManufacturerSlug(slug: string): boolean {
-  return [
-    'github',
-    'gitlab',
-    'bitbucket',
-    'sourceforge',
-    'readthedocs',
-    'githubio',
-    'pages',
-    'docs',
-  ].includes(slug);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function isOfficialOrVendorSource(reasons: readonly string[]): boolean {
-  return reasons.includes('official-vendor-domain') || reasons.includes('manufacturer-domain');
-}
-
-function deadlineExceeded(deadlineAt: number | undefined): boolean {
-  return typeof deadlineAt === 'number' && Date.now() >= deadlineAt;
-}
-
-function operationTimeout(deadlineAt: number | undefined, fallbackMs: number): number {
-  if (typeof deadlineAt !== 'number') return fallbackMs;
-  return Math.min(fallbackMs, Math.max(0, deadlineAt - Date.now()));
-}
-
-function hasIdentity(searchable: string, value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return false;
-  const compact = normalized.replace(/[\s_-]+/g, '');
-  const searchableCompact = searchable.replace(/[\s_-]+/g, '');
-  if (compact.length >= 4 && searchableCompact.includes(compact)) return true;
-  return searchable.includes(normalized);
-}
-
-function safeDomain(url: string): string | undefined {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return undefined;
-  }
-}
-
-async function yieldToEventLoop(): Promise<void> {
-  await sleep(0);
-}
-
-function gapRepairTags(request: KnowledgeSemanticGapRepairRequest): readonly string[] {
-  return uniqueStrings([
-    ...request.linkedObjects.flatMap((node) => [node.kind, node.title]),
-    ...request.sources.flatMap((source) => source.tags),
-  ]).slice(0, 12);
 }

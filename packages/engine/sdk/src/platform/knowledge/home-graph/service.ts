@@ -1,4 +1,9 @@
-import { knowledgeSourceCrawledNow } from '../store-record-representation.js';
+import { createKnowledgeExtractionOwner } from '../extraction-ownership.js';
+import type { KnowledgeIngestOwnership } from '../ingest-context.js';
+import { KnowledgeWebGapRepairHeldError } from '../semantic/web-gap-repair/types.js';
+import { registerGeneratedKnowledgeExtractionReferences } from '../source-structural-references.js';
+import { captureStrictRepairJson } from '../semantic/web-gap-repair/admission.js';
+import { knowledgeSourceCrawledNow, sameKnowledgeRecord } from '../store-record-representation.js';
 import { registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
 import { ConfigurationError, GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { ArtifactStore } from '../../artifacts/index.js';
@@ -131,7 +136,15 @@ export class HomeGraphService {
     return result;
   }
 
-  async ingestUrl(input: HomeGraphIngestUrlInput): Promise<HomeGraphIngestResult> {
+  async ingestUrl(input: HomeGraphIngestUrlInput, ownership: KnowledgeIngestOwnership = {}): Promise<HomeGraphIngestResult> {
+    const { signal, assertCurrent, onCommitted, deferSemanticEnrichment } = ownership;
+    const owned = !!(signal || assertCurrent || onCommitted || deferSemanticEnrichment);
+    const current = () => {
+      if (ownership.signal !== signal || ownership.assertCurrent !== assertCurrent || ownership.onCommitted !== onCommitted
+        || ownership.deferSemanticEnrichment !== deferSemanticEnrichment) throw new KnowledgeWebGapRepairHeldError('stale');
+      signal?.throwIfAborted(); assertCurrent?.();
+    };
+    current();
     this.requireAdmission('home-graph url ingestion');
     const { spaceId, installationId } = resolveHomeGraphSpace(input);
     const artifact = await this.artifactStore.create({
@@ -141,7 +154,8 @@ export class HomeGraphService {
         homeGraphSourceKind: 'url',
         requestedAt: Date.now(),
       }),
-    });
+    }, { signal, assertCurrent: current });
+    current();
     return this.ingestCreatedArtifact({
       spaceId,
       installationId,
@@ -155,7 +169,7 @@ export class HomeGraphService {
         ...(input.metadata ?? {}),
         homeGraphSourceKind: 'url',
       },
-    });
+    }, owned ? { ...ownership, signal, assertCurrent: current } : ownership);
   }
 
   async ingestNote(input: HomeGraphIngestNoteInput): Promise<HomeGraphIngestResult> {
@@ -484,15 +498,32 @@ export class HomeGraphService {
     readonly tags: readonly string[];
     readonly target?: HomeGraphKnowledgeTarget | undefined;
     readonly metadata: Record<string, unknown>;
-  }): Promise<HomeGraphIngestResult> {
+  }, ownership: KnowledgeIngestOwnership = {}): Promise<HomeGraphIngestResult> {
+    const owned = !!(ownership.signal || ownership.assertCurrent || ownership.onCommitted);
+    const extractionOwner = createKnowledgeExtractionOwner(ownership);
+    const assertOwned = extractionOwner.assertCurrent;
+    assertOwned();
+    // The repair consumer has no explicit target. Targeted linking requires its own
+    // edge-publication ownership and must not borrow this source receipt.
+    if (owned && input.target) throw new KnowledgeWebGapRepairHeldError('malformed');
     const sourceId = homeGraphSourceId(input.spaceId, input.metadata.homeGraphSourceKind as string, input.sourceUri ?? input.artifact.id);
     const canonicalUri = namespacedCanonicalUri(input.spaceId, 'source', input.sourceUri ?? input.artifact.id);
+    let published = false;
+    if (owned) {
+      const originalSource = this.store.getSource(sourceId), originalExtraction = this.store.getExtractionBySourceId(sourceId);
+      const original = captureStrictRepairJson({ source: originalSource, extraction: originalExtraction });
+      extractionOwner.retain(() => {
+        if (!published && (this.store.getSource(sourceId) !== originalSource || this.store.getExtractionBySourceId(sourceId) !== originalExtraction
+          || !sameKnowledgeRecord(captureStrictRepairJson({ source: this.store.getSource(sourceId), extraction: this.store.getExtractionBySourceId(sourceId) }), original))) throw new KnowledgeWebGapRepairHeldError('stale');
+      });
+    }
     const prepared = await prepareHomeGraphArtifactExtraction({
       store: this.store,
       artifactStore: this.artifactStore,
       reportBackgroundError: this.reportBackgroundError.bind(this),
-    }, sourceId, input.artifact, input.spaceId);
-    const source = await this.store.upsertSource(knowledgeSourceCrawledNow({
+    }, sourceId, input.artifact, input.spaceId, extractionOwner);
+    assertOwned();
+    const sourceInput = knowledgeSourceCrawledNow({
       id: sourceId,
       connectorId: HOME_GRAPH_CONNECTOR_ID,
       sourceType: input.sourceType,
@@ -500,20 +531,43 @@ export class HomeGraphService {
       sourceUri: input.sourceUri ?? input.artifact.sourceUri,
       canonicalUri,
       tags: uniqueStrings(input.tags),
-      status: 'indexed',
+      status: 'indexed' as const,
       artifactId: input.artifact.id,
       metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
         ...input.metadata,
         artifactMimeType: input.artifact.mimeType,
       }),
-    }));
+    });
+    let source: KnowledgeSourceRecord;
+    let extraction: KnowledgeExtractionRecord | undefined;
+    if (owned) {
+      const existing = this.store.getExtractionBySourceId(sourceId);
+      const generatedId = `hg-extract-${sourceId.replace(/^hg-src-/, '')}`;
+      const extractionId = existing?.id ?? generatedId;
+      await this.store.applyPreparedIngest({ sources: [sourceInput], extractions: prepared ? [{
+        id: extractionId, sourceId, artifactId: input.artifact.id, extractorId: prepared.extractorId,
+        format: prepared.format, title: prepared.title, summary: prepared.summary, excerpt: prepared.excerpt,
+        sections: prepared.sections, links: prepared.links, estimatedTokens: prepared.estimatedTokens, structure: prepared.structure,
+        metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, prepared.metadata),
+      }] : [], nodes: [], edges: [], issues: [] }, async () => {
+        assertOwned(); return { nodes: [], edges: [], issues: [], assertCurrent: assertOwned };
+      }, { signal: ownership.signal }, () => { published = true; ownership.onCommitted?.(sourceId); });
+      source = this.store.getSource(sourceId)!;
+      extraction = this.store.getExtractionBySourceId(sourceId) ?? undefined;
+      assertOwned();
+      registerGeneratedKnowledgeSourceReferences(this.store, source, { id: sourceId, canonicalUri,
+        ...(!input.sourceUri && !input.artifact.sourceUri && source.sourceUri === canonicalUri ? { sourceUri: canonicalUri } : {}) });
+      if (extraction?.id === generatedId) registerGeneratedKnowledgeExtractionReferences(this.store, source, extraction, generatedId);
+    } else source = await this.store.upsertSource(sourceInput);
     registerGeneratedKnowledgeSourceReferences(this.store, source, { id: sourceId, canonicalUri,
       ...(!input.sourceUri && !input.artifact.sourceUri && source.sourceUri === canonicalUri ? { sourceUri: canonicalUri } : {}) });
-    const extraction = await storeHomeGraphArtifactExtraction(this.store, source, input.artifact, input.spaceId, input.installationId, prepared);
+    if (!owned) extraction = await storeHomeGraphArtifactExtraction(this.store, source, input.artifact, input.spaceId, input.installationId, prepared);
+    assertOwned();
     const linked = input.target
       ? (await this.linkKnowledge({ knowledgeSpaceId: input.spaceId, sourceId: source.id, target: input.target })).edge
       : (await autoLinkHomeGraphSource({
-          signal: this.autoLinkController.signal,
+          signal: ownership.signal ? AbortSignal.any([this.autoLinkController.signal, ownership.signal]) : this.autoLinkController.signal,
+          ...(owned ? { shouldStop: () => { assertOwned(); return false; } } : {}),
           store: this.store,
           spaceId: input.spaceId,
           installationId: input.installationId,
@@ -521,7 +575,10 @@ export class HomeGraphService {
           ...(extraction ? { extraction } : {}),
           state: readHomeGraphState(this.store, input.spaceId),
         }))?.edge;
-    scheduleBackground(() => {
+    assertOwned();
+    // Owned repairs already run enrichment/promotion in their guarded caller.
+    // Do not detach a second publisher from the owner when returning its receipt.
+    if (!ownership.deferSemanticEnrichment) scheduleBackground(() => {
       void this.enrichAndImproveSource(source.id, input.spaceId).catch((error: unknown) => {
         this.reportBackgroundError('homegraph-ingest-enrich', error, {
           spaceId: input.spaceId,

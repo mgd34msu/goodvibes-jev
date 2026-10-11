@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation, knowledgeClockIso } from '../store-record-representation.js';
 import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import { exactKnowledgeIds, generatedFactSupportMetadata, type GeneratedFactWritePlanner } from './fact-support-write-plan.js';
 import type { KnowledgeStore } from '../store.js';
@@ -45,11 +46,11 @@ export function prepareSemanticSupersession(
     const writes = plans.map(({ node, supportingSourceIds, primarySourceId, supportKey }) => {
       const input: KnowledgeNodeUpsertInput = primarySourceId
         ? { ...node, sourceId: primarySourceId, metadata: semanticMetadata(spaceId, {
-          ...node.metadata, sourceId: primarySourceId, sourceIds: supportingSourceIds,
+          ...knowledgeRawRepresentation(node.metadata), sourceId: primarySourceId, sourceIds: supportingSourceIds,
           generatedFactSupport: generatedFactSupportMetadata(support.plans(supportKey!), node.metadata.generatedFactSupport),
-          detachedSourceIds: uniqueStrings([...readStringArray(node.metadata.detachedSourceIds), sourceId]), sourceDetachedAt: supersededAt,
+          detachedSourceIds: uniqueStrings([...readStringArray(node.metadata.detachedSourceIds), sourceId]), sourceDetachedAt: knowledgeClockIso(supersededAt),
         }) }
-        : { ...node, status: 'stale', metadata: { ...node.metadata, supersededAt, supersededInSpaceId: spaceId } };
+        : { ...node, status: 'stale', metadata: { ...knowledgeRawRepresentation(node.metadata), supersededAt: knowledgeClockIso(supersededAt), supersededInSpaceId: spaceId } };
       return { node, primarySourceId, input };
     });
     const activation = await store.prepareNodeWrites(writes.map((write) => write.input), { requireAccepted: true, assertCurrent });

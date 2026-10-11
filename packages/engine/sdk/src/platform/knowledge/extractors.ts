@@ -1,3 +1,4 @@
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from './extraction-ownership.js';
 import { extname } from 'node:path';
 import type { ArtifactDescriptor, ArtifactRecord } from '../artifacts/types.js';
 import { guessMimeType } from '../artifacts/types.js';
@@ -123,19 +124,21 @@ function decodeBuffer(buffer: Buffer): string {
   return cleanText(buffer.toString('utf-8'));
 }
 
-async function extractHtml(buffer: Buffer): Promise<KnowledgeExtractionResult> {
+async function extractHtml(buffer: Buffer, owner: KnowledgeExtractionOwner): Promise<KnowledgeExtractionResult> {
   const html = buffer.toString('utf-8');
   let readable: ReadableHtmlExtraction | null;
   let readabilityWarning: string | undefined;
   let lightweight = false;
   try {
-    readable = await extractReadableHtml(html);
+    readable = await extractReadableHtml(html, owner);
     if (!readable) {
+      owner.assertCurrent();
       const availability = await describeHtmlReadabilityAvailability();
+      owner.assertCurrent();
       if (!availability.available) {
         lightweight = true;
         readabilityWarning = `Used the lightweight HTML fallback: ${availability.reason ?? 'DOM parser unavailable'}`;
-        readable = await extractLightweightReadableHtml(html);
+        readable = await extractLightweightReadableHtml(html, owner);
       }
     }
   } catch (error) {
@@ -144,7 +147,7 @@ async function extractHtml(buffer: Buffer): Promise<KnowledgeExtractionResult> {
     lightweight = true;
     readabilityWarning = `DOM parsing failed; used lightweight HTML fallback: ${summarizeError(error)}`;
     logger.debug('Knowledge extraction: DOM parsing failed; using lightweight HTML parser', { error: summarizeError(error) });
-    readable = await extractLightweightReadableHtml(html);
+    readable = await extractLightweightReadableHtml(html, owner);
   }
   const extractorId = lightweight ? 'html' : 'html-readability';
   const extractionPath = lightweight ? 'lightweight-html' : 'readability';
@@ -591,11 +594,13 @@ export async function readKnowledgeArtifactJudgmentSource(
 export async function extractKnowledgeArtifact(
   artifact: Pick<ArtifactRecord, 'id' | 'mimeType' | 'filename'>,
   buffer: Buffer,
+  owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner(),
 ): Promise<KnowledgeExtractionResult> {
+  owner.assertCurrent();
   const format = chooseFormat(artifact);
   switch (format) {
     case 'html':
-      return await extractHtml(buffer);
+      return await extractHtml(buffer, owner);
     case 'markdown':
       return extractTextLike(buffer, 'markdown', 'markdown');
     case 'json':
@@ -620,7 +625,7 @@ export async function extractKnowledgeArtifact(
       // terminal failure; do NOT wrap it in the office text fallback. Decoding PDF binary
       // as text yields garbage and would swallow 'PDF extraction failed', which callers
       // rely on to know OCR / a dedicated PDF provider is required.
-      return extractPdf(buffer);
+      return extractPdf(buffer, owner);
     case 'text':
       return extractTextLike(buffer, 'text', 'text');
     default:

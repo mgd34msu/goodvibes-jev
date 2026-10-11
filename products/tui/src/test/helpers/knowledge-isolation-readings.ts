@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
 /** Exact authored readings for the Isolation Home synthetic snapshot only.
@@ -16,6 +17,22 @@ interface FixtureInput {
 }
 
 export function knowledgeIsolationAnswer(name: string, state: unknown) {
+  // Exact states observed from this consumer's authored Isolation Home gap.
+  // Owning entity/device selection does not invent missing extracted evidence.
+  if (name === 'repairSubjectSelected') {
+    for (const reference of ['subject-1', 'subject-2']) {
+      const expected = { reference, candidate: reference,
+        candidates: [
+          { title: 'Isolation Light', kind: 'ha_entity', aliases: ['Isolation Light'], identity: {}, summary: 'area area-lab - device device-light', reference: 'subject-1' },
+          { title: 'Isolation Light', kind: 'ha_device', aliases: ['Isolation Light'], identity: {}, summary: 'area area-lab', reference: 'subject-2' },
+        ],
+        query: 'where is the isolation light? Matching sources have no extracted evidence available for verification.',
+        objectProfiles: [{ subjectKinds: ['service', 'provider', 'capability'] }, { subjectKinds: ['ha_device'] },
+          { subjectKinds: ['ha_entity'] }, { subjectKinds: ['ha_integration'] }],
+      };
+      if (isDeepStrictEqual(state, expected)) return noulAnswer(0.99);
+    }
+  }
   const input = state as FixtureInput;
   if (name === 'readable' && input.sample === 'Home Assistant entity, device, area, automation, script, scene, label, and integration snapshot.') return noulAnswer(0.99);
   const deviceReadings: Readonly<Record<string, number>> = {

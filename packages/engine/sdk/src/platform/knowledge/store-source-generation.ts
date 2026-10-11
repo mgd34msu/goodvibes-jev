@@ -23,6 +23,11 @@ export function readKnowledgeSourceSnapshot(
   const result = 'id' in selector
     ? sqlite.exec('SELECT * FROM knowledge_sources WHERE id = ? LIMIT 1', [selector.id])
     : sqlite.exec('SELECT * FROM knowledge_sources WHERE canonical_uri = ? LIMIT 1', [selector.canonicalUri]);
+  return knowledgeSourceSnapshotFromRows(result);
+}
+
+/** Same full-row mapping for isolated reads and private synchronous guard reads. */
+export function knowledgeSourceSnapshotFromRows(result: ReturnType<SQLiteStore['exec']>): KnowledgeSourceSnapshot {
   const row = result[0];
   const values = row?.values[0];
   if (!row || !values) return { source: null, generation: null, raw: null };

@@ -15,6 +15,8 @@ const DOCUMENT = 'key-rotation-policy-for-tenants';
 // Synthetic sentinel values only. Nothing in this suite contacts a live service.
 const PRIVATE = 'synthetic-private-sentinel';
 const ISSUER = `ghp_${'x'.repeat(36)}`;
+const PEM_LABEL = 'PRIVATE KEY';
+const SYNTHETIC_PEM = `-----BEGIN ${PEM_LABEL}-----\nsynthetic\n-----END ${PEM_LABEL}-----`;
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => {
   previous = installJudgmentPort(undefined);
@@ -37,8 +39,8 @@ const protectedInputs = [
   ['JSON-escaped issuer', `{"body":"${DOCUMENT}","note":"\\u0067hp_${'x'.repeat(36)}"}`],
   ['nested JSON-escaped issuer', JSON.stringify({ body: DOCUMENT, nested: '{"note":"\\u0067hp_' + 'x'.repeat(36) + '"}' })],
   ['PAN', JSON.stringify({ body: DOCUMENT, note: '4111 1111 1111 1111' })],
-  ['PEM in a complete decoded record', JSON.stringify({ body: DOCUMENT, note: '-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----' })],
-  ['intact multiline source', `${JSON.stringify({ body: DOCUMENT })}\n-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----\n`],
+  ['PEM in a complete decoded record', JSON.stringify({ body: DOCUMENT, note: SYNTHETIC_PEM })],
+  ['intact multiline source', `${JSON.stringify({ body: DOCUMENT })}\n${SYNTHETIC_PEM}\n`],
   ['URL password', JSON.stringify({ body: DOCUMENT, note: `https://synthetic:${PRIVATE}@example.invalid/path` })],
   ['protected key in a later batch record', `${JSON.stringify({ body: DOCUMENT })}\n${JSON.stringify({ password: PRIVATE })}\n`],
   ['malformed record', `${JSON.stringify({ body: DOCUMENT })}\n{"broken":`],

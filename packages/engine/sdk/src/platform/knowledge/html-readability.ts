@@ -1,3 +1,4 @@
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from './extraction-ownership.js';
 /** Structural HTML parsing is optional; all main-content and title choices use Jev. */
 import { assertJudgmentInput } from '../gate/judgment-input.js';
 import { decodeCharacterReferences, pageTitle } from '../tools/fetch/page-blocks.js';
@@ -62,16 +63,18 @@ function truncateHtml(html: string): string {
 }
 
 /** Null means no main content, or no optional DOM parser. Judgment holds always throw. */
-export async function extractReadableHtml(html: string): Promise<ReadableHtmlExtraction | null> {
+export async function extractReadableHtml(html: string, owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner()): Promise<ReadableHtmlExtraction | null> {
+  owner.assertCurrent();
   assertJudgmentInput(html);
   const loaded = await loadHtmlReadabilityToolchain();
+  owner.assertCurrent();
   if (!loaded.available) return null;
   const dom = new loaded.toolchain.JSDOM(truncateHtml(html), { contentType: 'text/html', includeNodeLocations: false, pretendToBeVisual: false });
   try {
     const document = dom.window.document;
     document.querySelectorAll('script, style, noscript, iframe, template, svg, canvas').forEach((node) => node.remove());
     const metadataTitles = Array.from(document.querySelectorAll('meta[property="og:title"], meta[name="twitter:title"]'), (node) => node.getAttribute('content') ?? '');
-    const selected = await selectHtmlContent(document.documentElement.outerHTML, document.title, metadataTitles);
+    const selected = await selectHtmlContent(document.documentElement.outerHTML, document.title, metadataTitles, owner);
     if (!selected) return null;
     const byline = normalizeText(document.querySelector('meta[name="author"]')?.getAttribute('content'));
     const siteName = normalizeText(document.querySelector('meta[property="og:site_name"]')?.getAttribute('content'));
@@ -86,10 +89,11 @@ export async function extractReadableHtml(html: string): Promise<ReadableHtmlExt
 }
 
 /** Parser fallback only: identical registered decisions and strict hold semantics. */
-export async function extractLightweightReadableHtml(html: string): Promise<ReadableHtmlExtraction | null> {
+export async function extractLightweightReadableHtml(html: string, owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner()): Promise<ReadableHtmlExtraction | null> {
+  owner.assertCurrent();
   assertJudgmentInput(html);
   const markup = truncateHtml(html).replace(/<(script|style|noscript|iframe|template|svg|canvas)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
-  const selected = await selectHtmlContent(markup, pageTitle(markup));
+  const selected = await selectHtmlContent(markup, pageTitle(markup), [], owner);
   if (!selected) return null;
   const links = uniqueText(Array.from(markup.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi), (match) => decodeCharacterReferences(match[1] ?? '')), 80);
   return { ...selected, length: selected.textContent.length, links };

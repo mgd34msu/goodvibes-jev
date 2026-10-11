@@ -1,4 +1,4 @@
-import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
+import type { JudgmentPort, Questions } from '@goodvibes-jev/judgment/decisions';
 import { JudgmentPortMissingError, judgmentPortInstallation } from './judgment-port.js';
 
 /** A composition-owned observation. It is never execution permission. */
@@ -8,6 +8,16 @@ export interface JudgmentAuthorityFrame {
   readonly assertCurrent: () => void;
 }
 export interface JudgmentReadingOptions {
+  /** Bind complete response admission to the original requested schema before asking. */
+  readonly prepareResultCapture?: ((questions: Questions) => {
+    readonly questions: Questions;
+    readonly capture: <T extends Awaited<ReturnType<JudgmentPort['ask']>>>(result: T) => T;
+    readonly assertCurrent: () => void;
+  }) | undefined;
+  /** Admit the complete original and return a detached, immutable response for consumers. */
+  readonly captureResult?: (<T extends Awaited<ReturnType<JudgmentPort['ask']>>>(result: T) => T) | undefined;
+  /** Site-owned complete ORIGINAL response admission before decision-id access or retention. */
+  readonly assertResult?: ((result: unknown) => void) | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly assertCurrent?: (() => void) | undefined;
 }
@@ -103,7 +113,7 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
   const ask = base.ask, health = base.health, recorder = base.recorder;
   const ownedAsk = ask.bind(base);
   const recordReadings = recorder?.recordReadings, recordAction = recorder?.recordAction;
-  const callerCurrent = options.assertCurrent;
+  const callerCurrent = options.assertCurrent, assertResult = options.assertResult, captureResult = options.captureResult, prepareResultCapture = options.prepareResultCapture;
   let consumed = false;
   const installationCurrent = () => {
     if (installation.signal.aborted || binding.controller.signal.aborted || owners.get(base) !== binding
@@ -137,17 +147,38 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
     ...(health ? { health: () => { current(); const result = health.call(base); current(); return result; } } : {}),
     async ask(request) {
       current();
-      const requestSignal = request.signal;
+      // Scoped strict consumers bind the ORIGINAL data property before any
+      // property read or deferred dispatch. Materialize descriptors, not a
+      // spread of a borrowed request that may grow accessors while awaiting.
+      const descriptors = prepareResultCapture ? Object.getOwnPropertyDescriptors(request) : undefined;
+      if (descriptors && (!descriptors.questions || !('value' in descriptors.questions)
+        || !descriptors.questions.enumerable || Object.values(descriptors).some(d => !('value' in d)))) throw new JudgmentAuthorityRetiredError();
+      const input = descriptors ? Object.fromEntries(Object.entries(descriptors).filter(([, d]) => d.enumerable).map(([key, d]) => [key, d.value])) as typeof request : request;
+      const originalQuestions = input.questions;
+      const resultFrame = prepareResultCapture?.(originalQuestions);
+      const dispatchedQuestions = (resultFrame?.questions ?? originalQuestions) as typeof request.questions;
+      let ownedRequest: typeof request | undefined;
+      const questionsCurrent = (value: typeof request, expected: Questions) => {
+        const descriptor = Object.getOwnPropertyDescriptor(value, 'questions');
+        if (!descriptor || !('value' in descriptor) || !descriptor.enumerable || descriptor.value !== expected) throw new JudgmentAuthorityRetiredError();
+      };
+      const requestSignal = input.signal;
       const active = requestSignal ? AbortSignal.any([signal, requestSignal]) : signal;
-      const check = () => { if (active.aborted) throw new JudgmentAuthorityRetiredError(); current(); };
-      const beforeAttempt = request.beforeAttempt;
-      const beforeAsyncAttempt = request.beforeAsyncAttempt;
-      const assertLogCurrent = request.assertLogCurrent;
-      const onRetry = request.onRetry;
+      const check = () => {
+        if (active.aborted) throw new JudgmentAuthorityRetiredError();
+        if (resultFrame) { questionsCurrent(request, originalQuestions); if (ownedRequest) questionsCurrent(ownedRequest, dispatchedQuestions); }
+        current(); synchronous(resultFrame?.assertCurrent);
+        // Caller/source checks are arbitrary callbacks; validate again afterward.
+        if (resultFrame) { questionsCurrent(request, originalQuestions); if (ownedRequest) questionsCurrent(ownedRequest, dispatchedQuestions); }
+      };
+      const beforeAttempt = input.beforeAttempt;
+      const beforeAsyncAttempt = input.beforeAsyncAttempt;
+      const assertLogCurrent = input.assertLogCurrent;
+      const onRetry = input.onRetry;
       check();
       const result = await interrupt(Promise.resolve().then(() => {
         check();
-        const ownedRequest = { ...request, signal: active,
+        ownedRequest = { ...input, questions: dispatchedQuestions, signal: active,
           beforeAttempt: () => { check(); synchronous(beforeAttempt); check(); },
           beforeAsyncAttempt: async () => { check(); await beforeAsyncAttempt?.(); check(); },
           assertLogCurrent: () => { check(); synchronous(assertLogCurrent); check(); },
@@ -157,10 +188,18 @@ function capture(site: string, options: JudgmentReadingOptions): JudgmentPortCap
         return ownedAsk(ownedRequest);
       }), active);
       check();
-      const decisionId = result.decisionId;
+      // Admission runs on the untouched provider object. Never evaluate an
+      // accessor or retain a site-rejected decision identifier first.
+      assertResult?.(result);
+      check();
+      const admitted = resultFrame ? resultFrame.capture(result) : captureResult ? captureResult(result) : result;
+      check();
+      const decision = Object.getOwnPropertyDescriptor(admitted, 'decisionId');
+      if (decision?.get || decision?.set || (decision?.value !== undefined && typeof decision.value !== 'string')) throw new JudgmentAuthorityRetiredError();
+      const decisionId = decision?.value as string | undefined;
       check();
       if (decisionId !== undefined) decisionChecks.set(decisionId, check);
-      return result;
+      return admitted;
     },
   };
   current();

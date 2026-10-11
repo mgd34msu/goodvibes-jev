@@ -1,4 +1,4 @@
-import { knowledgeDecisionStamp } from './store-record-representation.js';
+import { knowledgeDecisionStamp, knowledgeRawRepresentation } from './store-record-representation.js';
 import { captureKnowledgeSourceReferences } from './source-structural-references.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -84,7 +84,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
     if (draft.restoration) { draft.restoration(); return record; }
     if (draft.authority) return record;
     if (observation && existing && (input.status ?? 'active') === existing.status && unchanged(draft)) return existing;
-    if (observation) return retainKnowledgeNodeRecord({ ...record, status: input.status ?? 'active', metadata: { ...record.metadata, nodeActivation: undefined,
+    if (observation) return retainKnowledgeNodeRecord({ ...record, status: input.status ?? 'active', metadata: { ...knowledgeRawRepresentation(record.metadata), nodeActivation: undefined,
       nodeObservation: { version: 1, origin: observation.origin },
       reviewProvenance: knowledgeDecisionStamp(draft.now, { state: 'explicit', reason: `Observed ${observation.origin} projection; untrusted origin retained; no synthesized claim or operator review` }) } }, record);
     if (input.status === 'stale' || input.status === 'draft' || (existing?.status === 'stale' && input.status !== 'active')) {
@@ -92,7 +92,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
         throw new Held('replacement-requires-review');
       }
       if (existing?.status === record.status && unchanged(draft) && record.metadata.reviewProvenance !== undefined) return existing;
-      return retainKnowledgeNodeRecord({ ...record, status: input.status ?? 'stale', metadata: { ...record.metadata, nodeActivation: undefined,
+      return retainKnowledgeNodeRecord({ ...record, status: input.status ?? 'stale', metadata: { ...knowledgeRawRepresentation(record.metadata), nodeActivation: undefined,
         reviewProvenance: knowledgeDecisionStamp(draft.now, { state: input.status === 'draft' ? 'pending-review' : 'explicit', reason: `Explicit non-serving status '${input.status ?? 'stale'}'` }) } }, record);
     }
     const receipt = existing?.metadata.nodeActivation;
@@ -117,7 +117,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
       ? { ...measured, outcome: 'pending-review' as const, reason: 'owner-confidence-floor' as const } : measured;
     if (reading.outcome !== 'accepted' && (draft.existing?.status === 'active' || options.requireAccepted)) throw new Held(reading.reason === 'missing-evidence' && draft.existing?.metadata.nodeObservation !== undefined ? 'observation-revalidation' : reading.reason ?? 'uncertain');
     const accepted = reading.outcome === 'accepted';
-    const record = retainKnowledgeNodeRecord({ ...draft.record, status: accepted ? 'active' : 'draft', metadata: { ...draft.record.metadata,
+    const record = retainKnowledgeNodeRecord({ ...draft.record, status: accepted ? 'active' : 'draft', metadata: { ...knowledgeRawRepresentation(draft.record.metadata),
       ...(!draft.preserveObservation ? { nodeObservation: undefined } : {}),
       reviewProvenance: knowledgeDecisionStamp(draft.now, { state: accepted ? 'auto-accepted' : 'pending-review',
         reason: accepted ? 'Settled serving-without-review judgment; untrusted origin retained; not an operator review'

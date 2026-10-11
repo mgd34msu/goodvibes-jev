@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation } from '../store-record-representation.js';
 import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import type { KnowledgeStore } from '../store.js';
@@ -54,7 +55,7 @@ export async function recoverNoRepairerTasks(store: KnowledgeStore, spaceId: str
             confidence: gap.confidence,
             sourceId: gap.sourceId,
             metadata: {
-              ...gap.metadata,
+              ...knowledgeRawRepresentation(gap.metadata),
               repairStatus: 'open',
               repairReason: 'Semantic gap repairer is now configured; retry is allowed.',
               nextRepairAttemptAt: undefined,

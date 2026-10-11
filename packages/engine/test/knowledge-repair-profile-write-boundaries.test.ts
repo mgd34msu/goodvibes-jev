@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,7 @@ afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice
 type State = { category?: { title: string }; candidate?: { text?: string }; text?: string; fact?: { title: string; value?: unknown; evidence?: unknown } };
 function readings(mode: 'yes' | 'uncertain' | 'unsupported' = 'yes', values: readonly (readonly [string, string])[] = [[display, first], [ports, last]]) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state));
     const item = state as State;
     if (name === 'wanted') return noulAnswer(values.some(([category]) => category === item.category?.title) ? 0.99 : 0.01);
     if (name === 'selected') return noulAnswer(values.some(([category, value]) => category === item.category?.title && value === item.candidate?.text) ? 0.99 : 0.01);

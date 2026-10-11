@@ -1,3 +1,4 @@
+import { repairSubjectFixtureReading } from './_helpers/repair-subject-fixture-readings.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -101,6 +102,7 @@ describe('repair operation generated-reference scope', () => {
     const graph = () => JSON.stringify({ facts: item.store.listNodes().filter((node) => node.kind === 'fact'), edges: item.store.listEdges() });
     let atHold = '';
     const fake = fakePort((name, question, state) => {
+      if (name === 'repairSubjectSelected') return noulAnswer(repairSubjectFixtureReading(state, [['AC-7', 0.99]]));
       if (name === 'authority') {
         if ((state as { source?: { title?: string } }).source?.title !== 'AC-7 reference') throw new Error('Unexpected authority fixture source');
         return choiceAnswer(question, 'official-vendor', 0.99);

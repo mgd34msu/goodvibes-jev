@@ -1,8 +1,8 @@
 # Explicit Telegram delegated intake and owner review
 
-Status: source-integrated first stage of THE-105, not completed work execution.
-No provider, credentials, live grant or live retention policy was changed in its
-qualification. Nonselected Telegram routes keep their existing behavior.
+Scope: delegated intake, with work execution governed by a separate contract.
+Nonselected Telegram routes keep their existing behavior. Offline fixtures need
+no provider, credentials, live grant or live retention-policy changes.
 
 ## Real entry and owner commands
 
@@ -117,13 +117,13 @@ Repeated calls use the same in-process provider message identity. Restart keeps
 selected routes held without reconstructing from broker text or persisted receipt.
 The receipt remains an honest record of acceptance when its original is gone.
 
-## Remaining THE-105 work
+## Transformation and execution boundary
 
-This is the first usable delegated-intake stage. Linking reviewed external input
-to a scoped non-owner native work proposal and actual execution still requires
-its own explicit approved transformation/derived-record and execution contract.
-Owner native capture, evaluator semantics, settlement, Slack provider composition
-and public search are outside this change. No exactly-once execution claim is made.
+Linking reviewed external input to a scoped non-owner native work proposal and
+actual execution requires its own explicit approved transformation/derived-record
+and execution contract. Owner native capture, evaluator semantics, settlement,
+Slack provider composition and public search are outside this intake contract.
+Intake does not establish exactly-once execution.
 
 ## Offline qualification
 

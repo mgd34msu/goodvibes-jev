@@ -19,6 +19,29 @@ describe('exact synthetic knowledge isolation readings', () => {
     expect(() => knowledgeIsolationAnswer('made-up', { query })).toThrow();
     expect(() => knowledgeIsolationAnswer('route', { provider: 'openai', model_id: 'test' })).toThrow();
   });
+  test('repair subject readings accept only the exact observed gap and complete fixture candidates', () => {
+    const fixture = (reference: string) => ({ reference, candidate: reference,
+      candidates: [
+        { title: 'Isolation Light', kind: 'ha_entity', aliases: ['Isolation Light'], identity: {}, summary: 'area area-lab - device device-light', reference: 'subject-1' },
+        { title: 'Isolation Light', kind: 'ha_device', aliases: ['Isolation Light'], identity: {}, summary: 'area area-lab', reference: 'subject-2' },
+      ], query: `${query} Matching sources have no extracted evidence available for verification.`,
+      objectProfiles: [{ subjectKinds: ['service', 'provider', 'capability'] }, { subjectKinds: ['ha_device'] },
+        { subjectKinds: ['ha_entity'] }, { subjectKinds: ['ha_integration'] }],
+    });
+    for (const reference of ['subject-1', 'subject-2']) expect(knowledgeIsolationAnswer('repairSubjectSelected', fixture(reference))).toEqual({ type: 'noul', noul: 0.99 });
+    const original = fixture('subject-1');
+    for (const unknown of [
+      { ...original, query: 'Where is another light?' },
+      { ...original, candidate: 'subject-2' },
+      fixture('subject-3'),
+      { ...original, candidates: original.candidates.slice(0, 1) },
+      { ...original, candidates: original.candidates.map(candidate => ({ ...candidate, title: 'Other light' })) },
+      { ...original, candidates: original.candidates.map(candidate => ({ ...candidate, summary: 'Different evidence' })) },
+      { ...original, objectProfiles: [] },
+      { ...original, additionalAuthority: true },
+    ]) expect(() => knowledgeIsolationAnswer('repairSubjectSelected', unknown)).toThrow();
+    expect(() => knowledgeIsolationAnswer('route', original)).toThrow();
+  });
   test('device readings require the exact fixture identity', () => {
     expect(knowledgeIsolationAnswer('batteryApplicable', { subject: { kind: 'ha_device', title: 'Isolation Light', homeAssistant: { objectId: 'device-light' } } })).toEqual({ type: 'noul', noul: 0.01 });
     expect(() => knowledgeIsolationAnswer('batteryApplicable', { subject: { kind: 'ha_device', title: 'Isolation Light', homeAssistant: { objectId: 'other-device' } } })).toThrow();

@@ -99,17 +99,17 @@ that shared view under a reentrancy guard; stale elastic-pool probes cannot admi
 both graphs past the cap. Current ACP ownership is counted once. Standalone
 managers without this optional composition retain their existing behavior.
 
-## Scope of this checkpoint
+## Wire scope
 
-This supports existing native work. Creation/claim intake and the ordinary
-Agent/TUI conversation path are not converted by these wire methods. Product
-controls consume the client in a separate change. There is no general external
-effect reconciler, automatic adoption of historical authority, or engine-union
-security clearance. Focused fixtures exercise actual paired storage, native
+This supports existing native work. These wire methods do not create or claim
+intake, or convert the ordinary Agent/TUI conversation path. There is no general
+external effect reconciler or automatic adoption of historical authority.
+Wire fixtures do not establish engine-union security clearance. Focused fixtures
+exercise actual paired storage, native
 scope, durable runner, recorded admission and the production REST/WS dispatch.
 
 A later attempt also works when the project has not ignored `.goodvibes/`:
 Git's raw nested-worktree directory entry is excluded at the known runtime root
 before file-path validation. Traversal, repeated separators, lookalike roots and
-malformed ordinary inputs keep the existing strict refusal. The regression was
-observed failing before this narrow change and passing afterward.
+malformed ordinary inputs keep the existing strict refusal. Regression controls
+must preserve both valid nested-worktree reuse and these refusal boundaries.

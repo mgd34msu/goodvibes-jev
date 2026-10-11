@@ -1,6 +1,7 @@
-# Autonomous tool admission vertical (THE-118)
+# Autonomous tool admission vertical
 
-Status: reviewed, tested draft integration checkpoint; hosted CI and remaining product migration are separate gates. This is the primary orchestrator path, not a claim that all product callers are autonomous.
+Scope: the primary orchestrator path. Each product caller must establish its own
+autonomous admission binding.
 
 ## Shared entry point
 
@@ -27,14 +28,14 @@ The public selector captures borrowed binding, evidence, choices, state and call
 
 The source claim protects duplicate delivery within this permission runtime. It is not cross-process exactly-once execution or a durable crash-recovery queue; contract start idempotency has its own tracked owner. Claimed sources are not evicted into renewed authority. Claim/deferral capacity exhaustion is explicit. Deferral does not authorize delayed execution or silently subscribe to an invented condition.
 
-The retained `checkDetailed`/`check` API and old duck-typed embedding managers remain compatibility callers. Their callback-era fixtures are labelled explicitly; autonomous executor fixtures separately preserve exact-command case/whitespace scope, same-class isolation, live deletion and post-decision revocation. External native-work criteria-array provenance beyond the existing contract source records, nested tool wrappers, sandbox/PTY prompts, settings capability consumption and other product-specific admission callers still require migration to the common current claim. This first intercepted-tool vertical does not prove those callers, native inbox dispatch, provider calibration or live deployment.
+The retained `checkDetailed`/`check` API and old duck-typed embedding managers remain compatibility callers. Their callback-era fixtures are labelled explicitly; autonomous executor fixtures separately preserve exact-command case/whitespace scope, same-class isolation, live deletion and post-decision revocation. External native-work criteria-array provenance beyond the existing contract source records, nested tool wrappers, sandbox/PTY prompts, settings capability consumption and other product-specific callers each require a binding to the common current claim. Intercepted-tool controls alone do not establish those bindings, native inbox dispatch, provider calibration or live deployment.
 
 The [Agent main-conversation READ adoption](agent-read-autonomous-admission.md)
-is a bounded subsequent consumer: it binds actual canonical/alias subjects and
-the construction-owned manager, gathers non-secret/requested-scope evidence
-before this same decision, and consumes current proof through the real wrappers
-and byte reader. Its private execution lease does not change raw legacy callback
-authority or migrate the outstanding settings and non-read wrappers.
+is a bounded consumer: it binds actual canonical/alias subjects and the
+construction-owned manager, gathers non-secret/requested-scope evidence before
+this same decision, and consumes current proof through the real wrappers and
+byte reader. Its private execution lease does not change raw legacy callback
+authority or establish admission for non-read wrappers.
 
 No source summary, old approval token, arbitrary model-generated prose, stale receipt or unknown continuation grants execution. Protected input is rejected locally before preparation/model access. Tests intercept every tool body and inject all model/transport responses; no fixture executes a shell payload or contacts a provider.
 

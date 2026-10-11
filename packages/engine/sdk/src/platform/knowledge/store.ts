@@ -1,4 +1,4 @@
-import { readKnowledgeRecordSnapshot, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
+import { KnowledgeRecordAdmissionHeldError, knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
 import { captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
 import { JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { createNativeCiContinuationTable, validateNativeCiContinuationTable } from './store-native-ci-continuation.js';
@@ -8,7 +8,7 @@ import { migrateNativeWorkSettlementTable, validateNativeWorkSettlementTable, cr
 import type { NativeWorkExecutionStorage } from '../workflow/work-ledger/native-execution-types.js';
 import { createKnowledgeWorkLedgerStorage, createWorkLedgerTable, validateWorkLedgerTable, migrateWorkLedgerTableToVersion2, type KnowledgeWorkLedgerStorage } from './store-work-ledger.js';
 import { randomUUID } from 'node:crypto';
-import { KnowledgeSourcePublicationHeldError, readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
+import { KnowledgeSourcePublicationHeldError, knowledgeSourceSnapshotFromRows, readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
 import { applyKnowledgeImport, type KnowledgeImportInput, type KnowledgeImportReceipt, type PrepareKnowledgeImportGraph } from './store-import.js';
 import { prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow, findKnowledgeEdge } from './store-edge-writes.js';
 import { snapshotNodeInput } from './activation/projection.js';
@@ -18,7 +18,7 @@ import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPrepare
 export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
 import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
-import { SQLiteStore } from '../state/sqlite-store.js';
+import { SQLiteStore, SQLiteObservationRetiredError } from '../state/sqlite-store.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -440,12 +440,23 @@ export class KnowledgeStore {
 
   /** Call init() before reading a detached snapshot of the actual stored row. */
   getSourceSnapshot(selector: { readonly id: string } | { readonly canonicalUri: string }): KnowledgeSourceSnapshot {
-    return this.sqlite.readPersisted((db) => readKnowledgeSourceSnapshot(db, selector));
+    return knowledgeSourceSnapshotFromRows('id' in selector
+      ? this.sqlite.readPersistedRow('knowledge_sources', 'id', selector.id)
+      : this.sqlite.readPersistedRow('knowledge_sources', 'canonical_uri', selector.canonicalUri));
+  }
+
+  /** Batch only synchronous guard reads, never evidence across an await/write. */
+  assertRecordSnapshotFrame(assertion: () => undefined): void {
+    try { this.sqlite.assertPersistedReadFrame(assertion); }
+    catch (error) {
+      if (error instanceof SQLiteObservationRetiredError) throw new KnowledgeRecordAdmissionHeldError('stale');
+      throw error;
+    }
   }
 
   /** Detached complete SQL row for semantic admission; numeric views confer no authority. */
   getRecordSnapshot(kind: 'node' | 'extraction', id: string): KnowledgeRecordSnapshot {
-    return this.sqlite.readPersisted((db) => readKnowledgeRecordSnapshot(db, kind, id));
+    return knowledgeRecordSnapshotFromRows(kind, this.sqlite.readPersistedRow(kind === 'node' ? 'knowledge_nodes' : 'knowledge_extractions', 'id', id));
   }
 
   /** Opaque full-row entity fingerprint. Possessing it does not grant authority. */

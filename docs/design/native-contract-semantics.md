@@ -1,6 +1,6 @@
 # Native contract semantic ownership
 
-Status: engine checkpoint, now composed with durable admission and PR56 input authority as described in `native-durable-contract-composition.md`. Native host/product entry points remain host-owned. This code does not publish a product cutover or provide a transactional claim for arbitrary external effects.
+Durable admission and PR56 input authority compose as described in `native-durable-contract-composition.md`. Native host/product entry points remain host-owned. Engine semantics do not provide a transactional claim for arbitrary external effects.
 
 ## Shared evaluator
 

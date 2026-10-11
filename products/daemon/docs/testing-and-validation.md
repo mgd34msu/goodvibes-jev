@@ -84,7 +84,7 @@ files into isolated homes and foreign cwd without the checkout/node_modules.
 It checks the real executable; local scripted services remain synthetic fixtures.
 The artifact set must stay together. These scripts are repository tooling,
 excluded from the packed Bun script package, and publish nothing.
-See [native packaging](../../../docs/audit/daemon-native-packaging.md).
+See [native packaging](cli-and-package-contracts.md#native-build-and-artifact-verification).
 
 ## Workspace CI and acceptance
 
@@ -122,7 +122,7 @@ product-owned `CHANGELOG.md` and explicit `--date YYYY-MM-DD` instead of
 `--no-changelog`. It does not commit, tag, publish, deploy, choose an updater feed
 or settle the separate root/product release policy. Inspect the diff in a clean,
 exclusive checkout: ordinary write rollback is not a crash-safe concurrent transaction.
-See [release preparation boundaries](../../../docs/audit/daemon-release-preparation.md).
+See [release preparation boundaries](cli-and-package-contracts.md#explicit-release-preparation).
 
 These operator guides were reconstructed from pinned original responsibilities
 and the current source. This page is a validation procedure, not a claim that lost

@@ -1,8 +1,7 @@
 # Agent SETTINGS admission
 
-Status: locally qualified candidate, awaiting hosted review/CI. This is
-the separately reviewed SETTINGS follow-up to the frozen Agent READ slice.
-It has not been published as part of the four-line HTTP auth repair in PR #201.
+Scope: SETTINGS admission through the Agent, shared permission owner and serving
+config/auth owners. READ admission has its own consumer contract.
 
 ## Scope and existing contracts
 
@@ -171,125 +170,43 @@ The Agent explanation path checks mechanical shape and states that current
 recorded admission is still required. It performs no semantic request, grants
 no authority and does not treat a pending promise as a denial string.
 
-## Qualification record
+## Validation requirements
 
-The latest runtime/API checkpoint is `97ed8774`, tree `9b64b6cf`, composed on
-actual main `5dae9807`, tree `9ef62a08`, after PR #218 removed the optional
-Verdaccio lane. Exact-tree review preserves all 24 removal-change paths,
-including all 15 deletions. The corrected SETTINGS source is independently
-reviewed; the final generated API adds 16 exports over this main and removes
-none. A three-way comparison preserves every non-overlapping export exactly;
-the three overlapping DaemonServer entries retain main's private `stopRuntime`
-declaration. The original public READ evidence signatures are unchanged.
+Preserve the public READ evidence signatures and every non-overlapping public
+export when composing declarations. Validate engine and daemon declarations,
+engine-test, Agent source/test and public-consumer types, all product type
+projects, API stability, contracts, exports and declared subpaths. Product builds
+must use their own source-bound outputs; sparse fixtures must materialize and
+build prerequisites rather than borrow unrelated output. Shared installed
+packages do not establish fresh-install dependency behavior.
 
-- Fresh engine and daemon declaration builds passed, followed by engine-test,
-  Agent source/test and public-consumer types, API stability, contracts, exports
-  and declared-subpath checks. The first Agent type attempt lacked the sparse
-  checkout's daemon/testing prerequisite. That failure is retained; the exact
-  daemon source was materialized and privately built before the successful
-  affected retry. No production source repair or borrowed output was used.
-- Terminal focused results total 853 tests across 40 distinct files, with
-  4,419 assertions: 289 owner/lifecycle, 9 wire, 228 admission/projection,
-  124 config compatibility, 41 built-auth/HTTP and 162 Agent tests. These are
-  separate completed groups, not a full-repository runtime command.
-- The handover correction first produced three passes and four failures in
-  seven controls. Independent review added two failing synchronous-stop controls
-  before the retry-ownership repair. The corrected 185-test serving/lifecycle
-  subset passes and is included in the 853 total, not additional credit.
-- Dependencies are shared immutable installed packages; outputs are private to
-  this checkout. This is not a fresh-install dependency proof. Four-product
-  builds and the full product type command were not repeated at this checkpoint;
-  their earlier source-bound evidence remains historical below.
+Focused suites cover config/auth serving owners and lifecycle, wire protocol,
+admission/projection, existing config compatibility, built-auth/HTTP and actual
+Agent READ/SETTINGS composition, legacy helpers, registration, settings ownership
+and non-authoritative explanations. Handover and synchronous-stop controls must
+exercise retry ownership. Preserve counterexamples for post-act semantic veto,
+false read classification and post-await or reentrant revocation/cancellation.
+Forgery/direct-call controls specify SDK binding; they are not model-exploit claims.
 
-Hosted exact-head CI, final publication and live calibration remain separate.
-The earlier checkpoints below are historical evidence, not current active gates.
+The real Agent/manager/projector/client path must connect to two separately
+dispatched real router requests and real serving config/auth owners. Set, default
+reset, reject/defer, revocation and lost-acknowledgment controls use temporary
+files and an engine-owned child on an ephemeral loopback port. Agent imports only
+the public client surface; private auth/router construction belongs in the engine
+test helper. A bounded private control pipe owns setup, inspection and teardown.
+No external service, provider or native daemon runtime is needed.
 
-The original actual-composition baseline was 5 pass / 11 fail. Reachable failures
-included the post-act semantic veto, false read classification, and post-await
-or reentrant revocation/cancellation effects. Forgery/direct-call cases specify
-the new SDK binding contract; they are not claims of a model exploit.
+Legacy compatibility controls use byte-exact legacy handler/helper regions,
+separate from the current factory. They distinguish legacy 400 rejection from
+current unsupported-owner 409 refusal, preserve no-write and no-downgrade
+behavior, and demonstrate why legacy top-level keys are omitted. Public READ
+field declarations must remain explicit; declaration-only repairs must not alter
+emitted runtime behavior. Run built-auth controls against newly built artifacts.
 
-At the earlier source checkpoint `2d7e9219` (qualification was then in progress):
-
-- Actual Agent SETTINGS and legacy-policy controls: 53/53, 288 assertions
-  (38 admission cases plus 15 existing legacy controls), after the final child
-  fixture layout and teardown changes.
-- Protocol and serving-owner readback: 57/57 pass, 195 assertions.
-- Config owner and existing config regressions: 146/146, 603 assertions,
-  including the 22 focused prepared-mutation controls.
-- Strict auth and existing native-pairing compatibility: 50/50, 297 assertions,
-  after both actual-load corrections.
-- Selected existing permission, projection, routing and legacy-policy suites:
-  228/228, 1,125 assertions across nine files.
-- The real Agent/manager/projector/client path is connected to two separately
-  dispatched real router requests and real serving config/auth owners. Set,
-  default reset, reject/defer, revocation and lost-acknowledgment controls use
-  only temporary files and an engine-owned child listening on an ephemeral
-  loopback port. Eight such remote controls pass with 58 assertions. Agent
-  imports only the public client surface; private auth/router construction lives
-  in the engine test helper. A bounded private control pipe owns setup, inspection
-  and teardown. No external service, provider or native daemon runtime starts.
-- Source-only architecture, no-any, credential-scope, error, judgment and product
-  boundary checks pass. The canonical type command passed its solution/engine
-  tests and consumer stages, then failed the old fixture's private cross-workspace
-  imports before any product type project ran. Those imports are now removed;
-  final affected engine-test and Agent-test preflights pass, as do all nine
-  product type projects. This is composed component qualification, not a claim
-  that the earlier full command reran green.
-
-Later current-main qualification preserves separate receipts:
-
-- `d8f203ea` passed the canonical engine and all four product builds. API
-  extraction had the existing TypeScript-version, sql-js and gaxios advisories.
-- The declaration-only correction `41ac7e73` restores the exact explicit public
-  READ evidence fields. Forced SDK, engine-test, Agent-test and consumer types
-  passed; emitted `input-projection.js` was byte-identical. After the disjoint
-  merged PR #204 overlay, SDK/API regeneration passed, and the committed
-  `a183296d` snapshot passed `api:check` with zero removed exports.
-- The subsequent 27-file engine run at `a183296d` has no terminal receipt:
-  309 passing lines and three failing wire-fixture assertions were observed
-  before its execution session became unaddressable. Its process lifetime is
-  unknown; its lock and temporary tree are preserved. The queued Agent run did
-  not start. This incomplete aggregate is not a passing qualification.
-- The three failures described a legacy handler while importing the current
-  factory. Corrected tests use byte-exact legacy handler/helper regions from
-  main `59959220`, pinned to source blob `1e3abfb6`. They distinguish legacy 400
-  rejection from current unsupported-owner 409 refusal, preserving no-write and
-  no-downgrade controls and demonstrating why legacy top-level keys are omitted.
-- Fresh validation uses a distinct checkout and private external temporary
-  parent, including the verified disjoint merged PR #207 baseline. At
-  `07d6daee`, corrected wire controls pass 9/9 (30 assertions), and the config,
-  auth, pairing and protocol owner suites pass 129/129 (589 assertions), each
-  with an explicit zero-exit receipt. No unknown earlier run was cleared or
-  retried.
-
-The earlier qualified source checkpoint `6fd0ae6e` also preserves the four disjoint merged
-PR #208 paths. Its reconstructed main baseline is commit `29b02ffa`, tree
-`1806cee3`; no main path was replaced by an older SETTINGS preimage.
-
-- Terminal focused engine results: 531 tests across 27 files, in separate
-  groups (129 owner controls, 9 wire controls, 228 admission/projection controls,
-  124 config compatibility controls, and 41 built-auth/HTTP controls).
-- Terminal Agent results: 162 tests across 9 files, including real READ and
-  SETTINGS composition, legacy helpers, registration, settings ownership and
-  non-authoritative explanation controls.
-- A fresh canonical engine and four-product build passed using only this
-  checkout's outputs. The built-auth controls ran against those new artifacts.
-- Final engine-test, Agent-test and consumer types passed, followed by API,
-  contracts, exports, declared subpaths, product boundaries, architecture,
-  credential scope, errors, no-any, judgment registration and docs checks.
-  Type qualification remains honestly composed with the earlier nine-product
-  project gate and independently qualified merged baseline changes; no fresh
-  full type-command or full-repository runtime pass is claimed.
-
-These final gates have explicit zero-exit receipts. They do not establish the
-old interrupted process's lifetime or retroactively qualify its partial log.
-Hosted exact-head CI and final publication checks remain separate.
-
-Independent source review cleared the original owner/adoption boundary through
-`d7e8dd51` and the final readback, auth and child-fixture delta through `2d7e9219`.
-Current-main composition, the READ declaration-only correction, and the pinned
-legacy-fixture correction received separate source review.
-Full-repository runtime testing and live semantic
-calibration are not claimed. Scripted, recorded Jev answers prove ownership and
-effect-path behavior, not live model accuracy or calibration.
+Keep architecture, product-boundary, credential-scope, error, no-any, judgment
+registration and documentation checks alongside source/test/consumer type gates.
+Component qualification is not a substitute for a fresh full-command result;
+interrupted logs cannot establish a terminal pass or process lifetime. Full
+repository runtime tests, exact-head hosted CI and live semantic calibration are
+separate validation boundaries. Scripted recorded Jev answers establish ownership
+and effect-path behavior, not live model accuracy or calibration.

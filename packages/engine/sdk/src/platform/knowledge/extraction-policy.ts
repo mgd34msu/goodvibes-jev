@@ -1,4 +1,4 @@
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { createKnowledgeExtractionOwner, type KnowledgeExtractionOwner } from './extraction-ownership.js';
 import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
 import { extractionReadability } from './batteries/extraction-readability.js';
 import type { KnowledgeExtractionRecord } from './types.js';
@@ -63,14 +63,15 @@ export async function readKnowledgeSearchText(record: Record<string, unknown>): 
   return typeof value === 'string' && await hasUsefulKnowledgeExtractionText(value) ? value : undefined;
 }
 
-export function hasUsefulKnowledgeExtractionText(value: string | undefined): Promise<boolean> {
-  return readKnowledgeExtractionTextUsability(value);
+export function hasUsefulKnowledgeExtractionText(value: string | undefined, owner?: KnowledgeExtractionOwner): Promise<boolean> {
+  return readKnowledgeExtractionTextUsability(value, owner?.signal, owner);
 }
 
 /** Shared readability operation with caller-owned cancellation. The public
  * compatibility helper above retains its existing signature and policy.
  */
-export async function readKnowledgeExtractionTextUsability(value: string | undefined, signal?: AbortSignal): Promise<boolean> {
+export async function readKnowledgeExtractionTextUsability(value: string | undefined, signal?: AbortSignal, owner: KnowledgeExtractionOwner = createKnowledgeExtractionOwner({ signal })): Promise<boolean> {
+  owner.assertCurrent();
   if (signal?.aborted) throw new KnowledgeExtractionJudgmentHoldError();
   if (!value?.trim()) return false;
   assertJudgmentInput(value);
@@ -78,9 +79,10 @@ export async function readKnowledgeExtractionTextUsability(value: string | undef
   // These are this codebase's own extractor placeholder messages, not guesses.
   if (LIMITED_EXTRACTION_MARKERS.some((marker) => normalized.includes(marker))) return false;
   return requireExtractionJudgment(async () => {
-    const run = await extractionReadability.run(judgmentPort('knowledge.extraction.readability'), {
+    const run = await extractionReadability.run(owner.port('knowledge.extraction.readability'), {
       sample: value.slice(0, KNOWLEDGE_EXTRACTION_SAMPLE_CHARS),
-    }, { site: 'knowledge.extraction.readability', ...(signal ? { signal } : {}) });
+    }, { site: 'knowledge.extraction.readability', ...(signal ? { signal } : {}), beforeAttempt: owner.assertCurrent });
+    owner.assertCurrent();
     if (signal?.aborted) throw new KnowledgeExtractionJudgmentHoldError();
     const reading = run.readings.readable;
     if (reading.outcome !== 'act' || reading.verdict === 'uncertain') {

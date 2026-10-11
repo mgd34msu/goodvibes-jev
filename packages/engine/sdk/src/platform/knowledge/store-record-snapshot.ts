@@ -16,7 +16,12 @@ export interface KnowledgeRecordSnapshot {
 }
 export function readKnowledgeRecordSnapshot(sqlite: Pick<SQLiteStore, 'exec'>, kind: 'node' | 'extraction', id: string): KnowledgeRecordSnapshot {
   const table = kind === 'node' ? 'knowledge_nodes' : 'knowledge_extractions';
-  const result = sqlite.exec(`SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [id])[0];
+  return knowledgeRecordSnapshotFromRows(kind, sqlite.exec(`SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [id]));
+}
+
+/** Preserve every serialized field and generation byte for both read paths. */
+export function knowledgeRecordSnapshotFromRows(kind: 'node' | 'extraction', rows: ReturnType<SQLiteStore['exec']>): KnowledgeRecordSnapshot {
+  const result = rows[0];
   const values = result?.values[0];
   if (!result || !values) return { record: null, raw: null, generation: null };
   const entries = result.columns.map((column, index) => [column, values[index]] as const).sort(([a], [b]) => a.localeCompare(b));

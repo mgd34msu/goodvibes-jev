@@ -13,7 +13,7 @@ import type {
   KnowledgeSourceRecord,
 } from '../types.js';
 import { buildKnowledgeSemanticGraphIndex } from './graph-index.js';
-import { canonicalRepairSubjectNodes, repairSubjectIds } from './repair-subjects.js';
+import { canonicalRepairSubjectNodes, captureRepairSubjectReadSet } from './repair-subjects.js';
 import {
   factsForObject,
   factsForSource,
@@ -28,6 +28,7 @@ import {
 import { readString, readStringArray, semanticMetadata, uniqueStrings } from './utils.js';
 
 export interface GapContext {
+  readonly assertCurrent?: (() => void) | undefined;
   readonly gap: KnowledgeNodeRecord;
   readonly sources: readonly KnowledgeSourceRecord[];
   readonly linkedObjects: readonly KnowledgeNodeRecord[];
@@ -58,12 +59,13 @@ export function collectCandidateGaps(
     .sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
 }
 
-export function buildGapContext(
+export async function buildGapContext(
   store: KnowledgeStore,
   spaceId: string,
   gap: KnowledgeNodeRecord,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): GapContext {
+  options: { readonly signal?: AbortSignal | undefined; readonly shouldStop?: (() => boolean) | undefined } = {},
+): Promise<GapContext> {
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const edges = graph.edges;
   const sourcesById = graph.sourcesById;
@@ -75,8 +77,10 @@ export function buildGapContext(
       .filter((edge) => edge.toKind === 'node' && edge.toId === gap.id && edge.fromKind === 'source')
       .map((edge) => edge.fromId),
   ]);
+  const guard = captureRepairSubjectReadSet(store, gap, [], options.signal, options.shouldStop);
   const directSources = sourceIds.map((id) => sourcesById.get(id)).filter((source): source is KnowledgeSourceRecord => Boolean(source));
-  const linkedObjects = canonicalRepairSubjectNodes({
+  guard.watch('subject-edges', () => store.listEdges());
+  const selected = await canonicalRepairSubjectNodes({ store, spaceId, context: { gap }, evidenceSources: directSources, ...options,
     text: `${gap.title} ${gap.summary ?? ''}`,
     objectProfiles,
     nodes: [
@@ -88,6 +92,9 @@ export function buildGapContext(
         .filter((node): node is KnowledgeNodeRecord => Boolean(node)),
     ],
   });
+  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  assertCurrent();
+  const linkedObjects = selected.nodes;
   const sources = uniqueById([
     ...directSources,
     ...linkedObjects.flatMap((object) => sourcesForObject(object.id, edges, sourcesById)),
@@ -102,7 +109,7 @@ export function buildGapContext(
       && edge.toId === gap.id
       && edge.relation === REPAIRS_GAP_RELATION)
     .map((edge) => edge.fromId));
-  return { gap, sources, linkedObjects, facts, repairSourceIds };
+  return { gap, sources, linkedObjects, facts, repairSourceIds, assertCurrent };
 }
 
 export async function classifyGap(
@@ -115,7 +122,8 @@ export async function classifyGap(
   const status = readString(context.gap.metadata.repairStatus);
   const nextAttemptAt = readNumber(context.gap.metadata.nextRepairAttemptAt);
   let usefulEvidence = false;
-  let assertCurrent: (() => void) | undefined;
+  let assertCurrent = context.assertCurrent;
+  assertCurrent?.();
   if (!force && (status === 'repaired' || hasRepairEdge(context))) {
     const guard = createSemanticWriteGuard(store, options.signal, options.shouldStop);
     guard.watch(`gap:${context.gap.id}`, () => store.getNode(context.gap.id), context.gap);
@@ -124,7 +132,7 @@ export async function classifyGap(
       subjects: context.linkedObjects, signal: options.signal, guard });
     const candidates = repairEvidenceCandidates(context);
     const quality = await reader.prepare(candidates);
-    assertCurrent = quality.assertCurrent;
+    assertCurrent = () => { context.assertCurrent?.(); quality.assertCurrent(); };
     usefulEvidence = quality.facts.length >= repairTargetFactCount(context.gap);
   }
   const repairedWithFacts = status === 'repaired' && usefulEvidence;
@@ -159,46 +167,29 @@ export async function linkRepairSources(
   query: string,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
   shouldStop: () => boolean = () => false,
+  signal?: AbortSignal,
 ): Promise<number> {
-  let linked = 0;
-  const linkedObjectIds = repairSubjectIdsForGap(store, spaceId, gap, objectProfiles);
-  for (const sourceId of sourceIds) {
-    if (shouldStop()) break;
-    if (!store.getSource(sourceId)) continue;
-    await store.batch(async () => {
-      if (shouldStop()) return;
-      await store.upsertEdge({
-        fromKind: 'source',
-        fromId: sourceId,
-        toKind: 'node',
-        toId: gap.id,
-        relation: REPAIRS_GAP_RELATION,
-        weight: 0.8,
-        metadata: semanticMetadata(spaceId, {
-          query,
-          repairedAt: Date.now(),
-        }),
-      });
-      for (const nodeId of linkedObjectIds) {
-        if (shouldStop()) return;
-        await store.upsertEdge({
-          fromKind: 'source',
-          fromId: sourceId,
-          toKind: 'node',
-          toId: nodeId,
-          relation: 'source_for',
-          weight: 0.78,
-          metadata: semanticMetadata(spaceId, {
-            query,
-            linkedBy: 'semantic-gap-repair',
-            repairedAt: Date.now(),
-          }),
-        });
-      }
-    });
-    linked += 1;
-  }
-  return linked;
+  const guard = createSemanticWriteGuard(store, signal, shouldStop);
+  guard.watch('repair-link-edges', () => store.listEdges());
+  const sources = [...new Set(sourceIds)].flatMap(id => {
+    const source = guard.source(id);
+    return source && getKnowledgeSpaceId(source) === spaceId ? [source] : [];
+  });
+  const selection = await repairSubjectsForGap(store, spaceId, gap, objectProfiles, shouldStop, signal, sourceIds);
+  const assertCurrent = () => { guard.assertCurrent(); selection.assertCurrent(); };
+  const edges = sources.flatMap(source => [
+    { fromKind: 'source' as const, fromId: source.id, toKind: 'node' as const, toId: gap.id,
+      relation: REPAIRS_GAP_RELATION, weight: 0.8,
+      metadata: semanticMetadata(spaceId, { query, repairedAt: Date.now() }) },
+    ...selection.nodes.map(node => ({ fromKind: 'source' as const, fromId: source.id,
+      toKind: 'node' as const, toId: node.id, relation: 'source_for', weight: 0.78,
+      metadata: semanticMetadata(spaceId, { query, linkedBy: 'semantic-gap-repair', repairedAt: Date.now() }) })),
+  ]);
+  assertCurrent();
+  await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+    nodes: [], edges, issues: [], assertCurrent,
+  }), { requireAccepted: true, signal });
+  return sources.length;
 }
 
 function gapMatchesSourceFilter(
@@ -261,12 +252,13 @@ function hasConcreteSubject(context: GapContext, objectProfiles: readonly Knowle
   }) || context.sources.some((source) => Boolean(source.title || source.url || source.sourceUri || source.canonicalUri));
 }
 
-function repairSubjectIdsForGap(
+async function repairSubjectsForGap(
   store: KnowledgeStore,
   spaceId: string,
   gap: KnowledgeNodeRecord,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): string[] {
+  shouldStop: () => boolean, signal?: AbortSignal, evidenceSourceIds: readonly string[] = [],
+) {
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const edges = graph.edges;
   const nodesById = graph.nodesById;
@@ -277,7 +269,9 @@ function repairSubjectIdsForGap(
       .filter((edge) => edge.toKind === 'node' && edge.toId === gap.id && edge.fromKind === 'source')
       .map((edge) => edge.fromId),
   ]);
-  return repairSubjectIds({
+  const guard = captureRepairSubjectReadSet(store, gap, evidenceSourceIds, signal, shouldStop);
+  const selected = await canonicalRepairSubjectNodes({ store, spaceId, context: { gap }, shouldStop, signal,
+    evidenceSources: uniqueStrings([...sourceIds, ...evidenceSourceIds]).map(id => store.getSource(id)).filter((source): source is KnowledgeSourceRecord => source !== null),
     text: `${gap.title} ${gap.summary ?? ''}`,
     objectProfiles,
     nodes: [
@@ -288,6 +282,8 @@ function repairSubjectIdsForGap(
       ...sourceIds.flatMap((sourceId) => linkedObjectsForSource(sourceId, edges, nodesById)),
     ],
   });
+  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  assertCurrent(); return { nodes: selected.nodes, assertCurrent };
 }
 
 function readNumber(value: unknown): number | undefined {

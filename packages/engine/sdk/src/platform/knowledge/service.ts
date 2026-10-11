@@ -203,6 +203,9 @@ export class KnowledgeService {
     };
   }
 
+  /** Await this owner's finite startup writes; failures remain observable. */
+  whenReady(): Promise<void> { return this.scheduleService.whenReady(); }
+
   attachRuntimeBus(runtimeBus: RuntimeEventBus | null | undefined): void {
     if (runtimeBus) this.runtimeBus = runtimeBus;
   }
@@ -531,9 +534,9 @@ export class KnowledgeService {
     readonly connectorId?: string | undefined;
     readonly allowPrivateHosts?: boolean | undefined;
     readonly metadata?: Record<string, unknown> | undefined;
-  }): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
+  }, ownership: KnowledgeIngestOwnership = {}): Promise<{ source: KnowledgeSourceRecord; artifactId?: string; extraction?: KnowledgeExtractionRecord; issues: readonly KnowledgeIssueRecord[] }> {
     this.requireAdmission('knowledge url ingestion');
-    return ingestKnowledgeUrl(this.getIngestContext(), input);
+    return ingestKnowledgeUrl(this.getIngestContext(), input, ownership);
   }
 
   /**

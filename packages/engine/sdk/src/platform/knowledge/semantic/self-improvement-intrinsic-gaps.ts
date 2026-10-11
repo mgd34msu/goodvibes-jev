@@ -1,3 +1,4 @@
+import { knowledgeRawRepresentation } from '../store-record-representation.js';
 import { createSemanticWriteGuard } from './primary-source-plan.js';
 import { KnowledgeRepairFactUsefulnessHeldError } from './repair-usefulness/types.js';
 import { createKnowledgeFactQualityReader, type KnowledgeFactQualityPlan } from './fact-quality.js';
@@ -25,7 +26,6 @@ import {
 } from './self-improvement-graph.js';
 import {
   readString,
-  readStringArray,
   semanticHash,
   semanticMetadata,
   semanticSlug,
@@ -118,15 +118,15 @@ async function upsertIntrinsicFeatureGap(
       confidence: 75,
       ...(primarySource ? { sourceId: primarySource.id } : {}),
       metadata: semanticMetadata(spaceId, {
+        // Carry the complete stored original, including owned clock strings and
+        // unknown caller fields. Regenerated semantic fields still win below.
+        ...knowledgeRawRepresentation(existing?.metadata ?? {}),
         semanticKind: 'gap',
         gapKind: 'intrinsic_features',
         subject: subject.title,
         sourceIds: sources.map((source) => source.id),
         linkedObjectIds: [subject.id],
         repairStatus: readString(existing?.metadata.repairStatus) ?? 'open',
-        ...((readStringArray(existing?.metadata.acceptedSourceIds).length > 0) ? { acceptedSourceIds: readStringArray(existing?.metadata.acceptedSourceIds) } : {}),
-        ...(typeof existing?.metadata.promotedFactCount === 'number' ? { promotedFactCount: existing.metadata.promotedFactCount } : {}),
-        ...(typeof existing?.metadata.nextRepairAttemptAt === 'number' ? { nextRepairAttemptAt: existing.metadata.nextRepairAttemptAt } : {}),
         createdBy: 'semantic-self-improvement',
       }),
     }, 'research-task', subject, () => { quality.assertCurrent(); return store.getNode(subject.id); });

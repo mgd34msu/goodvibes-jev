@@ -1,4 +1,4 @@
-import { carryKnowledgeRecordClocks, knowledgeRawRepresentation, normalizeKnowledgeStoredView, retainKnowledgeRepresentation, knowledgeDecisionStamp, knowledgeReviewStamp, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
+import { knowledgeNodeMetadataView, carryKnowledgeRecordClocks, knowledgeRawRepresentation, normalizeKnowledgeStoredView, retainKnowledgeRepresentation, knowledgeDecisionStamp, knowledgeReviewStamp, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
 import { randomUUID } from 'node:crypto';
 import type { KnowledgeNodeRecord } from './types.js';
 
@@ -74,7 +74,7 @@ export function mergeKnowledgeNodeMetadata(
   existing: Record<string, unknown> | undefined,
   input: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-  return { ...existing, ...withoutReviewFields(input ?? {}) };
+  return { ...knowledgeRawRepresentation(existing), ...withoutReviewFields(knowledgeRawRepresentation(input ?? {})) };
 }
 
 /** Legacy persisted review stamps remain protected; this never examines producer metadata. */
@@ -96,6 +96,9 @@ export function resolveKnowledgeNodeOperatorMutation(
   mutation: KnowledgeNodeMutationContext | undefined,
   now: number,
 ): { status: KnowledgeNodeRecord['status']; metadata: Record<string, unknown> } | undefined {
+  // Merges carry canonical originals until the record is retained. Authority
+  // comparisons must see the same numeric compatibility view as stored nodes.
+  candidate = { ...candidate, metadata: knowledgeNodeMetadataView(knowledgeRawRepresentation(candidate.metadata)) };
   if (mutation !== undefined) {
     if (!operatorMutations.has(mutation) || mutation.authority !== 'operator'
       || !['accept', 'reject', 'revise'].includes(mutation.action)) {
@@ -120,7 +123,7 @@ export function resolveKnowledgeNodeOperatorMutation(
     const status = mutation.action === 'accept' ? 'active' : mutation.action === 'reject' ? 'stale' : existing.status;
     // Revision is an explicit review of the NEW content. Never carry old facts or
     // an old acceptance stamp onto the replacement, even from the trusted input.
-    const metadata = withoutReviewFields(candidate.metadata);
+    const metadata = withoutReviewFields(knowledgeRawRepresentation(candidate.metadata));
     if (existing.metadata.nodeObservation !== undefined) metadata.nodeObservation = existing.metadata.nodeObservation;
     const unreviewed = fields?.length === 0;
     return {
@@ -163,7 +166,9 @@ export function resolveKnowledgeNodeOperatorMutation(
 /** Protect cache state from aliases to input metadata and mutable getNode results. */
 export function retainKnowledgeNodeRecord(record: KnowledgeNodeRecord, clockOrigin?: KnowledgeNodeRecord): KnowledgeNodeRecord {
   if (clockOrigin) carryKnowledgeRecordClocks(clockOrigin, record);
-  const detached = retainKnowledgeRepresentation(normalizeKnowledgeStoredView(record), normalizeKnowledgeStoredView(knowledgeRawRepresentation(record)));
+  const raw = normalizeKnowledgeStoredView(knowledgeRawRepresentation(record));
+  const detached = retainKnowledgeRepresentation({ ...normalizeKnowledgeStoredView(record),
+    metadata: knowledgeNodeMetadataView(raw.metadata) }, raw);
   deepFreeze(detached);
   return detached;
 }
@@ -176,7 +181,7 @@ export function prepareKnowledgeNodeReplacement(
   now: number,
   trustedRestoration = false,
 ): KnowledgeNodeRecord {
-  const metadata = withoutReviewFields(record.metadata);
+  const metadata = withoutReviewFields(knowledgeRawRepresentation(record.metadata));
   if (trustedRestoration) {
     for (const key of ['nodeActivation', 'nodeObservation']) if (record.metadata[key] !== undefined) metadata[key] = record.metadata[key];
   }

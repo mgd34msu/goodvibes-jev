@@ -11,6 +11,7 @@ import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 const roots: string[] = [];
+const runtimes: ReturnType<typeof createRuntimeServices>[] = [];
 
 function makeRuntime() {
   const root = makeProjectTempDir(`gv-knowledge-isolation-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -30,7 +31,7 @@ function makeRuntime() {
   });
 
   seedProviderMetadataCacheFixture({ configManager, homeDirectory: homeDir, workingDirectory: workingDir });
-  return {
+  const runtime = {
     configManager,
     services: createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
@@ -42,9 +43,12 @@ function makeRuntime() {
       homeDirectory: homeDir,
     }),
   };
+  runtimes.push(runtime.services);
+  return runtime;
 }
 
 afterEach(() => {
+  for (const runtime of runtimes.splice(0)) runtime.dispose();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -90,7 +94,7 @@ describe('runtime knowledge store isolation', () => {
     expect(multimodal.knowledgeService).toBe(services.knowledgeService);
   });
 
-  test('project planning and work plans store artifacts in Agent Knowledge only', async () => {
+  test('immediate startup planning waits for real bootstrap writes and stores artifacts in Agent Knowledge only', async () => {
     const { configManager, services } = makeRuntime();
     const controlPlaneDir = configManager.getControlPlaneConfigDir();
     const agentDbPath = join(controlPlaneDir, 'knowledge-agent.sqlite');
@@ -114,6 +118,10 @@ describe('runtime knowledge store isolation', () => {
       limit: 100,
     }).items;
 
+    const schedules = services.agentKnowledgeService.listSchedules();
+    expect(schedules.filter(schedule => schedule.metadata.bootstrap === true).map(schedule => schedule.jobId).sort()).toEqual([
+      'knowledge-deep-consolidation', 'knowledge-light-consolidation', 'knowledge-semantic-self-improvement',
+    ]);
     expect(agentSources).toHaveLength(1);
     expect(agentSources[0]?.title).toBe('Project Work Plan');
     expect(aliasSources).toHaveLength(1);
@@ -127,6 +135,7 @@ describe('runtime knowledge store isolation', () => {
     try {
       await reopened.init();
       expect(reopened.listSources()).toEqual(agentSources);
+      expect(reopened.listSchedules().sort((a, b) => a.id.localeCompare(b.id))).toEqual([...schedules].sort((a, b) => a.id.localeCompare(b.id)));
       expect(reopened.listSources()[0]?.metadata.value).toMatchObject({
         tasks: [{ title: 'Keep Agent work plans isolated', originSurface: GOODVIBES_AGENT_SURFACE_ROOT }],
       });

@@ -22,7 +22,7 @@ target-key list substituting for those readings.
 
 Terminal success/failure states are absorbing but may still receive safe pending
 enrichment. Cancellation, eviction and disposal prohibit late enrichment, cache
-refill or resurrection. See the retained [shared-ledger contract](../../../docs/audit/agent-shared-execution-ledger.md)
+refill or resurrection. See the retained [shared-ledger contract](runtime-and-packaging-contracts.md#shared-execution-history)
 for input, privacy, provenance and batch-lifetime details.
 
 ## Permission composition
@@ -42,7 +42,7 @@ success. It does not establish that the wrapper methods implement autonomous
 admission. Failed admission reaches no fake action; cancellation cannot accept a
 late approval. Actual successful admission retains supplied goal/criteria and
 its decision provenance without a human approval callback. The
-[shared-guard contract](../../../docs/audit/agent-shared-permission-gate.md)
+[shared-guard contract](runtime-and-packaging-contracts.md#shared-permission-wrapper-and-explanations)
 retains the full privacy and explanation boundaries.
 
 ## Session-spine connection selection
