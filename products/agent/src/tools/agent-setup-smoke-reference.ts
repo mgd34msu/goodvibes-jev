@@ -1,7 +1,7 @@
 import { ArtifactStore, type ArtifactCreateInput, type ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { lstatSync } from 'node:fs';
 import { judgmentInputCardProblem, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
-import { assertCurrentToolEffect, assertProjectionExecution, ToolInputProjectionError, type ToolInputProjector, type ToolNativeReferencesCapture } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolEffect, assertCurrentToolExecution, assertProjectionExecution, ToolInputProjectionError, type ToolInputProjector, type ToolNativeReferencesCapture, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { containsIssuerCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -12,6 +12,7 @@ import type { SetupSmokeArtifactStore, SetupSmokeEvidenceField } from './agent-h
 
 type ExecutionOptions = Parameters<Tool['execute']>[1];
 interface Capture {
+  readonly name: 'agent_harness' | 'setup';
   readonly context: CommandContext;
   readonly args: Record<string, unknown>;
   readonly evidence: readonly SetupSmokeEvidenceField[];
@@ -39,10 +40,13 @@ function evidenceParts(text: string): readonly Record<string, string>[] {
 }
 
 /** This source owner runs before ordinary argument privacy capture. */
-export function createSetupSmokeReferenceCapture(context?: CommandContext): NonNullable<ToolInputProjector['captureNativeReferences']> {
+export function createSetupSmokeReferenceCapture(context?: CommandContext,
+  selectSetupSmoke?: (args: Readonly<Record<string, unknown>>) => boolean): NonNullable<ToolInputProjector['captureNativeReferences']> {
+  const name = selectSetupSmoke ? 'setup' : 'agent_harness';
   return request => {
-    if (request.name !== 'agent_harness' || request.args.mode !== 'run_setup_smoke' || !context) return undefined;
-    if (request.args.setupItemId !== undefined && request.args.setupItemId !== 'install-smoke') return undefined;
+    if (request.name !== name || !context) return undefined;
+    if (selectSetupSmoke ? !selectSetupSmoke(request.args) : request.args.mode !== 'run_setup_smoke') return undefined;
+    if (!selectSetupSmoke && request.args.setupItemId !== undefined && request.args.setupItemId !== 'install-smoke') return undefined;
     const fields = request.args.fields;
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return undefined;
     const rawFields = fields as Readonly<Record<string, unknown>>;
@@ -91,7 +95,7 @@ export function createSetupSmokeReferenceCapture(context?: CommandContext): NonN
     // cross the ordinary unchanged credential/card floor and fresh admission.
     snapshotJudgmentInput(safeArgs, request.name);
     const token = Object.freeze({});
-    const capture: Capture = { context, args: safeArgs, evidence: Object.freeze(evidence), store, create,
+    const capture: Capture = { name, context, args: safeArgs, evidence: Object.freeze(evidence), store, create,
       rawFields, released: false,
       assertCurrent() {
         signal?.throwIfAborted();
@@ -147,4 +151,32 @@ export function resolveSetupSmokeNativeEvidence(args: Record<string, unknown>, o
       assertCurrent();
       return result;
     } : undefined };
+}
+
+/** Transfer only the live parent's private source into a freshly admitted child. */
+export async function executeNestedSetupSmoke(registry: ToolRegistry, callId: string, args: Record<string, unknown>,
+  options: ExecutionOptions, childArgs: Record<string, unknown>, context: CommandContext) {
+  const ownership = resolveSetupSmokeNativeEvidence(args, options, context);
+  const token = options?.inputProjectionContext;
+  const capture = token && captures.get(token);
+  if (childArgs.mode !== 'run_setup_smoke' || childArgs.setupItemId !== 'install-smoke'
+    || childArgs.fields !== args.fields || (capture && (capture.name !== 'setup' || !capture.rawFields
+      || !Object.isFrozen(capture.rawFields)))) throw new ToolInputProjectionError('held');
+  const fields = capture?.rawFields;
+  ownership.assertCurrent();
+  // Child execution has its own async invocation context. The registry retains
+  // the exact parent admission; this additional restriction owns only its
+  // execution lifetime and private source, without impersonating the child.
+  const assertSource = () => {
+    if (!assertCurrentToolExecution(args, options)) throw new ToolInputProjectionError('held');
+    if (capture) {
+      if (!token || captures.get(token) !== capture || capture.rawFields !== fields) throw new ToolInputProjectionError('stale');
+      assertProjectionExecution(token, args); capture.assertCurrent();
+    }
+  };
+  const result = await registry.executeNested(callId, 'agent_harness', {
+    ...childArgs, ...(fields ? { fields } : {}),
+  }, options, { assertCurrent: assertSource });
+  ownership.assertCurrent();
+  return result;
 }

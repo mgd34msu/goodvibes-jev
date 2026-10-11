@@ -1,8 +1,8 @@
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { assertCurrentToolInvocation, type ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { randomUUID } from 'node:crypto';
 import type { CommandContext, CommandRegistry } from '../input/command-registry.ts';
-import { createAgentHarnessTool } from './agent-harness-tool.ts';
-import { createAgentSettingsImportTool } from './agent-settings-import-tool.ts';
+import { createSetupSmokeReferenceCapture, executeNestedSetupSmoke } from './agent-setup-smoke-reference.ts';
 
 type AgentSetupAction =
   | 'status'
@@ -31,18 +31,8 @@ interface AgentSetupToolArgs {
 }
 
 interface AgentSetupToolDeps {
-  readonly commandRegistry: CommandRegistry;
   readonly commandContext: CommandContext;
   readonly toolRegistry: ToolRegistry;
-  readonly harnessTool?: Tool;
-  readonly settingsImportTool?: Tool;
-}
-
-function output(value: unknown): { readonly success: true; readonly output: string } {
-  return {
-    success: true,
-    output: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
-  };
 }
 
 function error(message: string): { readonly success: false; readonly error: string } {
@@ -116,13 +106,6 @@ function confirmedArgs(args: AgentSetupToolArgs): Record<string, unknown> {
 }
 
 export function createAgentSetupTool(deps: AgentSetupToolDeps): Tool {
-  const harnessTool = deps.harnessTool ?? createAgentHarnessTool({
-    commandRegistry: deps.commandRegistry,
-    commandContext: deps.commandContext,
-    toolRegistry: deps.toolRegistry,
-  });
-  const settingsImportTool = deps.settingsImportTool ?? createAgentSettingsImportTool(deps.commandContext);
-
   return {
     definition: {
       name: 'setup',
@@ -133,32 +116,34 @@ export function createAgentSetupTool(deps: AgentSetupToolDeps): Tool {
           action: {
             type: 'string',
             enum: ['status', 'item', 'repair', 'checkpoint', 'save_checkpoint', 'clear_checkpoint', 'token', 'smoke', 'finish', 'import_settings'],
-            description: 'Setup action; read status/item/checkpoint, confirm mutations.',
+            description: 'Setup action; inspect status/item/checkpoint or request a supported effect.',
           },
           mode: { type: 'string', description: 'Alias for action.' },
           setupItemId: { type: 'string', description: 'Setup item id.' },
           itemId: { type: 'string', description: 'Alias for setupItemId.' },
           target: { type: 'string', description: 'Setup item lookup text.' },
           query: { type: 'string', description: 'Filter setup status or lookup a setup item.' },
-          fields: { type: 'object', description: 'Optional redacted setup-smoke evidence fields.' },
+          fields: { type: 'object', description: 'Optional user-run setup smoke output.' },
           includeParameters: { type: 'boolean', description: 'Include bounded route details and parameters where supported.' },
           limit: { type: 'number', description: 'Optional status list limit.' },
-          confirm: { type: 'boolean', description: 'Required true for setup mutations.' },
-          explicitUserRequest: { type: 'string', description: 'User request authorizing confirmed setup effects.' },
+          confirm: { type: 'boolean', description: 'Optional legacy context; never grants authority.' },
+          explicitUserRequest: { type: 'string', description: 'Optional request context; never grants authority.' },
         },
         additionalProperties: false,
       },
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs: unknown) => {
+    execute: async (rawArgs: unknown, options) => {
+      if (!assertCurrentToolInvocation(rawArgs as Record<string, unknown>, options)) return error('Setup requires a current recorded invocation.');
       const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {}) as AgentSetupToolArgs;
       const action = readAction(args);
+      const run = (name: string, input: Record<string, unknown>) => deps.toolRegistry.executeNested(randomUUID(), name, input, options);
 
-      if (action === 'status') return harnessTool.execute(setupStatusArgs(args));
-      if (action === 'item') return harnessTool.execute(setupItemArgs(args));
+      if (action === 'status') return run('agent_harness', setupStatusArgs(args));
+      if (action === 'item') return run('agent_harness', setupItemArgs(args));
       if (action === 'repair') {
-        return harnessTool.execute(compactArgs({
+        return run('agent_harness', compactArgs({
           mode: 'setup_repair',
           setupItemId: itemLookup(args) || undefined,
           target: itemLookup(args) ? undefined : args.target,
@@ -166,29 +151,29 @@ export function createAgentSetupTool(deps: AgentSetupToolDeps): Tool {
           includeParameters: args.includeParameters,
         }));
       }
-      if (action === 'checkpoint') return harnessTool.execute({ mode: 'setup_checkpoint' });
+      if (action === 'checkpoint') return run('agent_harness', { mode: 'setup_checkpoint' });
       if (action === 'save_checkpoint') {
-        return harnessTool.execute({
+        return run('agent_harness', {
           mode: 'mark_setup_checkpoint',
           ...compactArgs({ setupItemId: itemLookup(args) || undefined }),
           ...confirmedArgs(args),
         });
       }
       if (action === 'clear_checkpoint') {
-        return harnessTool.execute({
+        return run('agent_harness', {
           mode: 'clear_setup_checkpoint',
           ...confirmedArgs(args),
         });
       }
       if (action === 'token') {
-        return harnessTool.execute({
+        return run('agent_harness', {
           mode: 'provision_connected_host_token',
           setupItemId: itemLookup(args) || 'connected-host-auth',
           ...confirmedArgs(args),
         });
       }
       if (action === 'smoke') {
-        return harnessTool.execute({
+        const childArgs = {
           mode: 'run_setup_smoke',
           setupItemId: itemLookup(args) || 'install-smoke',
           ...compactArgs({
@@ -196,17 +181,20 @@ export function createAgentSetupTool(deps: AgentSetupToolDeps): Tool {
             includeParameters: args.includeParameters,
           }),
           ...confirmedArgs(args),
-        });
+        };
+        return childArgs.setupItemId === 'install-smoke'
+          ? executeNestedSetupSmoke(deps.toolRegistry, randomUUID(), rawArgs as Record<string, unknown>, options, childArgs, deps.commandContext)
+          : run('agent_harness', childArgs);
       }
       if (action === 'finish') {
-        return harnessTool.execute({
+        return run('agent_harness', {
           mode: 'run_workspace_action',
           actionId: 'onboarding-apply-close',
           ...confirmedArgs(args),
         });
       }
       if (action === 'import_settings') {
-        return settingsImportTool.execute({
+        return run('import_goodvibes_settings', {
           action: readBoolean(args.confirm) ? 'apply' : 'preview',
           ...confirmedArgs(args),
         });
@@ -219,8 +207,14 @@ export function createAgentSetupTool(deps: AgentSetupToolDeps): Tool {
 
 export function registerAgentSetupTool(
   registry: ToolRegistry,
-  commandRegistry: CommandRegistry,
+  _commandRegistry: CommandRegistry,
   commandContext: CommandContext,
 ): void {
-  if (!registry.has('setup')) registry.register(createAgentSetupTool({ commandRegistry, commandContext, toolRegistry: registry }));
+  if (!registry.has('setup')) registry.register(createAgentSetupTool({ commandContext, toolRegistry: registry }), {
+    inputProjection: {
+      captureNativeReferences: createSetupSmokeReferenceCapture(commandContext, args => readAction(args) === 'smoke'
+        && (itemLookup(args) || 'install-smoke') === 'install-smoke'),
+      async project(request) { request.assertCurrent(); return { status: 'projected', args: request.args }; },
+    },
+  });
 }
