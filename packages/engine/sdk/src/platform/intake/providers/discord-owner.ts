@@ -30,7 +30,7 @@ export interface DiscordInboxOwnerOptions {
   readonly channels: DiscordInboxChannelScope;
   /** Expected bot identity, established by the trusted composition root. */
   readonly account: DiscordInboxAccount;
-  /** Actual local-service provenance/retention capability, never a source flag. */
+  /** Explicit trusted local or hosted retention capability, never a source flag. */
   readonly screening: ProtectedSourceOwnerOptions;
   /** Live local workspace/configuration binding, separate from API identity. */
   readonly assertCurrent: () => void;
@@ -167,10 +167,11 @@ export async function createDiscordInboxOwner(
     } catch { invalidateIdentity(); throw new Error('Discord inbox account scope is unavailable'); }
   };
   current();
-  const screening = createProtectedSourceOwner({ ...options.screening,
-    authority: { ...options.screening.authority, signal,
-      assertCurrent() { current(); return assertSource.call(sourceAuthority); } },
-  });
+  const screeningOptions = options.screening;
+  const assertScreeningCurrent = () => { current(); return assertSource.call(sourceAuthority); };
+  const screening = createProtectedSourceOwner('kind' in screeningOptions
+    ? { ...screeningOptions, authority: { ...screeningOptions.authority, signal, assertCurrent: assertScreeningCurrent } }
+    : { ...screeningOptions, authority: { ...screeningOptions.authority, signal, assertCurrent: assertScreeningCurrent } });
   const mapper = createProtectedInboxMapper(screening);
   let httpOwner: ReturnType<typeof createDiscordInboxHttpOwner>;
   try {

@@ -10,14 +10,32 @@ export interface LocalSourceScreeningAuthority {
   /** Synchronous live capability/revision check; structural scanning is not authority. */
   readonly assertCurrent: () => void;
 }
-export interface ProtectedSourceOwnerOptions {
-  readonly authority: LocalSourceScreeningAuthority;
-  readonly proposal: { readonly endpoint: string; readonly model: string };
-  readonly judgment: { readonly endpoint: string; readonly model: 'jev-1.13.0' };
+export interface HostedSourceScreeningAuthority {
+  readonly kind: 'hosted';
+  readonly ownerId: string;
+  readonly revision: string;
+  /** Explicit user grant; provider retention is not verified by this SDK. */
+  readonly retention: 'provider-managed-zero-retention-unverified';
+  readonly signal: AbortSignal;
+  readonly assertCurrent: () => void;
+}
+interface SourceScreeningOperationOptions {
   readonly timeoutMs?: number;
   /** Only value-free shared transport progress, never source or response metadata. */
   readonly onRetry?: (progress: JudgmentRetryProgress) => void;
 }
+export interface LocalProtectedSourceOwnerOptions extends SourceScreeningOperationOptions {
+  readonly authority: LocalSourceScreeningAuthority;
+  readonly proposal: { readonly endpoint: string; readonly model: string };
+  readonly judgment: { readonly endpoint: string; readonly model: 'jev-1.13.0' };
+}
+export interface HostedProtectedSourceOwnerOptions extends SourceScreeningOperationOptions {
+  readonly kind: 'hosted';
+  readonly authority: HostedSourceScreeningAuthority;
+  /** Resolved by native composition; never acquired from settings or environment here. */
+  readonly credentials: { readonly abacusApiKey: string; readonly typesafeApiKey: string };
+}
+export type ProtectedSourceOwnerOptions = LocalProtectedSourceOwnerOptions | HostedProtectedSourceOwnerOptions;
 declare const sourceBrand: unique symbol;
 declare const receiptBrand: unique symbol;
 declare const referenceBrand: unique symbol;

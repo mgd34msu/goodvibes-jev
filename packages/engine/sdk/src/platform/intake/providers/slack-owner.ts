@@ -124,10 +124,11 @@ export async function createSlackInboxOwner(
     } catch { invalidateIdentity(); throw new Error('Slack inbox account scope is unavailable'); }
   };
   current();
-  const screening = createProtectedSourceOwner({ ...options.screening,
-    authority: { ...options.screening.authority, signal,
-      assertCurrent() { current(); return assertSource.call(sourceAuthority); } },
-  });
+  const screeningOptions = options.screening;
+  const assertScreeningCurrent = () => { current(); return assertSource.call(sourceAuthority); };
+  const screening = createProtectedSourceOwner('kind' in screeningOptions
+    ? { ...screeningOptions, authority: { ...screeningOptions.authority, signal, assertCurrent: assertScreeningCurrent } }
+    : { ...screeningOptions, authority: { ...screeningOptions.authority, signal, assertCurrent: assertScreeningCurrent } });
   const mapper = createProtectedInboxMapper(screening);
   let httpOwner: ReturnType<typeof createSlackInboxHttpOwner>;
   try {

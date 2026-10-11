@@ -1,12 +1,24 @@
 /** Consumer-vantage opaque source/receipt and existing mapper compatibility. */
 import { createProtectedSourceOwner, createFramedResearchReferenceProjector, resolveFramedResearchReference, SOURCE_SCREENING_LIMITS,
-  type ProtectedSourceOwnerOptions, type ProtectedSource, type SourceScreeningReceipt,
+  type ProtectedSourceOwnerOptions, type HostedProtectedSourceOwnerOptions, type HostedSourceScreeningAuthority,
+  type ProtectedSource, type SourceScreeningReceipt,
   type ProtectedResearchReference, type ResearchReferenceScreeningReceipt, type ResearchReferenceScreeningResult,
   type ResearchReferenceProjection, type ResearchReferenceOperation,
 } from '@goodvibes-jev/engine/sdk/platform/security';
 import { ToolRegistry, type ToolInputProjector, type ProjectedToolCall } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createProtectedInboxMapper, type ProtectedInboxPreviewInput, type ProtectedInboxPreviewFields } from '@goodvibes-jev/engine/sdk/platform/intake';
 declare const options: ProtectedSourceOwnerOptions;
+declare const hostedAuthority: HostedSourceScreeningAuthority;
+const hostedOptions: HostedProtectedSourceOwnerOptions = { kind: 'hosted', authority: hostedAuthority,
+  credentials: { abacusApiKey: 'native-resolved-abacus', typesafeApiKey: 'native-resolved-typesafe' } };
+const hostedOwner = createProtectedSourceOwner(hostedOptions);
+// @ts-expect-error Hosted authority cannot claim verified local retention.
+const hostedAsLocal: HostedSourceScreeningAuthority = { ...hostedAuthority, retention: 'ephemeral-no-log' };
+const hostedWithDestination: HostedProtectedSourceOwnerOptions = {
+  ...hostedOptions,
+  // @ts-expect-error Hosted destinations and models belong to the SDK composition.
+  proposal: { endpoint: 'https://other.example', model: 'other' },
+};
 declare const input: ProtectedInboxPreviewInput;
 const owner = createProtectedSourceOwner(options);
 const source: ProtectedSource = owner.capture(['exact original']);
@@ -38,5 +50,5 @@ const close: Promise<void> = owner.close();
 const forgedSource: ProtectedSource = {};
 // @ts-expect-error A structural empty object is not a settled screening receipt.
 const forgedReceipt: SourceScreeningReceipt = {};
-export { source, result, close, forgedSource, forgedReceipt, reference, referenceResult, referenceProjection, fencedReferenceResult,
+export { hostedOwner, hostedAsLocal, hostedWithDestination, source, result, close, forgedSource, forgedReceipt, reference, referenceResult, referenceProjection, fencedReferenceResult,
   inputProjector, projectedCall, exactReference, SOURCE_SCREENING_LIMITS };

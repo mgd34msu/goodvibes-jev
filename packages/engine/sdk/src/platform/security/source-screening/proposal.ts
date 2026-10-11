@@ -31,11 +31,13 @@ function fields(value: unknown, keys: readonly string[]): Record<string, unknown
   if (Reflect.ownKeys(descriptors).length !== keys.length || keys.some(key => !descriptors[key] || !('value' in descriptors[key]!))) return fail();
   return Object.fromEntries(keys.map(key => [key, descriptors[key]!.value]));
 }
-export function captureScreeningSource(value: readonly string[]): ScreeningSource {
+export function captureScreeningSource(value: readonly string[], credentialLiterals: readonly string[] = []): ScreeningSource {
   // The existing floor refuses known credential/card material. It is neither
   // generic redaction nor permission to send arbitrary text to a hosted reader.
   const values = dense(value, LIMITS.parts);
   if (values.some(part => typeof part !== 'string')) return fail();
+  if (values.some(part => typeof part === 'string' && credentialLiterals.some(secret => part.includes(secret))))
+    throw new JudgmentInputError('credential-material');
   const snapshot = snapshotJudgmentInput(values);
   if (!Array.isArray(snapshot) || snapshot.length < 1 || snapshot.length > LIMITS.parts
     || snapshot.some(part => typeof part !== 'string')
@@ -84,7 +86,7 @@ export async function proposeScreeningSpans(source: ScreeningSource, options: {
       ].join('\n') }, { role: 'user', content: JSON.stringify(source) }] }),
   });
   options.assertCurrent(); options.signal.throwIfAborted();
-  if (!response.ok) throw new Error('Local source proposal unavailable');
+  if (!response.ok) throw new Error('Source proposal unavailable');
   let data: unknown;
   try { data = await response.json(); } catch { return fail(); }
   // JSON decoding produces ordinary data. Only the closed proposal survives;

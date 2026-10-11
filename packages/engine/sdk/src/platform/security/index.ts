@@ -84,7 +84,8 @@ export { createProtectedSourceOwner } from './source-screening/owner.js';
 export { createFramedResearchReferenceProjector, resolveFramedResearchReference } from './source-screening/framed-references.js';
 export { SOURCE_SCREENING_LIMITS } from './source-screening/types.js';
 export type {
-  LocalSourceScreeningAuthority, ProtectedSourceOwnerOptions, ProtectedSource,
+  LocalSourceScreeningAuthority, HostedSourceScreeningAuthority, LocalProtectedSourceOwnerOptions,
+  HostedProtectedSourceOwnerOptions, ProtectedSourceOwnerOptions, ProtectedSource,
   ProtectedSourceOwner, SourceScreeningReceipt, SourceScreeningResult, SourceScreeningHold,
   ProtectedResearchReference, ResearchReferenceScreeningReceipt, ResearchReferenceScreeningResult, ResearchReferenceProjection,
   ResearchReferenceOperation,

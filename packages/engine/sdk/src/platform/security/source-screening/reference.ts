@@ -41,7 +41,7 @@ export interface CapturedResearchReference {
 export const WITHHELD_RESEARCH_REFERENCE = '[source URL withheld]';
 
 /** The original's complete privacy floor is owned by captureScreeningSource first. */
-export function captureResearchReference(original: string): CapturedResearchReference {
+export function captureResearchReference(original: string, credentialLiterals: readonly string[] = []): CapturedResearchReference {
   const withheld = () => Object.freeze({ original, parameters: Object.freeze([]), malformed: true });
   // Parsing repairs these inputs. Withhold the known complete reference instead
   // of repairing it into another resource or inferring an unbound prose range.
@@ -54,7 +54,7 @@ export function captureResearchReference(original: string): CapturedResearchRefe
   if (parameters.length > LIMITS.referenceParameters) throw new Error('Protected research reference exceeds its bound');
   // A percent-encoded field name becomes the semantic name. Inspect that full
   // name with the existing floor before it can become a judgment state.
-  for (const parameter of parameters) captureScreeningSource([parameter]);
+  for (const parameter of parameters) captureScreeningSource([parameter], credentialLiterals);
   return Object.freeze({ original, parameters: Object.freeze(parameters), malformed: false });
 }
 
@@ -67,7 +67,7 @@ interface ReadOptions {
 }
 
 /** Owner-local refusal stability. Only digests and typed roles outlive a call. */
-export function createResearchReferenceReader(): {
+export function createResearchReferenceReader(credentialLiterals: readonly string[] = []): {
   read: (reference: CapturedResearchReference, options: ReadOptions) => Promise<Projection>;
   clear: () => void;
 } {
@@ -76,6 +76,7 @@ export function createResearchReferenceReader(): {
   const current = (options: ReadOptions) => { options.assertCurrent(); options.signal.throwIfAborted(); };
   const role = async (parameter: string, options: ReadOptions): Promise<Role | Hold> => {
     current(options);
+    captureScreeningSource([parameter], credentialLiterals);
     const key = createHash('sha256').update(parameter).digest('hex');
     if (roles.has(key)) return roles.get(key) ?? 'busy';
     if (roles.size >= LIMITS.referenceRoles) return 'capacity';

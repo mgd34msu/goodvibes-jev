@@ -2,10 +2,11 @@ import { createSystemOnePort, type JudgmentRetryProgress } from '@goodvibes-jev/
 import { types as nodeTypes } from 'node:util';
 import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { captureScreeningSource, isMalformedScreeningProposal, proposeScreeningSpans, type ScreeningSource, type ScreeningSpan } from './proposal.js';
-import { captureLoopbackEndpoint, createScreeningTransport } from './transport.js';
+import { captureHostedScreeningCredentials, captureLoopbackEndpoint, createScreeningTransport } from './transport.js';
 import { verifyScreeningSpans } from './verification.js';
 import { captureResearchReference, createResearchReferenceReader, WITHHELD_RESEARCH_REFERENCE, type CapturedResearchReference } from './reference.js';
 import { SOURCE_SCREENING_LIMITS as LIMITS, type ProtectedSource, type ProtectedSourceOwner, type ProtectedSourceOwnerOptions,
+  type HostedProtectedSourceOwnerOptions,
   type SourceScreeningReceipt, type SourceScreeningResult, type ProtectedResearchReference,
   type ResearchReferenceScreeningReceipt, type ResearchReferenceScreeningResult, type ResearchReferenceOperation } from './types.js';
 
@@ -45,6 +46,30 @@ function captureOperation(value: ResearchReferenceOperation | undefined): Resear
   return Object.freeze({ signal: signal as AbortSignal | undefined, assertCurrent: assertCurrent as (() => void) | undefined });
 }
 function reference(value: unknown): value is string { return typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value); }
+function dataFields(value: unknown, allowed: readonly string[]): Record<string, PropertyDescriptor> {
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return invalid();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || !allowed.includes(key))
+    || Object.values(descriptors).some(descriptor => !('value' in descriptor))) return invalid();
+  return descriptors;
+}
+function hostedOptions(value: ProtectedSourceOwnerOptions): value is HostedProtectedSourceOwnerOptions {
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) return invalid();
+  const kind = Object.getOwnPropertyDescriptor(value, 'kind');
+  if (!kind) return false;
+  if (!('value' in kind) || kind.value !== 'hosted') return invalid();
+  const options = dataFields(value, ['kind', 'authority', 'credentials', 'timeoutMs', 'onRetry']);
+  const authority = dataFields(options.authority?.value, ['kind', 'ownerId', 'revision', 'retention', 'signal', 'assertCurrent']);
+  if (authority.kind?.value !== 'hosted' || authority.retention?.value !== 'provider-managed-zero-retention-unverified'
+    || !reference(authority.ownerId?.value) || !reference(authority.revision?.value)
+    || nodeTypes.isProxy(authority.signal?.value) || !(authority.signal?.value instanceof AbortSignal)
+    || typeof authority.assertCurrent?.value !== 'function' || nodeTypes.isProxy(authority.assertCurrent.value)
+    || (options.timeoutMs && typeof options.timeoutMs.value !== 'number')
+    || (options.onRetry && (typeof options.onRetry.value !== 'function' || nodeTypes.isProxy(options.onRetry.value)))) return invalid();
+  captureHostedScreeningCredentials(options.credentials?.value);
+  return true;
+}
 function project(source: ScreeningSource, spans: readonly ScreeningSpan[]): readonly string[] {
   return Object.freeze(source.parts.map((text, part) => {
     let result = '', position = 0;
@@ -56,18 +81,23 @@ function project(source: ScreeningSource, spans: readonly ScreeningSpan[]): read
 }
 
 /**
- * Explicit trusted-host composition only. Loopback is destination containment,
- * not evidence of service retention behavior or permission to read a source.
- * No settings/env discovery, hosted fallback, persistent source, or raw log.
+ * Explicit trusted-host composition only. Local and hosted retention grants are
+ * distinct. No settings/env discovery, fallback, persistent source, or raw log.
  */
 export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions): ProtectedSourceOwner {
+  const isHosted = hostedOptions(options);
   const { authority } = options;
   const ownerId = authority.ownerId, authorityRevision = authority.revision;
   const parentSignal = authority.signal, assertAuthority = authority.assertCurrent;
-  if (!reference(ownerId) || !reference(authorityRevision) || authority.retention !== 'ephemeral-no-log'
+  if (!reference(ownerId) || !reference(authorityRevision)
+    || authority.retention !== (isHosted ? 'provider-managed-zero-retention-unverified' : 'ephemeral-no-log')
     || typeof assertAuthority !== 'function' || !(parentSignal instanceof AbortSignal)) return invalid();
-  const proposal = Object.freeze({ endpoint: captureLoopbackEndpoint(options.proposal.endpoint), model: options.proposal.model });
-  const judgment = Object.freeze({ endpoint: captureLoopbackEndpoint(options.judgment.endpoint), model: options.judgment.model });
+  const credentials = isHosted ? captureHostedScreeningCredentials(options.credentials) : undefined;
+  const credentialLiterals = credentials ? Object.freeze([credentials.abacusApiKey, credentials.typesafeApiKey]) : [];
+  const proposal = Object.freeze(isHosted ? { endpoint: 'https://routellm.abacus.ai', model: 'route-llm' }
+    : { endpoint: captureLoopbackEndpoint(options.proposal.endpoint), model: options.proposal.model });
+  const judgment = Object.freeze(isHosted ? { endpoint: 'https://api.typesafe.ai', model: 'jev-1.13.0' }
+    : { endpoint: captureLoopbackEndpoint(options.judgment.endpoint), model: options.judgment.model });
   if (!reference(proposal.model) || judgment.model !== 'jev-1.13.0') return invalid();
   const timeoutMs = options.timeoutMs ?? 10_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000
@@ -76,7 +106,7 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
   const signal = AbortSignal.any([parentSignal, lifetime.signal]);
   const sources = new Map<Handle, OwnedSource>();
   const projections = new Map<Receipt, OwnedProjection>();
-  const referenceReader = createResearchReferenceReader();
+  const referenceReader = createResearchReferenceReader(credentialLiterals);
   // Refusal-only fingerprints survive mapper-handle release, without raw text.
   const unsettled = new Set<string>();
   const screening = new Set<string>();
@@ -124,11 +154,13 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
     let transport: ReturnType<typeof createScreeningTransport> | undefined;
     try {
       assertCurrent();
-      transport = createScreeningTransport({ endpoints: [`${proposal.endpoint}/v1/chat/completions`, `${judgment.endpoint}/v1/systemone`],
+      transport = createScreeningTransport({ ...(credentials ? { kind: 'hosted', credentials } : {
+        endpoints: [`${proposal.endpoint}/v1/chat/completions`, `${judgment.endpoint}/v1/systemone`] }),
         signal: requestSignal, assertCurrent, timeoutMs });
       const ownedTransport = transport;
       const assertRoute = () => { assertCurrent(); ownedTransport.assertUsable(); };
-      const port = createSystemOnePort({ endpoint: { kind: 'local', baseURL: judgment.endpoint, apiKey: 'source-screening-local' },
+      const port = createSystemOnePort({ endpoint: { kind: isHosted ? 'hosted' : 'local', baseURL: judgment.endpoint,
+        apiKey: credentials?.typesafeApiKey ?? 'source-screening-local' },
         model: judgment.model, timeoutMs, retry: {}, fetch: ownedTransport.fetch });
       let parts: readonly string[];
       if (source.reference) {
@@ -175,7 +207,7 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
   };
   return {
     capture(parts) {
-      active(); const source = captureScreeningSource(parts); active();
+      active(); const source = captureScreeningSource(parts, credentialLiterals); active();
       if (sources.size >= LIMITS.sources) return invalid();
       const handle = Object.freeze({}) as ProtectedSource;
       sources.set(handle, { source, lifetime: new AbortController(), released: false }); return handle;
@@ -183,8 +215,8 @@ export function createProtectedSourceOwner(options: ProtectedSourceOwnerOptions)
     captureResearchReference(value) {
       active();
       // Capture the complete actual original before parsing, bounds or hashing.
-      const captured = captureScreeningSource([value]);
-      const reference = captureResearchReference(captured.parts[0]!);
+      const captured = captureScreeningSource([value], credentialLiterals);
+      const reference = captureResearchReference(captured.parts[0]!, credentialLiterals);
       active();
       if (sources.size >= LIMITS.sources) return invalid();
       // Equal text in display-preview mode cannot borrow reference authority.

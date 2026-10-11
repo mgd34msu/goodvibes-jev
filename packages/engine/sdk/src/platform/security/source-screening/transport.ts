@@ -1,5 +1,12 @@
 import { Client, interceptors } from 'undici/index.js';
 import * as directClient from './direct-client.js';
+import { types as nodeTypes } from 'node:util';
+import type { HostedProtectedSourceOwnerOptions } from './types.js';
+
+export const HOSTED_SOURCE_SCREENING_ROUTES = Object.freeze({
+  proposal: 'https://routellm.abacus.ai/v1/chat/completions',
+  judgment: 'https://api.typesafe.ai/v1/systemone',
+});
 
 const RESPONSE_LIMIT = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -14,6 +21,7 @@ function diagnostic(message: string): Error {
 
 const invalidEndpoint = () => diagnostic('source-screening endpoint is not an explicit literal-loopback target');
 const invalidRequest = () => diagnostic('source-screening transport request is not allowed');
+const invalidCredentials = () => diagnostic('source-screening hosted credentials are unavailable');
 const cancelled = () => diagnostic('source-screening transport was cancelled');
 const unauthorized = () => diagnostic('source-screening transport authority is no longer current');
 const timedOut = () => diagnostic('source-screening transport timed out');
@@ -30,12 +38,13 @@ const routeUnavailable = () => diagnostic('source-screening local route is unava
  * NO_PROXY is not an owner grant. Read only a presence bit, never retain or
  * print proxy values (which can themselves contain credentials).
  */
-function requireDirectRoute(): void {
+function requireDirectRoute(kind: 'local' | 'hosted' = 'local'): void {
   // Bun's lazily materialized standard proxy keys can be non-enumerable after
   // assignment. Test the known spellings explicitly, then discover variants.
   const names = new Set(['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy',
     ...Object.getOwnPropertyNames(process.env).filter((name) => ['http_proxy', 'https_proxy', 'all_proxy'].includes(name.toLowerCase()))]);
-  if ([...names].some((name) => process.env[name] !== undefined && process.env[name] !== '')) throw routeUnavailable();
+  if ([...names].some((name) => process.env[name] !== undefined && process.env[name] !== ''))
+    throw kind === 'hosted' ? diagnostic('source-screening hosted direct route is unavailable') : routeUnavailable();
 }
 
 /** Capture syntax before URL parsing can repair a non-literal or ambiguous address. */
@@ -63,6 +72,20 @@ function captureTargets(endpoints: readonly string[]): Set<string> {
   return targets;
 }
 
+/** Capture native-owned secret values without getters, route inference, or discovery. */
+export function captureHostedScreeningCredentials(value: unknown): HostedProtectedSourceOwnerOptions['credentials'] {
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw invalidCredentials();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).length !== 2) throw invalidCredentials();
+  const abacus = descriptors.abacusApiKey, typesafe = descriptors.typesafeApiKey;
+  if (!abacus || !typesafe || !('value' in abacus) || !('value' in typesafe)) throw invalidCredentials();
+  const abacusApiKey: unknown = abacus.value, typesafeApiKey: unknown = typesafe.value;
+  if (typeof abacusApiKey !== 'string' || typeof typesafeApiKey !== 'string'
+    || !/^[\x21-\x7e]{1,8192}$/.test(abacusApiKey) || !/^[\x21-\x7e]{1,8192}$/.test(typesafeApiKey)) throw invalidCredentials();
+  return Object.freeze({ abacusApiKey, typesafeApiKey });
+}
+
 function safeHeaders(response: { readonly headers: { get(name: string): string | null } }): Headers {
   const headers = new Headers({ 'content-type': 'application/json' });
   const retryAfter = response.headers.get('retry-after');
@@ -73,13 +96,15 @@ function safeHeaders(response: { readonly headers: { get(name: string): string |
   return headers;
 }
 
-interface ScreeningTransportOptions {
-  /** Exact full /v1/chat/completions and /v1/systemone targets, captured by the owner. */
-  readonly endpoints: readonly string[];
+interface ScreeningTransportOperation {
   readonly signal: AbortSignal;
   readonly assertCurrent: () => void;
   readonly timeoutMs?: number;
 }
+type ScreeningTransportOptions = ScreeningTransportOperation & (
+  | { readonly endpoints: readonly string[]; readonly kind?: never }
+  | { readonly kind: 'hosted'; readonly credentials: HostedProtectedSourceOwnerOptions['credentials'] }
+);
 
 interface ScreeningTransport {
   /** Check current admission/authority and direct routing before a logical retry. */
@@ -91,13 +116,14 @@ interface ScreeningTransport {
 }
 
 /**
- * A private, bounded loopback boundary, not another retry owner. The canonical
+ * A private, bounded fixed-route boundary, not another retry owner. The canonical
  * judgment client can stop awaiting a cancelled call before its actual fetch
  * settles. Keep that fetch, every body read, and cancellation cleanup owned
  * until they settle; close must never mistake the SDK's race for a drain.
  */
 export function createScreeningTransport(options: ScreeningTransportOptions): ScreeningTransport {
-  const targets = captureTargets(options.endpoints);
+  const hosted = options.kind === 'hosted' ? captureHostedScreeningCredentials(options.credentials) : undefined;
+  const targets = options.kind === 'hosted' ? new Set<string>(Object.values(HOSTED_SOURCE_SCREENING_ROUTES)) : captureTargets(options.endpoints);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) throw invalidRequest();
   const assertCurrent = options.assertCurrent;
@@ -128,7 +154,7 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
   }
 
   return {
-    assertUsable() { check(); requireDirectRoute(); },
+    assertUsable() { check(); requireDirectRoute(hosted ? 'hosted' : 'local'); },
     async fetch(input, init) {
       check();
       let request: Request;
@@ -139,6 +165,12 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
         // forward Bun proxy/unix/TLS/dispatcher extensions from a caller's init.
         request = new Request(input, { ...init, redirect: 'error', credentials: 'omit' });
         if (request.method !== 'POST' || !targets.has(request.url)) throw invalidRequest();
+        if (hosted) {
+          // No caller header, cookie, alternate credential or routing hint crosses
+          // this boundary. Each private key belongs to exactly one fixed target.
+          const apiKey = request.url === HOSTED_SOURCE_SCREENING_ROUTES.proposal ? hosted.abacusApiKey : hosted.typesafeApiKey;
+          request = new Request(request, { headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` } });
+        }
       } catch { throw invalidRequest(); }
       check();
       const controller = new AbortController();
@@ -163,7 +195,7 @@ export function createScreeningTransport(options: ScreeningTransportOptions): Sc
           check(controller.signal);
           // No await or owner/caller hook may run between this check and
           // dispatch. Recheck each attempt, including canonical SDK retries.
-          requireDirectRoute();
+          requireDirectRoute(hosted ? 'hosted' : 'local');
           const origin = new URL(request.url).origin;
           let client = clients.get(origin);
           if (!client) {

@@ -130,9 +130,11 @@ export function createEmailInboxOwner(options: EmailInboxOwnerOptions): Verified
     } catch { revokeEligibility(true); throw new Error('Email inbox scope is unavailable'); }
   };
   current();
-  const screening = createProtectedSourceOwner({ ...options.screening, authority: { ...authority, signal,
-    assertCurrent() { current(); sync(() => assertAuthority.call(authority)); screeningObservation?.assertCurrent(); },
-  } });
+  const screeningOptions = options.screening;
+  const assertScreeningCurrent = () => { current(); sync(() => assertAuthority.call(authority)); screeningObservation?.assertCurrent(); };
+  const screening = createProtectedSourceOwner('kind' in screeningOptions
+    ? { ...screeningOptions, authority: { ...screeningOptions.authority, signal, assertCurrent: assertScreeningCurrent } }
+    : { ...screeningOptions, authority: { ...screeningOptions.authority, signal, assertCurrent: assertScreeningCurrent } });
   const own = <T>(action: () => Promise<T>): Promise<T> => {
     const work = Promise.resolve().then(() => { current(); return action(); });
     active.add(work); void work.then(() => active.delete(work), () => active.delete(work)); return work;
