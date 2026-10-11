@@ -327,9 +327,11 @@ export function buildSettingsModel(liveConfig: unknown, clearedKeys: ReadonlySet
       (e) => namespaceOf(e.key) === ns && !OWNED_CONFIG_KEYS.has(e.key) && !isCardMaterialKey(e.key),
     ).map((e) => buildField(e, liveConfig));
 
+    // Explicit card exclusions win even over declared-secret facts. Other SDK
+    // secrets need no semantic clearance to render a deterministic masked row.
     const rawRows: RawRowModel[] = liveKeys
       .filter(
-        (k) => namespaceOf(k) === ns && !schemaKeySet.has(k) && !OWNED_CONFIG_KEYS.has(k) && !isCardMaterialKey(k) && nonCardKeys.has(k),
+        (k) => namespaceOf(k) === ns && !schemaKeySet.has(k) && !OWNED_CONFIG_KEYS.has(k) && !isCardMaterialKey(k) && (SECRET_CONFIG_KEYS.has(k) || nonCardKeys.has(k)),
       )
       .map((k) => ({
         key: k,

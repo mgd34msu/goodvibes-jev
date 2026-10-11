@@ -1,3 +1,8 @@
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { ConfigManager } from '../../config/index.ts';
+import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { afterAll, afterEach, beforeEach, describe, spyOn, expect, test } from 'bun:test';
 import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -16,15 +21,30 @@ import { createAgentProcessTool, createAgentTerminalTool, registerAgentTerminalP
 import { ordinaryResearchOwner, researchScreeningFixture, cleanupResearchScreeningFixtures, exactSensitiveSpans } from '../helpers/research-screening.ts';
 
 afterAll(cleanupResearchScreeningFixtures);
+const configRoots: string[] = [];
+function fixturePlatform() {
+  const root = makeProjectTempDir('harness-config-owner');
+  configRoots.push(root);
+  const configManager = new ConfigManager({
+    surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
+    configDir: join(root, '.goodvibes', GOODVIBES_AGENT_SURFACE_ROOT),
+    workingDir: root,
+    homeDir: root,
+  });
+  return { config: configManager.getAll(), configManager };
+}
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+afterEach(() => {
+  installJudgmentPort(previous);
+  for (const root of configRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 const start = { command: 'env firefox', processAction: 'start', confirm: true, explicitUserRequest: 'Open the browser.', timeoutMs: 120_000 };
 function fixture(owner = ordinaryResearchOwner()) {
   const calls: unknown[][] = [];
   const manager = { async spawn(...args: unknown[]) { calls.push(args); return { process_id: 'fixture-process', pid: 123 }; } } as unknown as ProcessManager;
-  const context = { workspace: { processManager: manager }, session: { runtime: { sessionId: 'original' } }, extensions: {}, clients: {} } as CommandContext;
+  const context = { platform: fixturePlatform(), workspace: { processManager: manager }, session: { runtime: { sessionId: 'original' } }, extensions: {}, clients: {} } as CommandContext;
   const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, owner);
   return { context, registry, calls, manager, options: (signal?: AbortSignal) => processClassificationOptions(context, registry, signal) };
 }

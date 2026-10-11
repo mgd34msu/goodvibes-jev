@@ -44,7 +44,7 @@ import { SettingsField } from '../SettingsField';
 import { SettingsHeadingLevel } from './parts';
 import { FeatureUnitCard } from '../FeatureUnitCard';
 import { PaymentCardEntry } from '../PaymentCardEntry';
-import { displayConfigValue, isUndeclaredConfigKey, isUnresolvedConfigKey, SECRET_CONFIG_KEYS } from '../../../lib/config-redaction';
+import { displayConfigValue, isUnresolvedConfigKey, SECRET_CONFIG_KEYS } from '../../../lib/config-redaction';
 import {
   buildSettingsModel,
   liveLeafKeys,
@@ -96,8 +96,10 @@ export function ConfigSettingsProvider({ enabled = true, children }: { enabled?:
   });
 
   const baseGroups = useMemo(() => buildSettingsModel(config.data), [config.data]);
+  // Canonically declared secrets stay deterministic, including non-schema keys.
+  // Only genuinely unresolved names need credential and card-material readings.
   const unresolvedNames = liveLeafKeys(config.data, "", new Set([...OBJECT_TYPED_CONFIG_KEYS, ...SECRET_CONFIG_KEYS]))
-    .filter((key) => isUndeclaredConfigKey(key) && !isDeclaredCardMaterialKey(key));
+    .filter((key) => isUnresolvedConfigKey(key) && !isDeclaredCardMaterialKey(key));
   const nameSignature = JSON.stringify(unresolvedNames);
   const [classification, setClassification] = useState<{
     data: unknown;

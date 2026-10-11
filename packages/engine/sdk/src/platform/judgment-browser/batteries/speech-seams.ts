@@ -1,5 +1,5 @@
 import { defineBattery, yesNo, type BatteryRun } from '@goodvibes-jev/judgment/decisions';
-import { BrowserJudgmentError, BROWSER_SPEECH_SEAM_BAND } from '../../../../../daemon-sdk/src/browser-judgment-contract.js';
+import { BrowserJudgmentError, BROWSER_SPEECH_SEAM_BAND } from '@goodvibes-jev/engine/daemon-sdk/browser-judgment-contract';
 import type { BrowserJudgmentBattery } from '../types.js';
 import { snapshotSpeechSeams } from '../speech-source.js';
 

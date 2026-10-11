@@ -13,7 +13,13 @@ import {
   sectionsOfPage,
 } from './sections';
 
-const groups = buildSettingsModel({ display: { theme: 'nord' }, mystery: { key: 1 } });
+// This routing test starts after the unknown key has explicit non-card evidence.
+// Credential clearance is separate: its value remains masked.
+const groups = buildSettingsModel(
+  { display: { theme: 'nord' }, mystery: { key: 1 } },
+  new Set(),
+  new Set(['mystery.key']),
+);
 
 describe('settings dialog sections', () => {
 

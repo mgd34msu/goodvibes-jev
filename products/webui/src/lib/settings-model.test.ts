@@ -10,6 +10,7 @@ import {
 } from './settings-model';
 import { CONFIG_SCHEMA_ENTRIES, FEATURE_SETTINGS } from './generated/config-schema';
 import { isCardMaterialKey } from './card-material';
+import { displayConfigValue } from './config-redaction';
 
 function groupById(groups: SettingsGroupModel[], id: string): SettingsGroupModel | undefined {
   return groups.find((g) => g.id === id);
@@ -141,6 +142,31 @@ describe('buildSettingsModel: enablement state from domain settings keys', () =>
 });
 
 describe("buildSettingsModel: honesty for unschema'd live keys", () => {
+  test.each(['synthetic-secret-1234', { child: 'synthetic-private-child' }])(
+    'a non-schema declared secret stays one masked row without semantic clearance: %p',
+    (value) => {
+      const groups = buildSettingsModel({ cluster: { groupMaterial: value } });
+      const rows = groupById(groups, 'cluster')!.rawRows;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ key: 'cluster.groupMaterial', isSecret: true, displayCleared: false });
+      expect(displayConfigValue(rows[0]!.key, rows[0]!.value, rows[0]!.displayCleared))
+        .toBe(typeof value === 'string' ? '••••••••••••1234' : '••••');
+    },
+  );
+
+  test('declared-secret rendering never grants an unknown neighbor or card material a row', () => {
+    const config = {
+      cluster: { groupMaterial: 'synthetic-secret-1234', unknownName: 'private-neighbor' },
+      payments: { cardNumber: 'private-card' },
+    };
+    const rows = buildSettingsModel(config).flatMap(group => group.rawRows);
+    expect(rows.map(row => row.key)).toEqual(['cluster.groupMaterial']);
+    const attemptedClearance = new Set(['cluster.groupMaterial', 'payments.cardNumber']);
+    const clearedRows = buildSettingsModel(config, attemptedClearance, attemptedClearance).flatMap(group => group.rawRows);
+    expect(clearedRows.map(row => row.key)).toEqual(['cluster.groupMaterial']);
+    expect(clearedRows[0]).toMatchObject({ isSecret: true, displayCleared: false });
+  });
+
   test('a live key with no schema entry renders as a raw row, never hidden', () => {
     const groups = buildSettingsModel({ mysteryDomain: { unknownKnob: 'held-by-daemon' } }, new Set(), new Set(['mysteryDomain.unknownKnob']));
     const group = groupById(groups, 'mysteryDomain');
