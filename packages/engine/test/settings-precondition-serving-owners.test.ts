@@ -117,7 +117,9 @@ test('actual facade source retires lifetime before stop callbacks and token repl
   expect(stop.indexOf('this.settingsLifetime = null')).toBeLessThan(stop.indexOf('this._configWatchUnsub?.()'));
   const enable = facade.slice(facade.indexOf('  enable(dangerConfig:'));
   expect(enable.indexOf('this.settingsLifetime =')).toBeLessThan(enable.indexOf('this.authToken = token ?? null'));
-  expect(facade).toContain('this.settingsLifetime = {};\n      this.server = this.serveFactory(');
+  const binding = facade.slice(facade.indexOf('  private async bindControlPlaneListener('), facade.indexOf('  private async detachControlPlaneListener('));
+  expect(binding).toContain('this.settingsLifetime = lifetime');
+  expect(binding.indexOf('this.settingsLifetime = lifetime')).toBeLessThan(binding.indexOf('this.serveFactory('));
   const composition = readFileSync(new URL('../sdk/src/platform/daemon/facade-composition.ts', import.meta.url), 'utf8');
   expect(composition).toContain('settingsLifetime: options.settingsLifetime');
   expect(composition).toContain('controlPlaneHelper.withSettingsAdminAuthority(req, authority, callback)');

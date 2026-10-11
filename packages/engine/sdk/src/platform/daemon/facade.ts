@@ -188,6 +188,10 @@ export class DaemonServer {
   private _restartDirty = false;
   private _restartAdmissionClosed = false;
   private stoppingRuntime: Promise<void> | null = null;
+  /** Full stop retires pending listener acquisition, including binding ABA. */
+  private listenerTransition: object = {};
+  /** The detached native socket remains owned until its actual close settles. */
+  private listenerDrain: Promise<void> | null = null;
   private tornDown = false; // True once stop() tore this daemon down; cleared by a successful bind. Teardown was gated on `server === null`, which conflated "never bound a socket" with "has nothing to release". The CONSTRUCTOR starts the companion-chat GC sweep and the batch tick, so enable() plus a failed or never-called start() left both running with no reachable stop. What must not run twice is the teardown, so that is what this guards.
 
   constructor(private config: DaemonConfig = {}) {
@@ -412,6 +416,7 @@ export class DaemonServer {
    * Start the daemon. Refuses to start if not explicitly enabled.
    */
   async start(): Promise<void> {
+    await this._restartingPromise;
     await this.stoppingRuntime;
     if (this.server === null) this.settingsLifetime = null;
     // Guarantees the daemon refuses to inherit from its host; see
@@ -464,7 +469,10 @@ export class DaemonServer {
       runtimeStore: this.runtimeStore,
     });
 
-    const self = this;
+    const transition = this.listenerTransition;
+    let previousBinding = this.configuredControlPlaneBinding();
+    let selectedBinding = { host: this.host, port: this.port };
+    let probedIncarnation = this.configManager.getConfigurationIncarnation();
     // Skip the OS port probe when the host injects a custom serve factory.
     if (this.serveFactory === Bun.serve) {
       await requirePortAvailable(this.port, this.host, 'daemon');
@@ -473,41 +481,36 @@ export class DaemonServer {
     try {
       // A stop admitted during asynchronous boot still owns its write drain.
       await this.stoppingRuntime;
-      this.tlsState = resolveInboundTlsContext(this.configManager, 'controlPlane'); this.tornDown = false; // a daemon that is up again is one that can be torn down again
+      if (this.listenerTransition !== transition) return;
+      this.tornDown = false;
       this.workProposals.startSweep();
-      this.settingsLifetime = {};
-      this.server = this.serveFactory({
-        port: this.port,
-        hostname: this.host,
-        // Derived from the SSE heartbeat interval so a quiet stream outlives it (Bun's 10s default would not).
-        idleTimeout: sseIdleTimeoutSeconds(),
-        ...(this.tlsState.tls ? { tls: this.tlsState.tls } : {}),
-        async fetch(req: Request, server: UpgradeCapableServer): Promise<Response | undefined> {
-          configureJudgmentRequestLifetime(req, server);
-          const upgrade = self.tryUpgradeControlPlaneWebSocket(req, server);
-          if (upgrade === 'upgraded') return;
-          if (upgrade) return upgrade;
-          return self.handleRequest(req);
-        },
-        websocket: {
-          open(ws) {
-            self.handleControlPlaneWebSocketOpen(ws as unknown as { data: ControlPlaneWebSocketData; send(message: string): void });
-          },
-          message(ws, message) {
-            void self.handleControlPlaneWebSocketMessage(
-              ws as unknown as { data: ControlPlaneWebSocketData; send(message: string): void },
-              message,
-            ).catch((error: unknown) => {
-              logger.warn('DaemonServer: control-plane websocket message failed', {
-                error: summarizeError(error),
-              });
-            });
-          },
-          close(ws) {
-            self.handleControlPlaneWebSocketClose(ws as unknown as { data: ControlPlaneWebSocketData });
-          },
-        },
-      });
+      const acquireInitialBinding = async (): Promise<{ tlsState: ResolvedInboundTlsContext; incarnation: number } | null> => {
+        while (this.listenerTransition === transition && !this.tornDown) {
+          const incarnation = this.configManager.getConfigurationIncarnation();
+          const latestBinding = this.configuredControlPlaneBinding();
+          if (latestBinding.host !== previousBinding.host || latestBinding.port !== previousBinding.port) {
+            selectedBinding = latestBinding;
+          }
+          previousBinding = latestBinding;
+          this.host = selectedBinding.host;
+          this.port = selectedBinding.port;
+          if (this.serveFactory === Bun.serve && probedIncarnation !== incarnation) {
+            await requirePortAvailable(this.port, this.host, 'daemon');
+            probedIncarnation = incarnation;
+          }
+          if (this.listenerTransition !== transition || this.tornDown) return null;
+          if (this.configManager.getConfigurationIncarnation() !== incarnation) continue;
+          const tlsState = resolveInboundTlsContext(this.configManager, 'controlPlane');
+          this.tlsState = tlsState;
+          if (await this.bindControlPlaneListener(transition, tlsState, incarnation)) {
+            if (this.configManager.getConfigurationIncarnation() === incarnation) return { tlsState, incarnation };
+            await this.detachControlPlaneListener();
+          }
+        }
+        return null;
+      };
+      let binding = await acquireInitialBinding();
+      if (binding === null) return;
 
       // Boot precondition: fold legacy session stores into the store the broker serves, then sweep the pre-split one aside. See daemon-session-store-boot.ts.
       await runDaemonSessionStoreBoot({ sessionBroker: this.sessionBroker, shellPaths: this.runtimeServices.shellPaths, surfaceRoot: this.runtimeServices.surfaceRoot, recordReceipt: (text) => this.lifecycle?.receiptStore().record(text) });
@@ -555,6 +558,14 @@ export class DaemonServer {
       } catch (error) {
         logger.warn('Trigger family failed to start; the daemon continues without it', { error: summarizeError(error) });
       }
+      // Manager startup awaits can retire an otherwise current native bind.
+      // Reacquire only the listener; the initialized backend owners stay live.
+      while (this.configManager.getConfigurationIncarnation() !== binding.incarnation) {
+        await this.detachControlPlaneListener();
+        binding = await acquireInitialBinding();
+        if (binding === null) return;
+      }
+      if (this.listenerTransition !== transition || this.tornDown) return;
       this.controlPlaneGateway.setServerState({ enabled: true, host: this.host, port: this.port });
       this._attachControlPlaneConfigWatcher();
       this.transportEventsHelper.emitTransportConnected();
@@ -569,9 +580,9 @@ export class DaemonServer {
       logger.info('DaemonServer started', {
         port: this.port,
         host: this.host,
-        tlsMode: this.tlsState.mode,
-        scheme: this.tlsState.scheme,
-        trustProxy: this.tlsState.trustProxy,
+        tlsMode: binding.tlsState.mode,
+        scheme: binding.tlsState.scheme,
+        trustProxy: binding.tlsState.trustProxy,
       });
     } catch (err) {
       this.settingsLifetime = null;
@@ -600,10 +611,7 @@ export class DaemonServer {
       this.approvalBrokerUnsubscribe = null;
       this.relayReachability?.stop();
       this.relayReachability = null;
-      if (this.server !== null) {
-        this.server.stop(true);
-        this.server = null;
-      }
+      await this.detachControlPlaneListener();
       this.tlsState = null;
       this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });
       this.transportEventsHelper.emitTransportTerminalFailure(message);
@@ -614,6 +622,119 @@ export class DaemonServer {
       try { await rollbackDrain; }
       finally { if (this.stoppingRuntime === rollbackDrain) this.stoppingRuntime = null; }
       throw err;
+    }
+  }
+
+  private async bindControlPlaneListener(transition: object, tlsState: ResolvedInboundTlsContext, incarnation: number): Promise<boolean> {
+    if (this.listenerTransition !== transition || this.tornDown
+      || this.configManager.getConfigurationIncarnation() !== incarnation) return false;
+    const self = this;
+    const lifetime = {};
+    this.settingsLifetime = lifetime;
+    try {
+      const server = this.serveFactory({
+        port: this.port,
+        hostname: this.host,
+        // Derived from the SSE heartbeat interval so a quiet stream outlives it (Bun's 10s default would not).
+        idleTimeout: sseIdleTimeoutSeconds(),
+        ...(tlsState.tls ? { tls: tlsState.tls } : {}),
+        async fetch(req: Request, server: UpgradeCapableServer): Promise<Response | undefined> {
+          configureJudgmentRequestLifetime(req, server);
+          const upgrade = self.tryUpgradeControlPlaneWebSocket(req, server);
+          if (upgrade === 'upgraded') return;
+          if (upgrade) return upgrade;
+          return self.handleRequest(req);
+        },
+        websocket: {
+          open(ws) {
+            self.handleControlPlaneWebSocketOpen(ws as unknown as { data: ControlPlaneWebSocketData; send(message: string): void });
+          },
+          message(ws, message) {
+            void self.handleControlPlaneWebSocketMessage(
+              ws as unknown as { data: ControlPlaneWebSocketData; send(message: string): void },
+              message,
+            ).catch((error: unknown) => {
+              logger.warn('DaemonServer: control-plane websocket message failed', {
+                error: summarizeError(error),
+              });
+            });
+          },
+          close(ws) {
+            self.handleControlPlaneWebSocketClose(ws as unknown as { data: ControlPlaneWebSocketData });
+          },
+        },
+      });
+      const current = (): boolean => this.listenerTransition === transition && !this.tornDown
+        && this.settingsLifetime === lifetime && this.configManager.getConfigurationIncarnation() === incarnation;
+      // Publication is async: mutations queued by the native factory retire its candidate too.
+      if (current()) await Promise.resolve();
+      if (!current()) {
+        if (this.settingsLifetime === lifetime) this.settingsLifetime = null;
+        await this.closeControlPlaneListener(server);
+        return false;
+      }
+      this.server = server;
+      return true;
+    } catch (error) {
+      if (this.settingsLifetime === lifetime) this.settingsLifetime = null;
+      throw error;
+    }
+  }
+
+  private async detachControlPlaneListener(): Promise<void> {
+    this.settingsLifetime = null;
+    const server = this.server;
+    this.server = null;
+    this.tlsState = null;
+    if (server === null) {
+      await this.listenerDrain;
+      return;
+    }
+    await this.closeControlPlaneListener(server);
+  }
+
+  private async closeControlPlaneListener(server: ReturnType<typeof Bun.serve>): Promise<void> {
+    // Reserve before invoking native close: abort callbacks can reenter stop.
+    const closed = Promise.withResolvers<void>();
+    const drain = closed.promise;
+    this.listenerDrain = drain;
+    try {
+      void Promise.resolve(server.stop(true)).then(closed.resolve, closed.reject);
+    } catch (error) {
+      closed.reject(error);
+    }
+    try { await drain; }
+    finally { if (this.listenerDrain === drain) this.listenerDrain = null; }
+  }
+
+  private configuredControlPlaneBinding(): ReturnType<typeof resolveHostBinding> {
+    return resolveHostBinding(this.configManager.get('controlPlane.hostMode') ?? 'local',
+      String(this.configManager.get('controlPlane.host') ?? '127.0.0.1'),
+      Number(this.configManager.get('controlPlane.port') ?? 3421), 'controlPlane');
+  }
+
+  private async rebindControlPlaneListener(transition: object): Promise<void> {
+    const current = (): boolean => this.listenerTransition === transition
+      && !this.tornDown && !this._restartAdmissionClosed;
+    while (current()) {
+      this._restartDirty = false;
+      await this.detachControlPlaneListener();
+      if (!current()) return;
+      const incarnation = this.configManager.getConfigurationIncarnation();
+      const binding = this.configuredControlPlaneBinding();
+      if (this.serveFactory === Bun.serve) await requirePortAvailable(binding.port, binding.host, 'daemon');
+      if (!current()) return;
+      // Every watched mutation, including same-value/ABA, retires this candidate.
+      if (this._restartDirty || this.configManager.getConfigurationIncarnation() !== incarnation) continue;
+      this.host = binding.host;
+      this.port = binding.port;
+      this.tlsState = resolveInboundTlsContext(this.configManager, 'controlPlane');
+      if (!await this.bindControlPlaneListener(transition, this.tlsState, incarnation)) continue;
+      if (!current()) return;
+      if (this.configManager.getConfigurationIncarnation() !== incarnation) continue;
+      this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });
+      this.transportEventsHelper.emitTransportConnected();
+      if (!this._restartDirty) return;
     }
   }
 
@@ -683,6 +804,8 @@ export class DaemonServer {
     // Both public and update/rollback stops retire SETTINGS before synchronous
     // abort callbacks can re-enter enable() and mint a new serving lifetime.
     this.settingsLifetime = null;
+    this.listenerTransition = {};
+    this._restartDirty = false;
     this.workProposals.dispose();
     this.tornDown = true;
     try {
@@ -695,17 +818,14 @@ export class DaemonServer {
     }
     if (alreadyTornDown) {
       await this.workProposals.flush();
+      await this.listenerDrain;
       await this.lifecycle?.drainHandovers(forHandover);
       return;
     }
 
-    // Tear down config watcher only on intentional stop; during a restart cycle
-    // (_restarting) it must stay active so mid-restart changes hit the dirty flag.
     const runtimeCloseFailures: unknown[] = [];
-    if (!this._restarting) {
-      this._configWatchUnsub?.();
-      this._configWatchUnsub = null;
-    }
+    this._configWatchUnsub?.();
+    this._configWatchUnsub = null;
 
     // Synchronous pre-stop teardown. Only stop the heartbeat watcher when start() engaged it (registered solely behind `watchers.enabled`); stopWatcher() runs requireFeatureGate('watcher-framework') and THROWS when that gate is off, which would break a clean shutdown of a watchers-disabled daemon. Wrapped as well because stop() is reachable on a daemon whose start() never ran, where the watcher is not registered and stopWatcher() runs its gate check before discovering that, a clean shutdown must not depend on the gate, the same stance start()'s own cleanup path takes.
     if (this.configManager.get('watchers.enabled')) { try { this.watcherRegistry.stopWatcher('daemon-heartbeat', 'daemon-stopped'); } catch (error) { logger.warn('DaemonServer: heartbeat watcher stop failed', { error: summarizeError(error) }); } }
@@ -739,33 +859,28 @@ export class DaemonServer {
     this.agentTaskAdapterUnsub?.();
     this.agentTaskAdapterUnsub = null;
     await this.sessionBroker.stop();
-    // Release sleep-inhibitor holds on a REAL shutdown (not an in-process
-    // restart cycle, where the runtime services, and their holds, live on):
-    // an exited daemon must never leave systemd-inhibit children blocking
-    // host sleep with no owner.
-    if (!this._restarting) {
-      try {
-        await this.runtimeServices.powerManager.stop();
-      } catch (error) {
-        logger.warn('DaemonServer: power-manager stop failed', { error: summarizeError(error) });
-      }
-      // Stop every poller the graph started. Same gate as the power manager: a
-      // restart cycle keeps the graph, and only a graph we built is ours to stop.
-      if (this.ownsRuntimeServices) {
-        try { await this.runtimeServices.close(); }
-        catch (error) { runtimeCloseFailures.push(error); }
-      }
+    try {
+      await this.runtimeServices.powerManager.stop();
+    } catch (error) {
+      logger.warn('DaemonServer: power-manager stop failed', { error: summarizeError(error) });
+    }
+    if (this.ownsRuntimeServices) {
+      try { await this.runtimeServices.close(); }
+      catch (error) { runtimeCloseFailures.push(error); }
     }
 
     // Disposal closed admission synchronously. Drain the existing serialized
     // write chain before a host can remove or replace this daemon's root.
     await this.workProposals.flush();
-    await this.lifecycle?.onStopping(this._restarting, forHandover);
+    await this.lifecycle?.onStopping(false, forHandover);
 
     this.tlsState = null;
     this.controlPlaneGateway.setServerState({ enabled: this.enabled, host: this.host, port: this.port });
     // A daemon that never listened has no disconnect to announce and no "stopped" to claim; everything above was released either way.
-    if (this.server !== null) { this.server.stop(true); this.server = null; this.transportEventsHelper.emitTransportDisconnected('Daemon server stopped', false); logger.info('DaemonServer stopped'); }
+    await this._restartingPromise;
+    const hadListener = this.server !== null || this.listenerDrain !== null;
+    await this.detachControlPlaneListener();
+    if (hadListener) { this.transportEventsHelper.emitTransportDisconnected('Daemon server stopped', false); logger.info('DaemonServer stopped'); }
     else logger.debug('DaemonServer released without ever binding a socket');
     if (runtimeCloseFailures.length > 0) throw new AggregateError(runtimeCloseFailures, 'Daemon runtime services cleanup failed');
   }
@@ -787,34 +902,23 @@ export class DaemonServer {
       if (this._restartAdmissionClosed) return;
       if (this._restarting) {
         // Change arrived mid-restart, queue a second cycle (check _restarting
-        // before isRunning: stop() runs synchronously inside the restart IIFE).
+        // before isRunning: listener detach runs inside the restart IIFE).
         this._restartDirty = true;
         return;
       }
       if (!this.isRunning) return;
       this._restarting = true;
+      const transition = this.listenerTransition;
       this._restartingPromise = (async () => {
         try {
-          logger.info('DaemonServer: controlPlane binding changed, restarting daemon server…');
-          await this.stop();
-          if (this._restartAdmissionClosed) return;
-          // Re-resolve host/port from updated config
-          const newBinding = resolveHostBinding((this.configManager.get('controlPlane.hostMode') as 'local' | 'network' | 'custom' | undefined) ?? 'local', String(this.configManager.get('controlPlane.host') ?? '127.0.0.1'), Number(this.configManager.get('controlPlane.port') ?? 3421), 'controlPlane');
-          this.host = newBinding.host;
-          this.port = newBinding.port;
-          await this.start();
+          logger.info('DaemonServer: controlPlane binding changed, rebinding listener…');
+          await this.rebindControlPlaneListener(transition);
         } catch (err) {
           logger.error('DaemonServer: restart after config change failed', { error: summarizeError(err) });
         } finally {
           this._restarting = false;
-          // If a config change arrived while we were restarting, kick off a second
-          // cycle BEFORE nulling _restartingPromise so waitForRestart() chains correctly.
-          if (this._restartDirty && !this._restartAdmissionClosed) {
-            this._restartDirty = false;
-            restart(); // sets this._restartingPromise to the new cycle
-          } else {
-            this._restartingPromise = null;
-          }
+          this._restartDirty = false;
+          this._restartingPromise = null;
         }
       })();
     };

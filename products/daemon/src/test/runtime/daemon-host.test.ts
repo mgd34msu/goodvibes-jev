@@ -368,15 +368,22 @@ test('close immediately fences both real config restart watchers while an admitt
   expect(graphClose).toHaveBeenCalledTimes(1);
 });
 
-test('close fences the start and dirty cycle of a config restart already waiting in stop', async () => {
+test('close fences the start and dirty cycle of a config restart waiting in native listener close', async () => {
+  const nativeServe = Bun.serve;
+  let listener: ReturnType<typeof Bun.serve> | undefined;
+  const binding = keep(spyOn(Bun, 'serve').mockImplementation(options => {
+    const server = nativeServe(options); listener = server; return server;
+  }));
   const fx = fixture(); await fx.host.start();
+  if (!listener) throw new Error('The owned native listener did not bind');
+  const acquired = listener;
   const daemon = fx.host.daemon!;
   const entered = gate(); const release = gate();
-  const originalStop = daemon.stop.bind(daemon);
-  let first = true;
-  keep(spyOn(daemon, 'stop').mockImplementation(async () => {
-    if (first) { first = false; entered.resolve(); await release.promise; }
-    await originalStop();
+  const originalStop = acquired.stop;
+  keep(spyOn(acquired, 'stop').mockImplementation((...args) => {
+    const result = originalStop.apply(acquired, args);
+    entered.resolve();
+    return Promise.resolve(result).then(() => release.promise);
   }));
   const start = keep(spyOn(daemon, 'start'));
   const close = keep(spyOn(fx.host.services!, 'close'));
@@ -388,6 +395,7 @@ test('close fences the start and dirty cycle of a config restart already waiting
   await tick(); expect(done()).toBe(false); expect(close).not.toHaveBeenCalled();
   release.resolve(); await closing;
   expect(start).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledTimes(1);
+  expect(binding).toHaveBeenCalledTimes(1); expect(daemon.isRunning).toBe(false);
 });
 
 test('one borrowed restart fence failure cannot skip the other fence or accepted owner drainage', async () => {
