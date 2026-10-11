@@ -67,6 +67,26 @@ describe('generated page original output ownership', () => {
     expect(item.artifactStore.get(committed.artifactId!)).not.toBeNull();
     expect(item.store.listEdges().some((edge) => edge.fromId === committed.id && edge.toId === item.target.id)).toBe(true);
   });
+  for (const change of ['output', 'signal'] as const) {
+    test(`postcommit ${change} replacement holds the caller without undoing the committed page`, async () => {
+      const item = await fixture();
+      const input = { ...item.input, markdown: '# Device\nCommitted original request.', signal: new AbortController().signal };
+      const original = item.store.applyPreparedIngest.bind(item.store);
+      const ingest = spyOn(item.store, 'applyPreparedIngest').mockImplementation(async (...args) => {
+        const receipt = await original(...args);
+        if (change === 'output') input.markdown = '# Different caller output';
+        else input.signal = new AbortController().signal;
+        return receipt;
+      });
+      try { await expect(materializeGeneratedKnowledgeProjection(input)).rejects.toThrow(); }
+      finally { ingest.mockRestore(); }
+      const committed = item.store.getSource(item.first.source.id)!;
+      expect(committed).not.toBe(item.first.source);
+      expect(item.artifactStore.get(committed.artifactId!)?.id).toBe(committed.artifactId);
+      expect(item.store.getSourceSnapshot({ id: committed.id }).source).toEqual(committed);
+      expect(item.store.listEdges().some(edge => edge.fromId === committed.id && edge.toId === item.target.id)).toBe(true);
+    });
+  }
   test('postcommit replacement is never returned as this operation receipt or overwritten by compensation', async () => {
     const item = await fixture(); const original = item.store.applyPreparedIngest.bind(item.store); let newer: unknown;
     const ingest = spyOn(item.store, 'applyPreparedIngest').mockImplementation(async (...args) => {

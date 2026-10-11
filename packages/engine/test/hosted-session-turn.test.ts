@@ -252,7 +252,7 @@ test('a hosted turn rejects an unrecorded port before tool admission', async () 
   answers.push({ content: '', toolCalls: [{ id: 'unrecorded-read', name: 'read', arguments: { files: [{ path: 'note.txt' }] } }], usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'tool_call' } as unknown as ChatResponse);
   try {
     await session.submit('read the note');
-    expect(errors).toEqual(['autonomous admission requires the recorded judgment port']);
+    expect(errors).toEqual(['[REDACTED]']);
     expect(executed).toEqual([]);
     expect(requests).toHaveLength(1);
     expect(readings.log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);

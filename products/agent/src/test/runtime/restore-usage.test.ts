@@ -75,7 +75,7 @@ describe('real bootstrap usage restoration', () => {
     expect(f.footer()).not.toMatch(/9000|22000|PRIVATE-BILLING-VALUE|NaN/);
     const unknown = await f.accountingTool.execute({}, {} as never);
     expect(unknown.success).toBe(false);
-    expect('error' in unknown ? unknown.error : '').toContain('usage unavailable');
+    expect('error' in unknown ? unknown.error : '').toBe('context_accounting failed: [REDACTED]');
     expect(JSON.stringify(unknown)).not.toContain('PRIVATE-BILLING-VALUE');
     f.orchestrator.usage.input += 300;
     f.orchestrator.lastInputTokens = 300;

@@ -22,7 +22,8 @@ function fakeDirectories(probability: (path: string) => number) {
     if (!state || typeof state !== 'object' || !('directories' in state) || !Array.isArray(state.directories)) {
       throw new Error('Directory candidates missing');
     }
-    const directory: unknown = state.directories.find(candidate => candidate.id === name);
+    const directory: unknown = state.directories.find(candidate => candidate !== null && typeof candidate === 'object'
+      && !Array.isArray(candidate) && 'id' in candidate && typeof candidate.id === 'string' && candidate.id === name);
     if (!directory || typeof directory !== 'object' || !('relativePath' in directory) || typeof directory.relativePath !== 'string') {
       throw new Error('Exact directory candidate missing');
     }

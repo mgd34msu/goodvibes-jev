@@ -53,7 +53,13 @@ for (const mode of ['normal', 'stale', 'stale-check', 'cancel'] as const) {
     if (mode === 'normal') { expect(done.status).toBe('passed'); expect(done.units.find((unit) => unit.id === 'u1.f1.u1')?.status).toBe('passed'); }
     else {
       expect(done.status).toBe(mode === 'cancel' ? 'cancelled' : 'failed'); expect(h.agentsOf('u1.f1.u1')).toEqual([]);
-      if (mode === 'stale' || mode === 'stale-check') expect(done.error).toContain('contract result changed during fix planning');
+      if (mode === 'stale' || mode === 'stale-check') {
+        expect(done.error).toBe("unit u1's stall could not be routed: [REDACTED]");
+        expect(readFileSync(join(view, 'src/csv.ts'), 'utf8')).toBe('attempt 2\n');
+        expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe(mode === 'stale'
+          ? 'concurrent contract writer\n' : 'contract changed during plan checking\n');
+        expect(done.units.some(unit => unit.id === 'u1.f1.u1')).toBe(false);
+      }
     }
   }, 25_000);
 }

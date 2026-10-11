@@ -65,14 +65,15 @@ async function write(item: Fixture) {
   return item.store.batch(async () => { prepared.assertCurrent(); return prepared.write(); });
 }
 describe('repair profile complete-pass write boundaries', () => {
-  test('prepared repair publication retains the original caller callback before any write', async () => {
+  test.each(['between calls', 'inside the original caller'] as const)('prepared repair publication rejects caller replacement %s before any write', async change => {
     const item = await fixture(), fake = readings();
     const facts = await buildDevicePageProfileFacts({ ...item, spaceId, installationId: 'profile-readings', sources: [item.source], sourceReader: createHomeGraphPageSourceReader() });
     const inputs = facts.map(fact => devicePageProfileFactInput(item.store, spaceId, 'profile-readings', item.device, fact));
-    const options = { assertCurrent() {} };
+    let replace = false;
+    const options = { assertCurrent() { if (replace) options.assertCurrent = () => {}; } };
     const prepared = await prepareSourceLinkedRepairProfileFacts(inputs, options);
     const before = snapshot(item.store), requests = fake.requests.length;
-    options.assertCurrent = () => {};
+    if (change === 'between calls') options.assertCurrent = () => {}; else replace = true;
     expect(() => prepared.assertCurrent()).toThrow(KnowledgeRepairSourceAuthorityHeldError);
     await expect(prepared.write()).rejects.toBeInstanceOf(KnowledgeRepairSourceAuthorityHeldError);
     expect(snapshot(item.store)).toBe(before);

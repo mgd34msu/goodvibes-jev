@@ -222,7 +222,10 @@ for (const scenario of ['act', 'reject', 'defer', 'revise', 'unrecorded', 'cance
         expect(results).toHaveLength(1);
         const result = results[0]!;
         if (scenario === 'unrecorded') {
-          expect(result.success).toBe(false); expect(result.error).toContain('record');
+          expect(result.success).toBe(false); expect(result.error).toBe('[REDACTED]');
+          expect(result.output).toBeUndefined();
+          expect(semanticRequests).toHaveLength(0);
+          expect(log.query({ site: TOOL_SITE })).toEqual([]);
           expect(result.autonomousDecision).toBeUndefined(); expect(bodies).toHaveLength(0);
         } else {
           expect(result.autonomousDecision?.outcome, JSON.stringify(result)).toBe(scenario === 'revise' || scenario === 'planner-act' ? 'act' : scenario);

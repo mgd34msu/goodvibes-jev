@@ -9,12 +9,15 @@ import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/e
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { createShellPathService } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
+import { SandboxSessionRegistry } from '@goodvibes-jev/engine/sdk/platform/runtime/sandbox';
+import { McpRegistry } from '@goodvibes-jev/engine/sdk/platform/mcp';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { ToolRegistry, ProcessManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
+import { ConversationManager } from '../../core/conversation.ts';
 import { runBackgroundProcessAction } from '../../tools/agent-harness-background-processes.ts';
 import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { processClassificationOptions } from '../../tools/agent-harness-process-launch.ts';
@@ -22,6 +25,7 @@ import { resolveBackgroundProcessClass } from '../../tools/agent-harness-process
 import { createAgentProcessTool, createAgentTerminalTool, registerAgentTerminalProcessTools } from '../../tools/agent-terminal-process-tools.ts';
 import { ordinaryResearchOwner, researchScreeningFixture, cleanupResearchScreeningFixtures, exactSensitiveSpans } from '../helpers/research-screening.ts';
 import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { createTestProviderRegistry } from '../helpers/test-managers.ts';
 
 afterAll(cleanupResearchScreeningFixtures);
 const configRoots: string[] = [];
@@ -49,8 +53,20 @@ function fixture(owner = ordinaryResearchOwner()) {
   const manager = new ProcessManager();
   manager.spawn = async (...args) => { calls.push(args); args[3]?.assertCurrent?.(); return { cmd: args[0], exit_code: null, stdout: '', stderr: '', success: true, process_id: 'fixture-process', pid: 123 }; };
   const platform = fixturePlatform();
-  const context = { platform, workspace: { processManager: manager, shellPaths: createShellPathService({ workingDirectory: platform.root, homeDirectory: platform.root }) }, session: { runtime: { sessionId: 'original' } }, extensions: {}, clients: {} } as CommandContext;
   const registry = new ToolRegistry(); bindAgentResearchSourceOwner(registry, owner);
+  const context: CommandContext = {
+    print: () => {}, renderRequest: () => {}, exit: () => {},
+    platform,
+    workspace: { processManager: manager, shellPaths: createShellPathService({ workingDirectory: platform.root, homeDirectory: platform.root }) },
+    session: { conversationManager: new ConversationManager(() => 80, platform.configManager),
+      runtime: { sessionId: 'original', model: 'fixture-model', provider: 'fixture', debugMode: false, systemPrompt: '', reasoningEffort: 'medium' } },
+    provider: { providerRegistry: createTestProviderRegistry() },
+    ops: {},
+    extensions: { toolRegistry: registry, mcpRegistry: new McpRegistry({
+      hookDispatcher: { fire: async () => ({ ok: true }) }, sandboxSessions: new SandboxSessionRegistry(platform.root),
+    }) },
+    clients: {},
+  };
   const options = (signal?: AbortSignal) => processClassificationOptions(context, registry, signal);
   async function admitted(tool: Tool, args: Record<string, unknown>, signal?: AbortSignal) {
     let sourcePort: ReturnType<typeof judgmentPort> | undefined;
@@ -249,7 +265,10 @@ describe('protected process lifetime classification', () => {
       const projected = await f.registry.projectCall('clear', name, { ...args, command: 'env firefox' });
       f.registry.assertProjected(projected);
       local.lifetime.abort(); expect(() => f.registry.assertProjected(projected)).toThrow();
-      await expect(f.registry.releaseProjected(projected)).rejects.toThrow();
+      await expect(f.registry.releaseProjected(projected)).resolves.toBeUndefined();
+      await expect(f.registry.releaseProjected(projected)).resolves.toBeUndefined();
+      expect(() => f.registry.assertProjected(projected)).toThrow();
+      expect(fake.requests).toHaveLength(0); expect(f.calls).toHaveLength(0);
     });
   }
 

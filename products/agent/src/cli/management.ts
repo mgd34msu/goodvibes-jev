@@ -19,6 +19,7 @@ import { createShellPathService } from '@/runtime/index.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { writeFatalLine } from '../utils/fatal-boot-write.ts';
 import { listProviderRuntimeSnapshots } from '@goodvibes-jev/engine/sdk/platform/providers';
+import type { ProviderCatalogOptions } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { BUILTIN_SECRET_PROVIDER_SOURCES, describeSecretRef, isSecretRefInput, resolveSecretRef } from '@goodvibes-jev/engine/sdk/platform/config';
 import { getSubscriptionProviderConfig, listAvailableSubscriptionProviders } from '@goodvibes-jev/engine/sdk/platform/config';
 import { beginOpenAICodexLogin, exchangeOpenAICodexCode } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -181,7 +182,7 @@ export async function probeTcp(host: string, port: number, timeoutMs = 750): Pro
 export async function withRuntimeServices<T>(
   runtime: CliCommandRuntime,
   fn: (services: RuntimeServices) => Promise<T> | T,
-  options: { readonly modelData?: 'background' | 'skip' } = {},
+  options: { readonly modelData?: 'background' | 'skip'; readonly catalog?: ProviderCatalogOptions } = {},
 ): Promise<T> {
   // Point the bus listener cap at runtime.eventBus.maxListeners before the
   // first bus exists, so every bus this process builds later uses it.
@@ -201,7 +202,7 @@ export async function withRuntimeServices<T>(
   if (options.modelData !== 'skip') {
     services.providerRegistry.initModelLimits();
     services.benchmarkStore.initBenchmarks();
-    services.providerRegistry.initCatalog();
+    services.providerRegistry.initCatalog(options.catalog);
   }
   try {
     await services.providerRegistry.ready();
@@ -212,7 +213,7 @@ export async function withRuntimeServices<T>(
     // question. stopWatching() only ever covered the provider registry, so
     // every such command left the config watch, fleet tick, memory governor and
     // the rest running until the process happened to exit.
-    services.dispose();
+    await services.close();
   }
 }
 

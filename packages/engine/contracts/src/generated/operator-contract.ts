@@ -1,6 +1,7 @@
 import type { OperatorContractManifest } from '../types.js';
+import { freezeGeneratedOperatorContract } from '../freeze-contract.js';
 
-export const OPERATOR_CONTRACT: OperatorContractManifest = {
+export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperatorContract({
   "version": 1,
   "product": {
     "id": "goodvibes",
@@ -6451,6 +6452,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "id": {
               "type": "string"
             },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "name": {
               "type": "string"
             },
@@ -6977,6 +6984,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "type": "object",
           "properties": {
             "id": {
+              "type": "string"
+            },
+            "mutationRevision": {
               "type": "string"
             },
             "name": {
@@ -7742,6 +7752,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           },
           "required": [
             "id",
+            "mutationRevision",
             "name",
             "labels",
             "createdAt",
@@ -7788,6 +7799,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "jobId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -7839,6 +7859,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "jobId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -7890,6 +7919,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "jobId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -7957,6 +7995,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "type": "object",
                 "properties": {
                   "id": {
+                    "type": "string"
+                  },
+                  "mutationRevision": {
                     "type": "string"
                   },
                   "name": {
@@ -8722,6 +8763,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "required": [
                   "id",
+                  "mutationRevision",
                   "name",
                   "labels",
                   "createdAt",
@@ -8849,6 +8891,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "jobId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             },
             "name": {
               "type": "string"
@@ -9325,6 +9376,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "type": "object",
           "properties": {
             "id": {
+              "type": "string"
+            },
+            "mutationRevision": {
               "type": "string"
             },
             "name": {
@@ -10090,6 +10144,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           },
           "required": [
             "id",
+            "mutationRevision",
             "name",
             "labels",
             "createdAt",
@@ -14219,6 +14274,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "name": {
               "type": "string"
             },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "prompt": {
               "type": "string"
             },
@@ -14677,6 +14738,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "type": "object",
           "properties": {
             "id": {
+              "type": "string"
+            },
+            "mutationRevision": {
               "type": "string"
             },
             "name": {
@@ -15442,6 +15506,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           },
           "required": [
             "id",
+            "mutationRevision",
             "name",
             "labels",
             "createdAt",
@@ -15485,6 +15550,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "scheduleId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -15533,6 +15607,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "scheduleId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -15581,6 +15664,15 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "scheduleId": {
               "type": "string"
+            },
+            "expectedMutationRevision": {
+              "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -15638,6 +15730,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "type": "object",
                 "properties": {
                   "id": {
+                    "type": "string"
+                  },
+                  "mutationRevision": {
                     "type": "string"
                   },
                   "name": {
@@ -16403,6 +16498,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "required": [
                   "id",
+                  "mutationRevision",
                   "name",
                   "labels",
                   "createdAt",
@@ -23024,6 +23120,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "draftId": {
               "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -23048,7 +23150,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "additionalProperties": false
         },
         "dangerous": true,
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "channels.drafts.get",
@@ -23246,7 +23351,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "channels.drafts.save",
         "title": "Save Channel Draft",
-        "description": "Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation.",
+        "description": "Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.",
         "category": "channels",
         "source": "builtin",
         "access": "admin",
@@ -23308,6 +23413,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             },
             "sendError": {
               "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -23393,7 +23504,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "additionalProperties": false
         },
         "dangerous": true,
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "channels.inbox.list",
@@ -24972,7 +25086,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "channels.routing.assign",
         "title": "Assign Channel Routing Rule",
-        "description": "Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation.",
+        "description": "Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.",
         "category": "channels",
         "source": "builtin",
         "access": "admin",
@@ -24990,6 +25104,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "channelId": {
               "type": "string"
             },
@@ -25050,7 +25170,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "additionalProperties": false
         },
         "dangerous": true,
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "channels.routing.delete",
@@ -25075,6 +25198,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "assignmentId": {
               "type": "string"
+            },
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           },
           "required": [
@@ -25099,7 +25228,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "additionalProperties": false
         },
         "dangerous": true,
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "channels.routing.list",
@@ -102753,6 +102885,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "occasionId": {
               "type": "string"
             },
@@ -102800,7 +102938,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.answer",
@@ -102823,6 +102964,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "occasionId": {
               "type": "string"
             },
@@ -102963,7 +103110,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.confirm",
@@ -102986,6 +103136,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "title": {
               "type": "string"
             },
@@ -103068,7 +103224,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.conflict.resolve",
@@ -103091,6 +103250,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "occasionId": {
               "type": "string"
             }
@@ -103116,7 +103281,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.gifts",
@@ -103214,6 +103382,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "interviewId": {
               "type": "string"
             },
@@ -103338,7 +103512,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.interview.get",
@@ -103500,6 +103677,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "interviewId": {
               "type": "string"
             },
@@ -103620,7 +103803,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.list",
@@ -104204,6 +104390,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "title": {
               "type": "string"
             },
@@ -104274,7 +104466,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.plans.list",
@@ -104651,6 +104846,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "occasionId": {
               "type": "string"
             },
@@ -104704,7 +104905,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "additionalProperties": false
         },
         "dangerous": true,
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "occasions.state",
@@ -104842,247 +105046,289 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         },
         "inputSchema": {
           "type": "object",
-          "properties": {},
-          "additionalProperties": false
-        },
-        "outputSchema": {
-          "type": "object",
           "properties": {
-            "ranAt": {
-              "type": "number"
-            },
-            "today": {
-              "type": "string"
-            },
-            "hold": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "nudge": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "raisedAt": {
-                      "type": "number"
-                    },
-                    "subjects": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "occasionId": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "person": {
-                            "type": "string"
-                          },
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "gift-giving",
-                              "remember-only",
-                              "neither"
-                            ]
-                          },
-                          "proximity": {
-                            "type": "string",
-                            "enum": [
-                              "approaching",
-                              "soon",
-                              "imminent"
-                            ]
-                          },
-                          "subject": {
-                            "type": "string",
-                            "enum": [
-                              "owner",
-                              "other",
-                              "unattributed"
-                            ]
-                          },
-                          "acknowledged": {
-                            "type": "boolean"
-                          }
-                        },
-                        "required": [
-                          "occasionId",
-                          "title",
-                          "person",
-                          "kind",
-                          "proximity",
-                          "subject",
-                          "acknowledged"
-                        ],
-                        "additionalProperties": false
-                      }
-                    },
-                    "message": {
-                      "type": "string"
-                    },
-                    "answerable": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "raisedAt",
-                    "subjects",
-                    "message",
-                    "answerable"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "conflictMessages": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "resumedInterviews": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "delivered": {
-              "type": "boolean"
-            },
-            "deliveryChannel": {
-              "type": "string"
-            },
-            "deliveryId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "deliveries": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "channel": {
-                    "type": "string"
-                  },
-                  "delivered": {
-                    "type": "boolean"
-                  },
-                  "deliveryId": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "failure": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "channel",
-                  "delivered",
-                  "deliveryId",
-                  "failure"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "mirrored": {
-              "type": "number"
-            },
-            "housekeeping": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "sweptAt": {
-                      "type": "number"
-                    },
-                    "expiredAcknowledgements": {
-                      "type": "number"
-                    },
-                    "orphanedRecords": {
-                      "type": "number"
-                    },
-                    "expiredOpenItems": {
-                      "type": "number"
-                    },
-                    "agedGiftRecords": {
-                      "type": "number"
-                    },
-                    "droppedInterviews": {
-                      "type": "number"
-                    },
-                    "staleMirrors": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "sweptAt",
-                    "expiredAcknowledgements",
-                    "orphanedRecords",
-                    "expiredOpenItems",
-                    "agedGiftRecords",
-                    "droppedInterviews",
-                    "staleMirrors"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "null"
-                }
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
               ]
             }
           },
-          "required": [
-            "ranAt",
-            "today",
-            "hold",
-            "nudge",
-            "conflictMessages",
-            "resumedInterviews",
-            "delivered",
-            "deliveryChannel",
-            "deliveryId",
-            "deliveries",
-            "mirrored",
-            "housekeeping"
-          ],
           "additionalProperties": false
         },
-        "invokable": true
+        "outputSchema": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "ranAt": {
+                  "type": "number"
+                },
+                "today": {
+                  "type": "string"
+                },
+                "hold": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "nudge": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "raisedAt": {
+                          "type": "number"
+                        },
+                        "subjects": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "occasionId": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "person": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "gift-giving",
+                                  "remember-only",
+                                  "neither"
+                                ]
+                              },
+                              "proximity": {
+                                "type": "string",
+                                "enum": [
+                                  "approaching",
+                                  "soon",
+                                  "imminent"
+                                ]
+                              },
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "owner",
+                                  "other",
+                                  "unattributed"
+                                ]
+                              },
+                              "acknowledged": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "occasionId",
+                              "title",
+                              "person",
+                              "kind",
+                              "proximity",
+                              "subject",
+                              "acknowledged"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "answerable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "raisedAt",
+                        "subjects",
+                        "message",
+                        "answerable"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "conflictMessages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "resumedInterviews": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "delivered": {
+                  "type": "boolean"
+                },
+                "deliveryChannel": {
+                  "type": "string"
+                },
+                "deliveryId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deliveries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "channel": {
+                        "type": "string"
+                      },
+                      "delivered": {
+                        "type": "boolean"
+                      },
+                      "deliveryId": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "failure": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "channel",
+                      "delivered",
+                      "deliveryId",
+                      "failure"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "mirrored": {
+                  "type": "number"
+                },
+                "housekeeping": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "sweptAt": {
+                          "type": "number"
+                        },
+                        "expiredAcknowledgements": {
+                          "type": "number"
+                        },
+                        "orphanedRecords": {
+                          "type": "number"
+                        },
+                        "expiredOpenItems": {
+                          "type": "number"
+                        },
+                        "agedGiftRecords": {
+                          "type": "number"
+                        },
+                        "droppedInterviews": {
+                          "type": "number"
+                        },
+                        "staleMirrors": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "sweptAt",
+                        "expiredAcknowledgements",
+                        "orphanedRecords",
+                        "expiredOpenItems",
+                        "agedGiftRecords",
+                        "droppedInterviews",
+                        "staleMirrors"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "ranAt",
+                "today",
+                "hold",
+                "nudge",
+                "conflictMessages",
+                "resumedInterviews",
+                "delivered",
+                "deliveryChannel",
+                "deliveryId",
+                "deliveries",
+                "mirrored",
+                "housekeeping"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "complete": {
+                  "type": "boolean",
+                  "enum": [
+                    false
+                  ]
+                },
+                "acceptedDeliveries": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "stopped": {
+                  "type": "string",
+                  "enum": [
+                    "request-retired-after-delivery",
+                    "delivery-processing-stopped"
+                  ]
+                }
+              },
+              "required": [
+                "complete",
+                "acceptedDeliveries",
+                "stopped"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "pairing.handoff.complete",
@@ -107831,6 +108077,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "section": {
               "type": "string"
             },
@@ -107920,7 +108172,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "profile.forget",
@@ -107943,6 +108198,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "fieldId": {
               "type": "string"
             },
@@ -108026,7 +108287,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "additionalProperties": false
         },
         "dangerous": true,
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "profile.get",
@@ -108589,6 +108853,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "fieldId": {
               "type": "string"
             },
@@ -108678,7 +108948,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "profile.status",
@@ -108782,6 +109055,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "inputSchema": {
           "type": "object",
           "properties": {
+            "admission": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            },
             "fieldId": {
               "type": "string"
             },
@@ -108859,7 +109138,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           ],
           "additionalProperties": false
         },
-        "invokable": true
+        "invokable": true,
+        "metadata": {
+          "requiresFreshOperatorAuth": true
+        }
       },
       {
         "id": "models.current.get",
@@ -155005,4 +155287,4 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
     "contractPath": "/api/remote/node-host/contract",
     "relationship": "paired device and node-host peers use a separate peer contract surface"
   }
-} as const;
+} as const);

@@ -11,12 +11,18 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
 function failurePort(category = 'rate_limit', yes: readonly string[] = []) {
-  return fakePort((name, question) => {
+  const fake = fakePort((name, question) => {
     if (name.startsWith('seam_')) return noulAnswer(0.99);
     if (name === 'category') return choiceAnswer(question, category, 0.99);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
-    return noulAnswer(yes.includes(name) ? 0.99 : 0.01);
+    if (['billing', 'rate_limited', 'context_exceeded', 'transient_network', 'provider_unusable', 'before_response'].includes(name)) {
+      return noulAnswer(yes.includes(name) ? 0.99 : 0.01);
+    }
+    throw new Error(`Unexpected speech or failure question: ${name}`);
   });
+  return { ...fake, get failureRequests() {
+    return fake.requests.filter(request => request.context?.battery === 'engine.failure-reading');
+  } };
 }
 let previousPort: JudgmentPort | undefined;
 beforeEach(() => { previousPort = installJudgmentPort(failurePort().port); });
@@ -595,10 +601,10 @@ describe('SpokenTurnController canonical failure reading', () => {
     const clock = retryClock();
     const h = makePipelineHarness({ error: Object.assign(new Error('429 concurrent request quota'), { status: 429 }), failWhen: (_text, attempt) => attempt === 1, ...clock });
     speak(h.controller); await drain();
-    expect(fake.requests).toHaveLength(1);
-    expect(fake.requests[0]?.state).toContain('HTTP status: 429');
-    expect(fake.requests[0]?.signal).toBeDefined();
-    expect(fake.requests[0]?.beforeAttempt).toBeDefined();
+    expect(fake.failureRequests).toHaveLength(1);
+    expect(fake.failureRequests[0]?.state).toContain('HTTP status: 429');
+    expect(fake.failureRequests[0]?.signal).toBeDefined();
+    expect(fake.failureRequests[0]?.beforeAttempt).toBeDefined();
     expect(clock.delays).toEqual(retry ? [1000] : []);
     clock.fire(); await drain();
     expect(h.requests()).toBe(retry ? 2 : 1);
@@ -614,7 +620,7 @@ describe('SpokenTurnController canonical failure reading', () => {
     const clock = retryClock();
     const h = makePipelineHarness({ error: new Error(message), failWhen: (_text, attempt) => attempt === 1, ...clock });
     speak(h.controller); await drain();
-    expect(fake.requests).toHaveLength(1);
+    expect(fake.failureRequests).toHaveLength(1);
     expect(clock.delays).toEqual(retry ? [1000] : []);
     clock.fire(); await drain();
     expect(h.requests()).toBe(retry ? 2 : 1);
@@ -675,7 +681,7 @@ describe('SpokenTurnController canonical failure reading', () => {
     const clock = retryClock();
     const h = makePipelineHarness({ error: new Error('An unsettled answer.'), failWhen: () => true, ...clock });
     speak(h.controller); await drain(); clock.fire(); await drain(); clock.fire(); await drain();
-    expect(h.requests()).toBe(3); expect(fake.requests).toHaveLength(2);
+    expect(h.requests()).toBe(3); expect(fake.failureRequests).toHaveLength(2);
     expect(clock.delays).toEqual([1000, 2500]); expect(clock.timers.size).toBe(0);
     expect(h.played).toEqual([]);
     expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
@@ -702,7 +708,8 @@ describe('SpokenTurnController original authority and late synthesis', () => {
     speak(h.controller); await drain();
     const replacement = failurePort(); installJudgmentPort(replacement.port);
     h.releaseSynth(); await drain();
-    expect(replacement.requests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(replacement.failureRequests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(replacement.requests.map(request => request.context?.battery)).toEqual(['engine.redaction.field-kind', 'engine.redaction.residual-credential']);
     expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
     expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
   });
@@ -770,7 +777,9 @@ describe('SpokenTurnController complete failure admission', () => {
     const clock = retryClock();
     const h = makePipelineHarness({ error, failWhen: () => true, ...clock });
     speak(h.controller); await drain();
-    expect(fake.requests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(fake.failureRequests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private-value');
+    expect(JSON.stringify(fake.requests)).not.toContain('4111111111111111');
     expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
     expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
     expect(h.messages.join(' ')).not.toContain('synthetic-private-value');
@@ -786,7 +795,7 @@ describe('SpokenTurnController complete failure admission', () => {
     const clock = retryClock();
     const h = makePipelineHarness({ error, failWhen: () => true, ...clock });
     speak(h.controller); await drain();
-    expect(fake.requests).toHaveLength(0); expect(h.requests()).toBe(1);
+    expect(fake.failureRequests).toHaveLength(0); expect(h.requests()).toBe(1);
     expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
     expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(1);
   });
@@ -813,7 +822,7 @@ describe('SpokenTurnController complete failure admission', () => {
       speak(h.controller); await drain();
       expect(h.requests()).toBe(1); expect(clock.delays).toEqual([]); expect(h.played).toEqual([]);
     }
-    expect(reads).toBe(0); expect(fake.requests).toHaveLength(0);
+    expect(reads).toBe(0); expect(fake.failureRequests).toHaveLength(0);
   });
 });
 

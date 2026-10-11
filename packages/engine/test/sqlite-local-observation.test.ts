@@ -82,8 +82,7 @@ test('unsupported virtual generated columns and inaccessible rowid fail closed',
 
 test('registered replacements for observer built-ins are rejected without invoking them', async () => {
   const db = await database(); let invoked = 0;
-  (db as SqlDatabase & { create_function(name: string, callback: (...args: unknown[]) => unknown): void })
-    .create_function('typeof', () => { invoked++; return 'text'; });
+  db.create_function('typeof', () => { invoked++; return 'text'; });
   expect(() => sqliteLocalObservation(db)).toThrow('unsupported local observation shape');
   expect(invoked).toBe(0);
 });
@@ -142,8 +141,7 @@ test('fresh metadata preserves quoted table, column and attached-schema names', 
 test('uppercase and mixed-case observer function overrides are rejected without invocation', async () => {
   for (const name of ['TYPEOF', 'TyPeOf', 'TOTAL_CHANGES', 'ToTaL_ChAnGeS']) {
     const db = await database(); let invoked = 0;
-    (db as SqlDatabase & { create_function(name: string, callback: (...args: unknown[]) => unknown): void })
-      .create_function(name, name.toLowerCase() === 'typeof'
+    db.create_function(name, name.toLowerCase() === 'typeof'
         ? (_value: unknown) => { invoked++; return 'text'; }
         : () => { invoked++; return 0; });
     expect(() => sqliteLocalObservation(db)).toThrow('unsupported local observation shape');

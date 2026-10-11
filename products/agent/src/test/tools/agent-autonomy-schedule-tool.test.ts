@@ -200,6 +200,9 @@ describe('agent_autonomy_schedule tool', () => {
       });
 
       expect(result).toEqual(expect.objectContaining({ success: true }));
+      if (!result.success || !('output' in result) || typeof result.output !== 'string') {
+        throw new Error('Successful autonomous schedule creation must include output text.');
+      }
       expect(result.output).toContain('Created GoodVibes schedule for autonomous Agent work');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-autonomy-1"');

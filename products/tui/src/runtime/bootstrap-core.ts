@@ -101,7 +101,7 @@ export interface BootstrapCoreState {
   readonly forensicsCollector: ForensicsCollector;
   readonly forensicsRegistry: ForensicsRegistry;
   readonly runtime: MutableRuntimeState;
-  readonly bootstrapUnsubs: Array<() => void>;
+  readonly bootstrapUnsubs: Array<() => void | Promise<void>>;
   readonly runtimeUnsubs: Array<() => void>;
   readonly agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null };
   readonly permissionPromptRef: { requestPermission: PermissionRequestHandler };
@@ -383,12 +383,12 @@ export async function initializeBootstrapCore(
     contextAccountingHolder: services.contextAccountingHolder,
   });
 
-  const bootstrapUnsubs: Array<() => void> = [];
+  const bootstrapUnsubs: Array<() => void | Promise<void>> = [];
   bootstrapUnsubs.push(() => conversation.setNoticeSink(null));
   await memoryStore.init();
-  bootstrapUnsubs.push(() => {
-    void memoryStore.save();
-    memoryStore.close();
+  bootstrapUnsubs.push(async () => {
+    try { await memoryStore.save(); }
+    finally { memoryStore.close(); }
   });
   // Fold this project's legacy per-project TUI memory into the home-scoped canonical store, ONCE, AFTER init(). Idempotent and non-fatal.
   await runBootMemoryFold(memoryStore, services.memoryEmbeddingRegistry, workingDir, logger);

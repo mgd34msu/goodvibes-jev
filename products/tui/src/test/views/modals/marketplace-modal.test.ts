@@ -171,7 +171,8 @@ describe('marketplace review lifecycle', () => {
       writeFileSync(join(paths.projectCatalogRoot!, 'plugins.json'), JSON.stringify({ version: 1, entries: [{ ...makeEntry('plugin', 'one', 'Former entry', '/synthetic/plugin'), trustNotes: 'Read the current synthetic note.' }] }));
       installJudgmentPort(fakePort(() => { throw new Error('current review unavailable'); }).port);
       surface.onAction?.('refresh', actionCtx(null)); await nextEventLoop();
-      expect(surface.buildView().degraded).toContain('current review unavailable');
+      expect(surface.buildView().degraded).toBe('Catalog load failed: [REDACTED]');
+      expect(surface.buildView().degraded).not.toContain('current review unavailable');
       expect(tabRows(surface.buildView(), 'catalog')).toHaveLength(0);
       expect(findAction(surface, 'install')?.enabledFor?.({ id: 'plugin:one', label: '' }, 'catalog')).toBe(false);
     } finally { cleanup(); }

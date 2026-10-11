@@ -571,10 +571,10 @@ build must not contaminate a subsequent script-package tarball.
 The manifest's native commands are repository-only: their scripts and toolchain
 configuration are intentionally excluded from the Bun script-package tarball.
 
-`scripts/check-version.ts` only validates the private product identity and exact
-compiled fallback. Root `sync:version` owns the engine fallback. Intentional
-daemon preparation uses the explicit mechanics below; native prebuild remains
-read-only and chooses no version stream, release feed or release-cut policy.
+`scripts/check-version.ts` validates private product identity, exact compiled
+fallback and agreement with the `goodvibes-jev` root version. Root `sync:version`
+owns the SDK fallback, daemon manifest and daemon fallback; root `version:check`
+checks the engine, judgment and daemon workspace versions. Native prebuild remains read-only.
 
 `build:binary` compiles the host target. `smoke:binary --binary <path>` uses the
 installed engine's actual post-build namespace scan. `verify:binary` consumes an
@@ -689,6 +689,10 @@ SDK-pin/lock agreement, registry authentication, a release feed or publication.
 Exactly one explicit bump/exact/no-bump mode is required. Notes require an
 explicit valid date and existing product changelog; `--no-changelog` neither
 reads nor creates one.
+The actual preparation CLI reads the `goodvibes-jev` root version first. Exact
+and arithmetic modes must select that version. No-bump mode synchronizes the
+product manifest and fallback with the root. Product-only bumps refuse before
+any version, badge or notes write.
 
 `--no-bump --no-changelog` is available only as an explicit preparation command;
 it does not configure a toolchain releaseCut hook or mutate native prebuild.
@@ -700,8 +704,7 @@ required. Exactly one binary fallback is required. Unknown, duplicate,
 conflicting and incomplete CLI arguments refuse before mutation.
 
 All inputs are read and validated before writes. Unchanged surfaces are not
-written. Repeating exact-version/no-bump preparation is byte-idempotent; an
-arithmetic bump explicitly requests another version. Ordinary filesystem write
+written. Repeating exact-version/no-bump preparation is byte-idempotent. Ordinary filesystem write
 failure attempts restoration in reverse order, including the failed file
 because a write can fail after truncation. Incomplete restoration is surfaced
 with original and restoration causes. This is not crash-safe multi-file atomicity. The explicit preparation entry
@@ -739,8 +742,8 @@ native wrapper against a declared fixture engine CLI to prove both writer/reader
 exclusion directions without compiling. Cover failure release, symlink identity,
 live-owner age immunity, exited-owner reclaim, corrupt-record refusal and invalid
 argument nonmutation. Use the supported owned engine runner, product types,
-workspace/import gates and diff validation. These mechanics do not select shared
-versus separate product version streams, rewrite legacy updater policy or activate
+workspace/import gates and diff validation. The actual CLI fixture also verifies
+root-selected version synchronization and product-only bump refusal. These mechanics do not rewrite legacy updater policy or activate
 service adoption, registry publication or automatic updates.
 
 ## Executable validation boundaries

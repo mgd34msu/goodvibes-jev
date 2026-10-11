@@ -1,3 +1,4 @@
+import { knowledgeSchemaColumns } from './store-schema-validation-data.js';
 import { readKnowledgeSourceSnapshot } from './store-source-generation.js';
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
 import { createEmptyWorkLedgerState, readWorkLedgerState, migrateLegacyWorkLedgerState } from '../workflow/work-ledger/service.js';
@@ -15,7 +16,7 @@ export function createWorkLedgerTable(db: Pick<SqlDatabase, 'run'>): void {
 /** A current-version file must never be "repaired" into an empty authority. */
 export function validateWorkLedgerTable(db: Pick<SqlDatabase, 'exec'>): void {
   const rows = db.exec('PRAGMA table_info(work_ledgers)')[0]?.values;
-  const expected = [['project_id', 'TEXT', 1, 1], ['format_version', 'INTEGER', 1, 0], ['revision', 'INTEGER', 1, 0], ['state_json', 'TEXT', 1, 0]];
+  const expected = knowledgeSchemaColumns.workLedger;
   if (!rows || rows.length !== expected.length || expected.some(([name, type, required, primary]) => {
     const row = rows.find(value => value[1] === name);
     return !row || row[2] !== type || row[3] !== required || row[5] !== primary;

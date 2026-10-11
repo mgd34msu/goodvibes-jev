@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withBuildPreparationLock } from './build-preparation-lock.ts';
+import { readSharedReleaseVersion } from './check-version.ts';
 
 export type BumpKind = 'patch' | 'minor' | 'major';
 export interface PrepareArgs {
@@ -160,7 +161,18 @@ export async function prepareRelease(
 
 if (import.meta.main) {
   try {
-    const changed = await prepareRelease(join(import.meta.dir, '..'), process.argv.slice(2));
+    const root = join(import.meta.dir, '..');
+    const argv = process.argv.slice(2);
+    const args = parseArgs(argv);
+    const sharedVersion = readSharedReleaseVersion(root);
+    const productVersion = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }).version;
+    const requestedVersion = args.bump === null ? sharedVersion
+      : typeof args.bump === 'string' ? bumpVersion(productVersion, args.bump) : args.bump.exact;
+    if (requestedVersion !== sharedVersion) {
+      throw new Error('Daemon releases use the goodvibes-jev root version; select the root version and run bun run sync:version first');
+    }
+    const changed = await prepareRelease(root, ['--version', sharedVersion,
+      ...(args.changelog ? ['--date', args.date!] : ['--no-changelog'])]);
     console.log(`[release:prepare] ${changed.length} local files updated. Review the diff and complete any scaffolded notes.`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1;

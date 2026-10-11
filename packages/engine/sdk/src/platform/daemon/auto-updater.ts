@@ -49,8 +49,6 @@
 import { readFailureTransience } from '@goodvibes-jev/engine/errors';
 import { daemonReadingPort } from './reading-lifetime.js';
 import { captureJudgmentFailure } from '../gate/failure-input.js';
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { flushActivityLogSync, logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import {
@@ -61,9 +59,10 @@ import {
   DEFAULT_UPDATE_TIMEOUT_MS,
   UpdateTransactionError,
   normalizeVersion,
-  resolveArtifactNames,
   resolveLatestReleaseTag,
-  resolveSqliteVecAsset,
+  resolveDaemonNativeTargets,
+  inspectDaemonNativeInstallation,
+  retainDaemonNativeFiles,
   type UpdateFetchLike,
   type UpdateFileIo,
   type UpdateTarget,
@@ -103,44 +102,12 @@ export interface DaemonInstalledFile {
 }
 
 /**
- * The set of files a daemon update owns: the daemon binary, plus the
- * sqlite-vec addon when it is installed beside it, the addon is compiled
- * against the same build and ships in the same release, so an update refreshes
- * it in the same verified pass and never leaves a mismatched pair installed.
- *
- * THE TERMINAL APP BINARY IS NOT IN THIS SET, deliberately. It used to be:
- * both binaries were built and released from the terminal app's repository, so
- * one release carried both and refreshing the pair together was the only way to
- * keep them matched. The daemon is now its own product with its own repository
- * and its own release line, and a daemon-repository release publishes no
- * `goodvibes-<os>-<arch>` asset at all. A daemon that still claimed the app
- * binary would look for an asset that does not exist, and, worse, if one ever
- * did appear under that name, would overwrite a terminal app that updates
- * itself from a different repository on a different version line. Each product
- * updates its own binary now; `goodvibes` sitting in the same directory is a
- * neighbour, not cargo.
- *
- * One source of truth, shared by the update swap and the crash-loop rollback,
- * so the files a bad update replaced are exactly the files a rollback
- * restores. (A rollback therefore also leaves the app binary alone: it restores
- * only what the update it is undoing actually replaced.)
+ * Fixed Linux daemon payloads and their installation receipt. Updates and
+ * rollback use this same cohort, regardless of whether a required file is
+ * currently present. The selected feed must supply all checksum-bound assets.
  */
 export function resolveDaemonInstalledFiles(location: DaemonUpdateInstallLocation): DaemonInstalledFile[] {
-  const io = location.io;
-  const exists = io ? io.exists.bind(io) : existsSync;
-  const execDir = dirname(location.execPath);
-  const artifacts = resolveArtifactNames(location.platform, location.arch);
-  const files: DaemonInstalledFile[] = [
-    { label: 'daemon binary', path: location.execPath, assetName: artifacts?.daemon ?? null, executable: true },
-  ];
-  const addon = resolveSqliteVecAsset(location.platform, location.arch);
-  if (addon) {
-    const addonPath = join(execDir, 'lib', addon.dirName, addon.fileName);
-    if (exists(addonPath)) {
-      files.push({ label: 'vector addon', path: addonPath, assetName: addon.assetName, executable: false });
-    }
-  }
-  return files;
+  return [...(resolveDaemonNativeTargets(location.execPath, location.platform, location.arch) ?? [])];
 }
 
 export interface DaemonAutoUpdaterOptions {
@@ -482,13 +449,19 @@ export class DaemonAutoUpdater {
     // supported while asynchronous lookup cannot redirect resolve or commit I/O.
     const io = captureUpdateFileIo(this.options.io ?? realUpdateFileIo);
     const deadline = performance.now() + this.updateTimeoutMs;
-    const assertCurrent = () => {
+    const assertLifecycleCurrent = () => {
       signal.throwIfAborted();
       if (signal !== this.failureReadAbort.signal || this.handoverCancelled || this.appliedVersion !== null || this.recoveryRequired) {
         throw new Error('update check no longer belongs to the current updater lifecycle');
       }
       if (performance.now() >= deadline) throw new Error('update check deadline exceeded');
     };
+    const installedTargets = resolveDaemonNativeTargets(this.options.execPath, this.options.platform, this.options.arch);
+    if (!installedTargets) return;
+    const installed = inspectDaemonNativeInstallation(this.options.execPath, this.options.platform, this.options.arch, '', io);
+    if (!installed || compareVersions(installed.version, this.options.currentVersion) !== 0) throw new Error('Running daemon does not own the complete installed native cohort');
+    const assertInstallationCurrent = retainDaemonNativeFiles(installedTargets, io);
+    const assertCurrent = () => { assertLifecycleCurrent(); assertInstallationCurrent(); };
     const remainingBudget = () => {
       assertCurrent();
       return Math.max(Number.EPSILON, deadline - performance.now());
@@ -555,6 +528,8 @@ export class DaemonAutoUpdater {
         platform: this.options.platform,
         signal,
         timeoutMs: remainingBudget(),
+        daemonNative: { execPath: this.options.execPath, platform: this.options.platform, arch: this.options.arch, version: tag },
+        assertCurrent: assertLifecycleCurrent,
         beforeCommit: () => {
           assertCurrent();
           const idle = this.options.isIdle();

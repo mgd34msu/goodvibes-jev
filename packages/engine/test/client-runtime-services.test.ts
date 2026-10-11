@@ -107,9 +107,9 @@ beforeAll(() => {
   });
 });
 
-afterAll(() => {
-  client.dispose();
-  daemon.dispose();
+afterAll(async () => {
+  await client.close();
+  await daemon.close();
   rmSync(root, { recursive: true, force: true });
   rmSync(daemonRoot, { recursive: true, force: true });
 });
@@ -211,7 +211,7 @@ test('the inbound-dispatch seam takes the surface loop runner', async () => {
   });
   withDispatch.sessionBroker.setContinuationRunner(runner);
   expect(bound).toEqual([runner]);
-  withDispatch.dispose();
+  await withDispatch.close();
 
   // The concrete SharedSessionBroker satisfies the same seam, which is what
   // keeps a daemon-grade composition usable through the client shape.
@@ -352,7 +352,7 @@ test('real client composition refuses missing or restricted workspace owners bef
     expect(gate.requests).toHaveLength(0);
     expect(semantic.requests).toHaveLength(0);
     expect(asks.length).toBe(startAsks);
-  } finally { withoutOwner.dispose(); }
+  } finally { await withoutOwner.close(); }
 });
 
 test('real client composition revokes an accepted MCP response when workspace trust changes before commit', async () => {

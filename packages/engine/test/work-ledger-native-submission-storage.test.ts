@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { SQLiteStore, loadSqlJsEngine, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 import { createWorkLedger, migrateLegacyWorkLedgerState, readWorkLedgerState } from '../sdk/src/platform/workflow/work-ledger/service.js';
@@ -54,7 +55,7 @@ test('one durable command creates exact source, claimed attempt and actor receip
   expect(readFileSync(f.file)).toEqual(before);
   expect((await reopened.service.readSnapshot(reopened.actor)).works[0]?.attempt?.report).toBe('Display report');
   const SQL = await loadSqlJsEngine(); const db = new SQL.Database(before);
-  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); expect(db.exec('SELECT format_version FROM work_ledgers')[0]?.values).toEqual([[2]]);
+  expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]); expect(db.exec('SELECT format_version FROM work_ledgers')[0]?.values).toEqual([[2]]);
   expect(db.exec('SELECT COUNT(*) FROM native_work_executions')[0]?.values).toEqual([[0]]); expect(db.exec('SELECT COUNT(*) FROM native_work_execution_intents')[0]?.values).toEqual([[0]]); db.close();
 });
 

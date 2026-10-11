@@ -15,6 +15,8 @@ const readings = useToolReadings([
   ['"value":"no"', { booleanValue: 'false' }],
   ['"value":"off"', { booleanValue: 'false' }],
 ]);
+const repairRequests = () => readings.requests.filter(request =>
+  Object.hasOwn(request.questions ?? {}, 'pick') || Object.hasOwn(request.questions ?? {}, 'boolean_value'));
 
 // ---------------------------------------------------------------------------
 // Test schema helpers
@@ -204,7 +206,7 @@ describe('Rule 2: fill missing required string params', () => {
   test('does not fill when no non-required string args present', async () => {
     const result = await repairToolCall('read', {}, STRING_SCHEMA);
     // No candidates available: nothing is read, missing path stays missing
-    expect(readings.requests).toHaveLength(0);
+    expect(repairRequests()).toHaveLength(0);
     expect(result.fixed['path']).toBeUndefined();
     expect(result.repaired).toBe(false);
   });
@@ -242,8 +244,8 @@ describe('Rule 2: the param-fill reading', () => {
 
   test('the selection offers only spare non-empty strings, with the tool and parameter as context', async () => {
     await repairToolCall('read', { encoding: 'utf-8', empty: '', count: 3 }, STRING_SCHEMA);
-    expect(readings.requests).toHaveLength(1);
-    const state = readings.requests[0]!.state as { context: { tool: string; missingParameter: string }; candidates: Array<{ id: string }> };
+    expect(repairRequests()).toHaveLength(1);
+    const state = repairRequests()[0]!.state as { context: { tool: string; missingParameter: string }; candidates: Array<{ id: string }> };
     expect(state.context.tool).toBe('read');
     expect(state.context.missingParameter).toBe('path');
     expect(state.candidates.map((candidate) => candidate.id)).toEqual(['encoding']);
@@ -305,14 +307,14 @@ describe('Rule 3: string-to-number coercion', () => {
 // ---------------------------------------------------------------------------
 
 describe('Rule 4: boolean coercion', () => {
-  test('the JSON literals "true" and "false" coerce in code, asking nothing', async () => {
+  test('the JSON literals "true" and "false" coerce without semantic argument readings', async () => {
     const r1 = await repairToolCall('toggle', { enabled: 'true' }, BOOL_SCHEMA);
     expect(r1.repaired).toBe(true);
     expect(r1.fixed['enabled']).toBe(true);
     const r2 = await repairToolCall('toggle', { enabled: 'false' }, BOOL_SCHEMA);
     expect(r2.repaired).toBe(true);
     expect(r2.fixed['enabled']).toBe(false);
-    expect(readings.requests).toHaveLength(0);
+    expect(repairRequests()).toHaveLength(0);
   });
 
   test('any other string is read by engine.tools.boolean-value with the parameter name', async () => {
@@ -320,8 +322,8 @@ describe('Rule 4: boolean coercion', () => {
     expect(result.repaired).toBe(true);
     expect(result.fixed['enabled']).toBe(true);
     expect(result.repairs).toEqual(["coerced enabled from 'yes' to boolean true"]);
-    expect(readings.requests).toHaveLength(1);
-    expect(readings.requests[0]!.state).toMatchObject({ tool: 'toggle', parameter: 'enabled', value: 'yes' });
+    expect(repairRequests()).toHaveLength(1);
+    expect(repairRequests()[0]!.state).toMatchObject({ tool: 'toggle', parameter: 'enabled', value: 'yes' });
   });
 
   test('a reading of false coerces to false', async () => {
@@ -336,14 +338,14 @@ describe('Rule 4: boolean coercion', () => {
     expect(r1.fixed['enabled']).toBe(true);
     const r2 = await repairToolCall('toggle', { enabled: 'YES' }, BOOL_SCHEMA);
     expect(r2.fixed['enabled']).toBe(true);
-    expect(readings.requests).toHaveLength(2);
+    expect(repairRequests()).toHaveLength(2);
   });
 
   test('leaves actual boolean unchanged', async () => {
     const result = await repairToolCall('toggle', { enabled: true }, BOOL_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['enabled']).toBe(true);
-    expect(readings.requests).toHaveLength(0);
+    expect(repairRequests()).toHaveLength(0);
   });
 
   test('a string read as neither is left as sent', async () => {

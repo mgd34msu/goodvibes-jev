@@ -19,14 +19,9 @@
  */
 
 import type { CatalogModel } from './model-catalog.js';
-
-/** User- or registration-supplied rates, USD per 1M tokens. */
-export interface ManualModelPrice {
-  readonly input: number;
-  readonly output: number;
-  readonly cacheRead?: number | undefined;
-  readonly cacheWrite?: number | undefined;
-}
+import { validManualModelPrice as validManualPrice, type ManualModelPrice } from '../config/manual-model-prices.js';
+export { validateManualModelPrices } from '../config/manual-model-prices.js';
+export type { ManualModelPrice } from '../config/manual-model-prices.js';
 
 /** Where a resolved price came from. */
 export type ModelPricingSource = 'user' | 'provider' | 'catalog';
@@ -167,25 +162,6 @@ export function computeUsageCostUsdCents(
 /** The event-level source stamp for a resolution. */
 export function usageCostSource(pricing: ResolvedModelPricing): UsageCostSource {
   return pricing.status === 'priced' ? pricing.source : pricing.status;
-}
-
-function validManualPrice(value: unknown): value is ManualModelPrice {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const rec = value as Record<string, unknown>;
-  const rate = (key: string, required: boolean): boolean => {
-    const v = rec[key];
-    if (v === undefined) return !required;
-    return typeof v === 'number' && Number.isFinite(v) && v >= 0;
-  };
-  return rate('input', true) && rate('output', true) && rate('cacheRead', false) && rate('cacheWrite', false);
-}
-
-/** Validate the whole `pricing.modelPrices` config value (record keyed `provider:model`). */
-export function validateManualModelPrices(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.entries(value as Record<string, unknown>).every(
-    ([key, price]) => key.includes(':') && validManualPrice(price),
-  );
 }
 
 function pricedFromManual(price: ManualModelPrice, source: 'user'): ResolvedModelPricing {

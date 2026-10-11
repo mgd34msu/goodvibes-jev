@@ -7,24 +7,27 @@
  * Guarantees:
  *   1. Read surfaces (remote_snapshot, remote_peers, remote_work, remote_pair_requests)
  *      return success:true with the expected methodId, route, and effect fields.
- *   2. Mutation surfaces (remote_pair_approve, remote_pair_reject, remote_peers_invoke,
- *      remote_work_cancel) are confirmation-gated: they return success:false when called
- *      without confirm:true + explicitUserRequest.
- *   3. When confirmed, mutation surfaces return a handoff with methodId and modelRoute
- *      pointing at agent_operator_method.
+ *   2. Mutation surfaces require current recorded admission; caller flags do not grant it.
+ *   3. Genuinely admitted mutation surfaces preserve their operator handoff and native
+ *      pairing requirements without performing remote effects in these fixtures.
  *   4. The remote catalog modes are registered in AGENT_HARNESS_MODES and described in
  *      HARNESS_MODE_DESCRIPTORS with the correct kinds and safety annotations.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ProcessManager, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { FileUndoManager } from '@goodvibes-jev/engine/sdk/platform/state';
+import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { ConfigManager } from '../../config/index.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { createShellPathService } from '@/runtime/index.ts';
-import { createAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
+import { registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { AGENT_HARNESS_MODES } from '../../tools/agent-harness-tool-schema.ts';
 import { HARNESS_MODE_DESCRIPTORS } from '../../tools/agent-harness-mode-catalog.ts';
 import { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
@@ -33,6 +36,33 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 const REMOTE_READ_MODES = ['remote_snapshot', 'remote_peers', 'remote_work', 'remote_pair_requests'] as const;
 const REMOTE_MUTATION_MODES = ['remote_pair_approve', 'remote_pair_reject', 'remote_peers_invoke', 'remote_work_cancel'] as const;
 const ALL_REMOTE_MODES = [...REMOTE_READ_MODES, ...REMOTE_MUTATION_MODES] as const;
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+let decisionLog: SqliteDecisionLog;
+let readings: ReturnType<typeof fakePort>;
+const NO_QUESTIONS = new Set(['mutates', 'outward', 'secrets', 'irreversible', 'beyondProject',
+  'weakensSecurity', 'obfuscated', 'flagsRisk', 'catastrophic', 'cardDetails']);
+const ADMISSION_BATTERIES = new Set(['engine.gate.boundary', 'engine.gate.side-effect',
+  'engine.gate.risk-family', 'engine.gate.autonomous-disposition', 'engine.gate.autonomous-refusal']);
+
+beforeEach(() => {
+  // Authored local handoff readings intentionally classify the body as read.
+  // The authentic engine proof and deterministic effect floors still apply.
+  readings = fakePort((name, question) => {
+    const label = name === 'disposition' ? 'act' : name === 'kind' ? 'read'
+      : name === 'family' || name === 'capability' ? 'generic' : undefined;
+    if (question.type === 'choice' && label) return choiceAnswer(question, label, 0.999);
+    if (question.type === 'noul' && NO_QUESTIONS.has(name)) return noulAnswer(0.001);
+    throw new Error(`Unscripted remote admission question ${name}`);
+  });
+  const port: JudgmentPort = { model: readings.port.model, ask(request) {
+    if (!ADMISSION_BATTERIES.has(request.context?.battery ?? '')) throw new Error('Unscripted remote admission battery');
+    return readings.port.ask(request);
+  } };
+  decisionLog = new SqliteDecisionLog(':memory:');
+  previousPort = installJudgmentPort(withDecisionLog(port, decisionLog));
+});
+afterEach(() => { installJudgmentPort(previousPort); decisionLog[Symbol.dispose](); });
 
 function makeRemoteFixture() {
   const root = makeProjectTempDir('gv-remote');
@@ -45,7 +75,9 @@ function makeRemoteFixture() {
     workingDir: paths.workingDirectory,
     homeDir: paths.homeDirectory,
   });
-  const toolRegistry = new ToolRegistry();
+  configManager.flushConfigFileChanges();
+  const permissionManager = new PermissionManager(undefined, createPermissionConfigReader(configManager), new PolicyRuntimeState());
+  const toolRegistry = new ToolRegistry(permissionManager);
   const processManager = new ProcessManager();
   const fileUndoManager = new FileUndoManager();
   const workPlanStore = new WorkPlanStore({ homeDirectory: root, surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT, projectId: 'remote-test', projectRoot: root });
@@ -134,15 +166,34 @@ function makeRemoteFixture() {
     extensions: { toolRegistry },
   } as unknown as CommandContext;
 
-  const tool = createAgentHarnessTool({
-    commandRegistry,
-    commandContext: context,
-    toolRegistry,
-  });
-  toolRegistry.register(tool);
+  registerAgentHarnessTool(toolRegistry, commandRegistry, context);
+  const tool = toolRegistry.list().find(candidate => candidate.definition.name === 'agent_harness');
+  if (!tool) throw new Error('Registered remote harness fixture is unavailable');
+  const source = { goal: 'Inspect an operator handoff in an isolated local fixture',
+    criteria: ['Preserve the exact remote route and input', 'Perform no remote effects'] };
+  let sequence = 0;
+  async function admit(args: Record<string, unknown>, signal?: AbortSignal) {
+    configManager.flushConfigFileChanges();
+    const call = await toolRegistry.prepareCall(`remote-handoff-${++sequence}`, 'agent_harness', args, { signal });
+    const admission = await permissionManager.admitAutonomous(call.callId, call.name, call.args, {
+      sourceOf: () => source, signal, schemaRevision: call.schemaRevision, preparedCall: { registry: toolRegistry, call },
+    });
+    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    const receipt = admission.result.autonomousDecision;
+    if (!receipt) throw new Error('Remote handoff has no recorded admission receipt');
+    for (const id of receipt.judgmentDecisionIds) expect(decisionLog.get(id)?.status).toBe('answered');
+    const disposition = readings.requests.filter(request => Object.hasOwn(request.questions, 'disposition')).at(-1);
+    expect(disposition?.state).toMatchObject({ input: { tool: 'agent_harness', arguments: call.args, source } });
+    return { call, admission };
+  }
 
   return {
     tool,
+    toolRegistry, configManager, source, admit,
+    async run(args: Record<string, unknown>, signal?: AbortSignal) {
+      const { call, admission } = await admit(args, signal);
+      return toolRegistry.executePrepared(call, admission);
+    },
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -155,7 +206,7 @@ describe('agent_harness remote surface', () => {
     }
   });
 
-  test('all remote modes have HARNESS_MODE_DESCRIPTORS entries with correct kinds and safety annotations', () => {
+  test('remote mode descriptors separate read routes from admitted effect handoffs', () => {
     const descriptorMap = new Map(HARNESS_MODE_DESCRIPTORS.map((d) => [d.id, d]));
 
     for (const mode of REMOTE_READ_MODES) {
@@ -163,7 +214,7 @@ describe('agent_harness remote surface', () => {
       expect(descriptor).toBeDefined();
       expect(descriptor?.kind).toBe('inspect');
       expect(descriptor?.family).toBe('remote');
-      expect(descriptor?.requiresConfirmation).toBeUndefined();
+      expect(Object.hasOwn(descriptor ?? {}, 'requiresConfirmation')).toBe(false);
     }
 
     for (const mode of REMOTE_MUTATION_MODES) {
@@ -171,8 +222,11 @@ describe('agent_harness remote surface', () => {
       expect(descriptor).toBeDefined();
       expect(descriptor?.kind).toBe('effect');
       expect(descriptor?.family).toBe('remote');
-      expect(descriptor?.requiresConfirmation).toBe(true);
-      expect(descriptor?.parameters).toEqual(expect.arrayContaining(['confirm', 'explicitUserRequest']));
+      expect(descriptor?.summary).toContain('Admitted handoff');
+      expect(descriptor?.next).toContain('agent_operator_method');
+      expect(Object.hasOwn(descriptor ?? {}, 'requiresConfirmation')).toBe(false);
+      expect(descriptor?.parameters).not.toContain('confirm');
+      expect(descriptor?.parameters).not.toContain('explicitUserRequest');
     }
   });
 
@@ -196,32 +250,35 @@ describe('agent_harness remote surface', () => {
         // modelRoute is a preview string (max 56 chars) so long methodIds may be truncated.
         // Verify it starts with the tool name prefix, and that methodId is separately correct.
         expect(String(parsed.modelRoute)).toContain('agent_operator_method');
-        expect(parsed.confirmationRequired).toBe(false);
+        expect(parsed.recordedAdmissionRequired).toBe(false);
+        expect(Object.hasOwn(parsed, 'confirmationRequired')).toBe(false);
       }
     } finally {
       fixture.cleanup();
     }
   });
 
-  test('mutation surfaces are confirmation-gated: reject without confirm+explicitUserRequest', async () => {
+  test('raw mutation surfaces reject caller flags as well as absent flags', async () => {
     const fixture = makeRemoteFixture();
     try {
       for (const mode of REMOTE_MUTATION_MODES) {
-        // No confirm, no explicitUserRequest
-        const result = await fixture.tool.execute({ mode });
-        expect(result.success).toBe(false);
-        expect(result.error).toBeDefined();
+        for (const extra of [{}, { confirm: true, explicitUserRequest: 'Caller-authored remote request' }]) {
+          const result = await fixture.tool.execute({ mode, ...extra });
+          expect(result.success).toBe(false);
+          expect(result.error).toContain('recorded effect admission');
+          expect(result.output).toBeUndefined();
+        }
       }
+      expect(readings.requests).toHaveLength(0);
+      expect(decisionLog.query()).toHaveLength(0);
     } finally {
       fixture.cleanup();
     }
   });
 
-  test('mutation surfaces return agent_operator_method handoff when confirmed', async () => {
+  test('recorded act admission returns operator handoffs without caller grants', async () => {
     const fixture = makeRemoteFixture();
     try {
-      const confirmArgs = { confirm: true, explicitUserRequest: 'test remote mutation' };
-
       const methodIdMap: Record<string, string> = {
         remote_pair_approve: 'remote.pair.requests.approve',
         remote_pair_reject: 'remote.pair.requests.reject',
@@ -230,16 +287,21 @@ describe('agent_harness remote surface', () => {
       };
 
       for (const [mode, expectedMethodId] of Object.entries(methodIdMap)) {
-        const result = await fixture.tool.execute({ mode, ...confirmArgs });
+        const result = await fixture.run({ mode });
         expect(result.success).toBe(true);
         const parsed = JSON.parse(result.output ?? '{}') as Record<string, unknown>;
         expect(parsed.methodId).toBe(expectedMethodId);
-        expect(parsed.effect).toBe('confirmed-connected-host-state');
-        expect(parsed.confirmationRequired).toBe(true);
+        expect(parsed.effect).toBe('connected-host-state');
+        expect(parsed.recordedAdmissionRequired).toBe(true);
+        expect(Object.hasOwn(parsed, 'confirmationRequired')).toBe(false);
         expect(typeof parsed.modelRoute).toBe('string');
         // modelRoute is a preview string (max 56 chars), verify tool prefix is present.
         // methodId identity is already asserted above via the parsed.methodId field.
         expect(String(parsed.modelRoute)).toContain('agent_operator_method');
+        expect(parsed.modelRoute).not.toContain('confirm:');
+        expect(parsed.modelRoute).not.toContain('explicitUserRequest:');
+        expect(parsed.policy).toContain('fresh admission');
+        if (mode !== 'remote_work_cancel') expect(parsed.policy).toContain('native pairing protocol');
       }
     } finally {
       fixture.cleanup();
@@ -249,12 +311,10 @@ describe('agent_harness remote surface', () => {
   test('remote_pair_approve handoff includes requestId in input when provided', async () => {
     const fixture = makeRemoteFixture();
     try {
-      const result = await fixture.tool.execute({
+      const result = await fixture.run({
         mode: 'remote_pair_approve',
         requestId: 'req-abc-123',
         note: 'approved by user',
-        confirm: true,
-        explicitUserRequest: 'Approve pair request req-abc-123',
       });
       expect(result.success).toBe(true);
       const parsed = JSON.parse(result.output ?? '{}') as Record<string, unknown>;
@@ -269,13 +329,13 @@ describe('agent_harness remote surface', () => {
 
   test('remote_peers_invoke handoff includes peerId and command in input when provided', async () => {
     const fixture = makeRemoteFixture();
+    const payload = { task: 'Inspect the owned fixture', detail: { revision: 'original' } };
     try {
-      const result = await fixture.tool.execute({
+      const result = await fixture.run({
         mode: 'remote_peers_invoke',
         peerId: 'peer-xyz',
         command: 'run-task',
-        confirm: true,
-        explicitUserRequest: 'Invoke run-task on peer peer-xyz',
+        payload,
       });
       expect(result.success).toBe(true);
       const parsed = JSON.parse(result.output ?? '{}') as Record<string, unknown>;
@@ -283,6 +343,7 @@ describe('agent_harness remote surface', () => {
       const inputField = parsed.input as Record<string, unknown>;
       expect(inputField.peerId).toBe('peer-xyz');
       expect(inputField.command).toBe('run-task');
+      expect(inputField.payload).toEqual(payload);
     } finally {
       fixture.cleanup();
     }
@@ -291,12 +352,10 @@ describe('agent_harness remote surface', () => {
   test('remote_work_cancel handoff includes workId and reason when provided', async () => {
     const fixture = makeRemoteFixture();
     try {
-      const result = await fixture.tool.execute({
+      const result = await fixture.run({
         mode: 'remote_work_cancel',
         workId: 'work-001',
         reason: 'user requested cancellation',
-        confirm: true,
-        explicitUserRequest: 'Cancel remote work item work-001',
       });
       expect(result.success).toBe(true);
       const parsed = JSON.parse(result.output ?? '{}') as Record<string, unknown>;
@@ -304,6 +363,43 @@ describe('agent_harness remote surface', () => {
       const inputField = parsed.input as Record<string, unknown>;
       expect(inputField.workId).toBe('work-001');
       expect(inputField.reason).toBe('user requested cancellation');
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test.each(['source', 'config', 'cancel'] as const)('a prepared handoff is held when its original %s retires', async change => {
+    const fixture = makeRemoteFixture();
+    const controller = new AbortController();
+    try {
+      const { call, admission } = await fixture.admit({ mode: 'remote_peers_invoke', peerId: 'peer-owned',
+        command: 'inspect-fixture', payload: { task: 'Keep the complete original handoff' } }, controller.signal);
+      const count = readings.requests.length;
+      if (change === 'source') fixture.source.goal = 'A different operator task';
+      if (change === 'config') fixture.configManager.set('permissions.mode', 'plan');
+      if (change === 'cancel') controller.abort();
+      await expect(fixture.toolRegistry.executePrepared(call, admission)).rejects.toThrow();
+      expect(readings.requests).toHaveLength(count);
+      expect(decisionLog.query({ site: 'engine.gate.autonomous-tool' }).flatMap(entry => entry.status === 'answered'
+        ? entry.notes.filter(note => note.kind === 'action' && note.action.startsWith('autonomous:claim:')) : [])).toHaveLength(0);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test.each(['private', 'card', 'accessor'] as const)('complete %s handoff input is refused before hosted readings', async kind => {
+    const fixture = makeRemoteFixture();
+    let getterCalls = 0;
+    const payload: Record<string, unknown> = { task: 'Inspect only the owned fixture' };
+    if (kind === 'private') payload.apiKey = 'synthetic-remote-private';
+    if (kind === 'card') payload.unknown = '4111111111111111';
+    if (kind === 'accessor') Object.defineProperty(payload, 'undisplayed', { enumerable: true,
+      get() { getterCalls++; return 'synthetic-remote-private'; } });
+    try {
+      await expect(fixture.run({ mode: 'remote_peers_invoke', peerId: 'peer-owned', command: 'inspect-fixture', payload })).rejects.toThrow();
+      expect(readings.requests).toHaveLength(0);
+      expect(decisionLog.query()).toHaveLength(0);
+      expect(getterCalls).toBe(0);
     } finally {
       fixture.cleanup();
     }

@@ -206,7 +206,7 @@ function syntheticUid(provider: CalendarProviderId, calendarId: string): string 
 }
 
 // ---------------------------------------------------------------------------
-// Cross-zone chronological ordering (F4)
+// Cross-zone chronological ordering
 // ---------------------------------------------------------------------------
 
 /**

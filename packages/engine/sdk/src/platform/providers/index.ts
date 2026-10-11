@@ -72,6 +72,7 @@ export type {
   ModelDefinition,
   ModelTier,
   ProviderRegistryOptions,
+  ProviderCatalogOptions,
   RuntimeProviderRegistration,
   TokenLimits,
 } from './registry-types.js';
@@ -228,7 +229,7 @@ export {
 export type { ReasoningEffortSpecRequest } from './reasoning-effort-families.js';
 export { EFFORT_DESCRIPTIONS } from './effort-levels.js';
 export { FavoritesStore } from './favorites.js';
-export type { FavoriteEntry, FavoritesData, FavoritesStoreOptions, UsageEntry } from './favorites.js';
+export type { FavoriteEntry, FavoritesData, FavoritesStoreOptions, FavoritesUsageRestriction, UsageEntry } from './favorites.js';
 export { ModelLimitsService } from './model-limits.js';
 export type { ModelLimitsServiceOptions } from './model-limits.js';
 export { findClosestModelIds, resolveModelReference } from './model-id-resolution.js';

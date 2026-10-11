@@ -1,4 +1,4 @@
-/** Public declared credential NAMES only. No stored values, secrets or provider implementation. */
+/** Canonical declared credential names. No stored values, secrets or provider implementation. */
 export const BUILTIN_PROVIDER_ENV_KEYS: Record<string, readonly string[]> = {
   openai: ['OPENAI_API_KEY', 'OPENAI_KEY'],
   anthropic: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],

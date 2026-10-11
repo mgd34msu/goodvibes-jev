@@ -135,7 +135,8 @@ test('privacy refusal stays safe through the final consumer and stored result', 
   expect(f.item.state).toBe('blocked-bookkeeping');
   expect(JSON.stringify(f.engine.getPhaseResults(f.ws.id))).not.toContain('synthetic-secret');
   expect(JSON.stringify(f.item)).not.toContain('synthetic-secret');
-  expect(fake.requests).toHaveLength(0);
+  expect(fake.requests.filter(request => request.context?.battery === repositoryFailureReading.name)).toHaveLength(0);
+  expect(JSON.stringify(fake.requests)).not.toContain('synthetic-secret');
 });
 
 test('port replacement during awaited cleanup withdraws the phase verdict before engine routing', async () => {

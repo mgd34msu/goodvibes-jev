@@ -1,5 +1,6 @@
 import type { OmitNamed, RequiredNamedKeys } from '@goodvibes-jev/engine/contracts';
 import { ContractError, admitRegex, compileLegacyRegex, type RegexAdmissionOptions } from '@goodvibes-jev/engine/errors';
+import { retainJsonSchemaSource } from './retained-schema-source.js';
 
 const MAX_SCHEMA_PATTERN_CHARS = 512;
 const MAX_SCHEMA_PATTERN_INPUT_CHARS = 50_000;
@@ -142,11 +143,15 @@ export async function firstJsonSchemaFailureAsync(
   schema: Record<string, unknown>, value: unknown,
   options: Omit<RegexAdmissionOptions, 'operation'> = {},
 ): Promise<JsonSchemaValidationFailure | undefined> {
-  const original = JSON.stringify([schema, value]);
-  const [capturedSchema, capturedValue] = structuredClone([schema, value]) as [Record<string, unknown>, unknown];
+  const retained = retainJsonSchemaSource<readonly [Record<string, unknown>, unknown]>([schema, value]);
+  const [capturedSchema, capturedValue] = retained.snapshot;
+  const signal = options.signal, assertOwnerCurrent = options.assertCurrent, reading = options.reading;
   const current = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
-    if (JSON.stringify([schema, value]) !== original) throw new ContractError('Contract schema validation source changed while reading.');
+    signal?.throwIfAborted(); assertOwnerCurrent?.();
+    if (options.signal !== signal || options.assertCurrent !== assertOwnerCurrent || options.reading !== reading) {
+      throw new ContractError('Contract schema validation owner changed while reading.');
+    }
+    retained.assertCurrent();
   };
   current();
   const walk = walkJsonSchema(capturedSchema, capturedValue);

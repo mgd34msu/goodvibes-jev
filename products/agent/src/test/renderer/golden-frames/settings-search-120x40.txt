@@ -5,7 +5,7 @@
 |                                                                                                                        |
 |            ✦ Settings › Search                                                                        esc              |
 |                                                                                                                        |
-|            theme▏                                                                              409 results             |
+|            theme▏                                                                              413 results             |
 |                                                                                                                        |
 |                                                                                                                        |
 |              theme  Display                                                                    goodvibes               |
@@ -26,15 +26,15 @@
 |              9 more ↓ · pgdn                                                                                           |
 |                                                                                                                        |
 |              themeMode  Display                                                                     auto               |
+|              treeGlyphs  Display                                                                 rounded               |
 |              showThinking  Display                                                                 false               |
 |              showTokenSpeed  Display                                                               false               |
 |              System Message Target  UI                                                             panel               |
 |              Operational Message Target  UI                                                        panel               |
 |              contractMessages  UI                                                                   both               |
-|              Auto-Compact %  Behavior                                                                 80               |
 |                                                                                                                        |
 |                                                                                                                        |
-|             ↑↓  move    ⏎  change    ⌫  edit search    ctrl+r  reset                            401 more ↓             |
+|             ↑↓  move    ⏎  change    ⌫  edit search    ctrl+r  reset                            405 more ↓             |
 |                                                                                                                        |
 |        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         |
 |                                                                                                                        |
@@ -4735,9 +4735,9 @@
 27 22 bg=#2d2e48
 27 23 fg=#e4e2ee
 27 23 bg=#2d2e48
-27 24 fg=#e4e2ee
+27 24 fg=#8e8ba3
 27 24 bg=#2d2e48
-27 25 fg=#e4e2ee
+27 25 fg=#8e8ba3
 27 25 bg=#2d2e48
 27 26 fg=#8e8ba3
 27 26 bg=#2d2e48
@@ -4753,9 +4753,7 @@
 27 31 bg=#2d2e48
 27 32 fg=#8e8ba3
 27 32 bg=#2d2e48
-27 33 fg=#8e8ba3
 27 33 bg=#2d2e48
-27 34 fg=#8e8ba3
 27 34 bg=#2d2e48
 27 35 bg=#2d2e48
 27 36 bg=#2d2e48
@@ -4820,7 +4818,9 @@
 27 95 bg=#2d2e48
 27 96 bg=#2d2e48
 27 97 bg=#2d2e48
+27 98 fg=#8e8ba3
 27 98 bg=#2d2e48
+27 99 fg=#8e8ba3
 27 99 bg=#2d2e48
 27 100 fg=#8e8ba3
 27 100 bg=#2d2e48
@@ -4902,9 +4902,9 @@
 28 24 bg=#2d2e48
 28 25 fg=#e4e2ee
 28 25 bg=#2d2e48
-28 26 fg=#e4e2ee
+28 26 fg=#8e8ba3
 28 26 bg=#2d2e48
-28 27 fg=#e4e2ee
+28 27 fg=#8e8ba3
 28 27 bg=#2d2e48
 28 28 fg=#8e8ba3
 28 28 bg=#2d2e48
@@ -4920,9 +4920,7 @@
 28 33 bg=#2d2e48
 28 34 fg=#8e8ba3
 28 34 bg=#2d2e48
-28 35 fg=#8e8ba3
 28 35 bg=#2d2e48
-28 36 fg=#8e8ba3
 28 36 bg=#2d2e48
 28 37 bg=#2d2e48
 28 38 bg=#2d2e48
@@ -5071,27 +5069,25 @@
 29 26 bg=#2d2e48
 29 27 fg=#e4e2ee
 29 27 bg=#2d2e48
-29 28 fg=#e4e2ee
+29 28 fg=#8e8ba3
 29 28 bg=#2d2e48
-29 29 fg=#e4e2ee
+29 29 fg=#8e8ba3
 29 29 bg=#2d2e48
-29 30 fg=#e4e2ee
+29 30 fg=#8e8ba3
 29 30 bg=#2d2e48
-29 31 fg=#e4e2ee
+29 31 fg=#8e8ba3
 29 31 bg=#2d2e48
-29 32 fg=#e4e2ee
+29 32 fg=#8e8ba3
 29 32 bg=#2d2e48
-29 33 fg=#e4e2ee
+29 33 fg=#8e8ba3
 29 33 bg=#2d2e48
-29 34 fg=#e4e2ee
+29 34 fg=#8e8ba3
 29 34 bg=#2d2e48
 29 35 fg=#8e8ba3
 29 35 bg=#2d2e48
 29 36 fg=#8e8ba3
 29 36 bg=#2d2e48
-29 37 fg=#8e8ba3
 29 37 bg=#2d2e48
-29 38 fg=#8e8ba3
 29 38 bg=#2d2e48
 29 39 bg=#2d2e48
 29 40 bg=#2d2e48
@@ -5252,23 +5248,18 @@
 30 33 bg=#2d2e48
 30 34 fg=#e4e2ee
 30 34 bg=#2d2e48
-30 35 fg=#e4e2ee
+30 35 fg=#8e8ba3
 30 35 bg=#2d2e48
-30 36 fg=#e4e2ee
+30 36 fg=#8e8ba3
 30 36 bg=#2d2e48
-30 37 fg=#e4e2ee
+30 37 fg=#8e8ba3
 30 37 bg=#2d2e48
-30 38 fg=#e4e2ee
+30 38 fg=#8e8ba3
 30 38 bg=#2d2e48
-30 39 fg=#e4e2ee
 30 39 bg=#2d2e48
-30 40 fg=#8e8ba3
 30 40 bg=#2d2e48
-30 41 fg=#8e8ba3
 30 41 bg=#2d2e48
-30 42 fg=#8e8ba3
 30 42 bg=#2d2e48
-30 43 fg=#8e8ba3
 30 43 bg=#2d2e48
 30 44 bg=#2d2e48
 30 45 bg=#2d2e48
@@ -5414,23 +5405,33 @@
 31 28 bg=#2d2e48
 31 29 fg=#e4e2ee
 31 29 bg=#2d2e48
-31 30 fg=#8e8ba3
+31 30 fg=#e4e2ee
 31 30 bg=#2d2e48
-31 31 fg=#8e8ba3
+31 31 fg=#e4e2ee
 31 31 bg=#2d2e48
-31 32 fg=#8e8ba3
+31 32 fg=#e4e2ee
 31 32 bg=#2d2e48
-31 33 fg=#8e8ba3
+31 33 fg=#e4e2ee
 31 33 bg=#2d2e48
+31 34 fg=#e4e2ee
 31 34 bg=#2d2e48
+31 35 fg=#e4e2ee
 31 35 bg=#2d2e48
+31 36 fg=#e4e2ee
 31 36 bg=#2d2e48
+31 37 fg=#e4e2ee
 31 37 bg=#2d2e48
+31 38 fg=#e4e2ee
 31 38 bg=#2d2e48
+31 39 fg=#e4e2ee
 31 39 bg=#2d2e48
+31 40 fg=#8e8ba3
 31 40 bg=#2d2e48
+31 41 fg=#8e8ba3
 31 41 bg=#2d2e48
+31 42 fg=#8e8ba3
 31 42 bg=#2d2e48
+31 43 fg=#8e8ba3
 31 43 bg=#2d2e48
 31 44 bg=#2d2e48
 31 45 bg=#2d2e48
@@ -5488,6 +5489,7 @@
 31 97 bg=#2d2e48
 31 98 bg=#2d2e48
 31 99 bg=#2d2e48
+31 100 fg=#8e8ba3
 31 100 bg=#2d2e48
 31 101 fg=#8e8ba3
 31 101 bg=#2d2e48
@@ -5571,9 +5573,9 @@
 32 26 bg=#2d2e48
 32 27 fg=#e4e2ee
 32 27 bg=#2d2e48
-32 28 fg=#8e8ba3
+32 28 fg=#e4e2ee
 32 28 bg=#2d2e48
-32 29 fg=#8e8ba3
+32 29 fg=#e4e2ee
 32 29 bg=#2d2e48
 32 30 fg=#8e8ba3
 32 30 bg=#2d2e48
@@ -5583,13 +5585,9 @@
 32 32 bg=#2d2e48
 32 33 fg=#8e8ba3
 32 33 bg=#2d2e48
-32 34 fg=#8e8ba3
 32 34 bg=#2d2e48
-32 35 fg=#8e8ba3
 32 35 bg=#2d2e48
-32 36 fg=#8e8ba3
 32 36 bg=#2d2e48
-32 37 fg=#8e8ba3
 32 37 bg=#2d2e48
 32 38 bg=#2d2e48
 32 39 bg=#2d2e48
@@ -5654,7 +5652,9 @@
 32 98 bg=#2d2e48
 32 99 bg=#2d2e48
 32 100 bg=#2d2e48
+32 101 fg=#8e8ba3
 32 101 bg=#2d2e48
+32 102 fg=#8e8ba3
 32 102 bg=#2d2e48
 32 103 fg=#8e8ba3
 32 103 bg=#2d2e48

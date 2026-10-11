@@ -36,6 +36,7 @@ export function createWebhookDeliveryStrategy(
   return {
     id: 'channel-delivery:webhook',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return request.target.kind === 'webhook' || resolveChannelDeliverySurfaceKind(request.target) === 'webhook';
     },
@@ -91,6 +92,7 @@ export function createSlackDeliveryStrategy(
   return {
     id: 'channel-delivery:slack',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'slack';
     },
@@ -150,6 +152,7 @@ export function createDiscordDeliveryStrategy(
   return {
     id: 'channel-delivery:discord',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'discord';
     },
@@ -207,6 +210,7 @@ export function createNtfyDeliveryStrategy(
   return {
     id: 'channel-delivery:ntfy',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'ntfy';
     },
@@ -252,6 +256,7 @@ export function createWebControlPlaneDeliveryStrategy(
   return {
     id: 'channel-delivery:web-control-plane',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'web';
     },
@@ -290,6 +295,7 @@ export function createHomeAssistantDeliveryStrategy(
   return {
     id: 'channel-delivery:homeassistant',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'homeassistant';
     },
@@ -369,6 +375,7 @@ export function createTelegramDeliveryStrategy(
   return {
     id: 'channel-delivery:telegram',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'telegram';
     },
@@ -416,6 +423,7 @@ export function createGoogleChatDeliveryStrategy(
   return {
     id: 'channel-delivery:google-chat',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'google-chat';
     },

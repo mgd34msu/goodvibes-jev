@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { SurfaceModalHost } from '../../input/surface-modal-host.ts';
+import { ConversationManager } from '../../core/conversation.ts';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { CommandRegistry } from '../../input/command-registry.ts';
@@ -297,7 +298,7 @@ describe('product breadth commands', () => {
       importSessionBundle: (path: string) => productRemoteRunnerRegistry.importSessionBundle(path),
     };
     const providerRegistry = runtimeServices.providerRegistry;
-    const conversationManager = {} as never;
+    const conversationManager = new ConversationManager(() => 80, runtimeServices.configManager);
     const configManager = runtimeServices.configManager;
     const toolRegistry = {} as never;
     const mcpRegistry = {

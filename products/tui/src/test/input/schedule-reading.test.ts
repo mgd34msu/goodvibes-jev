@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { createSystemOnePort, PINNED_MODEL, type JudgmentConfig, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 import type { CreateAutomationJobInput } from '@goodvibes-jev/engine/sdk/platform/automation';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerScheduleRuntimeCommands } from '../../input/commands/schedule-runtime.ts';
@@ -15,9 +16,14 @@ const previous = installJudgmentPort(undefined);
 afterEach(() => { installJudgmentPort(previous); });
 function deferred<T = void>() { let resolve!: (value: T) => void; let reject!: (reason: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { resolve, reject, promise }; }
 function choices(parts: Record<string, string>) {
-  return fakePort((name, question) => choiceAnswer(question, parts[name] ?? (name === 'complete' ? 'yes' : 'unknown'), 0.99));
+  const values: Record<string, string> = { format: 'natural', ...parts };
+  return fakePort((name, question) => {
+    const value = values[name];
+    if (value === undefined) throw new Error(`Unexpected schedule question: ${name}`);
+    return choiceAnswer(question, value, 0.99);
+  });
 }
-const interval = { shape: 'interval', quantity: 'literal_1', unit: 'minute' };
+const interval = { shape: 'interval', quantity: 'stated', unit: 'minute' };
 function context(start: () => Promise<void> = async () => {}) {
   let session = 's1'; let active = true;
   const printed: string[] = []; const jobs: CreateAutomationJobInput[] = [];
@@ -42,8 +48,12 @@ function transport(fetch: NonNullable<JudgmentConfig['fetch']>) {
     retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 }, fetch });
 }
 function wireAnswer(questions: Questions, parts = interval) {
-  const values: Record<string, string> = parts;
-  return Response.json({ model: PINNED_MODEL, answers: Object.fromEntries(Object.entries(questions).map(([name, q]) => [name, choiceAnswer(q, values[name] ?? (name === 'complete' ? 'yes' : 'unknown'), 0.99)])), usage: { input_tokens: 1, output_tokens: 1 } });
+  const values: Record<string, string> = { format: 'natural', ...parts };
+  return Response.json({ model: PINNED_MODEL, answers: Object.fromEntries(Object.entries(questions).map(([name, q]) => {
+    const value = values[name];
+    if (value === undefined) throw new Error(`Unexpected schedule wire question: ${name}`);
+    return [name, choiceAnswer(q, value, 0.99)];
+  })), usage: { input_tokens: 1, output_tokens: 1 } });
 }
 
 describe('registered /schedule when owns Jev reading before createJob', () => {
@@ -53,7 +63,9 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
     expect(f.jobs).toHaveLength(1);
     expect(f.jobs[0]!.schedule).toEqual({ kind: 'cron', expression: '0 9 * * *', timezone: 'Asia/Tokyo' });
     expect(f.printed.join('\n')).toContain('0 9 * * * [Asia/Tokyo]');
-    expect(jev.requests[0]!.state).toMatchObject({ source: { phrase: 'at nine every morning', timezone: 'Asia/Tokyo' } });
+    expect(jev.requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['hour', 'minute']]);
+    expect(jev.requests[0]?.state).toBe('at nine every morning');
+    expect(jev.requests[2]?.state).toMatchObject({ phrase: 'at nine every morning', timezone: 'Asia/Tokyo' });
   });
   test('unknown reading creates zero jobs and has no human question', async () => {
     const f = context(); installJudgmentPort(choices({ shape: 'unknown', complete: 'unknown' }).port);
@@ -71,7 +83,8 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
     const f = context(); const jev = choices(interval); const pending = await enteredRead(f, jev.port);
     await f.registry.execute('sched', args(), f.ctx); expect(f.jobs).toEqual([]);
     pending.release.resolve(); await pending.pending;
-    expect(f.jobs).toHaveLength(1); expect(jev.requests).toHaveLength(1);
+    expect(f.jobs).toHaveLength(1);
+    expect(jev.requests.map(request => Object.keys(request.questions))).toEqual([['format'], ['shape'], ['quantity', 'unit']]);
   });
   test.each(['cancel', 'session', 'shutdown', 'superseded'] as const)('%s after the read started creates zero old jobs', async cause => {
     const f = context(); const jev = choices(interval); const pending = await enteredRead(f, jev.port);
@@ -99,10 +112,13 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
     await f.registry.execute('schedule', ['add', 'every', '0m', 'check'], f.ctx); expect(f.jobs).toHaveLength(3);
   });
   test('source args/clock stay captured while startup is pending', async () => {
-    const startup = deferred(); const f = context(() => startup.promise); const jev = choices(interval); installJudgmentPort(jev.port);
+    const startup = deferred(); const f = context(() => startup.promise); const jev = choices({ ...interval, shape: 'delay' }); installJudgmentPort(jev.port);
     const input = args(); const before = Date.now(); const pending = f.registry.execute('schedule', input, f.ctx); input[2] = 'different'; startup.resolve(); await pending;
-    const source = (jev.requests[0]!.state as { source: { phrase: string; now: number } }).source;
-    expect(source.phrase).toBe('every 30 minutes'); expect(source.now).toBeGreaterThanOrEqual(before); expect(source.now).toBeLessThanOrEqual(Date.now());
+    expect(jev.requests[0]?.state).toBe('every 30 minutes');
+    const schedule = f.jobs[0]?.schedule;
+    if (schedule?.kind !== 'at') throw new Error('Expected the captured relative schedule');
+    expect(schedule.at).toBeGreaterThanOrEqual(before + 1_800_000);
+    expect(schedule.at).toBeLessThanOrEqual(Date.now() + 1_800_000);
   });
   test('shared transport retries 503 then creates exactly one job from the recovered reading', async () => {
     const f = context(); let calls = 0;
@@ -111,7 +127,7 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
       return wireAnswer((JSON.parse(String(init?.body)) as { questions: Questions }).questions);
     }));
     await f.registry.execute('schedule', args(), f.ctx);
-    expect(calls).toBe(3); expect(f.jobs).toHaveLength(1); expect(f.printed.join('\n')).toContain('Waiting for Jev');
+    expect(calls).toBe(5); expect(f.jobs).toHaveLength(1); expect(f.printed.join('\n')).toContain('Waiting for Jev');
   });
   test('real shared retry is immediately cancelled before creation, even when fetch ignores its signal', async () => {
     const f = context(); const entered = deferred(); const held = deferred<Response>();
@@ -129,7 +145,7 @@ describe('registered /schedule when owns Jev reading before createJob', () => {
       saveUndoState() {}, ensureInputCursorVisible() {} } as CommandModeRouteState;
     handleCommandModeToken(state, { type: 'key', logicalName: 'enter' } as never); await done.promise;
     expect(f.jobs).toHaveLength(1); expect(f.jobs[0]!.prompt).toBe('check builds');
-    expect(jev.requests[0]!.state).toMatchObject({ source: { phrase: 'every  30 minutes' } });
+    expect(jev.requests[0]?.state).toBe('every  30 minutes');
   });
 });
 
@@ -161,7 +177,7 @@ for (const fallback of [false, true]) {
       await dispatchTerminal(f, '/sched add when "every  30 minutes (the \\"short\\" interval)" "check \\"failed\\" builds"', fallback);
       expect(f.jobs).toHaveLength(1);
       expect(f.jobs[0]!.prompt).toBe('check "failed" builds');
-      expect(jev.requests[0]!.state).toMatchObject({ source: { phrase: 'every  30 minutes (the "short" interval)' } });
+      expect(jev.requests[0]?.state).toBe('every  30 minutes (the "short" interval)');
     });
     test.each(['/schedule add when "daily" "unterminated prompt', "/schedule add when 'daily' 'unterminated prompt", '/schedule add when daily prompt\\'])('malformed quoting creates zero jobs: %s', async command => {
       const f = context(); const jev = choices(interval); installJudgmentPort(jev.port);
@@ -188,6 +204,7 @@ for (const fallback of [false, true]) {
       expect(f.jobs).toEqual([]); expect(jev.requests).toEqual([]);
     });
     test.each(['cancel', 'session', 'closed', 'live'] as const)('%s startup failure stays on its owning command', async cause => {
+      await withPublicErrorText(['late manager failure'], async () => {
       const startup = deferred(); const f = context(() => startup.promise);
       const outcome = dispatchTerminal(f, '/schedule add when "every 30 minutes" "check builds"', fallback).catch(() => {});
       if (cause === 'cancel') f.lifetime.withCancellation(() => false)();
@@ -199,6 +216,7 @@ for (const fallback of [false, true]) {
       expect(f.jobs).toEqual([]);
       if (cause === 'live') expect(f.printed.join(' ')).toContain('late manager failure');
       else expect(f.printed).toEqual([]);
+      });
     });
   });
 }

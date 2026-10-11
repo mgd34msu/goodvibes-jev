@@ -63,7 +63,8 @@ describe('a child process that raises an injected fatal', () => {
     //    timer a dying process never reaches.
     const activity = readFileSync(join(home, '.goodvibes', 'logs', 'activity.md'), 'utf-8');
     expect(activity).toContain('uncaughtException');
-    expect(activity).toContain('injected fatal from crash-capture-probe');
+    expect(activity).toContain('"message": "[REDACTED]"');
+    expect(activity).not.toContain('injected fatal from crash-capture-probe');
   }, 90_000);
 });
 

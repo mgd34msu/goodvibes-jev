@@ -8,7 +8,7 @@ import { scheduleBackground, sleep, yieldEvery, yieldToEventLoop } from '../coop
 import { getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace, normalizeKnowledgeSpaceId } from '../spaces.js';
 import { answerKnowledgeQuery } from './answer.js';
 import { refreshAnswerCandidateWindowAfterRepair } from './answer-candidate-window.js';
-import { enrichKnowledgeSource } from './enrichment.js';
+import { enrichKnowledgeSource, type EnrichKnowledgeSourceOptions } from './enrichment.js';
 import type {
   KnowledgeSemanticAnswerInput,
   KnowledgeSemanticAnswerRefinement,
@@ -111,7 +111,7 @@ export class KnowledgeSemanticService {
 
   async enrichSource(
     sourceId: string,
-    input: { readonly force?: boolean | undefined; readonly knowledgeSpaceId?: string | undefined } = {},
+    input: EnrichKnowledgeSourceOptions = {},
   ): Promise<KnowledgeSemanticEnrichmentResult | null> {
     await this.store.init();
     const source = this.store.getSource(sourceId);
@@ -121,11 +121,12 @@ export class KnowledgeSemanticService {
 
   async enrichSources(
     sources: readonly KnowledgeSourceRecord[],
-    input: { readonly force?: boolean; readonly knowledgeSpaceId?: string; readonly limit?: number } = {},
+    input: EnrichKnowledgeSourceOptions & { readonly limit?: number } = {},
   ): Promise<readonly KnowledgeSemanticEnrichmentResult[]> {
     const results: KnowledgeSemanticEnrichmentResult[] = [];
     const selected = sources.slice(0, Math.max(1, input.limit ?? sources.length));
     for (const [index, source] of selected.entries()) {
+      if (input.signal?.aborted || input.shouldStop?.()) break;
       await yieldEvery(index);
       const result = await this.enrichSource(source.id, input);
       if (result) results.push(result);

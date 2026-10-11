@@ -136,6 +136,25 @@ describe('built-in guarded delivery', () => {
       for (const call of calls) expect(call.init?.signal?.aborted).toBe(true);
       // A successful delivery stays successful. Abort cannot undo a send already accepted.
     });
+
+    test(`${provider.name}: native publication covers final transport, leaving credentials and OAuth outside`, async () => {
+      let held = false, publications = 0;
+      const f = fixture(provider, { resolveSecret: async service => {
+        expect(held).toBe(false); return service === 'google-chat' ? 'https://google-chat.example.invalid' : 'owned-token';
+      } });
+      transport = async ({ url }) => {
+        const credentials = new URL(url).hostname === 'login.microsoftonline.com';
+        expect(held).toBe(!credentials);
+        return credentials ? Response.json({ access_token: 'owned-publication-token', expires_in: 3600 })
+          : Response.json({ ok: true, id: 'owned-message', result: { message_id: 7 } });
+      };
+      await f.router.deliver({ ...f.request, withPublication: async operation => {
+        publications++; held = true;
+        try { return await operation(() => {}); } finally { held = false; }
+      } });
+      expect(publications).toBe(1); expect(held).toBe(false);
+      expect(calls.length).toBe(provider.surface === 'msteams' ? 2 : 1);
+    });
   }
 
   for (const provider of [
@@ -335,6 +354,35 @@ describe('custom strategy and agent capability contracts', () => {
     expect(delivered).toBe(0);
     await expect(router.deliver(request)).resolves.toBe('owned-custom-message');
     expect(delivered).toBe(1);
+  });
+
+  test('an old guarded-delivery capability cannot silently drop native publication', async () => {
+    let deliveries = 0;
+    const legacy: ChannelDeliveryStrategy = { id: 'owned-legacy', supportsGuardedDelivery: true, canHandle: () => true,
+      async deliver() { deliveries++; return { responseId: 'legacy-receipt' }; } };
+    const router = new ChannelDeliveryRouter({ strategies: [legacy] });
+    const { request } = fixture(providers[0]!);
+    await expect(router.deliver({ ...request, withPublication: async operation => operation(() => {}) })).rejects.toThrow('does not support publication');
+    expect(deliveries).toBe(0); expect(calls).toHaveLength(0);
+    Object.defineProperty(legacy, 'supportsPublication', { value: true });
+    await expect(router.deliver({ ...request, withPublication: async operation => operation(() => {}) })).rejects.toThrow('does not support publication');
+    expect(deliveries).toBe(0);
+    await expect(router.deliver({ ...request, assertCurrent() {} })).resolves.toBe('legacy-receipt');
+    expect(deliveries).toBe(1);
+  });
+
+  test('an old guarded Agent sender cannot silently drop native publication', async () => {
+    let deliveries = 0;
+    const router = new ChannelDeliveryRouter({ strategies: [] });
+    const sender = { id: 'owned-legacy-agent', supportsGuardedDelivery: true, async send() { deliveries++; return 'owned-agent-receipt'; } };
+    router.agentDelivery.register(sender);
+    const { request } = fixture(providers[0]!);
+    const agent = { ...request, target: { kind: 'surface' as const, surfaceKind: 'agent' as const } };
+    await expect(router.deliver({ ...agent, withPublication: async operation => operation(() => {}) })).rejects.toThrow('does not support publication');
+    Object.defineProperty(sender, 'supportsPublication', { value: true });
+    await expect(router.deliver({ ...agent, withPublication: async operation => operation(() => {}) })).rejects.toThrow('does not support publication');
+    expect(deliveries).toBe(0);
+    await expect(router.deliver({ ...agent, assertCurrent() {} })).resolves.toBe('owned-agent-receipt'); expect(deliveries).toBe(1);
   });
 
   test('capability-advertising custom strategy receives the lifetime', async () => {

@@ -701,6 +701,7 @@ export class DaemonServer {
 
     // Tear down config watcher only on intentional stop; during a restart cycle
     // (_restarting) it must stay active so mid-restart changes hit the dirty flag.
+    const runtimeCloseFailures: unknown[] = [];
     if (!this._restarting) {
       this._configWatchUnsub?.();
       this._configWatchUnsub = null;
@@ -750,7 +751,10 @@ export class DaemonServer {
       }
       // Stop every poller the graph started. Same gate as the power manager: a
       // restart cycle keeps the graph, and only a graph we built is ours to stop.
-      if (this.ownsRuntimeServices) this.runtimeServices.dispose();
+      if (this.ownsRuntimeServices) {
+        try { await this.runtimeServices.close(); }
+        catch (error) { runtimeCloseFailures.push(error); }
+      }
     }
 
     // Disposal closed admission synchronously. Drain the existing serialized
@@ -763,6 +767,7 @@ export class DaemonServer {
     // A daemon that never listened has no disconnect to announce and no "stopped" to claim; everything above was released either way.
     if (this.server !== null) { this.server.stop(true); this.server = null; this.transportEventsHelper.emitTransportDisconnected('Daemon server stopped', false); logger.info('DaemonServer stopped'); }
     else logger.debug('DaemonServer released without ever binding a socket');
+    if (runtimeCloseFailures.length > 0) throw new AggregateError(runtimeCloseFailures, 'Daemon runtime services cleanup failed');
   }
 
   /** Undelivered daemon receipts for the /status payload (marked delivered once served). */

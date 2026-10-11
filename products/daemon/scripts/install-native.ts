@@ -2,14 +2,14 @@
 /** Explicit offline consumer of the existing private Linux native CI cohort. */
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   applyVerifiedUpdate, captureUpdateFileIo, realUpdateFileIo, rollbackKeptPrevious, sha256, UpdateTransactionError,
-  type UpdateFileIo, type UpdateFetchLike,
+  assertDaemonNativePayloadBytes, retainDaemonNativeFiles, type UpdateFileIo, type UpdateFetchLike,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/self-update';
 import { readVerifiedDaemonCiArtifact } from './ci-artifact.ts';
 import { assertNativeInstallHost, assertPath, expectedModes, inspectInstallation, inspectInstallationIdentity, targetPaths, validateOwner, type DaemonInstallOwner, type InstallationReceipt } from '../src/cli/native-installation.ts';
-import { daemonNativeHost, type DaemonNativeTarget } from '../src/cli/native-artifact.ts';
+import { daemonCiPayloads, daemonNativeHost, type DaemonNativeTarget } from '../src/cli/native-artifact.ts';
 
 export { assertNativeInstallHost, type DaemonInstallOwner } from '../src/cli/native-installation.ts';
 
@@ -30,6 +30,20 @@ function contains(parent: string, child: string): boolean {
   const path = relative(parent, child);
   return path === '' || (path !== '..' && !path.startsWith('..' + sep) && !isAbsolute(path));
 }
+function retainInstallDirectories(paths: readonly string[]): () => void {
+  const identity = (path: string): string => {
+    const stat = lstatSync(path, { bigint: true });
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Native install directory is not a retained regular directory');
+    return `${realpathSync(path)}:${stat.dev}:${stat.ino}:${stat.mode}:${stat.uid}:${stat.gid}`;
+  };
+  const retained = new Map<string, string>();
+  for (let path of paths) for (;;) {
+    try { retained.set(path, identity(path)); }
+    catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
+    const parent = dirname(path); if (parent === path) break; path = parent;
+  }
+  return () => { for (const [path, expected] of retained) if (identity(path) !== expected) throw new Error('Native install directory changed during preparation'); };
+}
 export interface InstallDaemonNativeOptions {
   readonly artifactRoot: string;
   readonly prefix: string;
@@ -49,11 +63,20 @@ export async function installDaemonNative(options: InstallDaemonNativeOptions): 
   const targets = targetPaths(prefix, owner.target);
   if (contains(artifactRoot, prefix) || contains(prefix, artifactRoot)) throw new Error('Install prefix and artifact source must not overlap');
   signal?.throwIfAborted();
+  const sourceTargets = [...daemonCiPayloads(owner.target), 'ci-artifact.json'].map(path => ({
+    label: path, path: join(artifactRoot, 'native', path), assetName: '', executable: false,
+  }));
+  const retainedSource = retainDaemonNativeFiles(sourceTargets, captureUpdateFileIo(realUpdateFileIo));
+  const retainedTargets = retainDaemonNativeFiles(targets, io);
+  const retainedDirectories = retainInstallDirectories([artifactRoot, prefix, ...sourceTargets.map(target => dirname(target.path)), ...targets.map(target => dirname(target.path))]);
+  const assertSourceCurrent = () => { signal?.throwIfAborted(); retainedDirectories(); retainedSource(); };
   const artifact = await readVerifiedDaemonCiArtifact(artifactRoot, owner);
+  assertSourceCurrent(); retainedTargets();
   expectedModes(artifact);
   // Snapshot after verification; canonical checksum verification below catches
   // any bytes changed since the verifier ran, before the first destination write.
   const buffers = artifact.files.map(file => { const path = join(artifactRoot, 'native', file.path); assertPath(path); return readFileSync(path); });
+  assertDaemonNativePayloadBytes(artifact, buffers);
   const receipt: InstallationReceipt = { schema: 1, packageName: PACKAGE, version: owner.version, artifact };
   buffers.push(Buffer.from(JSON.stringify(receipt, null, 2) + '\n'));
   const hashes = [...artifact.files.map(file => file.sha256), sha256(buffers[buffers.length - 1]!)];
@@ -66,9 +89,11 @@ export async function installDaemonNative(options: InstallDaemonNativeOptions): 
   };
   const alreadyInstalled = new Error('Identical daemon cohort already installed');
   try {
-    await applyVerifiedUpdate({ fetchImpl: readLocal, downloadBaseUrl: LOCAL_ORIGIN, targets, platform: 'linux',
+    await applyVerifiedUpdate({ fetchImpl: readLocal, downloadBaseUrl: LOCAL_ORIGIN, targets, platform: 'linux', native: true,
       ...(signal ? { signal } : {}), ...(io ? { io } : {}),
+      assertCurrent: assertSourceCurrent,
       beforeCommit: () => {
+        assertSourceCurrent(); retainedTargets();
         const current = inspectInstallation(prefix, '', owner.target);
         const previous = inspectInstallation(prefix, '.previous', owner.target);
         if (!current && previous) throw new Error('Previous daemon cohort exists without a current installation');
@@ -88,12 +113,14 @@ export function rollbackDaemonNative(prefix: string, io?: UpdateFileIo): void {
   assertNativeInstallHost();
   if (!lstatSync(prefix).isDirectory()) throw new Error('Rollback prefix must already be an installation directory');
   const targets = targetPaths(prefix);
+  const retained = retainDaemonNativeFiles(targets, captureUpdateFileIo(io ?? realUpdateFileIo));
   const result = rollbackKeptPrevious(targets, io, () => {
+    retained();
     // The current payload may be damaged: rollback is its recovery path.
     // Admit only its owner/target here; fully verify the previous bytes below.
     if (!inspectInstallationIdentity(prefix, '')) throw new Error('No owned current daemon cohort is available');
     if (!inspectInstallation(prefix, '.previous')) throw new Error('No complete previous daemon cohort is available');
-  });
+  }, { requireComplete: true, native: true });
   if (result.skipped.length) throw new Error('Previous native cohort changed before rollback completed');
 }
 

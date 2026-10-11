@@ -14,6 +14,7 @@ import { SandboxSessionRegistry } from '@goodvibes-jev/engine/sdk/platform/runti
 import { createRuntimeStore, type ContractRecord } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { createOperationsReadModels } from '@goodvibes-jev/engine/sdk/platform/runtime/ui';
 import { registerControlRoomRuntimeCommands } from '../../input/commands/control-room-runtime.ts';
+import { preparePublicErrorText, publicErrorTextAnswer } from '../helpers/user-error-reading.ts';
 
 async function dispatchPolicyCommand(args: string[], context: CommandContext): Promise<void> {
   await policyCommand.handler(args, context);
@@ -129,12 +130,17 @@ describe('/policy async readers', () => {
     registry.markSimulating();
     registry.attachSimulationReport(simulator.getDivergenceReport(), new DivergenceDashboard(simulator, 'simulation-only', { threshold: 0.05 }).checkEnforceGate());
     expect(registry.promote(true).ok).toBe(true);
-    const previous = installJudgmentPort({
-      model: 'jev-1.13.0',
-      async ask() { throw new Error('Synthetic lint reader unavailable'); },
+    const ctx = makeContext(out, state);
+    const publicLines = ['Synthetic lint reader unavailable'];
+    const fake = fakePort((name, question, source) => {
+      const publicAnswer = publicErrorTextAnswer(publicLines, name, question, source);
+      if (publicAnswer !== undefined) return publicAnswer;
+      throw new Error('Synthetic lint reader unavailable');
     });
+    const previous = installJudgmentPort(fake.port);
     try {
-      await dispatchPolicyCommand(['load', 'new-candidate'], makeContext(out, state));
+      await preparePublicErrorText(publicLines);
+      await dispatchPolicyCommand(['load', 'new-candidate'], ctx);
       expect(registry.getCandidate()?.bundle.bundleId).toBe('new-candidate');
       expect(registry.getCurrent()?.bundle.bundleId).toBe('active');
       expect(out.join('\n')).toContain('Candidate loaded: new-candidate');

@@ -59,7 +59,7 @@ export interface BootstrapCoreState {
   readonly forensicsCollector: ForensicsCollector;
   readonly forensicsRegistry: ForensicsRegistry;
   readonly runtime: MutableRuntimeState;
-  readonly bootstrapUnsubs: Array<() => void>;
+  readonly bootstrapUnsubs: Array<() => void | Promise<void>>;
   readonly runtimeUnsubs: Array<() => void>;
   readonly agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null };
   readonly permissionPromptRef: { requestPermission: PermissionRequestHandler };
@@ -299,16 +299,16 @@ export async function initializeBootstrapCore(
   };
   services.agentOrchestrator.setDependencies(agentOrchestratorToolDeps);
 
-  const bootstrapUnsubs: Array<() => void> = [];
+  const bootstrapUnsubs: Array<() => void | Promise<void>> = [];
   // D5 fix: stop the heartbeat watcher on shutdown so the setInterval is cleared.
   // Registered here (after declaration) rather than inside the watcher block above.
   if (configManager.get('watchers.enabled')) {
-    bootstrapUnsubs.push(() => watcherRegistry.stopWatcher('runtime-heartbeat'));
+    bootstrapUnsubs.push(() => { watcherRegistry.stopWatcher('runtime-heartbeat'); });
   }
   await memoryStore.init();
-  bootstrapUnsubs.push(() => {
-    void memoryStore.save();
-    memoryStore.close();
+  bootstrapUnsubs.push(async () => {
+    try { await memoryStore.save(); }
+    finally { memoryStore.close(); }
   });
 
   // Fold the agent's legacy per-surface memory into the canonical

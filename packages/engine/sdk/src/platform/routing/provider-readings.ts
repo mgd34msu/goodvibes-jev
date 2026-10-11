@@ -6,7 +6,9 @@
  * callers as code.
  */
 import type { YesNoReading } from '@goodvibes-jev/judgment';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { captureJudgmentPort, JudgmentAuthorityRetiredError, judgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+import { captureNormalizationSource } from '../utils/error-display.js';
+import { JudgmentInputError } from '../gate/judgment-input.js';
 import {
   alternateApi,
   contentPartKind,
@@ -69,20 +71,47 @@ export async function readLocalServerIdentity(evidence: ServerProbeEvidence, sit
 
 /** Long error bodies say what they mean in their opening. */
 const MAX_ERROR_CHARS = 1_500;
-const alternateApiMemo = new ReadingMemo<boolean>(256);
+let alternateApiMemos = new WeakMap<object, ReadingMemo<boolean>>();
 
 /**
  * Whether a local server's error (one the status alone did not settle) means
  * the request should go through the server's other API.
  */
-export function readsAsAlternateApi(error: { readonly status?: number | undefined; readonly message: string }, site: string): Promise<boolean> {
+export async function readsAsAlternateApi(error: { readonly status?: number | undefined; readonly message: string }, site: string,
+  options: JudgmentReadingOptions = {}): Promise<boolean> {
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const prototype: unknown = Object.getPrototypeOf(options);
+  if (typeof site !== 'string' || !site.trim() || (prototype !== Object.prototype && prototype !== null)
+    || Object.getOwnPropertySymbols(options).length || Object.values(descriptors).some((field) => !('value' in field)))
+    throw new JudgmentInputError('unsupported-input');
+  const sourceCurrent = captureNormalizationSource(error, options);
+  sourceCurrent();
+  const owner = captureJudgmentPort(site, { ...options, assertCurrent: sourceCurrent });
+  owner.assertCurrent();
   const state = { ...(error.status === undefined ? {} : { status: error.status }), error: error.message.slice(0, MAX_ERROR_CHARS) };
-  return alternateApiMemo.get(JSON.stringify(state), async () => {
-    const run = await alternateApi.run(judgmentPort(site), state, { site });
+  owner.assertCurrent();
+  let memo = alternateApiMemos.get(owner.identity);
+  if (!memo) { memo = new ReadingMemo<boolean>(256); alternateApiMemos.set(owner.identity, memo); }
+  const pending = memo.get(JSON.stringify(state), async () => {
+    const run = await alternateApi.run(owner.port, state, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+    owner.assertCurrent();
     const unsupported = holds(run.readings.unsupported);
     run.recordAction(unsupported ? 'use-other-api' : 'rethrow');
+    owner.assertCurrent();
     return unsupported;
   });
+  owner.assertCurrent();
+  let abort = () => {};
+  const stopped = new Promise<never>((_, reject) => {
+    abort = () => reject(new JudgmentAuthorityRetiredError());
+    owner.signal.addEventListener('abort', abort, { once: true });
+    if (owner.signal.aborted) abort();
+  });
+  try {
+    const result = await Promise.race([pending, stopped]);
+    owner.assertCurrent();
+    return result;
+  } finally { owner.signal.removeEventListener('abort', abort); }
 }
 
 const reasoningRejectionMemo = new ReadingMemo<boolean>(256);
@@ -154,7 +183,7 @@ export function readReasoningFamily(modelId: string, site: string): Promise<Reas
 
 /** Forgets every remembered protocol reading; for tests that swap the judgment port. */
 export function forgetProviderReadings(): void {
-  alternateApiMemo.clear();
+  alternateApiMemos = new WeakMap();
   reasoningRejectionMemo.clear();
   partKinds.clear();
   partKindMemo.clear();

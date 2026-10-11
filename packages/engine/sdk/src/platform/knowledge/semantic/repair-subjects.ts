@@ -4,7 +4,7 @@ import type { KnowledgeStore } from '../store.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import { captureOwnedJson } from '../../gate/judgment-input.js';
 import { sameKnowledgeRecord } from '../store-record-representation.js';
-import { assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
+import { assertKnowledgeRecordAdmissions, assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
 import { captureKnowledgeSourceReferences } from '../source-structural-references.js';
 import { createRepairSubjectSelectionReader, KnowledgeRepairSubjectSelectionHeldError as Held } from './repair-subject-selection/reader.js';
 import { repairProfileSubject } from './repair-profile.js';
@@ -71,7 +71,7 @@ async function prepareRepairSubjects(input: RepairSubjectInput): Promise<RepairS
   assertKnowledgeRecordContainers(data(), [...admissions, ...excludedAdmissions]);
   // Explicit entity overlays are absent from this decision, but their complete
   // original rows still receive privacy admission before the authorized overwrite.
-  for (const admission of excludedAdmissions) admission.assertCurrent();
+  assertKnowledgeRecordAdmissions(store, excludedAdmissions);
   const all = [...input.nodes.filter((node): node is KnowledgeNodeRecord => node !== undefined),
     'gap' in context ? context.gap : context.source, ...(extraction ? [extraction] : []),
     ...evidence.flatMap(({ source, extraction }) => [source, ...(extraction ? [extraction] : [])])];
@@ -82,18 +82,21 @@ async function prepareRepairSubjects(input: RepairSubjectInput): Promise<RepairS
       if (value !== undefined && (typeof value !== 'string' || value.trim() !== spaceId)) throw new Held('foreign-space');
     }
   }
+  const assertOriginalIdentity = () => {
+    if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
+    if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
+      || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord(data(), original)) throw new Held('stale');
+  };
   const assertOriginalCurrent = () => {
     try { store.assertRecordSnapshotFrame(() => {
-      if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
-      if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
-        || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord(data(), original)) throw new Held('stale');
-      ownerCurrent?.();
-      for (const admission of admissions) {
-        try { admission.assertCurrent(); } catch (error) {
-          if (error instanceof KnowledgeRecordAdmissionHeldError) throw new Held(error.reason);
-          throw error;
-        }
+      assertOriginalIdentity();
+      const result: unknown = ownerCurrent?.();
+      if (result !== undefined) {
+        try { void Promise.resolve(result).catch(() => {}); } catch { /* A callback result cannot authorize a reading. */ }
+        throw new Held('stale');
       }
+      assertOriginalIdentity();
+      assertKnowledgeRecordAdmissions(store, admissions);
       for (const { source, extraction } of evidence) if (store.getExtractionBySourceId(source.id) !== extraction) throw new Held('stale');
       if ('source' in context && store.getExtractionBySourceId(context.source.id) !== extraction) throw new Held('stale');
     }); } catch (error) {

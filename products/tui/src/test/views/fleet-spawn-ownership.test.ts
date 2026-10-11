@@ -112,12 +112,14 @@ test('closing during directory lookup invalidates it even when the same controll
  expect(f.host.depth).toBe(1); expect(f.creates()).toBe(0); f.host.clear();
 });
 
-test('rapid discovery keys share one read; current discovery errors stay visible', async () => {
+test('rapid discovery keys share one read; the current discovery failure stays visible with private detail withheld', async () => {
  const pending = deferred<readonly AcpDiscoveredAgent[]>(); let calls = 0;
  const f = setup({ listAgents: () => { calls++; return pending.promise; } });
  for (let i = 0; i < 5; i++) f.host.handleToken({ type: 'text', value: 'n' });
  expect(calls).toBe(1); pending.reject(new Error('current discovery failed')); await flush();
- expect(f.notes).toEqual(['Could not list ACP agents: current discovery failed']);
+ expect(f.notes).toEqual(['Could not list ACP agents: [REDACTED]']);
+ expect(f.notes.join('\n')).not.toContain('current discovery failed');
+ expect(f.creates()).toBe(0);
  expect(f.spawn.spawnModeActive()).toBe(false); f.host.clear();
 });
 
@@ -140,7 +142,12 @@ for (const settlement of ['resolve', 'reject'] as const) {
   if (settlement === 'resolve') pending.resolve({ hosted: { id: 'synthetic-created', agentId: agent.id, title: agent.title, binaryPath: agent.binaryPath, cwd: '/synthetic/current', state: 'starting', startedAt: 1, promptCount: 0 }, started: true });
   else pending.reject(new Error('admitted create failed'));
   await flush(); expect(f.spawn.spawnModeActive()).toBe(false); expect(f.renders()).toBe(renders);
-  expect(f.notes).toHaveLength(1); expect(f.notes[0]).toContain(settlement === 'resolve' ? 'Hosting Synthetic agent' : 'admitted create failed');
+  expect(f.notes).toHaveLength(1);
+  if (settlement === 'resolve') expect(f.notes[0]).toContain('Hosting Synthetic agent');
+  else {
+   expect(f.notes).toEqual(['ACP session create failed: [REDACTED]']);
+   expect(f.notes.join('\n')).not.toContain('admitted create failed');
+  }
   expect(creates).toBe(1); f.host.clear();
  });
 }

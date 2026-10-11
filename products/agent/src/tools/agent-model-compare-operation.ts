@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync, type BigIntStats } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { assertCurrentToolEffect, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -7,6 +7,9 @@ import { ArtifactStore, type ArtifactDescriptor } from '@goodvibes-jev/engine/sd
 import type { ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { AgentModelCompareArtifactStore, AgentModelCompareToolDeps } from './agent-model-compare-types.ts';
 import { agentResearchSourceOwner } from '../agent/protected-research-report.ts';
+import { captureCatalogMethods } from './agent-harness-catalog-ranking.ts';
+
+type ArtifactPathBinding = Readonly<Pick<BigIntStats, 'dev' | 'ino' | 'mode'>> & { readonly path: string };
 
 function captureNativeArtifactRoot(store: ArtifactStore) {
   const descriptor = Object.getOwnPropertyDescriptor(ArtifactStore.prototype, 'storagePath');
@@ -19,7 +22,7 @@ function captureNativeArtifactRoot(store: ArtifactStore) {
     return resolve(value);
   };
   const root = readRoot(), physicalRoot = realpathSync(root);
-  const ancestry = [];
+  const ancestry: ArtifactPathBinding[] = [];
   for (let cursor = root; ; cursor = dirname(cursor)) {
     const stat = lstatSync(cursor, { bigint: true });
     ancestry.push({ path: cursor, dev: stat.dev, ino: stat.ino, mode: stat.mode });
@@ -46,7 +49,7 @@ function captureNativeArtifactSource(store: ArtifactStore, id: string): () => vo
     if (isAbsolute(withinRoot) || withinRoot === '..' || withinRoot.startsWith(`..${sep}`)) throw new Error('Comparison source artifact escaped its physical store.');
     const file = statSync(path, { bigint: true });
     if (!file.isFile()) throw new Error('Comparison source artifact is not a regular file.');
-    const ancestry = [];
+    const ancestry: ArtifactPathBinding[] = [];
     for (let cursor = resolve(path); ; cursor = dirname(cursor)) {
       const stat = lstatSync(cursor, { bigint: true });
       ancestry.push({ path: cursor, dev: stat.dev, ino: stat.ino, mode: stat.mode });
@@ -73,6 +76,7 @@ function captureNativeArtifactSource(store: ArtifactStore, id: string): () => vo
 
 /** Every asynchronous comparison dependency stays inside its original owner frame. */
 export function createComparisonOperation(source: AgentModelCompareToolDeps, args: Record<string, unknown>, options?: ToolExecuteOptions) {
+  const assertSource = captureCatalogMethods(source, ['artifactStore', 'toolRegistry', 'modelCatalog', 'providerRegistry', 'applyModelRoute']);
   const observed = new Map<string, { readonly descriptor: ArtifactDescriptor; readonly captured: string }>();
   const descriptorBytes = (descriptor: ArtifactDescriptor) => {
     const captured = captureOwnedJson(descriptor);
@@ -87,18 +91,24 @@ export function createComparisonOperation(source: AgentModelCompareToolDeps, arg
   };
   const store = source.artifactStore;
   const nativeStore = store instanceof ArtifactStore ? store : undefined;
+  const assertStore = store && captureCatalogMethods(store, ['get', 'list', 'readContent', 'create', ...(nativeStore ? ['getRecord'] : [])]);
   const nativeRoot = nativeStore && captureNativeArtifactRoot(nativeStore);
   const nativeGetRecord = nativeStore?.getRecord;
   const physicalSources = new Map<string, () => void>();
   const registry = source.toolRegistry;
   const sourceOwner = agentResearchSourceOwner(registry);
   const get = store?.get; const list = store?.list; const readContent = store?.readContent; const create = store?.create;
-  const catalog = source.modelCatalog; const listModels = catalog.listModels; const getCurrentModel = catalog.getCurrentModel; const recordModelUsage = catalog.recordModelUsage;
-  const providers = source.providerRegistry; const getForModel = providers.getForModel; const applyModelRoute = source.applyModelRoute;
+  const catalog = source.modelCatalog;
+  const assertCatalog = captureCatalogMethods(catalog, ['listModels', 'getCurrentModel', 'recordModelUsage']);
+  const listModels = catalog.listModels; const getCurrentModel = catalog.getCurrentModel; const recordModelUsage = catalog.recordModelUsage;
+  const providers = source.providerRegistry;
+  const assertProviders = captureCatalogMethods(providers, ['getForModel']);
+  const getForModel = providers.getForModel; const applyModelRoute = source.applyModelRoute;
   const readDescriptor = (id: string) => get ? get.call(store, id) : list ? list.call(store, Number.MAX_SAFE_INTEGER).find(item => item.id === id) : observed.get(id)?.descriptor;
   const assertCurrent = () => {
     options?.signal?.throwIfAborted();
     assertCurrentToolExecution(args, options);
+    assertSource(); assertStore?.(); assertCatalog(); assertProviders();
     if (source.toolRegistry !== registry || agentResearchSourceOwner(registry) !== sourceOwner || source.artifactStore !== store || store?.get !== get || store?.list !== list || store?.readContent !== readContent || store?.create !== create
       || nativeStore?.getRecord !== nativeGetRecord
       || source.modelCatalog !== catalog || catalog.listModels !== listModels || catalog.getCurrentModel !== getCurrentModel || catalog.recordModelUsage !== recordModelUsage

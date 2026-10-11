@@ -128,7 +128,7 @@ export function createDefaultChannelDeliveryStrategies(
 export class ChannelDeliveryRouter {
   private readonly strategies: ChannelDeliveryStrategy[];
   /** A removed registration cannot be revived by re-adding the same strategy object. */
-  private readonly strategyRegistrations = new WeakMap<ChannelDeliveryStrategy, { readonly guarded: boolean }>();
+  private readonly strategyRegistrations = new WeakMap<ChannelDeliveryStrategy, { readonly guarded: boolean; readonly publication: boolean }>();
   private controlPlaneGateway: ControlPlaneGateway | null;
 
   /**
@@ -206,9 +206,11 @@ export class ChannelDeliveryRouter {
     return true;
   }
 
-  private captureRegistration(strategy: ChannelDeliveryStrategy): { readonly guarded: boolean } {
+  private captureRegistration(strategy: ChannelDeliveryStrategy): { readonly guarded: boolean; readonly publication: boolean } {
     const descriptor = Object.getOwnPropertyDescriptor(strategy, 'supportsGuardedDelivery');
-    return Object.freeze({ guarded: descriptor !== undefined && 'value' in descriptor && descriptor.value === true });
+    const publication = Object.getOwnPropertyDescriptor(strategy, 'supportsPublication');
+    return Object.freeze({ guarded: descriptor !== undefined && 'value' in descriptor && descriptor.value === true,
+      publication: publication !== undefined && 'value' in publication && publication.value === true });
   }
 
   async deliver(request: ChannelDeliveryRequest): Promise<string | undefined> {
@@ -230,6 +232,9 @@ export class ChannelDeliveryRouter {
       const registration = this.strategyRegistrations.get(strategy);
       if (guarded && registration?.guarded !== true) {
         throw new Error('Channel delivery strategy does not support guarded delivery');
+      }
+      if (request.withPublication !== undefined && registration?.publication !== true) {
+        throw new Error('Channel delivery strategy does not support publication');
       }
       const deliveryRequest = guarded ? {
         ...request,

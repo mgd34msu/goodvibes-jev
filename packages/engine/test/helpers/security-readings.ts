@@ -153,9 +153,6 @@ function recordedCredentialProjection(state: EntryType, targetOnly: boolean) {
     const text = state.parts.filter((part: unknown) => part !== null && typeof part === 'object' && 'kind' in part && part.kind === 'text')
       .map((part: unknown) => part !== null && typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : '').join('');
     if (['token ', 'using key ', 'Bearer ', 'Authorization: Bearer '].includes(text)) return noulAnswer(0.99);
-    if (text === 'agent is ' && live.length === 1 && live.every((span: unknown) => span !== null
-      && typeof span === 'object' && 'field' in span && span.field === 'agent'
-      && 'syntax' in span && span.syntax === 'assignment-value')) return noulAnswer(0.01);
     return noulAnswer(0.5);
   }
   return noulAnswer(0.01);

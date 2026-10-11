@@ -1,5 +1,8 @@
-import { useMemoryReadings } from '../helpers/memory-readings.ts';
-import { withPublicKnowledgeReadings } from '../helpers/public-knowledge-readings.ts';
+import { memoryReadingsPort } from '../helpers/memory-readings.ts';
+import { afterEach } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { nativeMemoryWorkPrivacy } from '../helpers/native-memory-work-readings.ts';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { createKnowledgeApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { resetTestRuntimeServices, getTestRuntimeServices } from '../helpers/runtime-services.ts';
@@ -11,7 +14,7 @@ describe('KnowledgeApi', () => {
 
   test('groups status, connector, and query surfaces over the knowledge runtime', async () => {
     const runtimeServices = getTestRuntimeServices();
-    readings.use({});
+    installJudgmentPort(nativeMemoryWorkPrivacy(memoryReadingsPort().port).port);
     const api = createKnowledgeApi(runtimeServices.knowledgeService, {
       memoryRegistry: runtimeServices.memoryRegistry,
     });
@@ -26,12 +29,12 @@ describe('KnowledgeApi', () => {
     expect(connectors.length).toBeGreaterThan(0);
     expect(api.connectors.get(connectors[0]!.id)?.id).toBe(connectors[0]!.id);
 
-    const sourceQuery = api.sources.query({ limit: 5 });
+    const sourceQuery = await api.sources.query({ limit: 5 });
     expect(sourceQuery).toMatchObject({
       total: expect.any(Number),
       items: expect.any(Array),
     });
-    expect(api.graph.nodes.query({ limit: 5 })).toMatchObject({
+    expect(await api.graph.nodes.query({ limit: 5 })).toMatchObject({
       total: expect.any(Number),
       items: expect.any(Array),
     });
@@ -59,7 +62,7 @@ describe('KnowledgeApi', () => {
 
   test('surfaces ingest, packets, projections, jobs, and consolidation through grouped domains', async () => {
     const runtimeServices = getTestRuntimeServices();
-    readings.use({});
+    installJudgmentPort(nativeMemoryWorkPrivacy(memoryReadingsPort().port).port);
     const api = createKnowledgeApi(runtimeServices.knowledgeService);
     const artifact = await runtimeServices.artifactStore.create({
       filename: 'knowledge-api.txt',
@@ -81,8 +84,17 @@ describe('KnowledgeApi', () => {
       },
     });
 
-    const packet = await withPublicKnowledgeReadings(['Knowledge API Artifact'], ['GoodVibes knowledge api artifact body'],
-      () => api.packets.build('knowledge api artifact', [], 5, { budgetLimit: 2_000 }));
+    const publicEvidence = fakePort((name, _question, state) => {
+      if (state === null || typeof state !== 'object' || Array.isArray(state)) throw new Error('Invalid authored Knowledge API evidence state');
+      if (name === 'included' && 'candidate' in state && state.candidate && typeof state.candidate === 'object' && 'content' in state.candidate
+        && state.candidate.content && typeof state.candidate.content === 'object' && 'title' in state.candidate.content
+        && ['Knowledge API Artifact', 'GoodVibes knowledge api artifact body', 'sdk-ready'].includes(String(state.candidate.content.title))) return noulAnswer(0.999);
+      if (name === 'useful' && 'candidate' in state && state.candidate && typeof state.candidate === 'object' && 'title' in state.candidate) return noulAnswer(state.candidate.title === 'Knowledge API Artifact' ? 0.999 : 0.001);
+      if (name === 'excerptUseful' && 'candidate' in state && state.candidate && typeof state.candidate === 'object' && 'text' in state.candidate) return noulAnswer(state.candidate.text === 'GoodVibes knowledge api artifact body' ? 0.999 : 0.001);
+      throw new Error(`Unscripted authored Knowledge API evidence question ${name}`);
+    });
+    installJudgmentPort(nativeMemoryWorkPrivacy(publicEvidence.port).port);
+    const packet = await api.packets.build('knowledge api artifact', [], 5, { budgetLimit: 2_000 });
     expect(packet.items.length).toBeGreaterThan(0);
 
     const targets = await api.projections.listTargets(10);
@@ -105,4 +117,6 @@ describe('KnowledgeApi', () => {
   });
 });
 
-const readings = useMemoryReadings();
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previous = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previous); });

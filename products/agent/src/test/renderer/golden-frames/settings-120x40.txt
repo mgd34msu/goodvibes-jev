@@ -8,7 +8,7 @@
 |            ▏Search all settings                                                                    display             |
 |                                                                                                                        |
 |          ✦ agent experience                                                                                            |
-|            Display             9      stream                                                        true               |
+|            Display            10      stream                                                        true               |
 |            UI                  4      lineNumbers                                                    off               |
 |            Behavior           11                                                                                       |
 |            Your Profile       10      display.lineNumbers · default off · enum with 3 possible value(s)                |
@@ -24,17 +24,17 @@
 |                                                                                                                        |
 |          ✦ models and providers       Category purpose: Presentation settings for the terminal                         |
 |            Provider            7      transcript: streaming, line numbers, thinking visibility,                        |
-|            Judgment            4      reasoning summaries, token speed, and tool previews.                             |
+|            Judgment            5      reasoning summaries, token speed, and tool previews.                             |
 |            Subscriptions       1                                                                                       |
 |            Helper              3      collapseThreshold                                               30               |
 |            Tools               9      theme                                                    goodvibes               |
 |            TTS                 5      themeMode                                                     auto               |
-|            Local Voice        34      showThinking                                                 false               |
-|            Model Pricing       1      showReasoningSummary                                         false               |
-|                                       showTokenSpeed                                               false               |
+|            Local Voice        34      treeGlyphs                                                 rounded               |
+|            Model Pricing       1      showThinking                                                 false               |
+|                                       showReasoningSummary                                         false               |
 |                        39 more ↓                                                                                       |
 |                                                                                                                        |
-|             ↑↓  move    ⏎  change    ←→  category    pgup pgdn  docs    ctrl+r  reset             1 more ↓             |
+|             ↑↓  move    ⏎  change    ←→  category    pgup pgdn  docs    ctrl+r  reset             2 more ↓             |
 |                                                                                                                        |
 |        ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀         |
 |                                                                                                                        |
@@ -1735,6 +1735,7 @@
 9 28 bg=#232438
 9 29 bg=#232438
 9 30 bg=#232438
+9 31 fg=#636176
 9 31 bg=#232438
 9 32 fg=#636176
 9 32 bg=#232438
@@ -5421,9 +5422,7 @@
 30 47 bg=#2d2e48
 30 48 fg=#e4e2ee
 30 48 bg=#2d2e48
-30 49 fg=#e4e2ee
 30 49 bg=#2d2e48
-30 50 fg=#e4e2ee
 30 50 bg=#2d2e48
 30 51 bg=#2d2e48
 30 52 bg=#2d2e48
@@ -5472,7 +5471,9 @@
 30 95 bg=#2d2e48
 30 96 bg=#2d2e48
 30 97 bg=#2d2e48
+30 98 fg=#8e8ba3
 30 98 bg=#2d2e48
+30 99 fg=#8e8ba3
 30 99 bg=#2d2e48
 30 100 fg=#8e8ba3
 30 100 bg=#2d2e48
@@ -5593,21 +5594,13 @@
 31 49 bg=#2d2e48
 31 50 fg=#e4e2ee
 31 50 bg=#2d2e48
-31 51 fg=#e4e2ee
 31 51 bg=#2d2e48
-31 52 fg=#e4e2ee
 31 52 bg=#2d2e48
-31 53 fg=#e4e2ee
 31 53 bg=#2d2e48
-31 54 fg=#e4e2ee
 31 54 bg=#2d2e48
-31 55 fg=#e4e2ee
 31 55 bg=#2d2e48
-31 56 fg=#e4e2ee
 31 56 bg=#2d2e48
-31 57 fg=#e4e2ee
 31 57 bg=#2d2e48
-31 58 fg=#e4e2ee
 31 58 bg=#2d2e48
 31 59 bg=#2d2e48
 31 60 bg=#2d2e48
@@ -5759,11 +5752,17 @@
 32 51 bg=#2d2e48
 32 52 fg=#e4e2ee
 32 52 bg=#2d2e48
+32 53 fg=#e4e2ee
 32 53 bg=#2d2e48
+32 54 fg=#e4e2ee
 32 54 bg=#2d2e48
+32 55 fg=#e4e2ee
 32 55 bg=#2d2e48
+32 56 fg=#e4e2ee
 32 56 bg=#2d2e48
+32 57 fg=#e4e2ee
 32 57 bg=#2d2e48
+32 58 fg=#e4e2ee
 32 58 bg=#2d2e48
 32 59 bg=#2d2e48
 32 60 bg=#2d2e48

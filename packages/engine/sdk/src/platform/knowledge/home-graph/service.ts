@@ -98,6 +98,13 @@ export class HomeGraphService {
   private syncSelfImproveRuns = new Map<string, Promise<void>>();
   private foregroundOperations = new Map<string, number>();
   private resumeSyncSelfImprove = new Set<string>();
+  private pendingAnswerEnrichment = new Map<string, Set<string>>();
+  private scheduledAnswerEnrichment = new Set<string>();
+  private answerEnrichmentRuns = new Map<string, {
+    readonly controller: AbortController;
+    readonly sourceIds: readonly string[];
+    readonly run: Promise<void>;
+  }>();
   constructor(
     private readonly store: KnowledgeStore,
     private readonly artifactStore: ArtifactStore,
@@ -122,9 +129,11 @@ export class HomeGraphService {
     }
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.autoLinkController.abort();
     this.cancelSyncSelfImprovement();
+    this.cancelAnswerEnrichment();
+    await Promise.all([...this.syncSelfImproveRuns.values(), ...[...this.answerEnrichmentRuns.values()].map(tail => tail.run)]);
   }
 
   async status(input: { readonly installationId?: string; readonly knowledgeSpaceId?: string } = {}): Promise<HomeGraphStatus> {
@@ -275,6 +284,7 @@ export class HomeGraphService {
         installationId,
         answer,
       });
+      this.queueAnswerEnrichment(spaceId, answer);
       return withHomeGraphAskPageRefresh(answer, pageRefresh);
     });
   }
@@ -512,6 +522,9 @@ export class HomeGraphService {
     const { spaceId } = resolveReadableHomeGraphSpace(this.store, input);
     if (input.dryRun !== true) {
       this.cancelSyncSelfImprovement(spaceId);
+      const tail = this.answerEnrichmentRuns.get(spaceId)?.run;
+      this.cancelAnswerEnrichment(spaceId);
+      await tail;
     }
     return resetHomeGraphSpace(this.store, this.artifactStore, input);
   }
@@ -654,10 +667,18 @@ export class HomeGraphService {
     if (this.syncSelfImproveControllers.has(spaceId)) this.resumeSyncSelfImprove.add(spaceId);
     const background = this.syncSelfImproveRuns.get(spaceId);
     this.cancelSyncSelfImprovement(spaceId);
+    const tail = this.answerEnrichmentRuns.get(spaceId);
+    if (tail) {
+      const pending = this.pendingAnswerEnrichment.get(spaceId) ?? new Set<string>();
+      for (const sourceId of tail.sourceIds) pending.add(sourceId);
+      this.pendingAnswerEnrichment.set(spaceId, pending);
+      tail.controller.abort();
+    }
     try {
       // Capture answer and page inputs only after the cancelled same-space
       // repair pump has finished its owned writes and cleanup.
       await background;
+      await tail?.run;
       return await operation();
     } finally {
       const remaining = (this.foregroundOperations.get(spaceId) ?? 1) - 1;
@@ -665,7 +686,60 @@ export class HomeGraphService {
       else {
         this.foregroundOperations.delete(spaceId);
         if (this.resumeSyncSelfImprove.delete(spaceId)) this.scheduleSyncSelfImprovement(spaceId, installationId);
+        this.scheduleAnswerEnrichment(spaceId);
       }
+    }
+  }
+
+  private queueAnswerEnrichment(spaceId: string, answer: HomeGraphAskResult): void {
+    if (!this.options.semanticService || this.autoLinkController.signal.aborted) return;
+    const pending = this.pendingAnswerEnrichment.get(spaceId) ?? new Set<string>();
+    const selected = new Set(answer.results.flatMap(result => result.source ? [result.source.id] : []));
+    for (const sourceId of [...selected].slice(0, 3)) pending.add(sourceId);
+    if (pending.size > 0) this.pendingAnswerEnrichment.set(spaceId, pending);
+    this.scheduleAnswerEnrichment(spaceId);
+  }
+
+  private scheduleAnswerEnrichment(spaceId: string): void {
+    const semantic = this.options.semanticService;
+    if (!semantic || this.autoLinkController.signal.aborted || this.foregroundOperations.has(spaceId)
+      || this.answerEnrichmentRuns.has(spaceId) || this.scheduledAnswerEnrichment.has(spaceId)
+      || !this.pendingAnswerEnrichment.has(spaceId)) return;
+    this.scheduledAnswerEnrichment.add(spaceId);
+    scheduleBackground(() => {
+      this.scheduledAnswerEnrichment.delete(spaceId);
+      if (this.foregroundOperations.has(spaceId) || this.answerEnrichmentRuns.has(spaceId)) return;
+      const pending = this.pendingAnswerEnrichment.get(spaceId);
+      if (!pending) return;
+      // Preserve governor backpressure for the selected-source background tail.
+      if (semantic.isBackgroundWorkPaused()) { this.pendingAnswerEnrichment.delete(spaceId); return; }
+      const sourceIds = [...pending].slice(0, 3);
+      for (const sourceId of sourceIds) pending.delete(sourceId);
+      if (pending.size === 0) this.pendingAnswerEnrichment.delete(spaceId);
+      const sources = sourceIds.flatMap(id => { const source = this.store.getSource(id); return source ? [source] : []; });
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, this.autoLinkController.signal]);
+      const run = semantic.enrichSources(sources, { knowledgeSpaceId: spaceId, limit: 3, signal,
+        shouldStop: () => signal.aborted || this.foregroundOperations.has(spaceId),
+      }).then(() => {}, (error: unknown) => {
+        if (!signal.aborted) this.reportBackgroundError('homegraph-post-answer-enrich', error, { spaceId });
+      }).finally(() => {
+        if (this.answerEnrichmentRuns.get(spaceId)?.run === run) this.answerEnrichmentRuns.delete(spaceId);
+        this.scheduleAnswerEnrichment(spaceId);
+      });
+      this.answerEnrichmentRuns.set(spaceId, { controller, sourceIds, run });
+    }, 0, this.autoLinkController.signal);
+  }
+
+  private cancelAnswerEnrichment(spaceId?: string): void {
+    const entries = spaceId ? [...this.answerEnrichmentRuns].filter(([id]) => id === spaceId) : [...this.answerEnrichmentRuns];
+    for (const [, tail] of entries) tail.controller.abort();
+    if (spaceId) {
+      this.pendingAnswerEnrichment.delete(spaceId);
+      this.scheduledAnswerEnrichment.delete(spaceId);
+    } else {
+      this.pendingAnswerEnrichment.clear();
+      this.scheduledAnswerEnrichment.clear();
     }
   }
 

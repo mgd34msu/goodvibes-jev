@@ -37,6 +37,7 @@ import { setSecretBackedSettingValue } from '../../input/settings-modal-secrets.
 import { registerConfigCommand } from '../../input/commands/config.ts';
 import { SecretsManager } from '../../config/secrets.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 function stubConfigManager(): ConfigManager & { readonly writes: [string, unknown][] } {
   const writes: [string, unknown][] = [];
@@ -117,19 +118,33 @@ describe('a setting the daemon applies is written where the daemon reads it', ()
     const configManager = stubConfigManager();
     const daemonConfig = recordingDaemonWriter('reject');
     const reported: string[] = [];
-    applySettingValue({
-      key: 'watchers.enabled' as ConfigKey,
-      value: false,
-      configManager,
-      groups: noGroups,
-      onSettingApplied: null,
-      refreshGroups: () => {},
-      daemonConfig,
-      onAsyncError: (message) => { reported.push(message); },
+    await withPublicErrorText(['the daemon is not reachable'], async () => {
+      applySettingValue({
+        key: 'watchers.enabled' as ConfigKey,
+        value: false,
+        configManager,
+        groups: noGroups,
+        onSettingApplied: null,
+        refreshGroups: () => {},
+        daemonConfig,
+        onAsyncError: (message) => { reported.push(message); },
+      });
+      // The daemon refusal arrives after the synchronous setting dispatch.
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }, {
+      ordinaryFields: ['daemon'],
+      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [
+        { kind: 'text', text: 'the daemon is ' },
+        { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'daemon' },
+        { kind: 'text', text: '' },
+      ] }],
+      residualProjections: [{ parts: [
+        { kind: 'text', text: 'the daemon is ' },
+        { kind: 'withheld', reference: 'span-1' },
+        { kind: 'text', text: '' },
+      ] }],
     });
-    // The write is fire-and-forget so a slow daemon never blocks the keystroke;
-    // the rejection lands on the next turn of the loop.
-    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(daemonConfig.sent).toEqual([['watchers.enabled', false]]);
     expect(reported).toHaveLength(1);
     expect(reported[0]).toContain('not reachable');
   });

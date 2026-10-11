@@ -19,6 +19,7 @@ import { createFeatureFlagManager } from '@/runtime/index.ts';
 import { ServiceRegistry } from '@goodvibes-jev/engine/sdk/platform/config';
 import { SubscriptionManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { SecretsManager } from '../../config/secrets.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 // Stop the shared test runtime graph when this file ends. Called here, not
 // registered inside the helper, for the reason its doc comment gives.
@@ -665,10 +666,12 @@ describe('command modal handoff', () => {
   test('a handler that throws is caught by the generic command-route .catch(), rendering a visible error instead of an unhandled rejection', async () => {
     const modalStack = ['command'];
     const registry = new CommandRegistry();
+    let calls = 0;
     registry.register({
       name: 'boom',
       description: 'Always throws',
       handler: async () => {
+        calls++;
         throw new Error('kaboom');
       },
     });
@@ -698,15 +701,21 @@ describe('command modal handoff', () => {
     process.on('unhandledRejection', onUnhandled);
     let handled: boolean;
     try {
-      handled = handleCommandModeToken(state, key('enter'));
-      // Let the rejected commandPromise's .then/.catch chain settle.
-      await new Promise((r) => setTimeout(r, 10));
+      handled = await withPublicErrorText(['kaboom'], async () => {
+        const result = handleCommandModeToken(state, key('enter'));
+        // Let the rejected commandPromise's .then/.catch chain settle.
+        await new Promise((r) => setTimeout(r, 10));
+        return result;
+      });
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
 
     expect(unhandled).toEqual([]);
+    expect(calls).toBe(1);
     expect(handled).toBe(true);
+    expect(state.commandMode).toBe(false);
+    expect(modalStack).toEqual([]);
     expect(logged.some((l) => l.text.includes('Command /boom failed') && l.text.includes('kaboom'))).toBe(true);
   });
 

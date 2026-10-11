@@ -456,7 +456,11 @@ describe('secondary reading paths and errors', () => {
     const manager = new McpPermissionManager();
     manager.registerServer('test-server');
     await expect(manager.evaluateToolCall('test-server', 'credentials.set', { key: 'custom', value: SECRET })).rejects.toBeInstanceOf(JudgmentInputError);
-    expect(log.requests).toEqual([]);
+    for (const request of log.requests) {
+      expect(Object.keys(request.questions ?? {})).toEqual(['kind']);
+      expect(request.state).toEqual({ field: expect.stringMatching(/^(serverName|trustLevel)$/) });
+    }
+    expect(JSON.stringify(log.requests)).not.toContain(SECRET);
   });
 
   test('protected untrusted source needs an owner; no source material reaches judgment', async () => {

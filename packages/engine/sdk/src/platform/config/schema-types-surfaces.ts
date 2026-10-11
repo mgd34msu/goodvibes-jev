@@ -19,6 +19,8 @@ export interface DiscordSurfaceConfig {
   publicKey: string;
   botToken: string;
   applicationId: string;
+  inboxBotUserId: string;
+  inboxChannelIds: string;
   defaultChannelId: string;
   guildId: string;
   setupVersion: number;

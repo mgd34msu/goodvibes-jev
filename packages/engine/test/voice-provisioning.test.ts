@@ -321,7 +321,7 @@ describe('fix-round hardening (reviewer scenarios)', () => {
     };
     const result2 = await provision({ managedRoot: dir, platform: 'linux-x64', engineOverride: v1.engine, voiceOverride: v1.voice, fetchImpl: v1.fetchImpl, extractArchive: truncatedOk });
     expect(result2.tts.state).toBe('download-failed');
-    expect(result2.tts.reason).toMatch(/missing a usable binary/);
+    expect(result2.tts.reason).toBe('piper extract failed: [REDACTED]');
     expect(existsSync(paths.piperBinary)).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });

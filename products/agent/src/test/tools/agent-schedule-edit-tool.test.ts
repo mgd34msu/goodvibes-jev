@@ -244,6 +244,9 @@ describe('agent_schedule_edit tool', () => {
       });
 
       expect(result).toEqual(expect.objectContaining({ success: true }));
+      if (!result.success || !('output' in result) || typeof result.output !== 'string') {
+        throw new Error('Successful schedule edit must include output text.');
+      }
       expect(result.output).toContain('Updated GoodVibes schedule');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-edit-1"');

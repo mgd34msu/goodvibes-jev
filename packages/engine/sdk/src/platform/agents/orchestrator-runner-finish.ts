@@ -9,6 +9,11 @@ import { logger } from '../utils/logger.js';
 import type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
 import type { AgentSession } from './session.js';
 
+export interface AgentRunTerminal {
+  readonly assertCurrent: () => void;
+  readonly settle: () => Promise<void>;
+}
+
 /** Stops every process the run started (anything not running before it began). */
 export function cleanupLeakedProcesses(
   processManager: ProcessManager | undefined,
@@ -23,14 +28,24 @@ export function cleanupLeakedProcesses(
   }
 }
 
-export async function disposeSession(session: AgentSession): Promise<void> {
-  try {
-    await session.dispose();
-  } catch (error) {
-    logger.warn('[AgentOrchestrator] session disposal failed', {
-      error: summarizeError(error),
-    });
-  }
+const sessionDisposals = new WeakMap<AgentSession, Promise<void>>();
+
+export function disposeSession(session: AgentSession): Promise<void> {
+  const existing = sessionDisposals.get(session);
+  if (existing) return existing;
+  const retained = Promise.withResolvers<void>();
+  sessionDisposals.set(session, retained.promise);
+  const dispose = async () => {
+    try {
+      await session.dispose();
+    } catch (error) {
+      logger.warn('[AgentOrchestrator] session disposal failed', {
+        error: summarizeError(error),
+      });
+    }
+  };
+  void dispose().then(retained.resolve, retained.reject);
+  return retained.promise;
 }
 
 /**
@@ -45,11 +60,18 @@ export async function finishCancelledRun(
   session: AgentSession | null,
   preAgentProcessIds: Set<string>,
   turn?: number,
+  terminal?: AgentRunTerminal,
 ): Promise<void> {
-  if (context.beforeRunSettlement) await context.beforeRunSettlement();
+  terminal?.assertCurrent();
+  if (terminal) await terminal.settle();
+  else if (context.beforeRunSettlement) await context.beforeRunSettlement();
+  terminal?.assertCurrent();
   record.completedAt = Date.now();
+  terminal?.assertCurrent();
   context.emitAgentCancelledEvent(record.id, 'Agent cancelled');
+  terminal?.assertCurrent();
   if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  terminal?.assertCurrent();
   if (!session) return;
   session.appendMessage({
     type: 'session_end',
@@ -59,5 +81,7 @@ export async function finishCancelledRun(
     durationMs: Date.now() - record.startedAt,
     timestamp: new Date().toISOString(),
   });
+  terminal?.assertCurrent();
   await disposeSession(session);
+  terminal?.assertCurrent();
 }

@@ -1,8 +1,8 @@
 # Daemon command executable and explicit host (partial migration)
 
-Package: `@goodvibes-jev/daemon` · product version `1.28.25` · `private: true`.
-The repository root is separately versioned `2.0.23`; these manifest facts do not
-choose a shared or product-specific release policy. [MIT license](LICENSE),
+Package: `@goodvibes-jev/daemon` · version `2.0.23` · `private: true`.
+The `goodvibes-jev` repository root owns the daemon's release version.
+[MIT license](LICENSE),
 Copyright (c) 2026 Mike Davis.
 
 ## Operator guides
@@ -16,8 +16,9 @@ Copyright (c) 2026 Mike Davis.
 
 These guides reconstruct pinned upstream responsibilities against current source,
 not a claim that lost executor documentation or validation receipts were recovered
-byte-for-byte. Configured standalone screening bootstrap, the configured Discord
-inbox/DM catalog, release/update policy and final native/live calibration remain gates.
+byte-for-byte. Configured inbox deployment requires an established trusted local
+screening host. Final native/live calibration and release availability require their
+own receipts.
 
 ## Product boundary
 
@@ -40,6 +41,17 @@ source polling or mirror storage. Configured sources require established account
 and trusted-local screening authority; missing or unreadable authority refuses
 startup and rolls back owned resources. An unavailable credential store is not
 reported as a fresh install.
+For an admitted screening host, `createProductionDaemonRuntime({}, screening)`
+constructs the canonical Discord bot owner from `surfaces.discord.inboxBotUserId`
+and `surfaces.discord.inboxChannelIds`. The latter is an explicit comma-separated
+registry of 1–200 bot-readable one-to-one DM IDs. The token must prove the expected
+bot identity and every channel before history reads; account or registry replacement
+revokes the source even if the setting is restored. Group DMs are unsupported.
+The host supplies the live `ProtectedSourceOwnerOptions` capability for both the
+local proposal service and `jev-1.13.0`, including established ephemeral retention.
+The standalone launcher has no managed local screening runner; settings or endpoint
+addresses cannot establish its retention policy. [Inbox contract](../../docs/contracts/daemon-inbox-and-triage.md#discord-account-and-intended-channels)
+describes the owned read and revocation boundaries.
 Service install/start/restart/migrate requires a
 launcher that supplies both real inbox composition and its installed executable
 path. Systemd service definitions preserve the selected tree, daemon home and
@@ -209,7 +221,7 @@ the production inbox before service activation.
 
 The package remains a private Bun script package with an opt-in local native
 build. The local tooling does not publish a native release or activate automatic
-updates. Product/root version ownership and the release feed remain undecided. Source
+updates. The release identity is `mgd34msu/goodvibes-jev` and the root version is authoritative. Source
 and emitted modules are included because the existing Bun export condition uses
 source. Use the supported Bun 1.3.14 runtime and built engine workspace.
 
@@ -234,23 +246,25 @@ pagination and protected-read contracts.
 
 ## Explicit local release preparation
 
-`bun run release:prepare --no-bump --no-changelog` synchronizes the compiled
-version fallback with this product's manifest (and a README version badge if
-one exists). It is opt-in; ordinary builds still only validate the fallback.
+Root `bun run sync:version` synchronizes the SDK fallback, daemon manifest and
+daemon compiled fallback with the repository release version. Root `version:check`
+includes the daemon. Native prebuild validates that shared identity without writes.
 
-After a product release/version policy is chosen, the same mechanics accept one
-explicit `--patch`, `--minor`, `--major`, or `--version X.Y.Z` instead of
-`--no-bump`. To scaffold notes, provide a product-owned `CHANGELOG.md` and
+`bun run release:prepare --no-bump --no-changelog` synchronizes this product's
+manifest and compiled fallback with the root version (and a README version badge
+if one exists).
+
+An explicit `--version X.Y.Z` must equal the selected root version. Arithmetic
+bump options also refuse a result that differs from the root. To scaffold notes,
+provide a product-owned `CHANGELOG.md` and
 `--date YYYY-MM-DD` instead of `--no-changelog`. The section is inserted above
 the first existing section, preserving old notes. Review and complete the notes.
-Exact-version and no-bump runs are byte-idempotent; another arithmetic bump is
-a new bump. Missing/ambiguous inputs fail before writes. Ordinary write failures
+Exact-version and no-bump runs are byte-idempotent. Missing/ambiguous inputs fail before writes. Ordinary write failures
 attempt to restore every touched file, reporting incomplete restoration. This
 is not a crash-safe or concurrent multi-file transaction; use a clean, exclusive
 checkout and inspect the diff before continuing.
 
-These mechanics do not select shared versus daemon-specific version ownership,
-migrate saved updater settings, configure release-cut, publish, tag, commit,
+These mechanics do not migrate saved updater settings, configure release-cut, publish, tag, commit,
 install or deploy anything. See [release preparation contracts](docs/cli-and-package-contracts.md#explicit-release-preparation).
 
 Historical upstream release notes are preserved in [the provenance-labelled archive](docs/history/README.md); they are not current product release claims.

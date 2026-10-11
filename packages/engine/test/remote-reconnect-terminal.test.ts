@@ -7,9 +7,10 @@
  * adapter could not categorise (`unknown`) was never retried whatever it
  * said; it is now read through the engine's failure reading.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ReconnectEngine, type ConnectOutcome, type TransportAdapter } from '../sdk/src/platform/runtime/remote/reconnect.js';
-import { useFailureReadings } from './_helpers/failure-readings.js';
+import { authoredErrorReadingsPort, errorText, type AuthoredPrivacy } from './_helpers/authored-error-readings.js';
 
 const FAST = { maxAttempts: 4, initialDelayMs: 1, maxDelayMs: 1, backoffMultiplier: 1, jitter: 0 };
 const IDENTITY = { sessionId: 's1', clientId: 'c1' } as never;
@@ -56,16 +57,45 @@ describe('a failure that cannot clear ends the reconnect loop', () => {
 });
 
 describe('an uncategorised failure is read, not assumed', () => {
-  const readings = useFailureReadings([
-    ['socket hang up', { category: 'network', transientNetwork: true }],
-    ['invalid pairing token', { category: 'authentication' }],
-  ]);
+  const privacy: AuthoredPrivacy = {
+    parts: [[errorText('socket hang up')], [errorText('invalid pairing token')]],
+    fields: { attempt: 'other', maxAttempts: 'other', delayMs: 'other', error: 'content',
+      category: 'other', retryable: 'other', isReconnect: 'other', sessionId: 'other',
+      epoch: 'other', lastAckedOffset: 'other' },
+  };
+  const failures = [
+    { message: 'socket hang up', reading: { category: 'network', transientNetwork: true } },
+    { message: 'invalid pairing token', reading: { category: 'authentication' } },
+  ] as const;
+  let readings = authoredErrorReadingsPort(privacy, failures);
+  let previous: ReturnType<typeof installJudgmentPort>;
+  beforeEach(() => {
+    forgetFailureReadings();
+    readings = authoredErrorReadingsPort(privacy, failures);
+    previous = installJudgmentPort(readings.port);
+  });
+  afterEach(() => {
+    installJudgmentPort(previous);
+    forgetFailureReadings();
+  });
+
+  function expectOneFailureReading(message: string) {
+    const requests = readings.requests.filter((request) => request.context?.battery === 'engine.failure-reading');
+    expect(requests).toHaveLength(1);
+    const request = requests[0];
+    if (!request) throw new Error('Expected the actual reconnect failure reading');
+    expect(request.state).toBe(`Message: ${message}`);
+    expect(request.context).toEqual({ battery: 'engine.failure-reading', batteryVersion: 2,
+      pattern: 'battery', site: 'remote.reconnect.failure' });
+    expect(Object.keys(request.questions).sort()).toEqual(['before_response', 'billing', 'category',
+      'connection_failure', 'context_exceeded', 'provider_unusable', 'rate_limited', 'transient_network']);
+  }
 
   test('wording read as a dropped connection is retried', async () => {
     const run = engineFailingWith([failure('unknown', 'socket hang up'), failure('unknown', 'socket hang up'), { success: true, token: {} as never, epoch: 1, replayFromOffset: 0, negotiatedProtocol: {} as never }]);
     expect(await run.engine.reconnect(async () => 'token')).toBe(true);
     expect(run.calls()).toBe(3);
-    expect(readings.requests).toHaveLength(1);
+    expectOneFailureReading('socket hang up');
   });
 
   test('wording read as rejected credentials ends the loop', async () => {
@@ -73,5 +103,6 @@ describe('an uncategorised failure is read, not assumed', () => {
     expect(await run.engine.reconnect(async () => 'token')).toBe(false);
     expect(run.calls()).toBe(1);
     expect(run.terminal).toEqual(['invalid pairing token']);
+    expectOneFailureReading('invalid pairing token');
   });
 });

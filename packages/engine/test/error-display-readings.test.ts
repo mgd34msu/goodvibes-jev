@@ -10,10 +10,32 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { EntryType, JudgmentPort, Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { forgetFailureReadings, installJudgmentPort, type ConnectionFailure } from '@goodvibes-jev/engine/errors';
+import { forgetFailureReadings, installJudgmentPort, readFailure, type ConnectionFailure } from '@goodvibes-jev/engine/errors';
 import { ProviderError } from '../sdk/src/platform/types/errors.ts';
 import { normalizeError, readFormattedError, readNormalizedError } from '../sdk/src/platform/utils/error-display.ts';
 import { payloadSpans } from '../sdk/src/platform/utils/batteries/display-payload.ts';
+import type { RedactionPart } from '../sdk/src/platform/utils/batteries/redaction.ts';
+import { authoredPrivacyAnswer, errorText as text, errorSpan as span } from './_helpers/authored-error-readings.ts';
+import { registerAccountIdentityRedaction } from '../sdk/src/platform/utils/redaction.ts';
+
+const publicLines = [
+  '[1,2,3]', 'plain words only', 'connect ECONNREFUSED 127.0.0.1:11434',
+  'getaddrinfo ENOTFOUND api.example.com', 'something else broke', 'socket trouble',
+  'upstream ECONNREFUSED behind the gateway',
+  'No credits remain for the API.',
+  'You exceeded your current quota, please check your plan and billing details. insufficient_quota',
+  'No credits remain for the API. [REDACTED_GITHUB_TOKEN]',
+];
+const authoredParts: readonly (readonly RedactionPart[])[] = [
+  ...publicLines.map((line) => [text(line)]),
+  [text('Rate limit for model [gpt-4o] {"used":'), span('used', 1), text(',"limit":'), span('limit', 2), text('} try later')],
+  [text('failed {"used":'), span('used', 1), text('}')],
+  [text('x {"used":'), span('used', 1), text('} y [1,2] z {"limit":'), span('limit', 2), text('}')],
+  [text('{"code":'), span('code', 1), text('}')],
+  [text('ETIMEDOUT: '), span('ETIMEDOUT', 1), text('')],
+];
+const privacyAnswer = authoredPrivacyAnswer({ parts: authoredParts,
+  fields: { used: 'other', limit: 'other', code: 'other', ETIMEDOUT: 'content' } });
 
 /** A payload answer: yes, no, or a reading too unsure to act on. */
 type PayloadAnswer = 'yes' | 'no' | 'unsure';
@@ -21,6 +43,7 @@ type PayloadAnswer = 'yes' | 'no' | 'unsure';
 interface Answers {
   readonly connection?: ConnectionFailure;
   readonly payload?: (span: string) => PayloadAnswer;
+  readonly billing?: boolean;
 }
 
 function spanText(state: EntryType, name: string): string {
@@ -31,17 +54,21 @@ function spanText(state: EntryType, name: string): string {
 /** A port answering both readings, recording every request and every recorded action. */
 function readingsPort(answers: Answers) {
   const { port: inner, requests } = fakePort((name: string, question: Question, state: EntryType) => {
+    const privacy = privacyAnswer(name, question, state);
+    if (privacy !== undefined) return privacy;
     if (name.startsWith('payload_')) {
       const answer = answers.payload?.(spanText(state, name)) ?? 'no';
       return noulAnswer(answer === 'yes' ? 0.97 : answer === 'no' ? 0.03 : 0.5);
     }
-    if (name === 'category') return choiceAnswer(question, 'unknown', 0.95);
+    if (name === 'category') return choiceAnswer(question, answers.billing ? 'billing' : 'unknown', 0.95);
     if (name === 'connection_failure') return choiceAnswer(question, answers.connection ?? 'none', 0.95);
     // Numbers in payloads also ask the retry-wait battery. These fixtures name
     // no wait: answer its two Choice items rather than falling through to Noul.
     if (name === 'pick') return choiceAnswer(question, 'none', 0.95);
     if (name === 'unit') return choiceAnswer(question, 's', 0.95);
-    return noulAnswer(0.03);
+    if (['billing', 'rate_limited', 'context_exceeded', 'transient_network', 'provider_unusable', 'before_response'].includes(name)
+      || name.startsWith('fits_n')) return noulAnswer(answers.billing && name === 'billing' ? 0.97 : 0.03);
+    throw new Error('Unexpected authored display question');
   });
   const actions: string[] = [];
   let next = 0;
@@ -55,7 +82,7 @@ function readingsPort(answers: Answers) {
     recorder: {
       recordReadings: () => undefined,
       recordAction: (_decisionId: string, action: string) => void actions.push(action),
-    } as unknown as NonNullable<JudgmentPort['recorder']>,
+    },
   };
   return { port, requests, actions };
 }
@@ -107,14 +134,14 @@ describe('display payload', () => {
   test('a reading too unsure to act on keeps the part', async () => {
     const { port } = readingsPort({ payload: () => 'unsure' });
     installJudgmentPort(port);
-    const normalized = await readNormalizedError(new ProviderError('failed {"a":1}', 500), { site: 'test.display' });
-    expect(normalized.message).toBe('failed {"a":1}');
+    const normalized = await readNormalizedError(new ProviderError('failed {"used":1}', 500), { site: 'test.display' });
+    expect(normalized.message).toBe('failed {"used":1}');
   });
 
   test('every part of one message is asked in one request', async () => {
     const { port, requests } = readingsPort({ payload: () => 'yes' });
     installJudgmentPort(port);
-    await readNormalizedError(new ProviderError('x {"a":1} y [1,2] z {"b":2}', 500), { site: 'test.display' });
+    await readNormalizedError(new ProviderError('x {"used":1} y [1,2] z {"limit":2}', 500), { site: 'test.display' });
     const asked = payloadRequests(requests);
     expect(asked).toHaveLength(1);
     expect(Object.keys(asked[0]!.questions).sort()).toEqual(['payload_1', 'payload_2', 'payload_3']);
@@ -131,8 +158,8 @@ describe('display payload', () => {
   test('a whole-JSON message is parsed, not read', async () => {
     const { port, requests } = readingsPort({ payload: () => 'yes' });
     installJudgmentPort(port);
-    const normalized = await readNormalizedError(new ProviderError('{"error":{"message":"Invalid model"}}', { statusCode: 404 }), { site: 'test.display' });
-    expect(normalized.message).toBe('Invalid model');
+    const normalized = await readNormalizedError(new ProviderError('{"code":"model_not_found"}', { statusCode: 404 }), { site: 'test.display' });
+    expect(normalized.message).toBe('model_not_found');
     expect(payloadRequests(requests)).toHaveLength(0);
   });
 
@@ -143,11 +170,13 @@ describe('display payload', () => {
     expect(payloadRequests(requests)).toHaveLength(0);
   });
 
-  test('the synchronous path shows the message unstripped and asks nothing', () => {
+  test('the synchronous path holds unqualified prose without asking the payload battery', () => {
     const { port, requests } = readingsPort({ payload: () => 'yes' });
     installJudgmentPort(port);
-    expect(normalizeError(new Error('failed {"a":1} here')).message).toBe('failed {"a":1} here');
-    expect(requests).toHaveLength(0);
+    const error = new Error('failed {"a":1} here');
+    expect(normalizeError(error).message).toBe('[REDACTED]');
+    expect(error.message).toBe('failed {"a":1} here');
+    expect(payloadRequests(requests)).toHaveLength(0);
   });
 });
 
@@ -200,12 +229,143 @@ describe('connection failure', () => {
     const normalized = await readNormalizedError(new ProviderError('upstream ECONNREFUSED behind the gateway', 502), { site: 'test.display' });
     expect(normalized.category).toBe('service');
     expect(normalized.summary).toBe('upstream ECONNREFUSED behind the gateway');
-    expect(requests).toHaveLength(0);
+    expect(requests.filter((request) => 'connection_failure' in request.questions)).toHaveLength(0);
   });
 
   test('the synchronous path keeps the error\'s own category and message', () => {
     const normalized = normalizeError(new Error('ECONNREFUSED 127.0.0.1:3000'));
     expect(normalized.category).toBe('unknown');
-    expect(normalized.summary).toBe('ECONNREFUSED 127.0.0.1:3000');
+    expect(normalized.summary).toBe('[REDACTED]');
+  });
+});
+
+describe('first-call protected error normalization', () => {
+  test.each([
+    [400, 'No credits remain for the API.'],
+    [429, 'You exceeded your current quota, please check your plan and billing details. insufficient_quota'],
+  ] as const)('settles a first-call provider %i billing failure after privacy qualification', async (status, message) => {
+    const { port, requests } = readingsPort({ billing: true });
+    installJudgmentPort(port);
+    const error = new ProviderError(message, { statusCode: status, provider: 'test-provider' });
+    const normalized = await readNormalizedError(error, { site: 'test.first-call' });
+    expect(normalized.category).toBe('billing');
+    expect(normalized.hint).toContain('credits');
+    const failureRequests = requests.filter((request) => 'billing' in request.questions);
+    expect(failureRequests).toHaveLength(1);
+    expect(failureRequests[0]!.state).toContain(`Message: ${message}`);
+    expect(error.message).toBe(message);
+  });
+
+  test('issuer credentials never reach prose classification or retry evidence', async () => {
+    const { port, requests } = readingsPort({ billing: true });
+    installJudgmentPort(port);
+    const credential = 'ghp_0123456789012345678901234567890123456789';
+    const error = new ProviderError(`No credits remain for the API. ${credential}`, 400);
+    const normalized = await readNormalizedError(error, { site: 'test.protected' });
+    expect(normalized.category).toBe('billing');
+    expect(normalized.message).toContain('[REDACTED_GITHUB_TOKEN]');
+    expect(JSON.stringify(requests.map((request) => ({ state: request.state, questions: request.questions })))).not.toContain(credential);
+    expect(error.rawMessage).toContain(credential);
+  });
+
+  test('unqualified wording stays held without a prose-classification guess', async () => {
+    const { port, requests } = readingsPort({ billing: true });
+    installJudgmentPort(port);
+    const normalized = await readNormalizedError(new ProviderError('Unspecified private diagnostic', 400), { site: 'test.unknown' });
+    expect(normalized.message).toBe('[REDACTED]');
+    expect(normalized.category).toBe('bad_request');
+    expect(requests.filter((request) => 'billing' in request.questions || 'pick' in request.questions)).toHaveLength(0);
+  });
+
+  test('PAN-bearing prose is held before any semantic request', async () => {
+    const { port, requests } = readingsPort({ billing: true });
+    installJudgmentPort(port);
+    const normalized = await readNormalizedError(new ProviderError('No credits remain for card 4111111111111111', 400), { site: 'test.pan' });
+    expect(normalized.message).toBe('[REDACTED]');
+    expect(normalized.category).toBe('bad_request');
+    expect(requests).toHaveLength(0);
+  });
+
+  test('a protected password assignment settles with held prose and native facts', async () => {
+    const parts = [text('Native context owner revoked password='), span('password'), text('')];
+    const residual = JSON.stringify({ parts: [text('Native context owner revoked password='),
+      { kind: 'withheld', reference: 'span-1' }, text('')] });
+    const { port, requests } = fakePort((name, question, state) => {
+      if (name === 'kind' && JSON.stringify(state) === JSON.stringify({ field: 'password' }))
+        return choiceAnswer(question, 'secret', 0.99);
+      if (name === 'credentialRemains' && JSON.stringify(state) === residual) return noulAnswer(0.01);
+      throw new Error('Unexpected protected-assignment reading');
+    });
+    installJudgmentPort(port);
+    const secret = 'SYNTHETIC_PRIVATE_CONTEXT';
+    const error = new ProviderError(`Native context owner revoked password=${secret}`, 400);
+    const failure = await readFailure({ message: 'No credits remain for the API.', status: 400 },
+      'test.prior-billing', { port: readingsPort({ billing: true }).port });
+    expect(failure).toMatchObject({ billing: true });
+    const normalized = await readNormalizedError(error,
+      { site: 'test.protected-assignment', failure });
+    expect(normalized.message).toBe('[REDACTED]');
+    expect(normalized.summary).toBe('[REDACTED]');
+    expect(normalized.category).toBe('bad_request');
+    expect(normalized.statusCode).toBe(400);
+    expect(requests.map((request) => request.state)).toEqual([{ field: 'password' },
+      { parts: parts.map((part) => part.kind === 'span' ? { kind: 'withheld', reference: part.reference } : part) }]);
+    expect(JSON.stringify(requests)).not.toContain(secret);
+    expect(error.message).toContain(secret);
+  });
+
+  test('a PAN in native evidence holds prose before any feature reading', async () => {
+    const { port, requests } = readingsPort({ connection: 'refused' });
+    installJudgmentPort(port);
+    const pan = '4111111111111111';
+    const error = Object.assign(new Error('socket trouble'), { code: pan, statusCode: 502 });
+    const normalized = await readNormalizedError(error, { site: 'test.native-pan' });
+    expect(normalized.message).toBe('[REDACTED]');
+    expect(normalized.summary).toBe('[REDACTED]');
+    expect(normalized.category).toBe('service');
+    expect(normalized.statusCode).toBe(502);
+    expect(normalized.code).toBeUndefined();
+    expect(requests.map((request) => Object.keys(request.questions)))
+      .toEqual([['lineHasCredential', 'spanIsCredential']]);
+    expect(JSON.stringify(requests)).not.toContain(pan);
+    expect(error.code).toBe(pan);
+  });
+
+  test.each(['error', 'cause', 'options', 'redaction-source', 'redaction-aba', 'port', 'port-aba', 'cancel'] as const)('retains original %s through the first privacy await', async (change) => {
+    const { port: inner, requests } = readingsPort({ billing: true });
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const port: JudgmentPort = { ...inner, async ask(request) {
+      if ('lineHasCredential' in request.questions) { entered.resolve(); await released.promise; }
+      return inner.ask(request);
+    } };
+    installJudgmentPort(port);
+    const controller = new AbortController();
+    const cause = new Error('Private native cause');
+    const error = new ProviderError('No credits remain for the API.', { statusCode: 400, cause });
+    const options = { site: 'test.current', provider: 'test-provider', signal: controller.signal };
+    const pending = readNormalizedError(error, options);
+    await entered.promise;
+    if (change === 'error') error.message = 'Changed diagnostic';
+    else if (change === 'cause') cause.message = 'Changed private native cause';
+    else if (change === 'options') options.provider = 'other-provider';
+    else if (change === 'redaction-source') registerAccountIdentityRedaction(() => ({ homeDirectory: '/home/test', userName: 'test' }));
+    else if (change === 'redaction-aba') { registerAccountIdentityRedaction(() => ({ homeDirectory: '/home/test', userName: 'test' })); registerAccountIdentityRedaction(null); }
+    else if (change === 'port') installJudgmentPort(readingsPort({ billing: true }).port);
+    else if (change === 'port-aba') { installJudgmentPort(readingsPort({ billing: true }).port); installJudgmentPort(port); }
+    else controller.abort();
+    try {
+      released.resolve();
+      await expect(pending).rejects.toThrow();
+      expect(requests.filter((request) => 'billing' in request.questions)).toHaveLength(0);
+    } finally { registerAccountIdentityRedaction(null); released.resolve(); }
+  });
+
+  test('an asynchronous currentness callback cannot qualify the source', async () => {
+    const { port, requests } = readingsPort({ billing: true });
+    installJudgmentPort(port);
+    await expect(readNormalizedError(new ProviderError('No credits remain for the API.', 400),
+      { site: 'test.async-current', assertCurrent: async () => {} })).rejects.toThrow();
+    expect(requests).toHaveLength(0);
   });
 });

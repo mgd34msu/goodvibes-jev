@@ -1,5 +1,7 @@
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { authoredPrivacyAnswer, errorSpan, errorText } from './_helpers/authored-error-readings.ts';
+import { redactSensitiveDataAsync } from '../sdk/src/platform/utils/redaction.ts';
 /**
  * Data safety with no discipline: every SQLite store the platform writes
  * carries PRAGMA user_version; migrations snapshot first and auto-restore
@@ -133,7 +135,21 @@ describe('downgrade guard: an older binary refuses a newer schema honestly', () 
     const configManager = new ConfigManager({ configDir: join(dir, 'config') });
     const registry = new MemoryEmbeddingProviderRegistry({ configManager });
     const store = new CodeIndexStore(dir, dbPath, registry);
-    await store.init();
+    const readDiagnostic = authoredPrivacyAnswer({ parts: [[
+      errorText('code index store was written by a newer version: '), errorSpan('version'), errorText(' nothing is '), errorSpan('nothing', 2),
+      errorText('; run the newer version, or restore a snapshot taken by it. Store file: '),
+      errorSpan('file', 3), errorText(''),
+    ]], fields: { version: 'other', nothing: 'other', file: 'other', backend: 'other', error: 'content' } });
+    const previous = installJudgmentPort(fakePort((name, question, state) => {
+      const answer = readDiagnostic(name, question, state);
+      if (answer === undefined) throw new Error('Unexpected downgrade diagnostic question');
+      return answer;
+    }).port);
+    try {
+      const diagnostic = `code index store was written by a newer version: it uses schema v9 and this build only understands up to v1. Refusing to open so nothing is corrupted; run the newer version, or restore a snapshot taken by it. Store file: ${dbPath}`;
+      expect(await redactSensitiveDataAsync(diagnostic)).toBe(diagnostic);
+      await store.init();
+    } finally { installJudgmentPort(previous); }
     const status = store.stats();
     store.close();
     expect(status.available).toBe(false);

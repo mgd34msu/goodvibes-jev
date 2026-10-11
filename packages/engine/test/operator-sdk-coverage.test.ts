@@ -417,7 +417,7 @@ describe('createOperatorRemoteClient (src): shorthand method bindings', () => {
           routeIds: [],
           surfaceKinds: [],
           participants: [],
-          metadata: {},
+          metadata: { nested: { values: [null, true, 3, 'native', { deeper: ['value'] }] } },
         },
       }, 201)),
       buildOperatorContract(new GatewayMethodCatalog()),
@@ -427,6 +427,7 @@ describe('createOperatorRemoteClient (src): shorthand method bindings', () => {
     const session = result.session as Record<string, unknown>;
     expect(session.kind).toBe('tui');
     expect(session.lastActivityAt).toBe(createdAt);
+    expect(session.metadata).toEqual({ nested: { values: [null, true, 3, 'native', { deeper: ['value'] }] } });
   });
 
   test('sessions.get tolerates a wire response that omits project (mixed-version daemon)', async () => {
@@ -453,7 +454,7 @@ describe('createOperatorRemoteClient (src): shorthand method bindings', () => {
           routeIds: [],
           surfaceKinds: [],
           participants: [],
-          metadata: {},
+          metadata: { nested: [{ value: 'legacy' }, null] },
         },
         messages: [],
       })),
@@ -464,6 +465,7 @@ describe('createOperatorRemoteClient (src): shorthand method bindings', () => {
     const session = result.session as Record<string, unknown>;
     expect(session.id).toBe('sess-legacy');
     expect(session.project).toBeUndefined(); // schema-gate layer does not backfill; that's normalizeSharedSessionRecord's job
+    expect(session.metadata).toEqual({ nested: [{ value: 'legacy' }, null] });
   });
 
   test('sessions.get builds path from sessionId', async () => {

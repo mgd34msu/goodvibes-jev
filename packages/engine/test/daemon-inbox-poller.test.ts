@@ -133,6 +133,6 @@ describe('InboundPoller', () => {
     await expect(poller.pollOnce()).resolves.toBeUndefined();
     const [status] = poller.snapshotStatuses();
     expect(status!.state).toBe('unavailable');
-    expect(status!.error).toContain('socket exploded');
+    expect(status!.error).toBe('[REDACTED]');
   });
 });

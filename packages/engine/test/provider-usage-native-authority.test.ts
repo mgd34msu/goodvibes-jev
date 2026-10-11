@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { FavoritesStore } from '../sdk/src/platform/providers/favorites.js';
 import { createProviderApi, type ProviderApiDependencies } from '../sdk/src/platform/providers/provider-api.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
@@ -10,9 +10,9 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function deferred() { let resolve: () => void = () => {}; const promise = new Promise<void>(finish => { resolve = finish; }); return { promise, resolve }; }
 function temporaryStages(root: string): string[] { return readdirSync(root).filter(name => name.startsWith('.favorites-usage-')); }
-function fixture() {
+function fixture(relativeDirectory = false) {
   const root = mkdtempSync(join(tmpdir(), 'provider-usage-native-')); roots.push(root);
-  const store = new FavoritesStore({ dir: root });
+  const store = new FavoritesStore({ dir: relativeDirectory ? relative(process.cwd(), root) : root });
   const model: ModelDefinition = { id: 'model', provider: 'synthetic', registryKey: 'synthetic:model', displayName: 'Synthetic model', description: 'Synthetic usage fixture',
     capabilities: { toolCalling: true, codeEditing: false, reasoning: false, multimodal: false }, contextWindow: 8192, selectable: true, tier: 'standard' };
   const unexpected = (): never => { throw new Error('Unexpected synthetic provider operation.'); };
@@ -46,8 +46,8 @@ test('guarded native usage creates an absent favorites file and removes its priv
   expect(temporaryStages(f.root)).toEqual([]);
 });
 
-test.each(['revoke', 'cancel', 'symlink', 'parent-aba', 'stage-symlink'] as const)('actual %s during native temp write prevents usage publication and cleans only its own stage', async mutation => {
-  const f = fixture(); await f.store.save({ pinned: [], history: [] });
+test.each(['revoke', 'cancel', 'symlink', 'parent-aba', 'stage-symlink', 'cwd'] as const)('actual %s during native temp write prevents usage publication and cleans only its own stage', async mutation => {
+  const f = fixture(mutation === 'cwd'); await f.store.save({ pinned: [], history: [] });
   const entered = deferred(); const controller = new AbortController(); let active = true;
   const pending = f.api.recordModelUsage('synthetic:model', { signal: controller.signal, assertCurrent() {
     if (!active) throw new Error('Synthetic usage authority retired.');
@@ -58,6 +58,19 @@ test.each(['revoke', 'cancel', 'symlink', 'parent-aba', 'stage-symlink'] as cons
   if (mutation === 'revoke') active = false;
   else if (mutation === 'cancel') controller.abort();
   else if (mutation === 'parent-aba') { const transient = join(f.root, 'unrelated-entry'); writeFileSync(transient, ''); unlinkSync(transient); }
+  else if (mutation === 'cwd') {
+    const originalDirectory = process.cwd(), outsideRoot = mkdtempSync(join(tmpdir(), 'provider-usage-cwd-')); roots.push(outsideRoot);
+    const outsideDirectory = join(outsideRoot, ...originalDirectory.split('/').filter(Boolean)); mkdirSync(outsideDirectory, { recursive: true });
+    try {
+      process.chdir(outsideDirectory);
+      await expect(pending).rejects.toThrow();
+      expect(readdirSync(outsideDirectory)).toEqual([]);
+    } finally { process.chdir(originalDirectory); }
+    expect(await f.store.getRecentModels(10)).toEqual([]);
+    expect(temporaryStages(f.root)).toEqual([]);
+    expect((await new FavoritesStore({ dir: f.root }).load()).history).toEqual([]);
+    return;
+  }
   else if (mutation === 'stage-symlink') {
     const stageName = temporaryStages(f.root)[0];
     if (!stageName) throw new Error('Native usage stage is absent.');
@@ -78,4 +91,20 @@ test.each(['revoke', 'cancel', 'symlink', 'parent-aba', 'stage-symlink'] as cons
   expect(temporaryStages(f.root)).toEqual([]);
   if (mutation === 'symlink') expect(await Bun.file(outside).text()).toBe('{"private":"unchanged"}');
   else expect((await new FavoritesStore({ dir: f.root }).load()).history).toEqual([]);
+});
+
+test.each(['revoke', 'source-change'] as const)('guarded favorites reread refuses %s during native text acquisition before cache adoption', async mutation => {
+  const f = fixture(); await f.store.save({ pinned: [], history: [] });
+  const history = [{ registryKey: 'synthetic:model', lastUsed: '2026-01-01T00:00:00.000Z', count: 7 }];
+  writeFileSync(f.store.getPath(), JSON.stringify({ pinned: [], history }));
+  const entered = deferred(); let active = true, checks = 0;
+  const pending = f.store.load({ assertCurrent() {
+    if (!active) throw new Error('Synthetic favorites read authority retired.');
+    if (++checks === 2) entered.resolve();
+  } });
+  await Promise.race([entered.promise, pending.then(() => { throw new Error('Native favorites read completed before its text acquisition.'); })]);
+  if (mutation === 'revoke') active = false;
+  else writeFileSync(f.store.getPath(), JSON.stringify({ pinned: [], history: [{ ...history[0], count: 9 }] }));
+  await expect(pending).rejects.toThrow();
+  expect(await f.store.getRecentModels(10)).toEqual([]);
 });

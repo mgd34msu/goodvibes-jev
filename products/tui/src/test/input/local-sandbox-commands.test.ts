@@ -7,6 +7,7 @@ import { SandboxSessionRegistry } from '@goodvibes-jev/engine/sdk/platform/runti
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerLocalSetupCommands } from '../../input/commands/local-setup.ts';
 import { registerPlatformSandboxRuntimeCommands } from '../../input/commands/platform-sandbox-runtime.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 // Exercise the command adapters with public SDK config/session objects and
 // synthetic service/read-model data. No full runtime, providers or daemons.
@@ -145,7 +146,13 @@ describe('local sandbox and setup commands', () => {
     expect(await run('sandbox', ['session', 'stop', session.id])).toContain(`Stopped sandbox session ${session.id}`);
     expect(sessions.get(session.id)?.state).toBe('stopped');
     expect(await run('sandbox', ['session', 'start', 'invalid'])).toContain('Usage:');
-    expect(await run('sandbox', ['session', 'run', 'missing', 'bash'])).toContain('Unknown sandbox session');
+    await withPublicErrorText(['Unknown sandbox session: missing'], async () => {
+      expect(await run('sandbox', ['session', 'run', 'missing', 'bash'])).toContain('Unknown sandbox session');
+    }, {
+      ordinaryFields: ['session'],
+      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [{ kind: 'text', text: 'Unknown sandbox session: ' }, { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'session' }, { kind: 'text', text: '' }] }],
+      residualProjections: [{ parts: [{ kind: 'text', text: 'Unknown sandbox session: ' }, { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] }],
+    });
   });
 
   test('setup review and support bundles retain useful local state without QEMU scaffolds', async () => {

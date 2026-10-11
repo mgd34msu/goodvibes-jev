@@ -15,6 +15,11 @@
  * test so none of them come back quietly.
  */
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import type { OccasionsGatewayInvoke } from '../../agent/occasions-gateway.ts';
+import { executeNativeMemoryWork, nativeMemoryWorkAdmission, nativeMemoryWorkRegistry } from '../helpers/native-memory-work-readings.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { AGENT_READ_ADMISSION_DENIAL_MESSAGE } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -379,9 +384,9 @@ describe('a found itinerary is recorded as a plan', () => {
   /** The daemon's occasions verbs, faked. Same shape as the SDK test's port. */
   function fakeOccasionsGateway() {
     const confirmed: Record<string, unknown>[] = [];
-    const invoke = (async (methodId: string, body: Record<string, unknown>) => {
+    const invoke: OccasionsGatewayInvoke = async (methodId, body) => {
       if (methodId === 'occasions.plans.confirm') {
-        confirmed.push(body);
+        confirmed.push({ ...body });
         return {
           ok: true,
           route: 'in-process',
@@ -393,14 +398,19 @@ describe('a found itinerary is recorded as a plan', () => {
         };
       }
       return { ok: false, route: 'unavailable', data: null, error: `unexpected verb ${methodId}` };
-    }) as never;
+    };
     return { confirmed, invoke };
   }
 
-  function occasionsTool(invoke: never) {
-    const registry = new ToolRegistry();
-    registerAgentOccasionsTool(registry, { invoke });
-    return registry.list().find((tool) => tool.definition.name === 'occasions')!;
+  function occasionsTool(invoke: OccasionsGatewayInvoke) {
+    const { registry, manager } = nativeMemoryWorkRegistry(makeProjectTempDir('itinerary-admission'), registry => registerAgentOccasionsTool(registry, { invoke }));
+    let sequence = 0;
+    return { async execute(args: Record<string, unknown>) {
+      const readings = nativeMemoryWorkAdmission(); using log = new SqliteDecisionLog(':memory:');
+      const previous = installJudgmentPort(withDecisionLog(readings.port, log));
+      try { return await executeNativeMemoryWork(registry, manager, `itinerary-${++sequence}`, 'occasions', args); }
+      finally { installJudgmentPort(previous); }
+    } };
   }
 
   test('the trip lands, with every detail from the itinerary carried through', async () => {
@@ -414,7 +424,7 @@ describe('a found itinerary is recorded as a plan', () => {
       destination: 'Picayune MS',
       authority: 'owner-direct',
       said: 'check your email',
-    } as never);
+    });
 
     expect(result.success).toBe(true);
     expect(confirmed).toHaveLength(1);
@@ -424,9 +434,9 @@ describe('a found itinerary is recorded as a plan', () => {
     expect(body.to).toBe('2026-08-09');
     expect(body.away).toBe(true);
     expect(body.destination).toBe('Picayune MS');
-    // The authority is the owner's own, and his words ride along with it.
-    expect(body.authority).toBe('owner-direct');
-    expect(body.said).toBe('check your email');
+    // Model-supplied provenance cannot impersonate the owner; actual admission rides separately.
+    expect(body.authority).toBe('autonomous');
+    expect(body.said).toBe('');
   });
 
   test('the tool hands back a concrete line to say, naming the dates', async () => {
@@ -440,18 +450,18 @@ describe('a found itinerary is recorded as a plan', () => {
       away: true,
       authority: 'owner-direct',
       said: 'check your email',
-    } as never);
+    });
     expect(result.output).toContain('Say this in your reply');
     expect(result.output).toContain('2026-08-06');
     expect(result.output).toContain('Plans');
   });
 
   test('a refused capture comes back as a refusal to say out loud, not a success', async () => {
-    const invoke = (async () => ({
+    const invoke: OccasionsGatewayInvoke = async () => ({
       ok: true,
       route: 'in-process',
       data: { ok: false, occasionId: '', disclosure: '', reason: 'Untrusted source: email.' },
-    })) as never;
+    });
     const result = await occasionsTool(invoke).execute({
       action: 'plan_confirm',
       title: 'Trip to Picayune',
@@ -459,7 +469,7 @@ describe('a found itinerary is recorded as a plan', () => {
       to: '2026-08-09',
       authority: 'email',
       said: 'itinerary from Southwest',
-    } as never);
+    });
     expect(result.success).toBe(false);
     expect(result.output).toContain('was not recorded');
     expect(result.output).toContain('Untrusted source: email.');

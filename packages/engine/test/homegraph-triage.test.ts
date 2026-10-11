@@ -214,7 +214,7 @@ describe('Home Graph judgment issue triage', () => {
   test('is a no-op when no judgment port is configured', async () => {
     const { root, service } = createTriageService(null);
     try {
-      await service.syncSnapshot(TRIAGE_SNAPSHOT);
+      await service.syncSnapshot({ ...TRIAGE_SNAPSHOT, pageAutomation: { enabled: false } });
       const result = await service.runRefinement({ installationId: 'house-1', triage: true, skipGapRefinement: true });
       expect(result.triage!.configured).toBe(false);
       expect(result.triage!.reason).toBe('triage-judgment-not-configured');

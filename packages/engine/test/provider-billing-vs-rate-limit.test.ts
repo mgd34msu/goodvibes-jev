@@ -25,14 +25,15 @@
  * provider message carries, and every async predicate and the display layer
  * settle the category from it.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   ProviderError,
   isBillingOrCreditError,
   isRateLimitOrQuotaError,
 } from '../sdk/src/platform/types/errors.ts';
 import { readNormalizedError } from '../sdk/src/platform/utils/error-display.ts';
-import { useFailureReadings } from './_helpers/failure-readings.ts';
+import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { authoredErrorReadingsPort, errorSpan, errorText, type AuthoredFailure } from './_helpers/authored-error-readings.ts';
 
 /** The message Anthropic returns with a 400 when the account is out of credit. */
 const ANTHROPIC_CREDIT_400 =
@@ -42,16 +43,32 @@ const ANTHROPIC_CREDIT_400 =
 const OPENAI_QUOTA_429 =
   'You exceeded your current quota, please check your plan and billing details. insufficient_quota';
 
-useFailureReadings([
-  [ANTHROPIC_CREDIT_400, { category: 'billing', billing: true, providerUnusable: true }],
-  [OPENAI_QUOTA_429, { category: 'billing', billing: true, rateLimited: true }],
-  ['invalid request: unsupported parameter', { category: 'bad_request' }],
-  ['invalid request: malformed tool schema', { category: 'bad_request' }],
-  ['Rate limit reached', { category: 'rate_limit', rateLimited: true }],
-  ['rate limit of 30000 tokens per minute', { category: 'rate_limit', rateLimited: true }],
-  ['prompt is too long', { category: 'bad_request', contextExceeded: true }],
-  ['Payment required', { category: 'billing', billing: true }],
-]);
+const failures: readonly AuthoredFailure[] = [
+  { message: ANTHROPIC_CREDIT_400, status: 400, reading: { category: 'billing', billing: true, providerUnusable: true } },
+  { message: OPENAI_QUOTA_429, status: 429, reading: { category: 'billing', billing: true, rateLimited: true } },
+  { message: 'invalid request: [REDACTED_TEXT]', status: 400, reading: { category: 'bad_request' } },
+  { message: 'invalid request: malformed tool schema', status: 400, reading: { category: 'bad_request' } },
+  { message: 'Rate limit reached for requests. Please try again later.', status: 429, reading: { category: 'rate_limit', rateLimited: true } },
+  { message: 'Rate limit reached, too many requests', status: 429, reading: { category: 'rate_limit', rateLimited: true } },
+  { message: 'Request too large: rate limit of 30000 tokens per minute exceeded', status: 429, reading: { category: 'rate_limit', rateLimited: true } },
+  { message: 'prompt is too long: 210000 tokens > 200000 maximum', status: 400, reading: { category: 'bad_request', contextExceeded: true } },
+  { message: 'Payment required', status: 402, reading: { category: 'billing', billing: true } },
+];
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetFailureReadings();
+  const { port } = authoredErrorReadingsPort({ fields: { balance: 'other', request: 'content' }, parts: [
+    [errorText('Your credit balance is '), errorSpan('balance'), errorText('')],
+    [errorText(OPENAI_QUOTA_429)],
+    [errorText('invalid request: '), errorSpan('request'), errorText('')],
+    [errorText('Rate limit reached for requests. Please try again later.')],
+  ] }, failures.flatMap((fixture) => [
+    { ...fixture, errorName: 'ProviderError' }, { ...fixture, errorName: 'Error' },
+    { message: fixture.message, errorName: 'Error', reading: fixture.reading },
+  ]));
+  previous = installJudgmentPort(port);
+});
+afterEach(() => { installJudgmentPort(previous); forgetFailureReadings(); });
 
 /** The category the display layer settles on once the wording is read. */
 async function settled(err: ProviderError): Promise<string> {

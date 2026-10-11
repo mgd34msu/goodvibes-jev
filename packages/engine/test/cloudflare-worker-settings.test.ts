@@ -127,7 +127,8 @@ describe('Cloudflare Worker settings provisioning', () => {
     expect(steps).toHaveLength(1);
     expect(steps[0]?.status).toBe('warning');
     expect(steps[0]?.message).toContain('existing schedule state could not be read first');
-    expect(steps[0]?.message).toContain('schedule get denied');
+    expect(steps[0]?.message).toContain('existing schedule state could not be read first: [REDACTED]');
+    expect(steps[0]?.message).not.toContain('schedule get denied');
   });
 
   test('surfaces workers.dev state read failures while still deleting on disable', async () => {
@@ -149,7 +150,8 @@ describe('Cloudflare Worker settings provisioning', () => {
     expect(steps).toHaveLength(1);
     expect(steps[0]?.status).toBe('warning');
     expect(steps[0]?.message).toContain('existing workers.dev route state could not be read first');
-    expect(steps[0]?.message).toContain('subdomain get denied');
+    expect(steps[0]?.message).toContain('existing workers.dev route state could not be read first: [REDACTED]');
+    expect(steps[0]?.message).not.toContain('subdomain get denied');
   });
 
   test('creates a Durable Object SQLite class migration only on first Worker upload', async () => {

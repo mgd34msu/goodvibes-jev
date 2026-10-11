@@ -12,6 +12,10 @@ import { join } from 'node:path';
 import { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 import { ProviderNotFoundError } from '../sdk/src/platform/providers/provider-not-found-error.js';
 import { getProviderUsageSnapshot } from '../sdk/src/platform/providers/runtime-snapshot.js';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { readFallbackContextWindow } from '../sdk/src/platform/providers/context-window-fallback.js';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 import {
   getCatalogCachePath,
@@ -258,6 +262,46 @@ describe('ProviderRegistry.require()', () => {
 });
 
 describe('ProviderRegistry model catalog cache', () => {
+  test.each(['none', 'background'] as const)('catalog %s context-window enrichment retains the full cached and native catalog', async enrichment => {
+    const root = mkdtempSync(join(tmpdir(), 'goodvibes-provider-catalog-enrichment-'));
+    const entered = Promise.withResolvers<void>();
+    const fixture = fakePort((_name, question) => choiceAnswer(question, 'none', 0.5));
+    const previous = installJudgmentPort({ ...fixture.port, async ask(request) {
+      if (Object.hasOwn(request.questions, 'route') && typeof request.state === 'object' && request.state !== null
+        && Object.hasOwn(request.state, 'provider') && Object.hasOwn(request.state, 'model_id')) entered.resolve();
+      return fixture.port.ask(request);
+    } });
+    forgetModelLimitReadings();
+    try {
+      const registry = makeRegistry(root);
+      const native = registry.listModels();
+      saveCatalogCache([makeCatalogModel('catalog-display-fixture', 'openai')], getCatalogCachePath(root), getCatalogTmpPath(root));
+      if (enrichment === 'none') registry.initCatalog({ contextWindowEnrichment: 'none' });
+      else registry.initCatalog();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const models = registry.listModels();
+      expect(models.map(model => model.registryKey)).toEqual(expect.arrayContaining(native.map(model => model.registryKey)));
+      expect(models.some(model => model.registryKey === 'openai:catalog-display-fixture')).toBe(true);
+      expect(models).toHaveLength(native.length + 1);
+      if (enrichment === 'none') {
+        expect(fixture.requests.filter(request => Object.hasOwn(request.questions, 'route'))).toHaveLength(0);
+      } else {
+        await entered.promise;
+        const unsized = native.filter(model => model.contextWindowProvenance === 'fallback');
+        expect(unsized.length).toBeGreaterThan(0);
+        await Promise.all(unsized.map(model => readFallbackContextWindow(model.provider, model.id, 'test.registry.catalog-enrichment')));
+        const windows = fixture.requests.filter(request => Object.hasOwn(request.questions, 'route'));
+        expect(windows.length).toBeGreaterThan(0);
+        expect(windows.every(request => typeof request.state === 'object' && request.state !== null
+          && Object.hasOwn(request.state, 'provider') && Object.hasOwn(request.state, 'model_id'))).toBe(true);
+      }
+    } finally {
+      installJudgmentPort(previous);
+      forgetModelLimitReadings();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // 'gpt-9999-catalog-only-fixture' stands in for a model that is ONLY ever
   // known via the third-party models.dev catalog, unlike a real OpenAI
   // model id, it deliberately never appears in OpenAIProvider's dated-static

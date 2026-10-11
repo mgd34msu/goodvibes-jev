@@ -138,12 +138,18 @@ describe('run', () => {
     expect(lines.at(-1)).toEqual({ contractId: contract.id, status: 'passed', answer: 'The parser is written and tested.', statusLine: contract.statusLine! });
   });
 
-  test('a start that throws exits 1 with the reason', async () => {
+  test('a start that throws exits 1 with a protected failure and starts no work', async () => {
     const harness = cliHarness();
-    harness.runner.start = () => { throw new Error('no route for the planner'); };
+    let starts = 0;
+    harness.runner.start = () => { starts++; throw new Error('no route for the planner'); };
     const io = new FakeIo(false);
     expect(await runContractCli(['run', ASK], io, harness.deps)).toBe(EXIT_FAILED);
-    expect(io.stderr).toEqual(['The contract could not start: no route for the planner']);
+    expect(io.stderr).toEqual(['The contract could not start: [REDACTED]']);
+    expect(starts).toBe(1);
+    expect(harness.runner.contracts.size).toBe(0);
+    expect(harness.sessions.submitted).toEqual([]);
+    expect(io.stdout).toEqual([]);
+    expect(harness.opened.disposed).toBe(1);
   });
 });
 
@@ -185,13 +191,16 @@ describe('session mode', () => {
     expect(io.stderr.at(-1)).toContain('ended before its work was checked');
   });
 
-  test('a turn that failed is reported with its error before following ends', async () => {
+  test('a turn that failed is reported with a protected error before following ends', async () => {
     const harness = cliHarness();
     sessionModeStart(harness);
     harness.sessions.onTurn = () => { throw new Error('Anthropic API error 400: credit balance too low'); };
     const io = new FakeIo(false);
     expect(await runContractCli(['run', ASK], io, harness.deps)).toBe(EXIT_FAILED);
-    expect(io.stderr.some((line) => line.includes('failed: Anthropic API error 400: credit balance too low'))).toBe(true);
+    const contract = [...harness.runner.contracts.values()][0]!;
+    expect(io.stderr).toContain(`The session turn for contract ${contract.id} failed: [REDACTED]`);
+    expect(harness.sessions.submitted).toEqual([[CLI_SESSION, ASK]]);
+    expect(io.stdout).toEqual([]);
     expect(io.stderr.at(-1)).toContain('ended before its work was checked');
   });
 

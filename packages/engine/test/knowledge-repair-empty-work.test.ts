@@ -5,12 +5,11 @@ import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import type { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
-import { KnowledgeRepairSourceAuthorityHeldError } from '../sdk/src/platform/knowledge/semantic/repair-source-authority/types.js';
+import { KnowledgeScopeSelectionHeldError } from '../sdk/src/platform/knowledge/scope-selection.js';
 import { KnowledgeRepairSubjectSelectionHeldError } from '../sdk/src/platform/knowledge/semantic/repair-subject-selection/types.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { promoteRepairSources } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
-import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
 const spaceId = 'empty-repair-pass';
 const roots: string[] = [], stores: KnowledgeStore[] = [];
 let previous: JudgmentPort | undefined;
@@ -57,8 +56,9 @@ describe('mechanically empty repair work', () => {
     };
     const beforeTask = item.store.getRefinementTask(item.task.id);
     const error: unknown = await promoteRepairSources({ store: item.store }, spaceId, item.gap, [item.source.id], item.task, Date.now() + 5_000).catch(error => error);
-    expect(error).toBeInstanceOf(KnowledgeRepairSourceAuthorityHeldError);
-    expect((error as KnowledgeRepairSourceAuthorityHeldError).reason).toBe('stale');
+    expect(error).toBeInstanceOf(KnowledgeScopeSelectionHeldError);
+    if (!(error instanceof KnowledgeScopeSelectionHeldError)) throw error;
+    expect(error.reason).toBe('stale');
     expect(changed).toBe(true); expect(requests).toBe(0); expect(item.store.listEdges()).toEqual([]);
     expect(item.store.getRefinementTask(item.task.id)).toEqual(beforeTask);
     expect(item.store.getSource(item.source.id)).toEqual(item.source);
@@ -95,7 +95,7 @@ describe('mechanically empty repair work', () => {
     };
     const beforeTask = item.store.getRefinementTask(item.task.id);
     await expect(promoteRepairSources({ store: item.store }, spaceId, item.gap, [item.source.id], item.task, Date.now() + 5_000))
-      .rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
+      .rejects.toMatchObject({ name: 'KnowledgeScopeSelectionHeldError', reason: 'stale' });
     expect(changed).toBe(true); expect(requests).toBe(0); expect(item.store.listEdges()).toEqual([]);
     expect(item.store.getRefinementTask(item.task.id)).toEqual(beforeTask);
     expect(item.store.getSource(item.source.id)?.summary).toBe('Concurrent new source observation');

@@ -5,6 +5,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { acquireCrossProcessLock } from '../sdk/src/platform/workspace/checkpoint/cross-process-lock.js';
 import { loadSqlJsEngine, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store-persistence.js';
@@ -141,7 +142,7 @@ for (const phase of ['before', 'after'] as const) test(`${phase}-publication I/O
   expect(await p.adapter.read()).toMatchObject({ revision: 1 }); expect(f.storage.current(key)?.state).toBe('associated');
 });
 
-test('DB5 upgrade preserves source1 exactly and old readers/writers fail closed at DB7', async () => {
+test('DB5 upgrade preserves source1 exactly and old readers/writers fail closed at the current schema', async () => {
   const f = await open(); const storage = await f.store.openWorkLedgerStorage('project'), ledger = createWorkLedger({ projectId: 'project', storage, clock });
   const actor = ledger.authority.issueActor({ projectId: 'project', actorId: 'owner', role: 'coordinator' });
   const explicit = { type: 'submit_native', requestId: 'explicit', expectedRevision: 0, title: 'Explicit', goal: ' Exact goal ', criteria: [' same ', ' same '], source: { version: 1, sourceId: 'old-source', sourceRevision: 'old-revision', inputId: 'explicit-input', sessionId: 'session' } };
@@ -151,7 +152,7 @@ test('DB5 upgrade preserves source1 exactly and old readers/writers fail closed 
   const upgraded = await open(f.file); expect(await (await upgraded.store.openWorkLedgerStorage('project')).read()).toEqual(original);
   old.run('UPDATE work_ledgers SET revision=999'); await expect(old.save()).rejects.toThrow('persisted state changed'); old.close();
   const oldReader = new SQLiteStore(f.file); await expect(oldReader.init(() => {}, { schemaVersion: 5 })).rejects.toThrow('newer version'); oldReader.close();
-  const SQL = await loadSqlJsEngine(), db = new SQL.Database(fs.readFileSync(f.file)); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); db.close();
+  const SQL = await loadSqlJsEngine(), db = new SQL.Database(fs.readFileSync(f.file)); expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]); db.close();
 });
 
 test('DB7 never repairs missing capture tables, missing association rows or contradictory source lineage', async () => {
@@ -161,7 +162,7 @@ test('DB7 never repairs missing capture tables, missing association rows or cont
   }
 });
 
-test('DB6 captured source and extracted work upgrade to DB7 without rewriting either authority', async () => {
+test('DB6 captured source and extracted work upgrade to the current schema without rewriting either authority', async () => {
   const f = await open(), source = await ready(f.storage), publication = publisher(f.storage, source);
   expect(await publication.service.execute(command(source), publication.actor)).toMatchObject({ kind: 'accepted' });
   await f.store.close();
@@ -173,7 +174,7 @@ test('DB6 captured source and extracted work upgrade to DB7 without rewriting ei
   fs.writeFileSync(f.file, old.export()); old.close();
   const upgraded = await open(f.file); expect(upgraded.storage.current(key)?.state).toBe('associated');
   const current = new SQL.Database(fs.readFileSync(f.file));
-  expect(current.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]);
+  expect(current.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]);
   expect(current.exec('SELECT state_json FROM native_conversation_captures')[0]?.values).toEqual(captures);
   expect(current.exec('SELECT state_json FROM work_ledgers')[0]?.values).toEqual(ledgers);
   expect(current.exec('SELECT COUNT(*) FROM native_work_execution_settlements')[0]?.values).toEqual([[0]]);

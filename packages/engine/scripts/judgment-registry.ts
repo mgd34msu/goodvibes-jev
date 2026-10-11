@@ -16,3 +16,6 @@ import { deferredWork, internalIdentifier, staticOffendingAnchor } from './batte
 registry.register(internalIdentifier);
 registry.register(deferredWork);
 registry.register(staticOffendingAnchor);
+
+import { staticWeakAnchor } from './batteries/static-weak-anchor.ts';
+registry.register(staticWeakAnchor);

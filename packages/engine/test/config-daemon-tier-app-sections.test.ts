@@ -215,7 +215,10 @@ describe('settings ingestion: a key form from a newer component', () => {
     expect(entry?.key).toBe('calendar.google.clientSecretRef@v2');
     expect(entry?.action).toBe('skipped');
     expect(entry?.reason).toContain('newer form of calendar.google.clientSecretRef');
-    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests.map(request => request.state)).toEqual([
+      expect.objectContaining({ context: { section: 'calendar.google', name: 'clientSecretRef@v2' } }),
+      { field: 'file' }, { field: 'key' }, { field: 'reason' }, { field: 'remedy' },
+    ]);
     // Never deleted: the file is shared, and a component that understands the
     // newer form must still find it there.
     const onDisk = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
@@ -257,7 +260,8 @@ describe('settings ingestion: the keys that refuse instead of skipping', () => {
     const daemonDir = join(root, 'daemon');
     mkdirSync(daemonDir, { recursive: true });
     const path = join(daemonDir, 'settings.json');
-    writeFileSync(path, JSON.stringify({ permissions: { tools: { exec: 'sometimes' } } }), 'utf-8');
+    const original = JSON.stringify({ permissions: { tools: { exec: 'sometimes' } } });
+    writeFileSync(path, original, 'utf-8');
 
     let message = '';
     try {
@@ -267,7 +271,9 @@ describe('settings ingestion: the keys that refuse instead of skipping', () => {
     }
     expect(message).toContain(path);
     expect(message).toContain('permissions.tools.exec');
-    expect(message).toContain('expects one of allow, prompt, deny');
+    expect(message).toBe(`Daemon config load failed for ${path} at permissions.tools.exec: [REDACTED]`);
+    expect(message).not.toContain('sometimes');
+    expect(readFileSync(path, 'utf-8')).toBe(original);
   });
 
   test('every refusing key has a shipped default that permits more than its strictest value', () => {

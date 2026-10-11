@@ -10,6 +10,7 @@ import { createMemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { MemoryRegistry, MemoryStore } from '@goodvibes-jev/engine/sdk/platform/state';
 import { MemoryEmbeddingProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import { createShellPathService } from '@/runtime/index.ts';
+import { nativeMemoryWorkPrivacy } from '../helpers/native-memory-work-readings.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 function makeBaseContext(registry: MemoryRegistry, printed: string[]): CommandContext {
@@ -94,7 +95,7 @@ describe('recall command breadth', () => {
     registry = new MemoryRegistry(store);
     printed = [];
     readings = fakePort((name, _question, state) => rankFixture(name, state));
-    previousJudgment = installJudgmentPort(readings.port);
+    previousJudgment = installJudgmentPort(nativeMemoryWorkPrivacy(readings.port).port);
   });
 
   afterEach(() => {
@@ -112,9 +113,9 @@ describe('recall command breadth', () => {
 
     await recallCommand.handler(['queue', '5'], context);
     expect(printed.join('\n')).toContain('Review queue (1)');
-    expect(readings.requests).toHaveLength(1);
-    expect(readings.requests[0]?.state).toMatchObject({ record: { summary: 'Deploy runbook', review_state: 'fresh' } });
-    expect(Object.keys(readings.requests[0]!.questions)).toEqual(['needs_review']);
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-review-priority')).toHaveLength(1);
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-review-priority')[0]?.state).toMatchObject({ record: { summary: 'Deploy runbook', review_state: 'fresh' } });
+    expect(Object.keys(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-review-priority')[0]!.questions)).toEqual(['needs_review']);
 
     printed.length = 0;
     await recallCommand.handler(['review', created!.id, 'reviewed', '--confidence', '92', '--by', 'operator'], context);
@@ -128,8 +129,8 @@ describe('recall command breadth', () => {
     await recallCommand.handler(['queue', '1'], context);
     expect(printed.join('\n')).toContain('Review queue (1)');
     expect(printed.join('\n')).toContain(created!.id);
-    expect(readings.requests).toHaveLength(2);
-    expect(readings.requests[1]?.state).toMatchObject({ record: { review_state: 'reviewed', confidence: 92 } });
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-review-priority')).toHaveLength(2);
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-review-priority')[1]?.state).toMatchObject({ record: { review_state: 'reviewed', confidence: 92 } });
     expect(registry.get(created!.id)?.scope).toBe('team');
   });
 
@@ -155,8 +156,8 @@ describe('recall command breadth', () => {
     expect(printed.join('\n')).toContain('orchestration graph runtime edits');
     expect(printed.join('\n')).toContain('sim ');
     expect(printed.join('\n')).not.toContain('Slack channel adapter handles slash commands');
-    expect(readings.requests).toHaveLength(2);
-    expect(readings.requests.map(request => (request.state as { candidate: { summary: string } }).candidate.summary).sort()).toEqual([
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-search')).toHaveLength(2);
+    expect(readings.requests.filter(request => request.context?.battery === 'engine.state.memory-search').map(request => (request.state as { candidate: { summary: string } }).candidate.summary).sort()).toEqual([
       'Slack channel adapter handles slash commands',
       'Use orchestration graph runtime edits for node scheduling changes',
     ]);

@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentWorktree } from '../sdk/src/platform/agents/worktree.js';
+import { GitService } from '../sdk/src/platform/git/service.js';
 
 function runGit(cwd: string, args: string[]): string {
   const result = Bun.spawnSync(['git', ...args], { cwd });
@@ -16,6 +17,12 @@ describe('AgentWorktree', () => {
   for (const ignored of [false, true]) test(`commitWorkingTree commits project changes without staging GoodVibes internal state (ignored=${ignored})`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-worktree-'));
     runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', '']);
+    runGit(root, ['config', 'user.email', '']);
+    runGit(root, ['config', 'user.useConfigOnly', 'true']);
+    const originalConfig = readFileSync(join(root, '.git', 'config'), 'utf8');
+    expect(() => runGit(root, ['var', 'GIT_AUTHOR_IDENT'])).toThrow();
+    expect(() => runGit(root, ['var', 'GIT_COMMITTER_IDENT'])).toThrow();
 
     if (ignored) writeFileSync(join(root, '.gitignore'), '.goodvibes/\n');
     writeFileSync(join(root, 'feature.ts'), 'export const ok = true;\n');
@@ -29,9 +36,46 @@ describe('AgentWorktree', () => {
     const trackedFiles = runGit(root, ['ls-files']);
     expect(trackedFiles).toContain('feature.ts');
     expect(trackedFiles).not.toContain('.goodvibes');
+    expect(runGit(root, ['show', 'HEAD:feature.ts'])).toBe('export const ok = true;\n');
+    expect(runGit(root, ['show', '-s', '--format=%an%n%ae%n%cn%n%ce', 'HEAD'])).toBe('GoodVibes\ngoodvibes@local\nGoodVibes\ngoodvibes@local\n');
+    expect(readFileSync(join(root, '.git', 'config'), 'utf8')).toBe(originalConfig);
 
     writeFileSync(join(root, '.goodvibes', 'sessions', 'later.json'), '{}\n');
     await expect(worktree.commitWorkingTree('Contract: internal only')).resolves.toEqual({ hash: null, skippedIgnored: [] });
+  });
+
+  test('commitWorkingTree preserves a configured native identity instead of selecting its fallback', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-worktree-identity-'));
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Native fixture']);
+    runGit(root, ['config', 'user.email', 'native-fixture@example.test']);
+    const originalConfig = readFileSync(join(root, '.git', 'config'), 'utf8');
+    writeFileSync(join(root, 'feature.ts'), 'export const native = true;\n');
+    const result = await new AgentWorktree(root).commitWorkingTree('Contract: configured author');
+    expect(result.hash).toMatch(/^[0-9a-f]{40}$/);
+    expect(runGit(root, ['show', 'HEAD:feature.ts'])).toBe('export const native = true;\n');
+    expect(runGit(root, ['show', '-s', '--format=%an%n%ae%n%cn%n%ce', 'HEAD'])).toBe('Native fixture\nnative-fixture@example.test\nNative fixture\nnative-fixture@example.test\n');
+    expect(readFileSync(join(root, '.git', 'config'), 'utf8')).toBe(originalConfig);
+  });
+
+  test.each(['absent', 'invalid'] as const)('GitService does not commit with an %s fallback and missing native identity', async fallback => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-worktree-invalid-identity-'));
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', '']);
+    runGit(root, ['config', 'user.email', '']);
+    runGit(root, ['config', 'user.useConfigOnly', 'true']);
+    const originalConfig = readFileSync(join(root, '.git', 'config'), 'utf8');
+    writeFileSync(join(root, 'feature.ts'), 'export const pending = true;\n');
+    runGit(root, ['add', 'feature.ts']);
+    const hookPath = join(root, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hookPath, '#!/bin/sh\nprintf "attempt\\n" >> .git/commit-attempts\n');
+    if (Bun.spawnSync(['chmod', '+x', hookPath]).exitCode !== 0) throw new Error('Could not make fixture hook executable');
+    const options = fallback === 'invalid' ? { fallbackIdentity: { name: '', email: 'invalid-fixture@example.test' } } : undefined;
+    await expect(new GitService(root).commit('Contract: unavailable native author', options)).rejects.toThrow();
+    expect(() => runGit(root, ['rev-parse', '--verify', 'HEAD'])).toThrow();
+    expect(existsSync(join(root, '.git', 'commit-attempts'))).toBe(false);
+    expect(runGit(root, ['diff', '--cached', '--name-only'])).toBe('feature.ts\n');
+    expect(readFileSync(join(root, '.git', 'config'), 'utf8')).toBe(originalConfig);
   });
 
   test('commitWorkingTree(message, paths) stages only the given paths, leaving other dirty files uncommitted', async () => {
@@ -136,7 +180,12 @@ describe('AgentWorktree', () => {
     expect(runGit(root, ['diff', '--cached', '--name-only']).trim()).toBe('');
   });
 
-  test.each(['configured', 'fallback'] as const)('commitWorkingTree restores the index when the commit step fails after staging (%s identity)', async (identity) => {
+  test.each([
+    ['configured', false],
+    ['fallback', false],
+    ['configured', true],
+    ['fallback', true],
+  ] as const)('commitWorkingTree restores the index when the commit step fails after staging (%s identity; diagnostic=%s)', async (identity, diagnostic) => {
     // A genuinely-failing commit (here: a pre-commit hook that rejects) must not leave the
     // deliverable staged in the user's index. The staged path is reset before the error propagates.
     const root = mkdtempSync(join(tmpdir(), 'agent-worktree-restore-'));
@@ -156,7 +205,8 @@ describe('AgentWorktree', () => {
     const hookDir = join(root, '.git', 'hooks');
     mkdirSync(hookDir, { recursive: true });
     const hookPath = join(hookDir, 'pre-commit');
-    writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
+    const hookMessage = diagnostic ? 'printf "Author identity unknown\\n" >&2\n' : '';
+    writeFileSync(hookPath, `#!/bin/sh\nprintf "attempt\\n" >> .git/commit-attempts\n${hookMessage}exit 1\n`);
     Bun.spawnSync(['chmod', '+x', hookPath]);
 
     writeFileSync(join(root, 'deliverable.ts'), 'export const d = true;\n');
@@ -164,6 +214,7 @@ describe('AgentWorktree', () => {
     await expect(worktree.commitWorkingTree('Contract: rejected', ['deliverable.ts'])).rejects.toThrow();
 
     expect(runGit(root, ['rev-parse', 'HEAD']).trim()).toBe(originalHead);
+    expect(readFileSync(join(root, '.git', 'commit-attempts'), 'utf8')).toBe('attempt\n');
 
     // Index must be clean despite the failed commit, the staged path was reset.
     expect(runGit(root, ['diff', '--cached', '--name-only']).trim()).toBe('');

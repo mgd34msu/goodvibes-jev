@@ -8,6 +8,7 @@ import { DAEMON_CI_PAYLOADS, recordDaemonCiArtifact } from '../../../scripts/ci-
 import { installDaemonNative, readDaemonInstallOwner } from '../../../scripts/install-native.ts';
 import { verifiedDaemonNativePath } from '../../cli/native-launch.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.ts';
+import { nativeRuntimeProvenance } from '../helpers/native-runtime-provenance.ts';
 const nativeTest = process.platform === 'linux' && process.arch === 'x64' ? test : test.skip;
 
 async function fixture(runtime = 'console.log(JSON.stringify(process.argv.slice(2))); process.exitCode = 17;') {
@@ -27,8 +28,9 @@ async function fixture(runtime = 'console.log(JSON.stringify(process.argv.slice(
   const engine = dirname(createRequire(import.meta.url).resolve('@goodvibes-jev/engine/package.json'));
   mkdirSync(join(root, 'node_modules/@goodvibes-jev'), { recursive: true }); symlinkSync(engine, join(root, 'node_modules/@goodvibes-jev/engine'), 'dir');
   const source = join(root, 'artifacts/products/daemon');
+  const runtimeBytes = `#!${process.execPath}\n${runtime}\n`;
   for (const [index, file] of DAEMON_CI_PAYLOADS.entries()) {
-    const bytes = index === 0 ? '#!/bin/sh\nexec "$0.bun" "$@"\n' : index === 1 ? `#!${process.execPath}\n${runtime}\n` : `fixture-${index}`;
+    const bytes = index === 0 ? '#!/bin/sh\nexec "$0.bun" "$@"\n' : index === 1 ? runtimeBytes : index === 3 ? nativeRuntimeProvenance(runtimeBytes) : `fixture-${index}`;
     const path = join(source, 'native', file); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, bytes); chmodSync(path, index < 2 ? 0o755 : 0o644);
   }
   await recordDaemonCiArtifact(source, owner);
@@ -98,7 +100,7 @@ else console.log(JSON.stringify(endpoint.includes('/jobs?') ? [{ jobs: ['Product
 });
 
 
-nativeTest('installed-like package uses emitted native support without a source checkout or installer scripts', async () => {
+nativeTest('installed-like emitted native support works under Bun and ordinary Node without source or installer scripts', async () => {
   const f = await fixture(); await f.install();
   const transpiler = new Bun.Transpiler({ loader: 'ts' });
   for (const file of ['native-artifact', 'native-installation', 'native-launch']) {
@@ -108,4 +110,8 @@ nativeTest('installed-like package uses emitted native support without a source 
   }
   rmSync(join(f.product, 'src'), { recursive: true }); rmSync(join(f.product, 'scripts'), { recursive: true }); rmSync(join(f.root, 'package.json')); rmSync(join(f.product, 'tsconfig.json'));
   const result = f.invoke(['installed argument']); expect(result.status, result.stderr).toBe(17); expect(JSON.parse(result.stdout)).toEqual(['installed argument']);
+  const nodeHarness = join(f.product, 'dist/cli/node-native-launch.mjs');
+  writeFileSync(nodeHarness, "import { runVerifiedDaemonNative, finishDaemonNativeLaunch } from './native-launch.js';\nfinishDaemonNativeLaunch(await runVerifiedDaemonNative(process.argv[2], JSON.parse(process.argv[3]), process.argv.slice(4)));\n");
+  const nodeResult = spawnSync('node', [nodeHarness, f.prefix, JSON.stringify(f.owner), 'ordinary Node argument'], { cwd: f.root, env: f.env, encoding: 'utf8', timeout: 5000 });
+  expect(nodeResult.status, nodeResult.stderr).toBe(17); expect(JSON.parse(nodeResult.stdout)).toEqual(['ordinary Node argument']);
 });

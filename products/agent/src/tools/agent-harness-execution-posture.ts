@@ -1,6 +1,9 @@
 import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { capturePersonalOpsData, assertPersonalOpsDataCurrent } from './agent-harness-personal-ops-source.ts';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { browserControlPosture } from './agent-harness-browser-control.ts';
 import { delegationDecisionCards } from './agent-harness-delegation-posture.ts';
@@ -286,8 +289,9 @@ function describeRoute(
   };
 }
 
-function executionSources(context: CommandContext, toolRegistry: ToolRegistry) {
+function executionSources(context: CommandContext, toolRegistry: ToolRegistry, originalSources: readonly unknown[]) {
   return captureCatalogData({
+    originalSources,
     sessionId: context.session.runtime.sessionId,
     routes: routeDefinitions().map(route => ({ route,
       full: describeRoute(route, context, toolRegistry, { includeParameters: true }),
@@ -304,38 +308,80 @@ function executionSources(context: CommandContext, toolRegistry: ToolRegistry) {
 }
 
 function captureExecutionBackend(context: CommandContext, toolRegistry: ToolRegistry) {
+  // Canonical evidence uses complete acquired DTOs; public runtime cards remain bounded.
+  const originalSources: unknown[] = [];
   const guards = [captureCatalogMethods(context, ['workspace', 'session', 'clients', 'extensions', 'platform', 'openProcessModal', 'openLiveTail']),
     captureCatalogMethods(toolRegistry, ['getToolDefinitions']), captureCatalogMethods(context.workspace, ['fileUndoManager', 'shellPaths']),
     captureCatalogMethods(context.session, ['runtime']), captureCatalogMethods(context.session.runtime, ['sessionId']),
     captureCatalogMethods(context.extensions, ['mcpRegistry', 'daemonRuntime']), captureCatalogMethods(context.platform, ['readModels'])];
   if (context.clients) guards.push(captureCatalogMethods(context.clients, ['operator', 'operatorSdk', 'mcpApi']));
   if (context.workspace.shellPaths) guards.push(captureCatalogMethods(context.workspace.shellPaths, ['workingDirectory', 'homeDirectory']));
-  const retainPublished = (subject: object, key: string) => {
+  const retainPublished = (subject: object, key: string, children?: readonly string[]) => {
     guards.push(captureCatalogMethods(subject, [key]));
-    const revision = JSON.stringify(captureCatalogData(Reflect.get(subject, key)));
-    guards.push(() => { if (JSON.stringify(captureCatalogData(Reflect.get(subject, key))) !== revision) throw new ToolInputProjectionError('stale'); });
+    const source = modelReadingServicePath(subject, [key]);
+    if (children) {
+      if (source !== undefined && source !== null) {
+        if (typeof source !== 'object') throw new ToolInputProjectionError('invalid');
+        for (const child of children) retainPublished(source, child);
+      }
+      return;
+    }
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      const names = ['getSnapshot', 'snapshot', 'list', 'records'];
+      const methods = captureCatalogMethods(source, [...names, 'subscribe']); guards.push(methods);
+      let materialized = false;
+      for (const name of names) {
+        const read = modelReadingServicePath(source, [name]);
+        if (typeof read !== 'function') continue;
+        materialized = true;
+        if (name === 'getSnapshot' && typeof modelReadingServicePath(source, ['subscribe']) === 'function') guards.push(captureNativeReadModelObservation(source));
+        const acquire = () => { methods(); let value: unknown;
+          try { value = read.call(source); } catch { throw new ToolInputProjectionError('unavailable'); }
+          methods(); return value;
+        };
+        const original = acquire(), complete = capturePersonalOpsData(original);
+        originalSources.push({ slot: key, method: name, original: complete });
+        guards.push(() => { assertPersonalOpsDataCurrent(original, complete); assertPersonalOpsDataCurrent(acquire(), complete); methods(); });
+      }
+      if (materialized) return;
+    }
+    if (typeof source === 'function') {
+      const acquire = () => { let value: unknown; try { value = source(); } catch { throw new ToolInputProjectionError('unavailable'); } return value; };
+      const original = acquire(), complete = capturePersonalOpsData(original);
+      originalSources.push({ slot: key, original: complete });
+      guards.push(() => { assertPersonalOpsDataCurrent(original, complete); assertPersonalOpsDataCurrent(acquire(), complete); });
+      return;
+    }
+    const complete = capturePersonalOpsData(source);
+    if (source !== undefined && source !== null) originalSources.push({ slot: key, original: complete });
+    guards.push(() => assertPersonalOpsDataCurrent(modelReadingServicePath(subject, [key]), complete));
   };
   const readModels: unknown = Reflect.get(context.platform, 'readModels');
-  if (readModels && typeof readModels === 'object') for (const key of ['execution', 'computer', 'browser']) retainPublished(readModels, key);
+  if (readModels && typeof readModels === 'object') {
+    retainPublished(readModels, 'execution', ['interactiveRuntime', 'processRuntime', 'ptySessions', 'sudoMediation']);
+    retainPublished(readModels, 'computer', ['browserDesktopReceipts']);
+    retainPublished(readModels, 'browser', ['controlReceipts']);
+  }
   const daemonRuntime: unknown = Reflect.get(context.extensions, 'daemonRuntime');
   if (daemonRuntime && typeof daemonRuntime === 'object') retainPublished(daemonRuntime, 'interactiveRuntime');
   const operatorSdk: unknown = context.clients ? Reflect.get(context.clients, 'operatorSdk') : undefined;
-  if (operatorSdk && typeof operatorSdk === 'object') retainPublished(operatorSdk, 'execution');
+  if (operatorSdk && typeof operatorSdk === 'object') retainPublished(operatorSdk, 'execution', ['interactiveRuntime']);
   if (context.workspace.fileUndoManager) guards.push(captureCatalogMethods(context.workspace.fileUndoManager, ['peekUndo', 'undoDepth', 'redoDepth']));
   const mcp = context.clients?.mcpApi ?? context.extensions.mcpRegistry;
   if (mcp) guards.push(captureCatalogMethods(mcp, ['listServerSecurity']));
-  return () => { for (const guard of guards) guard(); };
+  return { originalSources: captureCatalogData(originalSources), assertCurrent: () => { for (const guard of guards) guard(); } };
 }
 
 function retainExecutionSources(context: CommandContext, toolRegistry: ToolRegistry, sources: ReturnType<typeof executionSources>, options: CatalogRankingOptions, assertBackend: () => void) {
   const revision = JSON.stringify(sources);
-  const assertCurrent = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
     assertBackend();
-    if (JSON.stringify(executionSources(context, toolRegistry)) !== revision) throw new ToolInputProjectionError('stale');
+    if (JSON.stringify(executionSources(context, toolRegistry, sources.originalSources)) !== revision) throw new ToolInputProjectionError('stale');
     assertBackend();
   };
-  options.retainCurrent?.(assertCurrent, 'agent.harness.execution-posture.sources');
+  options.retainCurrent?.(assertSourceCurrent, 'agent.harness.execution-posture.sources');
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); assertSourceCurrent(); };
   assertCurrent();
   return assertCurrent;
 }
@@ -344,7 +390,7 @@ async function matchingRoutes(sources: ReturnType<typeof executionSources>, inpu
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   if (!input) return { matches: sources.routes.map(entry => ({ entry, judgment: undefined })), judgments: [] };
   return rankHarnessCatalog(sources.routes, input, entry => ({ id: entry.route.id,
-    description: routeSearchText(entry.route), evidence: entry }), 'agent.harness.execution-posture',
+    description: routeSearchText(entry.route), evidence: { ...entry, originalSources: sources.originalSources } }), 'agent.harness.execution-posture',
     { ...options, requirePreservedSource: true });
 }
 
@@ -364,9 +410,9 @@ export async function executionPostureSummary(context: CommandContext, toolRegis
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   const query = readString(args.query);
   const includeParameters = args.includeParameters === true;
-  const assertBackend = captureExecutionBackend(context, toolRegistry);
-  const sources = executionSources(context, toolRegistry);
-  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, assertBackend);
+  const backend = captureExecutionBackend(context, toolRegistry);
+  const sources = executionSources(context, toolRegistry, backend.originalSources);
+  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, backend.assertCurrent);
   const selected = await matchingRoutes(sources, query, { ...options, assertCurrent });
   assertCurrent();
   const routes = selected.matches.slice(0, readLimit(args.limit, 100));
@@ -405,7 +451,7 @@ export async function executionPostureSummary(context: CommandContext, toolRegis
 
 export async function describeHarnessExecutionRoute(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessExecutionArgs, options: CatalogRankingOptions = {}): Promise<ExecutionResolution> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const assertBackend = captureExecutionBackend(context, toolRegistry);
+  const backend = captureExecutionBackend(context, toolRegistry);
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -413,8 +459,8 @@ export async function describeHarnessExecutionRoute(context: CommandContext, too
       usage: 'execution action:"route" requires executionRouteId, target, or query. Use execution action:"status" to inspect execution route ids.',
     };
   }
-  const sources = executionSources(context, toolRegistry);
-  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, assertBackend);
+  const sources = executionSources(context, toolRegistry, backend.originalSources);
+  const assertCurrent = retainExecutionSources(context, toolRegistry, sources, options, backend.assertCurrent);
   const all = sources.routes;
   const normalized = lookup.input.toLowerCase();
   const exact = all.find(({ route }) => route.id === lookup.input);

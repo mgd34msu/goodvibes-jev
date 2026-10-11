@@ -15,7 +15,7 @@ import { createAgentModelsTool, registerAgentModelsTool, isModelsReadinessCall }
 import { createHarnessCatalogInputProjector } from '../../tools/agent-harness-catalog-ingress.ts';
 import { localModelCookbook, localModelRecipes } from '../../tools/agent-harness-local-model-cookbook.ts';
 import { localRecipeReadinessScore } from '../../tools/agent-harness-model-readiness.ts';
-import { modelReadingOptions, withModelReadingContext, withModelReadingSource } from '../../tools/agent-harness-model-reading-source.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingOptions, withModelReadingContext, withModelReadingSource } from '../../tools/agent-harness-model-reading-source.ts';
 import type { LocalModelBenchmarkEvidence } from '../../tools/agent-harness-model-routing-types.ts';
 import { cleanupResearchScreeningFixtures, ordinaryResearchOwner, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
 
@@ -1089,6 +1089,25 @@ test.each(['hidden-value', 'hidden-added', 'accessor', 'proxy', 'array-property'
   });
   await expect(pending).rejects.toThrow(ToolInputProjectionError);
   expect(touched).toBe(0);
+});
+
+test('frozen source matches are bound to their exact captured position', () => {
+  const source: { left: Readonly<{ complete: string }>; right: Readonly<{ complete: string }> } = {
+    left: Object.freeze({ complete: 'left' }), right: Object.freeze({ complete: 'right' }),
+  };
+  const current = captureModelReadingSnapshotGuard(captureModelReadingInput(source));
+  current(source); current(source);
+  source.right = source.left;
+  expect(() => current(source)).toThrow(ToolInputProjectionError);
+});
+
+test('a frozen source parent cannot cache a mutable descendant', () => {
+  const child = { complete: 'original' };
+  const source = Object.freeze({ child });
+  const current = captureModelReadingSnapshotGuard(captureModelReadingInput(source));
+  current(source); current(source);
+  child.complete = 'changed';
+  expect(() => current(source)).toThrow(ToolInputProjectionError);
 });
 
 test.each(['unchanged', 'incarnation', 'method', 'accessor'] as const)('raw readiness guards supported config incarnation against %s without reading config secrets', async kind => {

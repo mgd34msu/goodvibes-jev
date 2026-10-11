@@ -118,28 +118,49 @@ export class FavoritesStore {
     return join(this.dir, 'favorites.json');
   }
 
-  async load(): Promise<FavoritesData> {
-    const file = Bun.file(this.getPath());
-    if (!await file.exists()) {
+  async load(ownership?: FavoritesUsageRestriction): Promise<FavoritesData> {
+    const assertOptions = ownership && captureMutationDescriptors(ownership, ['signal', 'assertCurrent']);
+    const signal = ownership?.signal, suppliedCurrent = ownership?.assertCurrent;
+    const assertOwner = ownership && captureMutationDescriptors(this, ['dir', 'getPath', 'load']);
+    const ownedPath = this.getPath(), path = ownership ? resolve(ownedPath) : ownedPath;
+    const physical = ownership && captureFileMutation(path);
+    const current = () => {
+      if (!ownership) return;
+      assertOptions?.(); signal?.throwIfAborted();
+      const result: unknown = suppliedCurrent ? Reflect.apply(suppliedCurrent, ownership, []) : undefined;
+      if (result !== undefined) {
+        if (nodeTypes.isPromise(result)) Reflect.apply(Promise.prototype.then, result, [undefined, () => {}]);
+        throw new Error('Favorites read lifetime check is unavailable.');
+      }
+      assertOptions?.(); assertOwner?.();
+      if (this.getPath() !== ownedPath || resolve(this.getPath()) !== path) throw new Error('Favorites read owner changed.');
+      physical?.assertCurrent(); signal?.throwIfAborted();
+    };
+    current();
+    const file = Bun.file(path);
+    const exists = await file.exists();
+    current();
+    if (!exists) {
       const empty = emptyData();
       this.cache = empty;
       return empty;
     }
     try {
       const text = await file.text();
+      current();
       const parsed = JSON.parse(text) as unknown;
       const { data: loaded, warnings } = parseFavoritesData(parsed);
       if (warnings.length > 0) {
         logger.warn('[favorites] Ignoring malformed favorites data', {
-          path: this.getPath(),
+          path: ownership ? path : this.getPath(),
           warnings,
         });
       }
-      this.cache = loaded;
+      current(); this.cache = loaded;
       return loaded;
     } catch (error) {
       logger.warn('[favorites] Favorites load failed; preserving existing file', {
-        path: this.getPath(),
+        path: ownership ? path : this.getPath(),
         error: summarizeError(error),
       });
       throw error;
@@ -187,7 +208,7 @@ export class FavoritesStore {
     const physical = ownership && captureFileMutation(path);
     const current = () => {
       assertOptions?.(); signal?.throwIfAborted();
-      const result: unknown = suppliedCurrent?.();
+      const result: unknown = suppliedCurrent ? Reflect.apply(suppliedCurrent, ownership, []) : undefined;
       if (result !== undefined) {
         if (nodeTypes.isPromise(result)) Reflect.apply(Promise.prototype.then, result, [undefined, () => {}]);
         throw new Error('Favorites usage lifetime check is unavailable.');

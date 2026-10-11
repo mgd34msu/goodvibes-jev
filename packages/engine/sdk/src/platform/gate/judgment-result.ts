@@ -1,6 +1,6 @@
 import { types as nodeTypes } from 'node:util';
 import { checkAnswers, type JudgmentResult, type Questions } from '@goodvibes-jev/judgment';
-import { assertJudgmentInput, captureOwnedJson } from './judgment-input.js';
+import { assertJudgmentInput, captureOwnedJson, retainOwnedJson } from './judgment-input.js';
 
 export type JudgmentResultAdmissionProblem = 'malformed' | 'stale';
 export class JudgmentResultAdmissionError extends Error {
@@ -15,6 +15,12 @@ const admissionError: JudgmentResultAdmissionFailure = problem => new JudgmentRe
 export function captureStrictJudgmentJson<T>(value: T, failure: JudgmentResultAdmissionFailure = admissionError): T {
   let snapshot: unknown;
   try { snapshot = captureOwnedJson(value, nodeTypes.isProxy); } catch { throw failure('malformed'); }
+  assertStrictJsonShape(value, failure);
+  // captureOwnedJson checked and detached every node while preserving its type.
+  return snapshot as T;
+}
+
+function assertStrictJsonShape(value: unknown, failure: JudgmentResultAdmissionFailure): void {
   const visit = (entry: unknown): void => {
     if (entry === undefined || entry === null || typeof entry !== 'object') return;
     const descriptors = Object.getOwnPropertyDescriptors(entry);
@@ -34,8 +40,22 @@ export function captureStrictJudgmentJson<T>(value: T, failure: JudgmentResultAd
     if (error instanceof JudgmentResultAdmissionError) throw error;
     throw failure('malformed');
   }
-  // captureOwnedJson checked and detached every node while preserving its type.
-  return snapshot as T;
+}
+
+export interface RetainedStrictJudgmentJson<T> {
+  readonly snapshot: T;
+  readonly assertCurrent: () => void;
+}
+
+/** Complete strict admission once, followed by exact original-slot currentness. */
+export function retainStrictJudgmentJson<T>(value: T, failure: JudgmentResultAdmissionFailure = admissionError): RetainedStrictJudgmentJson<T> {
+  let source: ReturnType<typeof retainOwnedJson>;
+  try { source = retainOwnedJson(value, nodeTypes.isProxy); }
+  catch { throw failure('malformed'); }
+  assertStrictJsonShape(value, failure);
+  const assertCurrent = () => { try { source.assertCurrent(); } catch { throw failure('stale'); } };
+  assertCurrent();
+  return Object.freeze({ snapshot: source.snapshot as T, assertCurrent });
 }
 export function admitJudgmentJson<T>(value: T, failure: JudgmentResultAdmissionFailure = admissionError): T {
   const snapshot = captureStrictJudgmentJson(value, failure);

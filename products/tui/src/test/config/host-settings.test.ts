@@ -14,6 +14,7 @@ import { refreshEntryValues, updateEntryForKey } from '../../input/settings-moda
 import { settingContextLines } from '../../renderer/settings-modal-context.ts';
 import { renderSettingsModal } from '../../renderer/settings-modal.ts';
 import { frameFromLayer, frameText } from '../helpers/surface-frame.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -225,7 +226,8 @@ for (const mode of ['malformed', 'unreadable'] as const) test(`host metadata sta
   modal.close();
 });
 
-test('metadata failure while open clears stale unlocked provenance without writing', () => {
+test('metadata failure while open clears stale unlocked provenance without writing', async () => {
+  await withPublicErrorText(['Host setting metadata is unavailable because managed policy could not be read.'], () => {
   const { config, handle, modal, options } = fixture();
   handle.set(false);
   expect(modal.getSelected()?.locked).toBe(false);
@@ -238,6 +240,11 @@ test('metadata failure while open clears stale unlocked provenance without writi
   expect(modal.lastSettingEffectMessage).toContain('metadata is unavailable');
   expect(JSON.parse(readFileSync(config.getConfigPath(), 'utf8')).behavior.notificationsMetadataOnly).toBe(false);
   modal.close();
+  }, {
+    ordinaryFields: ['metadata'],
+    credentialProjections: [{ phase: 'source', target: 'span-1', parts: [{ kind: 'text', text: 'Host setting metadata is ' }, { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'metadata' }, { kind: 'text', text: '' }] }],
+    residualProjections: [{ parts: [{ kind: 'text', text: 'Host setting metadata is ' }, { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] }],
+  });
 });
 
 for (const action of ['selected', 'category', 'all'] as const) test(`${action} reset uses scoped host set(default) and retains global opt-in`, () => {
@@ -297,7 +304,8 @@ test('host row refresh, search and directional controls use the validated public
   } finally { handleSpy.mockRestore(); modal.close(); }
 });
 
-test('host mutation refuses non-booleans without coercion or persistence', () => {
+test('host mutation refuses non-booleans without coercion or persistence', async () => {
+  await withPublicErrorText(['Host settings require a literal boolean.'], () => {
   const { config, handle, modal } = fixture();
   for (const value of ['false', 'true', 0, 1, null, undefined, {}]) {
     const result = applyHostSettingValue({ key: KEY, value, configManager: config, groups: modal.groups, onSettingApplied: null });
@@ -307,6 +315,7 @@ test('host mutation refuses non-booleans without coercion or persistence', () =>
     expect(existsSync(config.getConfigPath())).toBe(false);
   }
   modal.close();
+  });
 });
 
 test('open, reopen, close and manager replacement each own exactly their host subscription', () => {

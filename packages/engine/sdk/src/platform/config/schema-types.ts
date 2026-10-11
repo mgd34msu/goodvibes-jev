@@ -381,6 +381,8 @@ export type ConfigKey =
   | 'surfaces.discord.publicKey'
   | 'surfaces.discord.botToken'
   | 'surfaces.discord.applicationId'
+  | 'surfaces.discord.inboxBotUserId'
+  | 'surfaces.discord.inboxChannelIds'
   | 'surfaces.discord.defaultChannelId'
   | 'surfaces.discord.guildId'
   | 'surfaces.ntfy.enabled'

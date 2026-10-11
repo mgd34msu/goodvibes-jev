@@ -1,5 +1,5 @@
 import { sameKnowledgeRecord } from '../store-record-representation.js';
-import { assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
+import { assertKnowledgeRecordAdmissions, assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
 import { captureOwnedJson } from '../../gate/judgment-input.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import { captureKnowledgeSourceReferences, projectKnowledgeSourceReferences } from '../source-structural-references.js';
@@ -63,21 +63,22 @@ export async function prepareRepairSourceAuthorities(input: {
   };
   sameSpace(snapshot.gap);
   for (const subject of snapshot.subjects) sameSpace(subject);
+  const assertOriginalIdentity = () => {
+    if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
+    if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
+      || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord({ gap: input.gap, subjects: input.subjects, sources: input.sources }, snapshot)
+      || store.getNode(input.gap.id) !== gapRecord) throw new Held('stale');
+  };
   const assertOriginalCurrent = () => {
     try { store.assertRecordSnapshotFrame(() => {
-      if (signal?.aborted || shouldStop?.()) throw new Held('aborted');
-      if (input.store !== store || input.spaceId !== spaceId || input.signal !== signal || input.shouldStop !== shouldStop
-        || input.assertCurrent !== ownerCurrent || !sameKnowledgeRecord({ gap: input.gap, subjects: input.subjects, sources: input.sources }, snapshot)
-        || store.getNode(input.gap.id) !== gapRecord) throw new Held('stale');
-      ownerCurrent?.();
-      for (const admission of admissions) {
-        try { admission.assertCurrent(); } catch (error) {
-          // Preserve the declared reader failure vocabulary without treating a
-          // retired raw-record generation as an operational/model outage.
-          if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
-          throw error;
-        }
+      assertOriginalIdentity();
+      const result: unknown = ownerCurrent?.();
+      if (result !== undefined) {
+        try { void Promise.resolve(result).catch(() => {}); } catch { /* A callback result cannot authorize a reading. */ }
+        throw new Held('stale');
       }
+      assertOriginalIdentity();
+      assertKnowledgeRecordAdmissions(store, admissions);
       for (const subject of originals.subjects) if (store.getNode(subject.id) !== subject) throw new Held('stale');
       for (const { source, extraction } of originals.sources) {
         // Object identity detects delete/reinsert and ABA replacements even when
@@ -102,7 +103,7 @@ export async function prepareRepairSourceAuthorities(input: {
   });
   const reader = createRepairSourceAuthorityReader({ signal, assertCurrent: assertOriginalCurrent });
   const readings = await reader.read(selected);
-  assertOriginalCurrent(); reader.assertCurrent();
+  reader.assertCurrent();
   return Object.freeze({
     sources: Object.freeze(readings.map((reading) => Object.freeze({ authority: reading.authority }))),
     assertCurrent: reader.assertCurrent,

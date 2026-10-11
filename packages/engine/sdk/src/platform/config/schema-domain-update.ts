@@ -7,15 +7,9 @@
  * rollback, and restarts via the service manager. Default-on per the owner
  * directive; `update.auto` turns it off.
  *
- * WHICH REPOSITORY. `releasesUrl` names the daemon's own repository,
- * `mgd34msu/goodvibes-daemon`. The daemon used to be built and released inside
- * the terminal app's repository and rode its tags; it is now a separate product
- * with its own release line, so its update source moved with it. The asset
- * names did not change (`goodvibes-daemon-<os>-<arch>`, `sqlite-vec-<os>-<arch>`),
- * so a daemon already installed on a machine hands itself over on its next
- * hourly check: it resolves the next tag from the new repository, downloads the
- * same-named asset, and swaps itself in place. The service unit's ExecStart is
- * path-stable, so nothing else has to change for the handover to complete.
+ * `releasesUrl` names the authorized goodvibes-jev monorepo release line.
+ * Only exact historical default feeds migrate. Explicit custom feeds remain
+ * unchanged. Release availability is independent of source readiness.
  *
  * Like the worktree domain in schema-domain-runtime.ts, `update` is a
  * top-level config section registered via `declare module` here (co-located
@@ -23,6 +17,15 @@
  * union / ConfigValue map in schema-types.ts so config.get is typed.
  */
 import { type ConfigSettingDefinition, intRange } from './schema-shared.js';
+export const DAEMON_RELEASES_LATEST_URL = 'https://github.com/mgd34msu/goodvibes-jev/releases/latest';
+const LEGACY_DAEMON_RELEASE_FEEDS = ['https://github.com/mgd34msu/goodvibes-daemon/releases/latest', 'https://github.com/mgd34msu/goodvibes-tui/releases/latest'];
+/** Exact historical defaults only; near matches and custom channels retain their owner intent. */
+export function migrateLegacyDaemonReleaseFeed(parsed: Record<string, unknown>): Record<string, unknown> {
+  const update = parsed.update;
+  if (!update || typeof update !== 'object' || Array.isArray(update) || !('releasesUrl' in update)
+    || typeof update.releasesUrl !== 'string' || !LEGACY_DAEMON_RELEASE_FEEDS.includes(update.releasesUrl)) return parsed;
+  return { ...parsed, update: { ...update, releasesUrl: DAEMON_RELEASES_LATEST_URL } };
+}
 
 /** Daemon self-update: hourly check, verify, idle-moment swap, auto-restart. */
 export interface UpdateConfig {
@@ -45,7 +48,7 @@ export const updateConfigDefaults = {
     auto: true,
     intervalMinutes: 60,
     firstCheckSeconds: 30,
-    releasesUrl: 'https://github.com/mgd34msu/goodvibes-daemon/releases/latest',
+    releasesUrl: DAEMON_RELEASES_LATEST_URL,
     rollbackAfterFailedStarts: 3,
     alertAfterFailedChecks: 3,
   },
@@ -75,8 +78,8 @@ export const updateConfigSettings: ConfigSettingDefinition[] = [
   {
     key: 'update.releasesUrl',
     type: 'string',
-    default: 'https://github.com/mgd34msu/goodvibes-daemon/releases/latest',
-    description: 'GitHub releases/latest URL the daemon resolves its own update tags and artifacts from. The daemon is its own product with its own repository and its own release line; the terminal app updates itself from the goodvibes-tui repository and is never touched by a daemon update. A value written into settings.json overrides this default and is never re-derived',
+    default: DAEMON_RELEASES_LATEST_URL,
+    description: 'GitHub releases/latest URL for the daemon complete native cohort and source manifest. Exact historical default feeds migrate to goodvibes-jev; explicit custom feeds remain unchanged. A daemon update does not replace sibling product executables',
   },
   {
     key: 'update.rollbackAfterFailedStarts',

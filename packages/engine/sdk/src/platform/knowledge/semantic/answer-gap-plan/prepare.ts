@@ -5,6 +5,7 @@ import { gapRecordField as field, snapshotGapRecord as snapshotNodeInput } from 
 import { isActiveKnowledgeEdge } from '../../projection-utils.js';
 import { DEFAULT_KNOWLEDGE_SPACE_ID, getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace, normalizeKnowledgeSpaceId } from '../../spaces.js';
 import type { KnowledgeStore } from '../../store.js';
+import { KnowledgeRecordAdmissionHeldError } from '../../store-record-snapshot.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../../types.js';
 import { captureKnowledgeSourceReferences, projectKnowledgeSourceReferences } from '../../source-structural-references.js';
 import { sourceRankingContent } from '../answer-source-ranking.js';
@@ -143,7 +144,19 @@ export function prepareAnswerGapUniverse(store: KnowledgeStore, requestedSpace: 
       }
       const noAdmission = noMatch && !linkedObjects.length && exactSpace === DEFAULT_KNOWLEDGE_SPACE_ID;
       let reader: ReturnType<typeof prepareAnswerGapReadings> | undefined;
-      const check = () => { assertCurrent(); callerCurrent?.(); reader?.assertCurrent(); };
+      const assertContextCurrent = () => {
+        try {
+          store.assertRecordSnapshotFrame(() => {
+            assertCurrent();
+            callerCurrent?.();
+            assertCurrent();
+          });
+        } catch (error) {
+          if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
+          throw error;
+        }
+      };
+      const check = () => { if (reader) reader.assertCurrent(); else assertContextCurrent(); };
       let resultPromise: ReturnType<typeof resolve> | undefined;
       async function resolve() {
         check();
@@ -173,7 +186,7 @@ export function prepareAnswerGapUniverse(store: KnowledgeStore, requestedSpace: 
         });
         reader = prepareAnswerGapReadings({ question, candidates: eligible,
           needsSubject: noMatch && !linkedObjects.length && exactSpace === 'homeassistant' },
-        { signal, deadlineAt, assertCurrent: () => { assertCurrent(); callerCurrent?.(); } });
+        { signal, deadlineAt, assertCurrent: assertContextCurrent });
         const result = await reader.read();
         check();
         const selected = result?.reference ? localGaps[candidates.findIndex((candidate) => candidate.reference === result.reference)] : undefined;

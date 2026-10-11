@@ -1,9 +1,10 @@
 import { types as nodeTypes } from 'node:util';
 import { judgmentPort, captureJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { gateJudgmentRegistry, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { gateJudgmentRegistry, prepareJudgmentResult, snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { SOURCE_SCREENING_LIMITS, type ProtectedSourceOwner, type ProtectedSource, type SourceScreeningReceipt } from '@goodvibes-jev/engine/sdk/platform/security';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Ranked, Rerank } from '@goodvibes-jev/judgment';
+import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
 
 export interface CatalogRankingOptions {
   readonly signal?: AbortSignal | undefined;
@@ -148,6 +149,24 @@ export async function rankHarnessCatalog<T>(
   const parts = [source.query, ...source.catalog.map(({ id, description, evidence }) => JSON.stringify([id, description, evidence ?? null]))];
   // Retain the original canonical whole-reading text budget across batches.
   if (parts.reduce((total, part) => total + part.length, 0) > 1_000_000) throw new ToolInputProjectionError('held');
+  if (parts.some(part => part.length > SOURCE_SCREENING_LIMITS.characters)) {
+    // Large schemas are complete structured values. Preserve every key/value
+    // through the existing source framing instead of clipping a candidate or
+    // splitting a semantic string. Original-returning readers require exact
+    // preservation; uncertain or redacted source remains held.
+    if (options.requirePreservedSource !== true) throw new ToolInputProjectionError('held');
+    const assertOptions = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent', 'requirePreservedSource']);
+    const originalAssert = options.assertCurrent;
+    return withModelReadingSource(source, { ...options, assertCurrent() { assertOptions(); originalAssert?.(); } }, async (captured, reading) => {
+      let assertBackend: (() => void) | undefined;
+      const assertCurrent = () => { reading.assertCurrent?.(); assertBackend?.(); };
+      return consumeProtectedCatalog(capturedEntries, captured.catalog.map(({ id }) => id), captured.query,
+        captured.catalog.map(({ id, description, evidence }) => ({ name: id, description, evidenceJson: JSON.stringify(evidence ?? null) })),
+        site, decisionName, { signal: reading.signal, assertCurrent, retainCurrent: reading.retainCurrent,
+          retainBackend(guard) { assertBackend = guard; },
+        });
+    });
+  }
   const batches: string[][] = [];
   for (const part of parts) {
     if (part.length > SOURCE_SCREENING_LIMITS.characters) throw new ToolInputProjectionError('held');
@@ -216,49 +235,73 @@ export async function rankHarnessCatalog<T>(
       if (typeof evidenceJson !== 'string') throw new ToolInputProjectionError('held');
       return { name: value[0], description: value[1], evidenceJson };
     });
-    // No hosted port lookup, log, cache, or request precedes full screening.
-    const port = judgmentPort(site);
-    const decision = gateJudgmentRegistry.get(decisionName);
-    if (!decision) throw new ToolInputProjectionError('unavailable');
-    const backend = captureCatalogBackend(port, decision as Rerank);
-    const { model, recorder, rerank } = backend;
-    const installation = captureJudgmentPort(site);
-    assertBackend = () => {
-      backend.assertCurrent();
-      installation.assertCurrent();
-      if (judgmentPort(site) !== port || gateJudgmentRegistry.get(decisionName) !== decision) throw new ToolInputProjectionError('held');
-    };
-    retainCurrent?.(assertBackend, `${decisionName}:${site}`);
-    assertCurrent();
-    const guardedPort: typeof port = { model, ...(recorder ? { recorder: {
-      recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { assertCurrent(); recorder.recordReadings(...args); assertCurrent(); },
-      recordAction: (...args: Parameters<typeof recorder.recordAction>) => { assertCurrent(); recorder.recordAction(...args); assertCurrent(); },
-    } } : {}), ask: async (request) => {
-      assertCurrent();
-      const result = await port.ask({ ...request,
-        beforeAttempt: () => { request.beforeAttempt?.(); assertCurrent(); },
-        assertLogCurrent: () => { request.assertLogCurrent?.(); assertCurrent(); },
-      });
-      assertCurrent(); return result;
-    } };
+    return await consumeProtectedCatalog(capturedEntries, source.catalog.map(({ id }) => id), projected[0]!, projectedCatalog, site, decisionName, {
+      signal, assertCurrent, retainCurrent,
+      retainBackend(guard) { assertBackend = guard; },
+    });
+  } finally { await release(); assertPublicationCurrent(); }
+}
+
+/** The canonical reader consumes only a completely protected catalog. */
+async function consumeProtectedCatalog<T>(entries: readonly T[], ids: readonly string[], query: string,
+  projectedCatalog: readonly { readonly name: string; readonly description: string; readonly evidenceJson: string }[],
+  site: string, decisionName: string, options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly assertCurrent: () => void;
+    readonly retainCurrent?: CatalogRankingOptions['retainCurrent'];
+    readonly retainBackend: (guard: () => void) => void;
+  }): Promise<{ readonly matches: readonly { readonly entry: T; readonly judgment: Ranked }[]; readonly judgments: readonly Ranked[] }> {
+  // No hosted port lookup, log, cache, or request precedes full screening.
+  const port = judgmentPort(site);
+  const decision = gateJudgmentRegistry.get(decisionName);
+  if (!decision) throw new ToolInputProjectionError('unavailable');
+  const backend = captureCatalogBackend(port, decision as Rerank);
+  const { model, rerank } = backend;
+  const installation = captureJudgmentPort(site, { signal: options.signal, prepareResultCapture: prepareJudgmentResult });
+  const readingPort = installation.port, recorder = readingPort.recorder;
+  let assertInstallation = installation.assertCurrent;
+  const assertBackend = () => {
+    backend.assertCurrent();
+    assertInstallation();
+    if (judgmentPort(site) !== port || gateJudgmentRegistry.get(decisionName) !== decision) throw new ToolInputProjectionError('held');
+  };
+  options.retainBackend(assertBackend);
+  options.retainCurrent?.(assertBackend, `${decisionName}:${site}`);
+  options.assertCurrent();
+  const guardedPort: typeof port = { model, ...(recorder ? { recorder: {
+    recordReadings: (...args: Parameters<typeof recorder.recordReadings>) => { options.assertCurrent(); recorder.recordReadings(...args); options.assertCurrent(); },
+    recordAction: (...args: Parameters<typeof recorder.recordAction>) => { options.assertCurrent(); recorder.recordAction(...args); options.assertCurrent(); },
+  } } : {}), ask: async (request) => {
+    options.assertCurrent();
+    const result = await readingPort.ask({ ...request,
+      beforeAttempt: () => { request.beforeAttempt?.(); options.assertCurrent(); },
+      assertLogCurrent: () => { request.assertLogCurrent?.(); options.assertCurrent(); },
+    });
+    options.assertCurrent(); return result;
+  } };
+  try {
     // Opaque request ids prevent catalog identity from bypassing source screening in logs.
-    const { ranked } = await rerank.call(decision, guardedPort, projected[0]!, source.catalog.map((_entry, index) => ({
+    const { ranked } = await rerank.call(decision, guardedPort, query, ids.map((_entry, index) => ({
       id: String(index), content: { type: 'tool', ...projectedCatalog[index]! },
-    })), { site, ...(signal ? { signal } : {}) });
-    assertCurrent();
-    if (ranked.length !== catalog.length || new Set(ranked.map(({ id }) => id)).size !== ranked.length
-      || ranked.some(({ id }) => !/^(0|[1-9][0-9]*)$/.test(id) || Number(id) >= catalog.length)) throw new ToolInputProjectionError('held');
+    })), { site, ...(options.signal ? { signal: options.signal } : {}) });
+    options.assertCurrent();
+    if (ranked.length !== entries.length || new Set(ranked.map(({ id }) => id)).size !== ranked.length
+      || ranked.some(({ id }) => !/^(0|[1-9][0-9]*)$/.test(id) || Number(id) >= entries.length)) throw new ToolInputProjectionError('held');
     for (const judgment of ranked) {
-      assertCurrent();
+      options.assertCurrent();
       if (judgment.decisionId) guardedPort.recorder?.recordAction(judgment.decisionId,
         judgment.reading.outcome !== 'act' ? 'catalog candidate held: unresolved reading'
           : judgment.reading.verdict === 'yes' ? 'catalog candidate matched'
           : judgment.reading.verdict === 'no' ? 'catalog candidate rejected' : 'catalog candidate held: uncertain');
     }
-    const judgments = ranked.map((judgment) => ({ ...judgment, id: source.catalog[Number(judgment.id)]!.id }));
+    const judgments = ranked.map((judgment) => ({ ...judgment, id: ids[Number(judgment.id)]! }));
     return {
-      matches: ranked.flatMap((judgment, index) => judgment.reading.verdict === 'no' && judgment.reading.outcome === 'act' ? [] : [{ entry: catalog[Number(judgment.id)]!.entry, judgment: judgments[index]! }]),
+      matches: ranked.flatMap((judgment, index) => judgment.reading.verdict === 'no' && judgment.reading.outcome === 'act' ? [] : [{ entry: entries[Number(judgment.id)]!, judgment: judgments[index]! }]),
       judgments,
     };
-  } finally { await release(); assertPublicationCurrent(); }
+  } finally {
+    const observation = installation.consumeObservation();
+    assertInstallation = observation.assertCurrent;
+    assertBackend();
+  }
 }

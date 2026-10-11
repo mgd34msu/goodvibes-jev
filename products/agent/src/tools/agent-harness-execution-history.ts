@@ -459,13 +459,14 @@ function captureHistoryBackend(context: CommandContext) {
 
 function retainHistorySources(context: CommandContext, sources: ReturnType<typeof historySources>, options: CatalogRankingOptions, assertBackend: () => void) {
   const revision = JSON.stringify(sources);
-  const assertCurrent = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
     assertBackend();
     if (JSON.stringify(historySources(context)) !== revision) throw new ToolInputProjectionError('stale');
     assertBackend();
   };
-  options.retainCurrent?.(assertCurrent, 'agent.harness.execution-history.sources');
+  options.retainCurrent?.(assertSourceCurrent, 'agent.harness.execution-history.sources');
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); assertSourceCurrent(); };
   assertCurrent(); return assertCurrent;
 }
 
@@ -553,7 +554,7 @@ async function readVerificationObservations(all: readonly AgentExecutionRecord[]
     };
     let capture: ReturnType<typeof captureJudgmentPort>;
     try { capture = captureJudgmentPort('agent.harness.execution-verification', { ...(signal ? { signal } : {}), assertCurrent: () => {
-      signal?.throwIfAborted(); callerCurrent?.(); assertDefinitionCurrent();
+      signal?.throwIfAborted(); assertDefinitionCurrent();
     }, prepareResultCapture: prepareJudgmentResult }); }
     catch (error) { if (error instanceof JudgmentPortMissingError) return observations; throw error; }
     assertBackend = capture.assertCurrent;

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { judgmentPort, installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { DEFAULT_CONFIG, type GoodVibesConfig } from '@goodvibes-jev/engine/sdk/platform/config';
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
@@ -45,9 +46,10 @@ function fixture(owner = ordinaryResearchOwner(), registry = new ToolRegistry())
 }
 function admittedFixture() {
   const directory = '/synthetic/admitted-catalog';
+  const permissions = { ...DEFAULT_CONFIG.permissions, mode: 'prompt', tools: {} } satisfies GoodVibesConfig['permissions'];
   const reader: PermissionConfigReader = {
-    getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: false, directory }),
-    getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), isAutoApproveEnabled: () => false, getWorkingDirectory: () => directory,
+    getAutonomousSnapshot: () => ({ permissions, autoApprove: false, directory }),
+    getSnapshot: () => ({ permissions }), isAutoApproveEnabled: () => false, getWorkingDirectory: () => directory,
   };
   const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState());
   const f = fixture(ordinaryResearchOwner(), new ToolRegistry(manager));
@@ -76,6 +78,23 @@ function suspended() {
   const gate = new Promise<void>(resolve => { release = resolve; });
   return { start, release, started, gate };
 }
+
+test.each(['private-extra', 'accessor-extra', 'hidden-extra'] as const)('canonical catalog response admission refuses %s before publishing a match', async kind => {
+  let touched = 0, published = 0;
+  const fake = readings({ 'ordinary-entry': 0.99 });
+  installJudgmentPort({ ...fake.port, ask: async request => {
+    const result = await fake.port.ask(request);
+    if (kind === 'private-extra') return { ...result, unused: { paymentCard: '4111111111111111' } };
+    const borrowed = { ...result };
+    Object.defineProperty(borrowed, 'unused', kind === 'accessor-extra'
+      ? { enumerable: true, get() { touched++; return 'unused'; } }
+      : { enumerable: false, value: 'hidden' });
+    return borrowed;
+  } });
+  await expect(rankHarnessCatalog([{ id: 'ordinary-entry' }], 'ordinary', entry => ({ id: entry.id, description: 'Ordinary read-only entry' }),
+    'agent.test.complete-response', { sourceOwner: ordinaryResearchOwner() }).then(result => { published++; return result; })).rejects.toThrow();
+  expect(touched).toBe(0); expect(published).toBe(0); expect(fake.requests).toHaveLength(1);
+});
 
 describe('P11 actual catalog consumers', () => {
   test('tool and slash catalogs preserve counter-lexical ranking and explicit bounds', async () => {
@@ -195,17 +214,29 @@ describe('P11 actual catalog consumers', () => {
 
   test.each(['cancel', 'session', 'owner', 'tool-registration', 'command-registration'] as const)('awaited catalog reading rejects %s loss before result/effect', async change => {
     const f = fixture(); const wait = suspended(); const controller = new AbortController();
-    const fake = readings({ opaque_operation: 0.99 }); const signals: unknown[] = [];
-    installJudgmentPort({ ...fake.port, ask: async request => { signals.push(request.signal); wait.start(); await wait.gate; return fake.port.ask(request); } });
+    const fake = readings({ opaque_operation: 0.99 }); const signals: AbortSignal[] = [];
+    installJudgmentPort({ ...fake.port, ask: async request => {
+      if (request.context?.battery === 'engine.tools.registry-rank') {
+        if (!(request.signal instanceof AbortSignal)) throw new Error('The canonical catalog request needs a live native signal');
+        expect(request.signal.aborted).toBe(false);
+        signals.push(request.signal); wait.start(); await wait.gate;
+      }
+      return fake.port.ask(request);
+    } });
     const pending = f.workspace.execute({ action: 'run_command', query: 'search inbox', confirm: true, explicitUserRequest: 'Run it' }, { signal: controller.signal });
     await wait.started;
-    if (change === 'cancel') controller.abort(new Error('catalog cancelled'));
+    expect(signals.length).toBeGreaterThan(0);
+    if (change === 'cancel') {
+      const reason = new Error('catalog cancelled'); controller.abort(reason);
+      expect(signals.every(signal => signal.aborted && signal.reason === reason)).toBe(true);
+    }
     if (change === 'session') f.context.session!.runtime.sessionId = 'different';
     if (change === 'owner') bindAgentResearchSourceOwner(f.registry, researchScreeningFixture().owner);
     if (change === 'tool-registration') f.registry.register({ definition: { name: 'workspace', description: 'replacement', parameters: { type: 'object' } }, execute: async () => ({ success: true }) });
     if (change === 'command-registration') f.commands.unregister('opaque_operation');
     wait.release(); await expect(pending).rejects.toThrow();
-    expect(signals.every(signal => signal === controller.signal)).toBe(true); expect(f.executed).toEqual([]);
+    expect(fake.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank').length).toBeGreaterThan(0);
+    expect(f.executed).toEqual([]);
   });
 
   test.each(['agent_harness', 'host', 'workspace'] as const)('%s registered ingress preserves registration guards across the real rewritten caller', async name => {
@@ -378,5 +409,83 @@ test('aggregate sparse-array allocation is bounded before private DTO copies', a
   const screening = researchScreeningFixture(); const fake = readings({}); installJudgmentPort(fake.port);
   const entries = Array.from({ length: 6 }, (_, index) => ({ id: `entry-${index}`, description: 'ordinary', metadata: new Array(20_000) }));
   await expect(rankHarnessCatalog(entries, 'query', ({ id, description }) => ({ id, description }), 'agent.harness.tools', { sourceOwner: screening.owner })).rejects.toThrow();
+  expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+});
+
+function structuralCatalog() {
+  return [{ id: 'complete-schema', description: 'Complete native method contract', evidence: {
+    properties: Object.fromEntries(Array.from({ length: 240 }, (_, index) => [`field-${index}`, {
+      type: 'string', description: `${'Complete ordinary schema context. '.repeat(10)} Last property marker ${index}`,
+    }])),
+  } }];
+}
+
+test('oversized structural catalog reaches the canonical reader with every complete native key and value', async () => {
+  const entries = structuralCatalog(), screening = researchScreeningFixture(), fake = readings({ 'complete-schema': 0.99 });
+  expect(JSON.stringify(entries).length).toBeGreaterThan(40_000);
+  installJudgmentPort(fake.port);
+  const retained: (() => void)[] = [];
+  const ranked = await rankHarnessCatalog(entries, 'Select the complete schema', entry => entry, 'agent.test.structural-catalog', {
+    sourceOwner: screening.owner, requirePreservedSource: true, retainCurrent(guard) { retained.push(guard); },
+  });
+  expect(ranked.matches).toHaveLength(1);
+  expect(ranked.matches[0]?.entry).toEqual(entries[0]);
+  expect(fake.requests).toHaveLength(1);
+  expect(JSON.stringify(fake.requests)).toContain('Last property marker 239');
+  const state = fake.requests[0]!.state;
+  if (!state || typeof state !== 'object' || Array.isArray(state) || !state.candidate || typeof state.candidate !== 'object'
+    || Array.isArray(state.candidate) || typeof state.candidate.evidenceJson !== 'string') throw new Error('Expected complete structural catalog state');
+  expect(JSON.parse(state.candidate.evidenceJson)).toEqual(entries[0]!.evidence);
+  expect(screening.calls.filter(call => call.path === '/v1/chat/completions').length).toBeGreaterThan(1);
+  for (const guard of retained) guard();
+  installJudgmentPort(readings({}).port);
+  expect(() => { for (const guard of retained) guard(); }).toThrow();
+});
+
+test('oversized structural private source stays held before the canonical reader', async () => {
+  const sensitive = 'Private complete schema tail', entries = structuralCatalog();
+  entries[0]!.evidence.properties['field-239']!.description = sensitive;
+  const screening = researchScreeningFixture({ spans: exactSensitiveSpans([sensitive]) }), fake = readings({ 'complete-schema': 0.99 });
+  installJudgmentPort(fake.port);
+  await expect(rankHarnessCatalog(entries, 'Select the complete schema', entry => entry, 'agent.test.structural-catalog', {
+    sourceOwner: screening.owner, requirePreservedSource: true,
+  })).rejects.toThrow();
+  expect(JSON.stringify(screening.calls)).toContain(sensitive);
+  expect(fake.requests).toHaveLength(0);
+});
+
+test.each(['cancel', 'source', 'option'] as const)('oversized structural %s change during screening prevents model publication', async change => {
+  const entries = structuralCatalog(), controller = new AbortController();
+  const expected = JSON.stringify(entries);
+  const options = { signal: controller.signal, sourceOwner: ordinaryResearchOwner(), requirePreservedSource: true,
+    assertCurrent() { if (JSON.stringify(entries) !== expected) throw new Error('Original native source changed'); } };
+  const screening = researchScreeningFixture({ beforeProposal: async () => {
+    if (change === 'cancel') controller.abort();
+    if (change === 'source') entries[0]!.evidence.properties['field-239']!.description = 'Changed ordinary source';
+    if (change === 'option') options.requirePreservedSource = false;
+  } });
+  options.sourceOwner = screening.owner;
+  const fake = readings({ 'complete-schema': 0.99 }); installJudgmentPort(fake.port);
+  await expect(rankHarnessCatalog(entries, 'Select the complete schema', entry => entry, 'agent.test.structural-catalog', options)).rejects.toThrow();
+  expect(fake.requests).toHaveLength(0);
+});
+
+test('oversized structural backend replacement during the reading cannot publish an answer', async () => {
+  const entries = structuralCatalog(), fake = readings({ 'complete-schema': 0.99 });
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    const result = await fake.port.ask(request); installJudgmentPort(readings({}).port); return result;
+  } });
+  await expect(rankHarnessCatalog(entries, 'Select the complete schema', entry => entry, 'agent.test.structural-catalog', {
+    sourceOwner: ordinaryResearchOwner(), requirePreservedSource: true,
+  })).rejects.toThrow();
+  expect(fake.requests).toHaveLength(1);
+});
+
+test('structural framing does not split an oversized semantic string or enlarge its privacy budget', async () => {
+  const entries = [{ id: 'complete-schema', description: 'x'.repeat(40_001) }], screening = researchScreeningFixture();
+  const fake = readings({ 'complete-schema': 0.99 }); installJudgmentPort(fake.port);
+  await expect(rankHarnessCatalog(entries, 'Read the complete prose', entry => entry, 'agent.test.structural-catalog', {
+    sourceOwner: screening.owner, requirePreservedSource: true,
+  })).rejects.toThrow();
   expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
 });

@@ -11,6 +11,7 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
 import { InputTokenizer } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -24,6 +25,7 @@ import { wireViewOpeners } from '../../shell/view-openers.ts';
 import { layerTextBlock } from '../helpers/surface-frame.ts';
 import { makeTestShellViews } from '../helpers/shell-views.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 function makeContext(auth: UserAuthManager, host: SurfaceModalHost, wire: boolean): { context: CommandContext; printed: string[]; logged: string[] } {
   const printed: string[] = [];
@@ -159,11 +161,18 @@ describe('local-auth masked entry: command routing into the kit modal', () => {
     const { context } = makeContext(auth, host, true);
     context.openLocalAuthMaskedEntry!('rotate-password', 'erin');
     const modal = host.top() as MaskedEntryModal;
-    feed(host, 'short');
-    feed(host, '\r');
+    expect(() => auth.rotatePassword('erin', 'short')).toThrow('Password must be at least 8 characters.');
+    const userBytes = readFileSync(join(dir, 'users.json'));
+    await withPublicErrorText(['Password must be at least 8 characters.'], () => {
+      feed(host, 'short');
+      feed(host, '\r');
+    });
     expect(host.active).toBe(true);
+    expect(modal.passwordLength).toBe(0);
+    expect(readFileSync(join(dir, 'users.json'))).toEqual(userBytes);
     expect(modal.error).toContain('at least 8 characters');
     expect(layerTextBlock(modal.render(100, 30))).toContain('at least 8 characters');
+    expect(layerTextBlock(modal.render(100, 30))).not.toContain('short');
   });
 
   test('a failed call keeps the modal open with the error and an empty buffer', async () => {

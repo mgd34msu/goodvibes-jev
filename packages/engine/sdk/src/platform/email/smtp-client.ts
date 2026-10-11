@@ -321,10 +321,10 @@ export class SmtpClient {
     const abort = () => session.destroy();
     opts.signal?.addEventListener('abort', abort, { once: true });
     try {
-      const { capabilities } = await this.greetAndEhlo(session, hostname);
+      const { capabilities } = await this.greetAndEhlo(session, hostname, opts);
 
       // AUTH
-      await this.authenticate(session, capabilities, username, password);
+      await this.authenticate(session, capabilities, username, password, opts);
 
       // Validate envelope fields before writing to the protocol stream (injection prevention)
       validateSmtpAddress(opts.from, 'from');
@@ -380,11 +380,13 @@ export class SmtpClient {
   private async greetAndEhlo(
     session: SmtpSession,
     hostname: string,
+    lifetime: DeliveryLifetime = {},
   ): Promise<{ capabilities: readonly string[] }> {
     const greeting = await session.readResponse();
     if (greeting.code !== 220) {
       throw new Error(`SMTP unexpected greeting: ${greeting.lines.join(' | ')}`);
     }
+    assertDeliveryCurrent(lifetime);
     const ehlo = await session.cmd(`EHLO ${hostname}`, 250);
     return { capabilities: ehlo.lines.map((l) => l.slice(4).trim().toUpperCase()) };
   }
@@ -394,6 +396,7 @@ export class SmtpClient {
     capabilities: readonly string[],
     username: string,
     password: string,
+    lifetime: DeliveryLifetime = {},
   ): Promise<void> {
     const hasPlain = capabilities.some((c) => c.includes('AUTH') && c.includes('PLAIN'));
     const hasLogin = capabilities.some((c) => c.includes('AUTH') && c.includes('LOGIN'));
@@ -401,12 +404,12 @@ export class SmtpClient {
     if (hasPlain) {
       // AUTH PLAIN: base64(\x00username\x00password)
       const token = base64(`\x00${username}\x00${password}`);
-      await session.cmd(`AUTH PLAIN ${token}`, 235);
+      assertDeliveryCurrent(lifetime); await session.cmd(`AUTH PLAIN ${token}`, 235);
     } else if (hasLogin) {
       // AUTH LOGIN: two-step base64 exchange
-      await session.cmd('AUTH LOGIN', 334);
-      await session.cmd(base64(username), 334);
-      await session.cmd(base64(password), 235);
+      assertDeliveryCurrent(lifetime); await session.cmd('AUTH LOGIN', 334);
+      assertDeliveryCurrent(lifetime); await session.cmd(base64(username), 334);
+      assertDeliveryCurrent(lifetime); await session.cmd(base64(password), 235);
     } else {
       throw new Error('SMTP server does not advertise AUTH PLAIN or AUTH LOGIN');
     }

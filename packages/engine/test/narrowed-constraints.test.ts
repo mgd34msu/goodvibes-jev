@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { EntryType, Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { authoredErrorReadingsPort, errorText } from './_helpers/authored-error-readings.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.ts';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
@@ -21,7 +22,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
-  redactSensitiveData,
+  redactSensitiveDataAsync,
   redactIssuerCredentials,
   registerAccountIdentityRedaction,
 } from '../sdk/src/platform/utils/redaction.ts';
@@ -82,21 +83,29 @@ describe('at-rest redaction masks credentials without anonymising the owner', ()
     expect(out).toContain('/home/mike/Projects/goodvibes-sdk');
   });
 
-  test('the EGRESS helper still anonymises, because that text leaves the machine', () => {
+  test('the EGRESS helper still anonymises, because that text leaves the machine', async () => {
     // session-export goes to someone who is not the owner, so his account name
     // is not theirs to have. This is the call site the identity patterns exist
     // for, and it must keep both halves.
     registerAccountIdentityRedaction(() => ({ homeDirectory: '/home/mike', userName: 'mike' }));
-    const out = redactSensitiveData('/home/mike/Projects/x');
+    const previous = installJudgmentPort(authoredErrorReadingsPort({ parts: [[errorText('/home/[REDACTED]/Projects/x')]] }, []).port);
+    let out: string;
+    try { out = await redactSensitiveDataAsync('/home/mike/Projects/x'); }
+    finally { installJudgmentPort(previous); }
     expect(out).toBe('/home/[REDACTED]/Projects/x');
   });
 
-  test('the at-rest and egress helpers agree on issuer formats, differ on identity', () => {
+  test('the at-rest and egress helpers agree on issuer formats, differ on identity', async () => {
     registerAccountIdentityRedaction(() => ({ homeDirectory: '/home/mike', userName: 'mike' }));
     const withSecret = 'token ghp_0123456789012345678901234567890123456789 here';
-    expect(redactIssuerCredentials(withSecret)).toBe(redactSensitiveData(withSecret));
+    const previous = installJudgmentPort(authoredErrorReadingsPort({ parts: [
+      [errorText('token [REDACTED_GITHUB_TOKEN] here')], [errorText('/home/[REDACTED]/x')],
+    ] }, []).port);
+    try {
+      expect(redactIssuerCredentials(withSecret)).toBe(await redactSensitiveDataAsync(withSecret));
+      expect(await redactSensitiveDataAsync('/home/mike/x')).toBe('/home/[REDACTED]/x');
+    } finally { installJudgmentPort(previous); }
     expect(redactIssuerCredentials('/home/mike/x')).toBe('/home/mike/x');
-    expect(redactSensitiveData('/home/mike/x')).toBe('/home/[REDACTED]/x');
   });
 });
 
@@ -233,7 +242,7 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
     const provider = new AnthropicProvider('test-key-not-real');
     await capturedMaxTokens('claude-opus-5', 200_000, provider);
     await capturedMaxTokens('claude-opus-5', 200_000, provider);
-    expect(cap.requests.map((request) => request.state)).toEqual([{ model_id: 'claude-opus-5' }]);
+    expect(cap.requests.filter((request) => 'route' in request.questions).map((request) => request.state)).toEqual([{ model_id: 'claude-opus-5' }]);
   });
 
   test('a request under the cap is passed through unchanged', async () => {
@@ -282,7 +291,7 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
       globalThis.fetch = realFetch;
     }
     expect(body['max_tokens']).toBe(250_000);
-    expect(cap.requests).toHaveLength(0);
+    expect(cap.requests.filter((request) => 'route' in request.questions)).toHaveLength(0);
   });
 });
 

@@ -2,7 +2,11 @@
  * Unit tests for the Evaluation Harness runner and scorecard scorer.
  */
 
-import { describe, it, expect } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
+import { authoredPrivacyAnswer, errorText } from './_helpers/authored-error-readings.ts';
+import { redactSensitiveDataAsync } from '../sdk/src/platform/utils/redaction.ts';
+import { afterEach, beforeEach, describe, it, expect } from 'bun:test';
 import { EvalRunner } from './_helpers/runtime-seam.ts';
 import { scoreScenario, DIMENSION_FLOOR } from './_helpers/runtime-seam.ts';
 import { captureBaseline, serialiseBaseline, deserialiseBaseline } from './_helpers/runtime-seam.ts';
@@ -136,6 +140,7 @@ describe('EvalRunner', () => {
   });
 
   it('normalises a thrown error to a failed raw result', async () => {
+    expect(await redactSensitiveDataAsync('scenario exploded')).toBe('scenario exploded');
     const scenario: EvalScenario = {
       id: 'runner-test:throws',
       name: 'Throws',
@@ -288,3 +293,15 @@ describe('BUILTIN_SUITES', () => {
     }
   });
 });
+
+
+const readDiagnostic = authoredPrivacyAnswer({ parts: [[errorText('scenario exploded')]] });
+let previousDiagnosticPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  previousDiagnosticPort = installJudgmentPort(fakePort((name, question, state) => {
+    const answer = readDiagnostic(name, question, state);
+    if (answer === undefined) throw new Error('Unexpected authored diagnostic question');
+    return answer;
+  }).port);
+});
+afterEach(() => { installJudgmentPort(previousDiagnosticPort); });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { retainCliConfig } from '../../cli/config-owner.ts';
+import { retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 describe('retained CLI configuration ownership', () => {

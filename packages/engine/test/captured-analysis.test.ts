@@ -43,6 +43,28 @@ async function fixture(mutable = false) {
   return { root, view, before, after, authority, stop, denied, reads, prompts, filter, tool, chat,
     setOnRead(callback: typeof onRead) { onRead = callback; } };
 }
+async function assertRejectedHistoricalSelection(
+  f: Awaited<ReturnType<typeof fixture>>,
+  mode: 'diff' | 'breaking' | 'semantic_diff',
+  files: readonly string[],
+): Promise<void> {
+  const commands: string[][] = []; const spawn = childProcess.spawnSync;
+  const tap = spyOn(childProcess, 'spawnSync').mockImplementation(((...args: Parameters<typeof childProcess.spawnSync>) => {
+    if (args[0] === 'git' && Array.isArray(args[1])) commands.push(args[1] as string[]);
+    return spawn(...args);
+  }) as typeof childProcess.spawnSync);
+  const ownerBytes = readFileSync(join(f.root, 'api.ts')); const capturedBytes = readFileSync(join(f.view, 'api.ts'));
+  try {
+    const result = await f.tool.execute({ mode, files: [...files] });
+    expect(result.success).toBe(false); expect(result.output).toBeUndefined(); expect(result.error).toBe('[REDACTED]');
+    expect(JSON.stringify(result)).not.toContain('HISTORY_ONLY_MARKER'); expect(f.prompts).toHaveLength(0);
+    expect(commands.some(args => args.includes('diff-tree') && args.includes('-p'))).toBe(false);
+    expect(commands.some(args => files.some(file => args.includes(file)))).toBe(false);
+    if (mode !== 'diff') expect(commands.some(args => args.includes('diff-tree'))).toBe(false);
+    expect(readFileSync(join(f.root, 'api.ts'))).toEqual(ownerBytes);
+    expect(readFileSync(join(f.view, 'api.ts'))).toEqual(capturedBytes);
+  } finally { tap.mockRestore(); }
+}
 for (const mode of ['diff', 'breaking', 'semantic_diff'] as const) {
   test(`captured ${mode} reuses the ordinary analyzer and identifies immutable comparison inputs`, async () => {
     const f = await fixture(); const previous = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
@@ -238,11 +260,7 @@ test('Git attributes, external diff configuration and caller Git routing cannot 
 for (const files of [['.git/config'], ['../api.ts'], [':(attr:secret)*']] as const) {
   test(`captured historical file selector remains bounded: ${files[0]}`, async () => {
     const f = await fixture();
-    const result = await f.tool.execute({ mode: 'breaking', files: [...files] });
-    expect(JSON.stringify(result)).not.toContain('HISTORY_ONLY_MARKER'); expect(f.prompts).toHaveLength(0);
-    expect(result.success).toBe(false);
-    expect(result.output).toBeUndefined();
-    expect(result.error).toContain('unsupported captured comparison');
+    await assertRejectedHistoricalSelection(f, 'breaking', files);
   });
 }
 
@@ -279,9 +297,6 @@ for (const files of [
 for (const mode of ['diff', 'breaking', 'semantic_diff'] as const) {
   test(`captured ${mode} reports an unsupported attribute predicate as a failure`, async () => {
     const f = await fixture();
-    const result = await f.tool.execute({ mode, files: [':(attr:secret)*'] });
-    expect(result.success).toBe(false); expect(result.output).toBeUndefined();
-    expect(result.error).toContain('live attribute predicates are unavailable');
-    expect(f.prompts).toHaveLength(0);
+    await assertRejectedHistoricalSelection(f, mode, [':(attr:secret)*']);
   });
 }

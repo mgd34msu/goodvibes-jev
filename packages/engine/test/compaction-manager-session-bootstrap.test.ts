@@ -125,7 +125,12 @@ test('a session bootstrap creates the CompactionManager and a compaction in the 
   off();
 
   // Small-window compaction is deterministic; turn shape and contract intake are separate readings.
-  expect(readings.requests.map((request) => request.context?.battery)).toEqual(['engine.core.turn-shape', 'contract.request-route']);
+  expect(readings.requests.map(request => request.context?.battery)).toEqual(['engine.redaction.field-kind', 'engine.redaction.field-kind', 'engine.redaction.field-kind', 'engine.redaction.residual-credential', 'engine.core.turn-shape', 'contract.request-route', 'engine.redaction.field-kind', 'engine.redaction.field-kind']);
+  const diagnostic = readings.requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
+  expect(diagnostic.map(request => request.state)).toEqual(['projectRoot', 'report', 'ENOENT', 'count', 'sampleIds'].map(field => ({ field })));
+  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
+  expect(Object.keys(readings.requests[3]!.questions)).toEqual(['credentialRemains']);
+  expect(readings.requests[4]?.state).toEqual({ purpose: 'conversation', work: 'one more' });
   expect(seen.map((e) => e.type)).toEqual([
     'COMPACTION_CHECK',
     'COMPACTION_MICROCOMPACT',

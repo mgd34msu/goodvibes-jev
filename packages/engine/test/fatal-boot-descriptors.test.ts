@@ -45,17 +45,18 @@ describe('fatal diagnostics reach actual descriptors', () => {
   });
   test('default context, reason and actual stack are disclosed', () => {
     const run = runInlineWriter(`reportFatalBootFailure(new Error('settings.json could not be read'));`);
-    expect(run.stderr).toContain('goodvibes daemon host failed: settings.json could not be read');
-    expect(run.stderr).toContain('Error: settings.json could not be read');
-    expect(run.stderr).toContain('at ');
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe('goodvibes daemon host failed: [REDACTED]\n[REDACTED]\n');
+    expect(run.stdout).toBe('');
   });
   test('custom context replaces default label', () => {
     const run = runInlineWriter(`reportFatalBootFailure(new Error('boom'), 'goodvibes service install');`);
-    expect(run.stderr).toContain('goodvibes service install failed: boom');
+    expect(run.stderr).toBe('[REDACTED] failed: [REDACTED]\n[REDACTED]\n');
+    expect(run.stderr).not.toContain('boom');
   });
   test('non-Error reason is disclosed without invented stack', () => {
     const run = runInlineWriter(`reportFatalBootFailure('just a string');`);
-    expect(run.stderr).toContain('just a string');
+    expect(run.stderr).toBe('goodvibes daemon host failed: [REDACTED]\n');
     expect(run.stderr).not.toContain('at ');
   });
   test('closed descriptor does not turn diagnostic into second failure', () => {
@@ -68,5 +69,66 @@ describe('fatal diagnostics reach actual descriptors', () => {
     expect(typeof writeFatalLine).toBe('function');
     expect(typeof writeExitingStdoutLine).toBe('function');
     expect(typeof reportFatalBootFailure).toBe('function');
+  });
+
+  test.each(['Authorization: Bearer synthetic-private-token', 'card 4111 1111 1111 1111'])('withholds an own private stack containing %s without changing Error or cause', (privateText) => {
+    const run = runInlineWriter(`
+      const cause = new Error('synthetic private cause');
+      const error = new Error('boot refused', { cause });
+      const stack = ${JSON.stringify(`Error: ${privateText}\n    at privateFixture`)};
+      Object.defineProperty(error, 'stack', { value: stack, configurable: true, writable: true });
+      reportFatalBootFailure(error, ${JSON.stringify(privateText)});
+      if (error.cause !== cause || Object.getOwnPropertyDescriptor(error, 'stack')?.value !== stack) throw new Error('native identity changed');
+      process.stdout.write('IDENTITY_PRESERVED\\n');
+    `);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('IDENTITY_PRESERVED\n');
+    expect(run.stderr).toContain('failed: [REDACTED]');
+    expect(run.stdout + run.stderr).not.toContain(privateText);
+    expect(run.stdout + run.stderr).not.toContain('synthetic-private-token');
+    expect(run.stdout + run.stderr).not.toContain('4111 1111 1111 1111');
+    expect(run.stdout + run.stderr).not.toContain('privateFixture');
+  });
+
+  test('does not invoke a custom stack accessor on the fatal descriptor path', () => {
+    const run = runInlineWriter(`
+      const error = new Error('boot refused');
+      let reads = 0;
+      Object.defineProperty(error, 'stack', { get() { reads++; throw new Error('private accessor material'); } });
+      reportFatalBootFailure(error);
+      process.stdout.write('STACK_READS=' + reads + '\\n');
+    `);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('STACK_READS=0\n');
+    expect(run.stderr).toBe('goodvibes daemon host failed: [REDACTED]\n');
+    expect(run.stdout + run.stderr).not.toContain('private accessor material');
+  });
+
+  test('prints the complete ordinary own stack after its current canonical reading settles', () => {
+    const redaction = new URL('../sdk/src/platform/utils/redaction.ts', import.meta.url).pathname;
+    const errors = new URL('../errors/src/index.ts', import.meta.url).pathname;
+    const testing = new URL('../../judgment/src/testing/index.ts', import.meta.url).pathname;
+    const stack = 'ordinary fixture failure\n    at fixtureBootstrap';
+    const context = 'goodvibes service install';
+    const run = runInlineWriter(`
+      import { redactSensitiveDataAsync } from ${JSON.stringify(redaction)};
+      import { installJudgmentPort } from ${JSON.stringify(errors)};
+      import { fakePort, noulAnswer } from ${JSON.stringify(testing)};
+      const admitted = new Set(${JSON.stringify([context, ...stack.split('\n')])}.map(text => JSON.stringify({ phase: 'source', parts: [{ kind: 'text', text }], target: 'whole-line' })));
+      const fixture = fakePort((name, question, state) => {
+        if ((name !== 'lineHasCredential' && name !== 'spanIsCredential') || !admitted.has(JSON.stringify(state))) throw new Error('Unscripted public stack fixture');
+        return noulAnswer(0.01);
+      });
+      installJudgmentPort(fixture.port);
+      const stack = ${JSON.stringify(stack)};
+      const context = ${JSON.stringify(context)};
+      await Promise.all([redactSensitiveDataAsync(stack), redactSensitiveDataAsync(context), redactSensitiveDataAsync('ordinary fixture failure')]);
+      const error = new Error('ordinary fixture failure');
+      Object.defineProperty(error, 'stack', { value: stack });
+      reportFatalBootFailure(error, context);
+    `);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toBe(`${context} failed: ordinary fixture failure\n${stack}\n`);
   });
 });

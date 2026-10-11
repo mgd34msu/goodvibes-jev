@@ -20,15 +20,17 @@ import type {
   UpdateFetchLike,
   UpdateFileIo,
 } from '../sdk/src/platform/runtime/self-update.ts';
+import { nativeCohortFixture, nativeMemoryIo } from './_helpers/daemon-native-cohort.ts';
 
-// Pins the old→new daemon handover. Every seam is stubbed: the `--version`
+// The legacy banner and filesystem are retained while the complete native
+// daemon installation is prepared. Every seam is local: the `--version`
 // probe never spawns a binary, fetch never reaches the network, the filesystem
 // is a map, and systemctl is a recorded call list. Versions are fixtures
-// ('1.27.1' as the shipped pre-split build, 'v1.28.0' as the first release from
-// the daemon's own repository), never the live build VERSION.
+// ('1.27.1' as a legacy build, 'v2.0.23' as the native release), never the live
+// build VERSION.
 
 const PRE_SPLIT_VERSION = '1.27.1';
-const SPLIT_TAG = 'v1.28.0';
+const SPLIT_TAG = 'v2.0.23';
 const DAEMON_PATH = '/home/op/.local/bin/goodvibes-daemon';
 const DAEMON_ASSET = 'goodvibes-daemon-linux-x64';
 
@@ -60,7 +62,8 @@ function stubDaemonReleaseFetch(options: {
   readonly requested?: string[];
 }): UpdateFetchLike {
   const tag = options.tag ?? SPLIT_TAG;
-  const assets = options.assets ?? { [DAEMON_ASSET]: 'new-daemon-bytes' };
+  const cohort = nativeCohortFixture({ version: tag.replace(/^v/, ''), daemonBytes: 'new-daemon-bytes' });
+  const assets = options.assets ?? Object.fromEntries(Object.entries(cohort.assets).map(([name, bytes]) => [name, bytes.toString()]));
   const manifest = Object.entries(assets)
     .map(([name, body]) => `${Bun.SHA256.hash(body, 'hex')}  ${name}`)
     .join('\n');
@@ -74,7 +77,7 @@ function stubDaemonReleaseFetch(options: {
         headers: {
           get: (name: string) =>
             name.toLowerCase() === 'location'
-              ? `https://github.com/mgd34msu/goodvibes-daemon/releases/tag/${tag}`
+              ? `https://github.com/mgd34msu/goodvibes-jev/releases/tag/${tag}`
               : null,
         },
         text: async () => '',
@@ -106,28 +109,9 @@ function stubDaemonReleaseFetch(options: {
 }
 
 /** An in-memory filesystem standing in for the install directory. */
-function memoryIo(seed: Record<string, string> = {}): UpdateFileIo & { readonly files: Map<string, string> } {
-  const files = new Map<string, string>(Object.entries(seed));
-  return {
-    files,
-    writeExclusive: (path, data) => {
-      if (files.has(path)) throw new Error(`exclusive file exists: ${path}`);
-      files.set(path, data.toString('utf-8'));
-    },
-    remove: (path) => { files.delete(path); },
-    writeFile: (path, data) => {
-      files.set(path, Buffer.from(data as Uint8Array).toString('utf-8'));
-    },
-    rename: (from, to) => {
-      const value = files.get(from);
-      if (value === undefined) throw new Error(`rename of missing file ${from}`);
-      files.delete(from);
-      files.set(to, value);
-    },
-    chmod: () => {},
-    exists: (path) => files.has(path),
-    mkdir: () => {},
-  };
+function memoryIo(seed: Record<string, string> = {}): UpdateFileIo & { readonly files: Map<string, Buffer> } {
+  const memory = nativeMemoryIo(Object.fromEntries(Object.entries(seed).map(([path, bytes]) => [path, Buffer.from(bytes)])));
+  return { ...memory.io, files: memory.files };
 }
 
 describe('parseDaemonVersionOutput', () => {
@@ -170,7 +154,7 @@ describe('isPreSplitDaemonVersion', () => {
   });
 
   test('the floor itself and anything above it is left alone', () => {
-    for (const version of [DAEMON_SPLIT_FLOOR_VERSION, '1.28.1', '1.29.0', '2.0.0']) {
+    for (const version of [DAEMON_SPLIT_FLOOR_VERSION, '2.0.24', '3.0.0']) {
       expect(isPreSplitDaemonVersion(version)).toBe(false);
     }
   });
@@ -218,7 +202,7 @@ describe('decideDaemonHandover', () => {
   });
 
   test('leaves a daemon that already comes from its own repository alone', () => {
-    expect(decideDaemonHandover({ ...base, binaryPath: DAEMON_PATH, installedVersion: '1.28.0' }))
+    expect(decideDaemonHandover({ ...base, binaryPath: DAEMON_PATH, installedVersion: DAEMON_SPLIT_FLOOR_VERSION }))
       .toEqual({ action: 'skip', reason: 'already-split' });
   });
 
@@ -250,7 +234,7 @@ describe('decideDaemonHandover', () => {
 });
 
 describe('performDaemonHandover', () => {
-  test('verifies and swaps ONLY the daemon binary, keeping the outgoing build', async () => {
+  test('installs the complete native daemon cohort and keeps the legacy daemon without changing the terminal app', async () => {
     const io = memoryIo({
       [DAEMON_PATH]: 'old-daemon-bytes',
       '/home/op/.local/bin/goodvibes': 'terminal-bytes',
@@ -258,6 +242,7 @@ describe('performDaemonHandover', () => {
     });
     const requested: string[] = [];
     const result = await performDaemonHandover({
+      runCommand: stubRunCommand({}),
       fetchImpl: stubDaemonReleaseFetch({ requested }),
       binaryPath: DAEMON_PATH,
       assetName: DAEMON_ASSET,
@@ -265,23 +250,25 @@ describe('performDaemonHandover', () => {
     });
 
     expect(result.tag).toBe(SPLIT_TAG);
-    expect(io.files.get(DAEMON_PATH)).toBe('new-daemon-bytes');
-    expect(io.files.get(`${DAEMON_PATH}.previous`)).toBe('old-daemon-bytes');
-    // The neighbours are this handover's business only insofar as it must not
-    // touch them: the surface binary is on its own release line and the addon
-    // is shared by every binary in the directory.
-    expect(io.files.get('/home/op/.local/bin/goodvibes')).toBe('terminal-bytes');
-    expect(io.files.get('/home/op/.local/bin/lib/sqlite-vec-linux-x64/vec0.so')).toBe('addon-bytes');
-    // And it never even ASKS for them, which is what keeps it immune to the
-    // 404 that stops the pre-split daemon's own updater.
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('new-daemon-bytes');
+    expect(io.files.get(`${DAEMON_PATH}.previous`)?.toString()).toBe('old-daemon-bytes');
+    expect(io.files.get('/home/op/.local/bin/goodvibes')?.toString()).toBe('terminal-bytes');
+    const installed = nativeCohortFixture({ version: '2.0.23', daemonBytes: 'new-daemon-bytes' }).installation(DAEMON_PATH);
+    for (const [path, bytes] of Object.entries(installed)) {
+      if (path.endsWith('daemon-installation.json')) expect(JSON.parse(io.files.get(path)?.toString() ?? 'null')).toEqual(JSON.parse(bytes.toString()));
+      else expect(io.files.get(path)).toEqual(bytes);
+    }
+    expect(io.files.get('/home/op/.local/bin/lib/sqlite-vec-linux-x64/vec0.so.previous')?.toString()).toBe('addon-bytes');
     expect(requested.some((url) => url.includes('goodvibes-linux-x64'))).toBe(false);
-    expect(requested.some((url) => url.includes('sqlite-vec'))).toBe(false);
+    expect(requested.some((url) => url.endsWith('sqlite-vec-linux-x64.so'))).toBe(true);
+    expect(requested.some((url) => url.endsWith(`${DAEMON_ASSET}.bun`))).toBe(true);
+    expect(requested.some((url) => url.endsWith(`${DAEMON_ASSET}.ci-artifact.json`))).toBe(true);
   });
 
   test('late discovery cannot redirect the original target or adapter', async () => {
     const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes', '/fixture/redirected': 'unowned' });
     const original = stubDaemonReleaseFetch({});
-    const options = { fetchImpl: original, binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io: { ...io } };
+    const options = { fetchImpl: original, binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io: { ...io }, runCommand: stubRunCommand({}) };
     options.fetchImpl = async (url, init) => {
       options.binaryPath = '/fixture/redirected';
       options.assetName = 'other-asset';
@@ -289,21 +276,51 @@ describe('performDaemonHandover', () => {
       return original(url, init);
     };
     await performDaemonHandover(options);
-    expect(io.files.get(DAEMON_PATH)).toBe('new-daemon-bytes');
-    expect(io.files.get('/fixture/redirected')).toBe('unowned');
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('new-daemon-bytes');
+    expect(io.files.get('/fixture/redirected')?.toString()).toBe('unowned');
+  });
+
+  test('same-byte legacy binary replacement during discovery refuses the stale physical owner', async () => {
+    const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
+    const honest = stubDaemonReleaseFetch({});
+    let begin!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const paused = new Promise<void>(resolve => { finish = resolve; });
+    const work = performDaemonHandover({
+      runCommand: stubRunCommand({}),
+      binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io,
+      fetchImpl: async (url, init) => {
+        if (url === DAEMON_REPO_RELEASES_LATEST_URL) { begin(); await paused; }
+        return honest(url, init);
+      },
+    });
+    try {
+      await started;
+      if (!io.writeExclusive) throw new Error('Native fixture I/O is incomplete');
+      io.writeExclusive('/fixture/replacement-daemon', Buffer.from('old-daemon-bytes'));
+      io.chmod('/fixture/replacement-daemon', 0o755);
+      io.rename('/fixture/replacement-daemon', DAEMON_PATH);
+      finish();
+      await expect(work).rejects.toThrow(/changed|retained|owner/);
+      expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
+      expect(io.files.has(`${DAEMON_PATH}.previous`)).toBe(false);
+      expect(io.files.has(`${DAEMON_PATH}.bun`)).toBe(false);
+    } finally { finish(); await work.catch(() => {}); }
   });
 
   test('refuses a release below the split floor rather than installing a downgrade', async () => {
     const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
     await expect(
       performDaemonHandover({
+        runCommand: stubRunCommand({}),
         fetchImpl: stubDaemonReleaseFetch({ tag: 'v1.27.2', assets: { [DAEMON_ASSET]: 'wrong-line' } }),
         binaryPath: DAEMON_PATH,
         assetName: DAEMON_ASSET,
         io,
       }),
-    ).rejects.toThrow(/below the 1\.28\.0 split floor/);
-    expect(io.files.get(DAEMON_PATH)).toBe('old-daemon-bytes');
+    ).rejects.toThrow(/below the 2\.0\.23 split floor/);
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
   });
 
   test('a checksum that does not match leaves the installed daemon untouched', async () => {
@@ -320,9 +337,9 @@ describe('performDaemonHandover', () => {
       };
     };
     await expect(
-      performDaemonHandover({ fetchImpl, binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io }),
+      performDaemonHandover({ fetchImpl, binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io, runCommand: stubRunCommand({}) }),
     ).rejects.toThrow(/checksum mismatch/);
-    expect(io.files.get(DAEMON_PATH)).toBe('old-daemon-bytes');
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
     expect(io.files.has(`${DAEMON_PATH}.previous`)).toBe(false);
   });
 
@@ -330,13 +347,64 @@ describe('performDaemonHandover', () => {
     const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
     await expect(
       performDaemonHandover({
+        runCommand: stubRunCommand({}),
         fetchImpl: stubDaemonReleaseFetch({ assets: { 'something-else': 'x' } }),
         binaryPath: DAEMON_PATH,
         assetName: DAEMON_ASSET,
         io,
       }),
     ).rejects.toThrow(/download failed \(404\)/);
-    expect(io.files.get(DAEMON_PATH)).toBe('old-daemon-bytes');
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
+  });
+
+  test('checksum-valid runtime metadata for a different target refuses the whole native release', async () => {
+    const fixture = nativeCohortFixture({ version: '2.0.23', daemonBytes: 'new-daemon-bytes' });
+    const metadata = JSON.stringify({ version: '1.3.14', target: 'linux-arm64', source: 'build-interpreter',
+      sha256: Bun.SHA256.hash('bun-2.0.23', 'hex'), upstreamSource: 'https://github.com/oven-sh/bun/tree/bun-v1.3.14' });
+    const artifact = { ...fixture.artifact, files: fixture.artifact.files.map(file => file.path.endsWith('.bun.json')
+      ? { ...file, sha256: Bun.SHA256.hash(metadata, 'hex'), size: Buffer.byteLength(metadata) } : file) };
+    const assets = { ...Object.fromEntries(Object.entries(fixture.assets).map(([name, bytes]) => [name, bytes.toString()])),
+      [`${DAEMON_ASSET}.bun.json`]: metadata, [`${DAEMON_ASSET}.ci-artifact.json`]: JSON.stringify(artifact) };
+    const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
+    await expect(performDaemonHandover({ binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io,
+      runCommand: stubRunCommand({}), fetchImpl: stubDaemonReleaseFetch({ assets }) })).rejects.toThrow(/provenance/);
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
+    expect(io.files.has(`${DAEMON_PATH}.previous`)).toBe(false);
+    expect(io.files.has(`${DAEMON_PATH}.bun`)).toBe(false);
+  });
+
+  test('checksum-valid artifact provenance without an exact source commit refuses publication', async () => {
+    const fixture = nativeCohortFixture({ version: '2.0.23', daemonBytes: 'new-daemon-bytes' });
+    const assets = { ...Object.fromEntries(Object.entries(fixture.assets).map(([name, bytes]) => [name, bytes.toString()])),
+      [`${DAEMON_ASSET}.ci-artifact.json`]: JSON.stringify({ ...fixture.artifact, sourceCommit: 'main' }) };
+    const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
+    await expect(performDaemonHandover({ binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io,
+      runCommand: stubRunCommand({}), fetchImpl: stubDaemonReleaseFetch({ assets }) })).rejects.toThrow(/exact source/);
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
+    expect(io.files.has(`${DAEMON_PATH}.previous`)).toBe(false);
+  });
+
+  for (const missing of [`${DAEMON_ASSET}.bun`, `${DAEMON_ASSET}.bun.LICENSE.md`, `${DAEMON_ASSET}.bun.json`, 'sqlite-vec-linux-x64.so', `${DAEMON_ASSET}.ci-artifact.json`]) {
+    test(`a new release missing ${missing} leaves every legacy member in place`, async () => {
+      const fixture = nativeCohortFixture({ version: '2.0.23', daemonBytes: 'new-daemon-bytes' });
+      const assets = Object.fromEntries(Object.entries(fixture.assets).filter(([name]) => name !== missing).map(([name, bytes]) => [name, bytes.toString()]));
+      const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
+      await expect(performDaemonHandover({ binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io,
+        runCommand: stubRunCommand({}), fetchImpl: stubDaemonReleaseFetch({ assets }) })).rejects.toThrow(/download failed/);
+      expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
+      expect(io.files.has(`${DAEMON_PATH}.previous`)).toBe(false);
+      expect(io.files.has(`${DAEMON_PATH}.bun`)).toBe(false);
+    });
+  }
+
+  test('a binary whose banner is unreadable cannot enter legacy native adoption', async () => {
+    const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
+    const requested: string[] = [];
+    await expect(performDaemonHandover({ binaryPath: DAEMON_PATH, assetName: DAEMON_ASSET, io,
+      runCommand: stubRunCommand({ version: { status: 1, stdout: '' } }), fetchImpl: stubDaemonReleaseFetch({ requested }) })).rejects.toThrow();
+    expect(requested).toEqual([]);
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
+    expect(io.files.has(`${DAEMON_PATH}.previous`)).toBe(false);
   });
 
   test('records the resolved tag on the progress record before writing anything', async () => {
@@ -344,6 +412,7 @@ describe('performDaemonHandover', () => {
     const io = memoryIo({ [DAEMON_PATH]: 'old-daemon-bytes' });
     expect(progress.begun).toBe(false);
     await performDaemonHandover({
+      runCommand: stubRunCommand({}),
       fetchImpl: stubDaemonReleaseFetch({}),
       binaryPath: DAEMON_PATH,
       assetName: DAEMON_ASSET,
@@ -438,13 +507,13 @@ describe('runDaemonHandover', () => {
       restarted: true,
       unitName: 'goodvibes',
     });
-    expect(io.files.get(DAEMON_PATH)).toBe('new-daemon-bytes');
-    expect(io.files.get(`${DAEMON_PATH}.previous`)).toBe('old-daemon-bytes');
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('new-daemon-bytes');
+    expect(io.files.get(`${DAEMON_PATH}.previous`)?.toString()).toBe('old-daemon-bytes');
     expect(calls).toContainEqual(['systemctl', '--user', 'restart', 'goodvibes.service']);
     // The receipt names both versions and the rollback, so the swap is not silent.
     const receipt = printed.join('\n');
     expect(receipt).toContain('v1.27.1');
-    expect(receipt).toContain('v1.28.0');
+    expect(receipt).toContain(SPLIT_TAG);
     expect(receipt).toContain('rollback');
   });
 
@@ -452,12 +521,12 @@ describe('runDaemonHandover', () => {
     const io = memoryIo({ [DAEMON_PATH]: 'new-daemon-bytes' });
     const { options, printed } = baseOptions({
       io,
-      runCommand: stubRunCommand({ version: { status: 0, stdout: 'goodvibes-daemon 1.28.0\n' } }),
+      runCommand: stubRunCommand({ version: { status: 0, stdout: 'goodvibes-daemon 2.0.23\n' } }),
     });
     const outcome = await runDaemonHandover(options);
     expect(outcome).toEqual({ action: 'skipped', reason: 'already-split' });
     expect(printed).toEqual([]);
-    expect(io.files.get(DAEMON_PATH)).toBe('new-daemon-bytes');
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('new-daemon-bytes');
   });
 
   test('is idempotent: a second launch after a handover does nothing', async () => {
@@ -470,7 +539,7 @@ describe('runDaemonHandover', () => {
     const first = await runDaemonHandover(baseOptions({ io, runCommand }).options);
     expect(first.action).toBe('handed-over');
     // The swapped binary now reports the new version, exactly as the real one would.
-    reported = '1.28.0';
+    reported = DAEMON_SPLIT_FLOOR_VERSION;
     const second = await runDaemonHandover(baseOptions({ io, runCommand }).options);
     expect(second).toEqual({ action: 'skipped', reason: 'already-split' });
   });
@@ -483,7 +552,7 @@ describe('runDaemonHandover', () => {
     });
     const outcome = await runDaemonHandover(options);
     expect(outcome.action).toBe('failed');
-    expect(io.files.get(DAEMON_PATH)).toBe('old-daemon-bytes');
+    expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
     expect(printed.join('\n')).toContain('daemon handover failed');
   });
 
@@ -545,7 +614,7 @@ describe('runDaemonHandover', () => {
       expect(restarts).toBe(0);
       const receipt = printed.join('\n');
       if (fault === 'commit') {
-        expect(io.files.get(DAEMON_PATH)).toBe('old-daemon-bytes');
+        expect(io.files.get(DAEMON_PATH)?.toString()).toBe('old-daemon-bytes');
         expect(receipt).toContain('unchanged');
       } else {
         expect(receipt).toContain('automatic retry is fenced');
@@ -563,13 +632,13 @@ describe('runDaemonHandover', () => {
 
   test('the caller-stated floor is what the swap is measured against, end to end', async () => {
     const { options } = baseOptions({
-      floorVersion: '1.30.0',
-      runCommand: stubRunCommand({ version: { status: 0, stdout: 'goodvibes-daemon 1.28.0\n' } }),
+      floorVersion: '2.1.0',
+      runCommand: stubRunCommand({ version: { status: 0, stdout: 'goodvibes-daemon 2.0.23\n' } }),
     });
     const outcome = await runDaemonHandover(options);
-    // The 1.28.0 release the stub serves is below the stated 1.30.0 floor, so
+    // The 2.0.23 release the stub serves is below the stated 2.1.0 floor, so
     // the swap refuses rather than installing a build the caller ruled out.
     expect(outcome.action).toBe('failed');
-    expect(outcome).toMatchObject({ detail: expect.stringContaining('below the 1.30.0 split floor') });
+    expect(outcome).toMatchObject({ detail: expect.stringContaining('below the 2.1.0 split floor') });
   });
 });

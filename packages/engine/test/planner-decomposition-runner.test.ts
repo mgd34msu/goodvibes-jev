@@ -124,7 +124,8 @@ describe('AgentManager decomposition runner', () => {
     const runner = createAgentManagerDecompositionRunner({ agentManager: fake.agentManager, now: fake.now, sleep: fake.sleep });
     const result = await runner.run(REQ);
     expect(result.status).toBe('failed');
-    expect(result.detail).toContain('spawn rejected');
+    expect(result.detail).toBe('[REDACTED]');
+    expect(result.detail).not.toContain('spawn rejected');
   });
 });
 

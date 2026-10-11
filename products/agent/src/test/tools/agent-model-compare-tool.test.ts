@@ -57,7 +57,7 @@ function artifactStore() {
         filename: input.filename,
         sizeBytes: buffer.byteLength,
         sha256: createHash('sha256').update(buffer).digest('hex'),
-        createdAt: Date.now(),
+        createdAt: 0,
         acquisitionMode: 'inline-data',
         fetchMode: 'not-applicable',
         metadata: input.metadata ?? {},

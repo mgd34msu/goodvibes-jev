@@ -38,7 +38,7 @@ import type { Tool, ToolCall, ToolResult } from '@goodvibes-jev/engine/sdk/platf
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { composeAgentToolRegistry } from '../../runtime/agent-tool-registry.ts';
 import { composeAgentPermissionManager } from '../../runtime/bootstrap-core.ts';
-import type { CommandContext } from '../../input/command-registry.ts';
+import type { McpApi, McpToolSchema } from '@goodvibes-jev/engine/sdk/platform/mcp';
 import { installAgentMcpCallRoute } from '../../tools/agent-mcp-call-route.ts';
 import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.ts';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
@@ -83,7 +83,7 @@ afterEach(async () => {
   try {
     for (const services of runtimes.splice(0).reverse()) {
       try { await services.processManager.close(); }
-      finally { services.dispose(); }
+      finally { await services.close(); }
     }
   } finally {
     installJudgmentPort(previousPort);
@@ -381,7 +381,7 @@ describe('a command killed through the agent exec pipeline', () => {
  * recorder sees is what the platform tool itself would have seen after the
  * whole agent wrapper chain ran.
  */
-function composeWithRecorders(services: RuntimeServices): { registry: ToolRegistry; received: Map<string, AbortSignal | undefined> } {
+function composeWithRecorders(services: RuntimeServices, callTool: McpApi['callTool'] = () => new Promise(() => {})): { registry: ToolRegistry; received: Map<string, AbortSignal | undefined> } {
   const received = new Map<string, AbortSignal | undefined>();
   const register = ToolRegistry.prototype.register;
   ToolRegistry.prototype.register = function registerWithRecorder(this: ToolRegistry, tool: Tool, options): void {
@@ -407,18 +407,20 @@ function composeWithRecorders(services: RuntimeServices): { registry: ToolRegist
     ToolRegistry.prototype.register = register;
   }
   // The same stage installs the MCP call route over the already-wrapped mcp tool.
-  expect(installAgentMcpCallRoute(registry, mcpContext(() => new Promise(() => {})))).toBe(true);
+  expect(installAgentMcpCallRoute(registry, mcpContext(callTool))).toBe(true);
   return { registry, received };
 }
 
 /** A command context whose MCP api has one connected, trusted server and the given callTool. */
-function mcpContext(callTool: (qualifiedName: string, input: Record<string, unknown>) => Promise<unknown>): CommandContext {
-  const mcpApi = {
-    listServerSecurity: () => [{ name: 'fixture', connected: true, trustMode: 'ask-on-risk', role: 'general', schemaFreshness: 'fresh', allowedHosts: [] }],
-    listAllTools: async () => [],
+function mcpContext(callTool: McpApi['callTool']): Parameters<typeof installAgentMcpCallRoute>[1] {
+  const schema: McpToolSchema = { name: 'slow', description: 'Hold the isolated synthetic call until cancellation.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
+  const mcpApi: Pick<McpApi, 'listServerSecurity' | 'getToolSchema' | 'callTool'> = {
+    listServerSecurity: () => [{ name: 'fixture', connected: true, trustMode: 'ask-on-risk', role: 'general', schemaFreshness: 'fresh', allowedPaths: [], allowedHosts: [] }],
+    getToolSchema: async () => schema,
     callTool,
   };
-  return { clients: { mcpApi } } as unknown as CommandContext;
+  return { clients: { mcpApi } };
 }
 
 /**
@@ -504,23 +506,40 @@ describe('the cancel signal reaches the tool through every agent wrapper chain',
     expect(result.success).toBe(false);
     expect(result.error).toContain('unadmitted read authority');
     expect(received.has('read')).toBe(false);
-    expect(answers.requests).toHaveLength(0);
+    expect(answers.requests.filter(request => request.context?.site?.startsWith('engine.gate.agent-read'))).toHaveLength(0);
+    expect(judgmentLog.query({ site: 'engine.gate.agent-read-secrets' })).toHaveLength(0);
+    expect(judgmentLog.query({ site: 'engine.gate.agent-read-scope' })).toHaveLength(0);
   });
 
   test('an MCP call that never answers settles as cancelled as soon as its signal aborts', async () => {
     const { services } = agentRuntime('exec-cancel-mcp-call');
     services.configManager.set('permissions.mode', 'allow-all');
-    const { registry } = composeWithRecorders(services);
+    let entered!: () => void;
+    const callEntered = new Promise<void>(resolve => { entered = resolve; });
+    let calls = 0;
+    const controller = new AbortController();
+    const { registry } = composeWithRecorders(services, async (name, input, options) => {
+      expect(name).toBe('mcp:fixture:slow');
+      expect(input).toEqual({});
+      expect(options?.signal).toBe(controller.signal);
+      options?.assertCurrent?.();
+      calls++;
+      entered();
+      return new Promise(() => {});
+    });
     const mcp = registry.list().find((tool) => tool.definition.name === 'mcp');
     expect(mcp).toBeDefined();
-    const controller = new AbortController();
-    const pending = mcp!.execute({ mode: 'call', qualifiedName: 'mcp:fixture:slow' }, { signal: controller.signal });
-    await Bun.sleep(200);
+    const deps = agentExecutionDeps(services, registry, { open: () => controller.signal, close: () => {} });
+    const pending = executeToolCalls(deps, 'turn-mcp-cancel', [{ id: 'mcp-cancel', name: 'mcp',
+      arguments: { mode: 'call', qualifiedName: 'mcp:fixture:slow' } }]);
+    await callEntered;
     const cancelledAt = Date.now();
     controller.abort();
-    const result = await pending;
+    const [result] = await pending;
     expect(Date.now() - cancelledAt).toBeLessThan(1_000);
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('was cancelled');
+    expect(result?.success).toBe(false);
+    expect(result?.error).toBe('cancelled by user');
+    expect(result?.cancelled).toBe(true);
+    expect(calls).toBe(1);
   }, 20_000);
 });

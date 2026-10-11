@@ -1,4 +1,4 @@
-import { prepareProjectFramework, readRepeatedCalls, OrchestratorObservationHeldError, type RetainedToolObservation } from './orchestrator-observations.js';
+import { prepareProjectFramework, readRepeatedCalls, captureOrchestratorObservationOwner, OrchestratorObservationHeldError, type RetainedToolObservation } from './orchestrator-observations.js';
 import { captureAutonomousSource } from '../permissions/autonomous.js';
 // OrchestratorRunner, single-agent turn loop coordinator.
 //
@@ -33,7 +33,7 @@ import {
   recordTurnInjection,
   DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR,
 } from './turn-knowledge-injection.js';
-import { summarizeError } from '../utils/error-display.js';
+import { readNormalizedError, summarizeError } from '../utils/error-display.js';
 import { resolveScopedDirectory } from '../runtime/surface-root.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
 import { gateBackgroundToolCall } from './background-permission-gate.js';
@@ -51,7 +51,7 @@ import {
 } from './orchestrator-runner-context-window.js';
 import type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
 import { holdContractCompletion, reportContractTurnEnd } from './orchestrator-runner-contract.js';
-import { cleanupLeakedProcesses, disposeSession, finishCancelledRun } from './orchestrator-runner-finish.js';
+import { cleanupLeakedProcesses, disposeSession, finishCancelledRun, type AgentRunTerminal } from './orchestrator-runner-finish.js';
 
 // Model-definition resolution moved to orchestrator-runner-context-window.ts and
 // the run context to orchestrator-run-context.ts; both re-exported here so
@@ -78,6 +78,60 @@ function resolveRunTurnBudget(context: AgentOrchestratorRunContext, record: Agen
 // This generation authorizes only fixed cancellation bookkeeping in the local
 // conversation. It never authorizes a tool effect, payload, or semantic decision.
 const cancellationConversationGenerations = new WeakMap<AgentRecord, object>();
+const terminalRunGenerations = new WeakMap<AgentRecord, object>();
+
+/** Fixed terminal bookkeeping owns the run, independently of semantic readers. */
+function captureAgentRunTerminal(context: AgentOrchestratorRunContext, record: AgentRecord): AgentRunTerminal & { readonly releaseSharedSources: () => void } {
+  const generation = {};
+  terminalRunGenerations.set(record, generation);
+  const id = record.id, task = record.task, startedAt = record.startedAt, cwd = context.workingDirectory;
+  const getSignal = context.getCancellationSignal, signal = getSignal?.call(context, id);
+  const failed = context.emitAgentFailedEvent, completed = context.emitAgentCompletedEvent, cancelled = context.emitAgentCancelledEvent;
+  const processManager = context.processManager, list = processManager?.list, stop = processManager?.stop, hasBoundaryOwner = processManager?.hasBoundaryOwner;
+  const beforeSettlement = context.beforeRunSettlement, runtimeBus = context.runtimeBus;
+  const releaseConversation = context.releaseConversationSource, codeIndex = context.codeIndex;
+  const prepareIndex = codeIndex?.prepare, disposeIndex = codeIndex?.dispose;
+  const assertIdentity = () => {
+    if (terminalRunGenerations.get(record) !== generation || record.id !== id || record.task !== task || record.startedAt !== startedAt
+      || context.workingDirectory !== cwd || context.getCancellationSignal !== getSignal
+      || context.emitAgentFailedEvent !== failed || context.emitAgentCompletedEvent !== completed || context.emitAgentCancelledEvent !== cancelled
+      || context.runtimeBus !== runtimeBus || context.processManager !== processManager || processManager?.list !== list
+      || processManager?.stop !== stop || processManager?.hasBoundaryOwner !== hasBoundaryOwner || context.beforeRunSettlement !== beforeSettlement
+      || (signal?.aborted && record.status !== 'cancelled')) throw new OrchestratorObservationHeldError();
+  };
+  const assertCurrent = () => {
+    assertIdentity();
+    const currentSignal = getSignal?.call(context, id);
+    assertIdentity();
+    if (currentSignal !== signal) throw new OrchestratorObservationHeldError();
+  };
+  let settlement: Promise<void> | undefined;
+  const settle = () => {
+    assertCurrent();
+    if (settlement) return settlement;
+    const held = Promise.withResolvers<void>();
+    settlement = held.promise;
+    try {
+      assertCurrent();
+      const pending = beforeSettlement?.call(context);
+      assertCurrent();
+      Promise.resolve(pending).then(() => {
+        try { assertCurrent(); held.resolve(); } catch (failure) { held.reject(failure); }
+      }, held.reject);
+    } catch (failure) { held.reject(failure); }
+    return settlement;
+  };
+  const ownsSharedSources = () => terminalRunGenerations.get(record) === generation && record.id === id && record.startedAt === startedAt
+    && context.releaseConversationSource === releaseConversation && context.codeIndex === codeIndex
+    && codeIndex?.prepare === prepareIndex && codeIndex?.dispose === disposeIndex;
+  const releaseSharedSources = () => {
+    if (!ownsSharedSources()) return;
+    if (prepareIndex) disposeIndex?.call(codeIndex);
+    if (ownsSharedSources()) releaseConversation?.call(context, id);
+  };
+  return { assertCurrent, settle, releaseSharedSources };
+}
+
 function captureCancelledConversationOwner(context: AgentOrchestratorRunContext, record: AgentRecord): () => boolean {
   const generation = {};
   cancellationConversationGenerations.set(record, generation);
@@ -223,28 +277,36 @@ async function finalizeAgentRun(
   record: AgentRecord,
   session: AgentSession | null,
   preAgentProcessIds: Set<string>,
+  terminal: AgentRunTerminal,
   assertObservationCurrent?: () => void,
 ): Promise<void> {
-  if (context.beforeRunSettlement) await context.beforeRunSettlement();
+  await terminal.settle();
+  terminal.assertCurrent();
   if (record.status === 'running') assertObservationCurrent?.();
+  terminal.assertCurrent();
   const statusAfterLoop = (record as { status: string }).status;
   if (statusAfterLoop !== 'failed' && statusAfterLoop !== 'cancelled') {
     record.status = 'completed';
   }
   record.completedAt = Date.now();
   recoverEmptyConversationalReply(record);
+  terminal.assertCurrent();
   if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
+  terminal.assertCurrent();
 
   if (context.runtimeBus && record.status !== 'failed' && statusAfterLoop !== 'cancelled') {
     context.emitAgentCompletedEvent(record.id, (record.completedAt ?? Date.now()) - record.startedAt, record.fullOutput ?? '', record.toolCallCount, record.usage);
+    terminal.assertCurrent();
   }
 
   if (record.status === 'failed') {
     context.emitAgentFailedEvent(record.id, record.error ?? 'Circuit breaker tripped', Date.now() - record.startedAt);
+    terminal.assertCurrent();
     logger.error(`Agent ${record.id} circuit-breaker terminated`, { error: record.error, toolCallCount: record.toolCallCount });
     session?.appendMessage({ type: 'session_end', status: 'failed', error: record.error, toolCallCount: record.toolCallCount, durationMs: Date.now() - record.startedAt, timestamp: new Date().toISOString() });
   } else if (statusAfterLoop === 'cancelled') {
     context.emitAgentCancelledEvent(record.id, 'Agent cancelled');
+    terminal.assertCurrent();
     logger.info(`Agent ${record.id} cancelled (detected post-loop)`, { toolCallCount: record.toolCallCount });
     session?.appendMessage({ type: 'session_end', status: 'cancelled', toolCallCount: record.toolCallCount, durationMs: Date.now() - record.startedAt, timestamp: new Date().toISOString() });
   } else {
@@ -259,7 +321,9 @@ async function finalizeAgentRun(
   }
 
   if (session) {
+    terminal.assertCurrent();
     await disposeSession(session);
+    terminal.assertCurrent();
   }
 }
 
@@ -269,29 +333,57 @@ async function handleAgentRunFailure(
   conversation: ConversationManager | null,
   session: AgentSession | null,
   preAgentProcessIds: Set<string>,
+  terminal: AgentRunTerminal,
   err: unknown,
 ): Promise<void> {
+  terminal.assertCurrent();
   // A retry wait that saw the cancel throws to get here; the run was cancelled, not failed.
-  if ((record as { status: string }).status === 'cancelled') return finishCancelledRun(context, record, session, preAgentProcessIds);
-  const message = summarizeError(err, {
-    ...(record.provider ? { provider: record.provider } : {}),
-  });
-  if (conversation) {
-    const lastMessages = conversation.getMessagesForLLM();
-    const lastAssistant = [...lastMessages].reverse().find((m) => m.role === 'assistant');
-    if (lastAssistant) {
-      record.fullOutput = typeof lastAssistant.content === 'string' ? lastAssistant.content : '';
+  if ((record as { status: string }).status === 'cancelled') return finishCancelledRun(context, record, session, preAgentProcessIds, undefined, terminal);
+  const nativeHeld = err instanceof OrchestratorObservationHeldError;
+  const failureOwner = nativeHeld ? terminal.assertCurrent : captureOrchestratorObservationOwner(context, record);
+  const signal = context.getCancellationSignal?.(record.id);
+  const provider = record.provider, settlement = context.beforeRunSettlement, publishFailure = context.emitAgentFailedEvent;
+  const assertFailureCurrent = () => {
+    terminal.assertCurrent();
+    failureOwner();
+    if (!nativeHeld && (record.provider !== provider || context.beforeRunSettlement !== settlement || context.emitAgentFailedEvent !== publishFailure))
+      throw new OrchestratorObservationHeldError();
+    failureOwner();
+  };
+  let message: string;
+  try {
+    message = nativeHeld ? new OrchestratorObservationHeldError().message : (await readNormalizedError(err, {
+      site: 'engine.agent.run-failure', signal, assertCurrent: assertFailureCurrent,
+      ...(provider ? { provider } : {}),
+    })).summary;
+    assertFailureCurrent();
+    if (!nativeHeld && conversation) {
+      const lastMessages = conversation.getMessagesForLLM();
+      const lastAssistant = [...lastMessages].reverse().find((m) => m.role === 'assistant');
+      if (lastAssistant) {
+        record.fullOutput = typeof lastAssistant.content === 'string' ? lastAssistant.content : '';
+      }
     }
+    assertFailureCurrent();
+    await terminal.settle();
+    assertFailureCurrent();
+  } catch (failure) {
+    if ((record as { status: string }).status === 'cancelled') return finishCancelledRun(context, record, session, preAgentProcessIds, undefined, terminal);
+    throw failure;
   }
-  if (context.beforeRunSettlement) await context.beforeRunSettlement();
+  if ((record as { status: string }).status === 'cancelled') return finishCancelledRun(context, record, session, preAgentProcessIds, undefined, terminal);
+  terminal.assertCurrent();
   record.status = 'failed';
   if (err instanceof OrchestratorObservationHeldError) record.failureReason = 'semantic_observation_held';
   record.error = message;
   record.completedAt = Date.now();
   if (!context.beforeRunSettlement) cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
-  context.emitAgentFailedEvent(record.id, message, Date.now() - record.startedAt);
+  terminal.assertCurrent();
+  publishFailure(record.id, message, Date.now() - record.startedAt);
+  terminal.assertCurrent();
   logger.error(`Agent ${record.id} failed`, { error: message });
   if (session) {
+    terminal.assertCurrent();
     session.appendMessage({
       type: 'session_end',
       status: 'failed',
@@ -300,7 +392,9 @@ async function handleAgentRunFailure(
       durationMs: Date.now() - record.startedAt,
       timestamp: new Date().toISOString(),
     });
+    terminal.assertCurrent();
     await disposeSession(session);
+    terminal.assertCurrent();
   }
 }
 
@@ -325,6 +419,7 @@ export async function runAgentTask(
   record: AgentRecord,
 ): Promise<void> {
   record.status = 'running';
+  const terminal = captureAgentRunTerminal(context, record);
   setAgentProgress(record, 'Initialising…', 'operator');
   record.usage = {
     inputTokens: record.usage?.inputTokens ?? 0,
@@ -336,8 +431,11 @@ export async function runAgentTask(
     turnCount: record.usage?.turnCount ?? 0,
     reasoningSummaryCount: record.usage?.reasoningSummaryCount ?? 0,
   };
+  terminal.assertCurrent();
   context.emitAgentStarted(record.id);
+  terminal.assertCurrent();
   context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
+  terminal.assertCurrent();
 
   let session: AgentSession | null = null;
   let conversation: ConversationManager | null = null;
@@ -450,7 +548,7 @@ export async function runAgentTask(
 
     while (continueLoop) {
       if ((record as { status: string }).status === 'cancelled') {
-        await finishCancelledRun(context, record, session, preAgentProcessIds, turn);
+        await finishCancelledRun(context, record, session, preAgentProcessIds, turn, terminal);
         return;
       }
       if (++turn > turnBudget.limit) {
@@ -660,8 +758,10 @@ export async function runAgentTask(
           record.streamingContent = undefined;
 
           const onDelta = (delta: StreamDelta) => {
+            terminal.assertCurrent();
             projectFramework.assertCurrent();
             repeatObservation?.assertCurrent();
+            terminal.assertCurrent();
             if (delta.content) {
               streamAccumulated += delta.content;
               // Live model output goes to streamingContent (rendered in the agent
@@ -720,8 +820,13 @@ export async function runAgentTask(
               ...(cancelSignal ? { signal: cancelSignal } : {}),
               onDelta,
             });
+            terminal.assertCurrent();
+            projectFramework.assertCurrent();
+            repeatObservation?.assertCurrent();
+            terminal.assertCurrent();
             break;
           } catch (chatErr) {
+            terminal.assertCurrent();
             if (chatErr instanceof OrchestratorObservationHeldError) throw chatErr;
             if (chatErr instanceof ProviderAttemptDeniedError || chatErr instanceof KnowledgeEvidenceRelevanceHeldError || chatErr instanceof JudgmentInputError) throw chatErr;
             if (
@@ -821,10 +926,12 @@ export async function runAgentTask(
       // Passive pointers authorize this provider turn only. Verify the completed
       // read generation, then release it before legitimate tool mutations begin.
       await capturedCode?.assertCurrent?.();
+      terminal.assertCurrent();
       capturedCode?.finishTurn?.();
 
       projectFramework.assertCurrent();
       repeatObservation?.assertCurrent();
+      terminal.assertCurrent();
 
       // Honest "consumed at boundary" signal, emitted here (not at drain time
       // above) because this is the first point in the turn where the chat
@@ -1001,12 +1108,12 @@ export async function runAgentTask(
       }
     }
 
-    await finalizeAgentRun(context, record, session, preAgentProcessIds, () => {
+    await finalizeAgentRun(context, record, session, preAgentProcessIds, terminal, () => {
       projectFramework.assertCurrent();
       repeatObservation?.assertCurrent();
     });
   } catch (err) {
-    await handleAgentRunFailure(context, record, conversation, session, preAgentProcessIds, err);
+    await handleAgentRunFailure(context, record, conversation, session, preAgentProcessIds, terminal, err);
   } finally {
     // Conversation-snapshot bridge (Part C6): release on EVERY exit path (normal completion,
     // the mid-loop cancellation/MAX_TURNS early returns above, and the catch
@@ -1014,7 +1121,7 @@ export async function runAgentTask(
     // snapshot always lands in AgentManager's retention ring. A no-op when
     // register was never called (e.g. failure before the ConversationManager
     // was created).
-    context.codeIndex?.prepare && context.codeIndex.dispose?.();
-    context.releaseConversationSource?.(record.id);
+    if (session) await disposeSession(session);
+    terminal.releaseSharedSources();
   }
 }

@@ -159,7 +159,8 @@ test('native encrypted push prepares credentials outside publication and preserv
     keys: { p256dh: key.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } }));
   const vapid = { async buildAuthorizationHeader() { return 'owned-authorization'; } } as unknown as VapidManager;
   const receipt = await f.send(lifetime => deliverToSubscription(subscription, { title: 'Synthetic', body: 'Owned push' }, { store, vapid,
-    transport: async (url, init) => { const response = await fetch(url, { ...init, body: new Uint8Array(init.body) });
+    transport: async (url, init) => { const response = await fetch(url, { method: init.method, headers: init.headers,
+      body: new Uint8Array(init.body), ...(init.signal ? { signal: init.signal } : {}) });
       for (const invalidate of f.invalidations) invalidate(); return { status: response.status }; } }, lifetime));
   expect(receipt.outcome).toBe('delivered'); expect(receipt.httpStatus).toBe(200); expect(local.received).toHaveLength(1);
   expect((await store.get(subscription.id))?.lastOutcome).toBe('delivered');

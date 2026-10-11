@@ -5,6 +5,7 @@ import { join } from 'path';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { buildWriteQuitCommitMessage, collectGitChanges, executeWriteQuit } from '../../input/commands/quit-shared.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 function makeCommandContext(overrides: Partial<CommandContext> = {}): Pick<CommandContext, 'print' | 'exit'> {
   return {
@@ -83,9 +84,10 @@ describe('write quit helpers', () => {
 
   test('does not exit when the commit step fails', async () => {
     let exited = 0;
+    let commits = 0;
     const printed: string[] = [];
 
-    await executeWriteQuit(makeCommandContext({
+    await withPublicErrorText(['commit rejected'], () => executeWriteQuit(makeCommandContext({
       print: (text) => { printed.push(text); },
       exit: () => { exited++; },
     }), {
@@ -104,12 +106,14 @@ describe('write quit helpers', () => {
           isClean: () => false,
         } as never),
         commit: async () => {
+          commits++;
           throw new Error('commit rejected');
         },
       }),
-    });
+    }));
 
     expect(exited).toBe(0);
+    expect(commits).toBe(1);
     expect(printed[printed.length - 1]).toContain('commit rejected');
   });
 });

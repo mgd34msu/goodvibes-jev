@@ -47,7 +47,7 @@ describe('provider runtime family projection', () => {
     const source = { ...base, getRegistered: () => ({ ...base.getRegistered('local'), describeRuntime: () => metadata }),
       describeRuntime: async () => metadata };
     const snapshots = await listProviderRuntimeSnapshots({ ...source,
-      listProviders: () => [source.getRegistered('local')],
+      listProviders: () => [source.getRegistered()],
     }, { modelFamilyEnrichment: 'none' });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(fixture.requests).toHaveLength(0);

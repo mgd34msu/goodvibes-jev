@@ -37,6 +37,16 @@ async function staysPending(promise: Promise<unknown>) {
   await tick();
   expect(settled).toBe(false);
 }
+function expectCancellationReason(signal: AbortSignal, parent: AbortSignal, cause: 'abort' | 'timeout', kind: string) {
+  if (cause === 'abort') {
+    expect(signal.reason).toBe(parent.reason);
+    return;
+  }
+  const reason: unknown = signal.reason;
+  expect(reason).toBeInstanceOf(Error);
+  if (!(reason instanceof Error)) throw new Error('Expected the actual hook deadline reason');
+  expect(reason.message).toBe(`${kind} hook timed out after 0.03s`);
+}
 function directory() {
   const root = mkdtempSync(join(tmpdir(), 'owned-hooks-'));
   roots.push(root);
@@ -79,11 +89,12 @@ describe('owned prompt invocation', () => {
         if (cause === 'abort') controller.abort(new Error('turn stopped'));
         await aborted.promise;
         expect(signal.aborted).toBe(true);
+        expectCancellationReason(signal, controller.signal, cause, 'prompt');
         await staysPending(work);
       } finally { released.resolve(); }
       const result = await work;
       expect(result.ok).toBe(false);
-      expect(result.error).toContain(cause === 'abort' ? 'turn stopped' : 'timed out');
+      expect(result.error).toBe('[REDACTED]');
     });
   }
 
@@ -117,11 +128,13 @@ describe('owned HTTP invocation', () => {
         if (cause === 'abort') parent.abort(new Error('turn stopped'));
         await aborted.promise;
         expect(signal?.aborted).toBe(true);
+        if (!signal) throw new Error('Expected the actual HTTP request signal');
+        expectCancellationReason(signal, parent.signal, cause, 'http');
         await staysPending(work);
       } finally { body.close(); }
       const result = await work;
       expect(result.ok).toBe(false);
-      expect(result.error).toContain(cause === 'abort' ? 'turn stopped' : 'timed out');
+      expect(result.error).toBe('[REDACTED]');
     });
   }
 
@@ -160,11 +173,12 @@ describe('owned TypeScript invocation', () => {
         if (cause === 'abort') parent.abort(new Error('turn stopped'));
         await aborted.promise;
         expect(signal.aborted).toBe(true);
+        expectCancellationReason(signal, parent.signal, cause, 'ts');
         await staysPending(work);
       } finally { release.resolve(); }
       const result = await work;
       expect(result.ok).toBe(false);
-      expect(result.error).toContain(cause === 'abort' ? 'turn stopped' : 'timed out');
+      expect(result.error).toBe('[REDACTED]');
     });
   }
 
@@ -206,7 +220,7 @@ test('Windows owned-command support is explicitly unavailable before any child s
     expect(result).toEqual({
       ok: false,
       code: 'OWNED_PROCESS_GROUP_UNSUPPORTED',
-      error: 'Owned process-group cleanup is unavailable on Windows; command was not started.',
+      error: '[REDACTED]',
     });
     expect(spawn).not.toHaveBeenCalled();
   } finally { Object.defineProperty(process, 'platform', platform); }

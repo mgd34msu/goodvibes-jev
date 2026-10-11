@@ -3,6 +3,7 @@ import { bindAgentResearchSourceOwner } from '../../agent/protected-research-rep
 import { buildTestModelDefinition } from '../helpers/test-managers.ts';
 import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { autonomyIntake } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
@@ -641,7 +642,7 @@ function expectRowsHaveCompactModelRoutes(rows: readonly Record<string, unknown>
 }
 
 async function executeHarnessJson<T>(fixture: HarnessFixture, args: Record<string, unknown>): Promise<T> {
-  const result = await fixture.tool.execute(args);
+  const result = await fixture.admittedTool.execute(args);
   expect(result.success, result.error).toBe(true);
   if (!result.success) throw new Error(result.error);
   return JSON.parse(result.output ?? '{}') as T;
@@ -834,6 +835,68 @@ describe('agent_harness tool', () => {
       if (pick === undefined) throw new Error(`Unscripted catalog fixture ${state.query}`);
       return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
     });
+    // These exact contracts are authored controls for the native discovery
+    // composition. Other registered methods are explicit negative controls.
+    const nativePersonalOpsIds = new Set(getOperatorContract().operator.methods.map(method => method.id));
+    const fixtureNonPersonalOpsIds = new Set(['filesystem', 'mcp:filesystem:read_file']);
+    const laneMembers: Readonly<Record<string, readonly string[]>> = {
+      inbox: ['channels.inbox.list', 'email.inbox.list', 'email.inbox.read', 'email.draft.create', 'email.send',
+        'email.inbound.status', 'email.expectation.list', 'email.expectation.open', 'email.expectation.cancel',
+        'gmail-inbox', 'mcp:gmail-inbox:gmail.search_messages', 'mcp:gmail-inbox:gmail.get_thread', 'mcp:gmail-inbox:gmail.send_reply'],
+      calendar: ['calendar.events.list', 'calendar.events.get', 'calendar.events.create', 'calendar.ics.import', 'calendar.ics.export',
+        'caldav-agenda', 'mcp:caldav-agenda:caldav.list_events', 'mcp:caldav-agenda:caldav.update_event'],
+      tasks: ['tasks.list', 'tasks.get', 'tasks.create', 'tasks.cancel', 'tasks.retry', 'tasks.status'],
+      reminders: ['automation.schedules.create', 'automation.schedules.list', 'automation.schedules.delete',
+        'automation.schedules.disable', 'automation.schedules.enable', 'automation.schedules.run'],
+      approvals: ['approvals.approve', 'approvals.cancel', 'approvals.claim', 'approvals.deny', 'approvals.list', 'approvals.raise'],
+      automation: ['automation.heartbeat.list', 'automation.heartbeat.run', 'automation.integration.snapshot',
+        'automation.jobs.create', 'automation.jobs.delete', 'automation.jobs.disable', 'automation.jobs.enable',
+        'automation.jobs.list', 'automation.jobs.run', 'automation.jobs.update',
+        'automation.runs.cancel', 'automation.runs.get', 'automation.runs.list', 'automation.runs.retry',
+        'automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable',
+        'automation.schedules.enable', 'automation.schedules.list', 'automation.schedules.run'],
+      schedules: ['automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable',
+        'automation.schedules.enable', 'automation.schedules.list', 'automation.schedules.run'],
+    };
+    const connectorLanes: Readonly<Record<string, 'inbox' | 'calendar'>> = {
+      'gmail.search_messages': 'inbox', 'gmail.get_thread': 'inbox', 'gmail.send_reply': 'inbox',
+      'caldav.list_events': 'calendar', 'caldav.update_event': 'calendar',
+    };
+    const connectorFields: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+      'gmail.search_messages': { query: 'query', limit: 'count', mailbox: 'mailbox', unreadOnly: 'include' },
+      'gmail.get_thread': { threadId: 'record', includeAttachments: 'include' },
+      'gmail.send_reply': { threadId: 'record', body: 'body', dryRun: 'preview' },
+      'caldav.list_events': { start: 'start', end: 'end', calendarId: 'calendar' },
+      'caldav.update_event': { eventId: 'record', title: 'subject', start: 'start', end: 'end' },
+    };
+    const personalOpsDiscovery = fakePort((name, question, state) => {
+      if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected Personal Ops discovery control.');
+      if (name === 'match' && question.type === 'noul' && typeof state.query === 'string'
+        && state.candidate && typeof state.candidate === 'object' && !Array.isArray(state.candidate)
+        && typeof state.candidate.name === 'string') {
+        const members = laneMembers[state.query], id = state.candidate.name;
+        if (!members || (!nativePersonalOpsIds.has(id) && !fixtureNonPersonalOpsIds.has(id)
+          && !Object.values(laneMembers).some(entries => entries.includes(id)))) {
+          throw new Error(`Unscripted exact lane-member control ${state.query}:${id}`);
+        }
+        return noulAnswer(members.includes(id) ? 0.999 : 0.001);
+      }
+      const contract = state.contract;
+      const tool = typeof state.tool === 'string' ? state.tool
+        : contract && typeof contract === 'object' && !Array.isArray(contract) && typeof contract.tool === 'string' ? contract.tool : undefined;
+      if (!tool || !connectorLanes[tool]) throw new Error(`Unscripted connector contract ${String(tool)}`);
+      if (name === 'lane' && question.type === 'choice') return choiceAnswer(question, connectorLanes[tool]!, 0.999);
+      if (name === 'role' && question.type === 'choice' && typeof state.field === 'string') {
+        const role = connectorFields[tool]?.[state.field];
+        if (!role) throw new Error(`Unscripted connector field ${tool}:${state.field}`);
+        return choiceAnswer(question, role, 0.999);
+      }
+      if (question.type === 'noul' && ['mutates', 'outward', 'secrets'].includes(name)) {
+        const effect = tool === 'gmail.send_reply' || tool === 'caldav.update_event';
+        return noulAnswer(effect && name !== 'secrets' ? 0.999 : 0.001);
+      }
+      throw new Error(`Unscripted Personal Ops discovery question ${name}`);
+    });
     const lifetime = fakePort(() => noulAnswer(0.01));
     const readiness = fakePort((name, question) => question.type === 'score' ? scoreAnswer(question, name === 'memoryAdequacy' ? 2 : 3) : noulAnswer(0.95));
     const intake = fakePort((name, question, rawState) => {
@@ -892,7 +955,7 @@ describe('agent_harness tool', () => {
     });
     // Ordinary catalog/record scripts explicitly answer the shared privacy
     // contracts. Focused containment suites exercise their positive readings.
-    const fixtureCredentialFields = new Set(['token', 'password', 'apiKey', 'api_key', 'accessToken', 'access_token', 'refreshToken',
+    const fixtureCredentialFields = new Set(['token', 'password', 'credential', 'apiKey', 'api_key', 'accessToken', 'access_token', 'refreshToken',
       'refresh_token', 'clientSecret', 'client_secret', 'privateKey', 'private_key', 'unlockPassphrase']);
     const privacy = fakePort((name, question, state) => {
       if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'owner_profile')
@@ -913,21 +976,27 @@ describe('agent_harness tool', () => {
     });
     const port: JudgmentPort = {
       model: security.port.model,
-      ask: request => request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
+      ask: async request => { try { return await (request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
         : request.context?.battery === 'routing.autonomy-intake' ? intake.port.ask(request)
         : request.context?.battery === 'automation.schedule' ? intakeSchedule.port.ask(request)
         : request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
         : request.context?.battery === 'engine.gate.execution-verification' ? executionVerification.port.ask(request)
         : request.context?.battery === 'agent.personal-ops.receipt-status' ? receiptStatus.port.ask(request)
+        : ['agent.personal-ops.lane-member', 'agent.personal-ops.tool-lane', 'agent.personal-ops.sample-field'].includes(request.context?.battery ?? '')
+          || request.context?.battery === 'engine.gate.side-effect' && request.context?.site === 'agent.personal-ops.tool-effect'
+          ? personalOpsDiscovery.port.ask(request)
         : ['engine.redaction.field-kind', 'engine.redaction.credential', 'engine.export.credential',
           'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive'].includes(request.context?.battery ?? '') ? privacy.port.ask(request)
-        : request.context?.battery === 'engine.gate.side-effect' || request.context?.battery === 'engine.gate.risk-family'
+        : request.context?.battery === 'engine.gate.boundary' || request.context?.battery === 'engine.gate.side-effect' || request.context?.battery === 'engine.gate.risk-family'
           || request.context?.battery === 'engine.gate.autonomous-disposition' || request.context?.battery === 'engine.gate.autonomous-refusal' ? admission.port.ask(request)
         : request.context?.battery === 'engine.tools.registry-rank'
           && ['agent.harness.cli-commands', 'agent.harness.keybindings', 'agent.harness.shortcuts'].includes(request.context?.site ?? '') ? metadata.port.ask(request)
         : request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
         : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
-        ? credentials.port.ask(request) : security.port.ask(request),
+        ? credentials.port.ask(request) : security.port.ask(request)); } catch (error) {
+          process.stderr.write(JSON.stringify({ battery: request.context?.battery, site: request.context?.site, questions: Object.keys(request.questions) }) + '\n');
+          throw error;
+        } },
     };
     previousPort = installJudgmentPort(withDecisionLog(port, fixtureLog));
   });
@@ -4060,14 +4129,14 @@ describe('agent_harness tool', () => {
       expect(thread?.sourceTool).toBe('context.platform.readModels.personalOps.inboxThreads');
       expect(thread?.certification?.schemaStatus).toBe('legacy');
       expect(thread?.certification?.schemaVersion).toBe('goodvibes.personal-ops.inbox-thread.v1');
-      expect(thread?.certification?.publicationGuarantee).toContain('token=<redacted>');
+      expect(thread?.certification?.publicationGuarantee).toContain('token=[REDACTED]');
       expect(thread?.certification?.publicationGuarantee).not.toContain('gmail-pub-secret');
       expect(thread?.certification?.publisher).toBe('goodvibes-daemon');
       expect(thread?.certification?.provenance?.join('\n')).toContain('gmail.threads.list');
       expect(thread?.certification?.receiptIds).toEqual(['gmail-reply-receipt-1', 'gmail-archive-receipt-1']);
       expect(thread?.certification?.missingSignals).toEqual(['Native host or SDK inbox thread schema attestation is not published.']);
       expect(thread?.modelRoute).toContain('read_thread');
-      expect(thread?.summary).toContain('token=<redacted>');
+      expect(thread?.summary).toContain('token=[REDACTED]');
       expect(thread?.summary).not.toContain('SECRET123');
       expect(thread?.summary).not.toContain('hunter2');
       expect(thread?.tags).toContain('provider-backed');
@@ -4089,12 +4158,12 @@ describe('agent_harness tool', () => {
       expect(event?.label).toContain('Fresh event');
       expect(event?.status).toBe('conflict');
       expect(event?.certification?.schemaStatus).toBe('legacy');
-      expect(event?.certification?.publicationGuarantee).toContain('credential=<redacted>');
+      expect(event?.certification?.publicationGuarantee).toContain('credential=[REDACTED]');
       expect(event?.certification?.publicationGuarantee).not.toContain('caldav-pub-secret');
       expect(event?.certification?.receiptIds).toEqual(['caldav-edit-receipt-1', 'caldav-rsvp-receipt-1']);
       expect(event?.certification?.missingSignals).toEqual(['Native host or SDK calendar event schema attestation is not published.']);
       expect(event?.summary).toContain('1 conflict signal');
-      expect(event?.summary).toContain('credential=<redacted>');
+      expect(event?.summary).toContain('credential=[REDACTED]');
       expect(event?.summary).not.toContain('calendar-secret');
       expect(event?.modelRoute).toContain('laneId:"calendar"');
       expect(event?.freshness).toMatchObject({
@@ -4256,14 +4325,14 @@ describe('agent_harness tool', () => {
       expect(taskRecord?.sourceTool).toBe('context.platform.readModels.personalOps.tasks');
       expect(taskRecord?.certification?.schemaStatus).toBe('legacy');
       expect(taskRecord?.certification?.schemaVersion).toBe('goodvibes.personal-ops.task.v1');
-      expect(taskRecord?.certification?.publicationGuarantee).toContain('token=<redacted>');
+      expect(taskRecord?.certification?.publicationGuarantee).toContain('token=[REDACTED]');
       expect(taskRecord?.certification?.publicationGuarantee).not.toContain('task-pub-secret');
       expect(taskRecord?.certification?.publisher).toBe('goodvibes-daemon');
       expect(taskRecord?.certification?.provenance?.join('\n')).toContain('tasks.list');
       expect(taskRecord?.certification?.receiptIds).toEqual(['todoist-update-receipt-1', 'todoist-complete-receipt-1']);
       expect(taskRecord?.certification?.missingSignals).toEqual(['Native host or SDK task schema attestation is not published.']);
       expect(taskRecord?.modelRoute).toContain('read_task');
-      expect(taskRecord?.summary).toContain('token=<redacted>');
+      expect(taskRecord?.summary).toContain('token=[REDACTED]');
       expect(taskRecord?.summary).not.toContain('TASKSECRET');
       expect(taskRecord?.tags).toContain('provider-backed');
       expect(taskRecord?.freshness).toMatchObject({
@@ -4317,14 +4386,14 @@ describe('agent_harness tool', () => {
       expect(reminderRecord?.sourceTool).toBe('context.platform.readModels.personalOps.reminders');
       expect(reminderRecord?.certification?.schemaStatus).toBe('legacy');
       expect(reminderRecord?.certification?.schemaVersion).toBe('goodvibes.personal-ops.reminder.v1');
-      expect(reminderRecord?.certification?.publicationGuarantee).toContain('password=<redacted>');
+      expect(reminderRecord?.certification?.publicationGuarantee).toContain('password=[REDACTED]');
       expect(reminderRecord?.certification?.publicationGuarantee).not.toContain('reminder-pub-secret');
       expect(reminderRecord?.certification?.publisher).toBe('goodvibes-daemon');
       expect(reminderRecord?.certification?.provenance?.join('\n')).toContain('reminders.list');
       expect(reminderRecord?.certification?.receiptIds).toEqual(['reminder-edit-receipt-1', 'reminder-snooze-receipt-1', 'reminder-delete-receipt-1']);
       expect(reminderRecord?.certification?.missingSignals).toEqual(['Native host or SDK reminder schema attestation is not published.']);
       expect(reminderRecord?.modelRoute).toContain('laneId:"reminders"');
-      expect(reminderRecord?.summary).toContain('password=<redacted>');
+      expect(reminderRecord?.summary).toContain('password=[REDACTED]');
       expect(reminderRecord?.summary).not.toContain('REMINDERSECRET');
       expect(reminderRecord?.freshness).toMatchObject({
         status: 'fresh-provider-record-current',
@@ -4516,7 +4585,7 @@ describe('agent_harness tool', () => {
       expect(inboxReceipt?.sourceTool).toBe('mcp:gmail:gmail.send_reply');
       expect(inboxReceipt?.confirmationRequired).toBe(false);
       expect(inboxReceipt?.certification?.schemaStatus).toBe('legacy');
-      expect(inboxReceipt?.certification?.publicationGuarantee).toContain('token=<redacted>');
+      expect(inboxReceipt?.certification?.publicationGuarantee).toContain('token=[REDACTED]');
       expect(inboxReceipt?.certification?.publicationGuarantee).not.toContain('gmail-receipt-secret');
       expect(inboxReceipt?.certification?.receiptId).toBe('gmail-send-1');
       expect(inboxReceipt?.certification?.missingSignals).toEqual(['Native host or SDK inbox provider-effect receipt schema attestation is not published.']);
@@ -4542,7 +4611,7 @@ describe('agent_harness tool', () => {
       expect(calendarReceipt?.artifactId).toBe('artifact-2');
       expect(calendarReceipt?.sourceTool).toBe('mcp:calendar:calendar.rsvp');
       expect(calendarReceipt?.certification?.schemaStatus).toBe('legacy');
-      expect(calendarReceipt?.certification?.publicationGuarantee).toContain('credential=<redacted>');
+      expect(calendarReceipt?.certification?.publicationGuarantee).toContain('credential=[REDACTED]');
       expect(calendarReceipt?.certification?.publicationGuarantee).not.toContain('caldav-receipt-secret');
       expect(calendarReceipt?.certification?.receiptId).toBe('caldav-rsvp-1');
       expect(calendarReceipt?.certification?.missingSignals).toEqual(['Native host or SDK calendar provider-effect receipt schema attestation is not published.']);
@@ -4570,7 +4639,7 @@ describe('agent_harness tool', () => {
       expect(reminderReceipt?.tags).toContain('reminders-effect');
       expect(reminderReceipt?.sourceTool).toBe('mcp:reminders:reminders.snooze');
       expect(reminderReceipt?.certification?.schemaStatus).toBe('legacy');
-      expect(reminderReceipt?.certification?.publicationGuarantee).toContain('password=<redacted>');
+      expect(reminderReceipt?.certification?.publicationGuarantee).toContain('password=[REDACTED]');
       expect(reminderReceipt?.certification?.receiptId).toBe('reminder-snooze-1');
       expect(reminderReceipt?.certification?.missingSignals).toEqual(['Native host or SDK reminder provider-effect receipt schema attestation is not published.']);
     } finally {
@@ -7716,7 +7785,7 @@ describe('agent_harness tool', () => {
           completedAt: now - 1000,
           durationMs: 1000,
           permissionApproved: true,
-          argsPreview: '{"command":"bun test","apiKey":"[redacted]"}',
+          argsPreview: '{"command":"bun test","pat":"[redacted]"}',
           argsKeys: ['command'],
           commandPreview: 'bun test src/test/tools/agent-harness-tool.test.ts',
           resultSummary: { kind: 'text', byteSize: 42, preview: '84 pass, 0 fail' },

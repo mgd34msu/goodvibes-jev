@@ -173,7 +173,8 @@ describe('native semantic callers', () => {
     const blocked = spyOn(h.store, 'write').mockReturnValue(false);
     try {
       const { contract } = startContract(h, { nativeSource: source }); const result = await done(h, contract.id); await h.runner.join(contract.id);
-      expect(result.status).toBe('failed'); expect(result.error).toContain('checkpoint failed'); expect(plannerCalls).toBe(0); expect(h.agentsOf('u1')).toHaveLength(0); noOwner(h, contract.id);
+      expect(result.status).toBe('failed'); expect(result.error).toBe(`contract ${contract.id} could not start: [REDACTED]`);
+      expect(blocked).toHaveBeenCalled(); expect(plannerCalls).toBe(0); expect(h.agentsOf('u1')).toHaveLength(0); noOwner(h, contract.id);
     } finally { blocked.mockRestore(); }
   });
 

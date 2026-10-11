@@ -290,7 +290,7 @@ for (const refreshedId of [canonical, 'balanced-model-4']) test(`readBenchmarks 
   const paused = gate();
   let calls = 0;
   installJudgmentPort({ ...judgment, ask: async (request) => {
-    if (++calls === 1) { started.release(); await paused.waiting; }
+    if (request.questions.pick?.type === 'choice' && ++calls === 1) { started.release(); await paused.waiting; }
     return judgment.ask(request);
   } });
   const reading = benchmarks.readBenchmarks(alias);
@@ -312,7 +312,7 @@ test('an empty leaderboard does not cache an alias miss across a later refresh',
   await refreshWith(benchmarks, [entry]);
   await prepareRouteBenchmarks(benchmarks, [model(alias)]);
   expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.85);
-  expect(requests).toHaveLength(1);
+  expect(requests.filter((request) => request.questions.pick?.type === 'choice')).toHaveLength(1);
 });
 
 test('cancelling one route during refresh preserves the shared reading and the other route retries', async () => {
@@ -322,7 +322,7 @@ test('cancelling one route during refresh preserves the shared reading and the o
   const paused = gate();
   let calls = 0;
   installJudgmentPort({ ...judgment, ask: async (request) => {
-    if (++calls === 1) { started.release(); await paused.waiting; }
+    if (request.questions.pick?.type === 'choice' && ++calls === 1) { started.release(); await paused.waiting; }
     return judgment.ask(request);
   } });
   const controller = new AbortController();
@@ -335,7 +335,7 @@ test('cancelling one route during refresh preserves the shared reading and the o
   await expect(first).rejects.toBe(reason);
   paused.release();
   await second;
-  expect(requests).toHaveLength(2);
+  expect(requests.filter((request) => request.questions.pick?.type === 'choice')).toHaveLength(2);
   expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.4);
 });
 
@@ -343,11 +343,11 @@ test('continuous leaderboard churn refuses an identity after bounded attempts', 
   const benchmarks = store();
   const { port: judgment, requests } = port();
   installJudgmentPort({ ...judgment, ask: async (request) => {
-    await refreshWith(benchmarks, [entry]);
+    if (request.questions.pick?.type === 'choice') await refreshWith(benchmarks, [entry]);
     return judgment.ask(request);
   } });
   await expect(benchmarks.readBenchmarks(alias)).rejects.toThrow('Benchmark leaderboard kept changing during identity preparation');
-  expect(requests).toHaveLength(BENCHMARK_PREPARATION_ATTEMPTS);
+  expect(requests.filter((request) => request.questions.pick?.type === 'choice')).toHaveLength(BENCHMARK_PREPARATION_ATTEMPTS);
   expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeNull();
 });
 

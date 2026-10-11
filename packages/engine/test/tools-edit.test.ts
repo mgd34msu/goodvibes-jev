@@ -303,12 +303,17 @@ describe('edit tool', () => {
     describe('fuzzy line window judged by engine.tools.edit-target', () => {
       /** Probability the fake port answers for a find text; anything unlisted reads as a strong no. */
       let sameTarget: Map<string, number>;
-      let requests: ReadonlyArray<{ readonly state: unknown }>;
+      let requests: ReturnType<typeof fakePort>['requests'];
+      const targetRequests = () => requests.filter(request => 'same_target' in request.questions);
       let previous: ReturnType<typeof installJudgmentPort>;
 
       beforeEach(() => {
         sameTarget = new Map();
-        const fake = fakePort((_name, _question, state) => noulAnswer(sameTarget.get((state as { find: string }).find) ?? 0.03));
+        const fake = fakePort((name, question, state) => {
+          if (name !== 'same_target' || question.type !== 'noul' || typeof state !== 'object' || state === null || !('find' in state) || typeof state.find !== 'string')
+            throw new Error('Unscripted edit-target reading');
+          return noulAnswer(sameTarget.get(state.find) ?? 0.03);
+        });
         requests = fake.requests;
         previous = installJudgmentPort(fake.port);
       });
@@ -327,8 +332,8 @@ describe('edit tool', () => {
         expect(result.success).toBe(true);
         expect(readFileSync(file, 'utf-8')).toBe('line one\nline two\nreplaced line\nline four\n');
         expect(JSON.stringify(result)).toMatch(/fuzzy line match/);
-        expect(requests).toHaveLength(1);
-        expect(requests[0]!.state).toEqual({ find, window: 'line one\nline two\nline three\nline four' });
+        expect(targetRequests()).toHaveLength(1);
+        expect(targetRequests()[0]!.state).toEqual({ find, window: 'line one\nline two\nline three\nline four' });
       });
 
       test('a window read as a different target is refused and the file is untouched', async () => {
@@ -343,7 +348,7 @@ describe('edit tool', () => {
         expect(text).toMatch(/not read as the same edit target/);
         expect(text).toMatch(/Did you mean this\? \(from line 1\)/);
         expect(text).toContain('const z = 3;');
-        expect(requests).toHaveLength(1);
+        expect(targetRequests()).toHaveLength(1);
       });
 
       test('a yes too weak to act on is refused, not applied', async () => {
@@ -365,7 +370,7 @@ describe('edit tool', () => {
         const result = await tool.execute({ edits: [{ path: relPath(file), find, replace: 'function a() {}' }] });
         expect(result.success).toBe(true);
         expect(readFileSync(file, 'utf-8')).toBe('function a() {}\n');
-        expect(requests).toHaveLength(1);
+        expect(targetRequests()).toHaveLength(1);
       });
 
       test('no window shares a line with the find text: plain not found, nothing is judged', async () => {
@@ -375,7 +380,7 @@ describe('edit tool', () => {
         });
         expect(result.success).toBe(false);
         expect(JSON.stringify(result)).toMatch(/not found/);
-        expect(requests).toHaveLength(0);
+        expect(targetRequests()).toHaveLength(0);
       });
     });
   });

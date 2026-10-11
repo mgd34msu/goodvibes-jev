@@ -50,6 +50,7 @@
 import { writeSync } from 'node:fs';
 import { summarizeError } from '../utils/error-display.js';
 import { flushActivityLogSync, logger } from '../utils/logger.js';
+import { redactSensitiveData } from '../utils/redaction.js';
 
 /** stdout and stderr, as the file descriptors they actually are. */
 const STDOUT_FD = 1;
@@ -107,11 +108,23 @@ export function writeExitingStdoutLine(line: string): void {
  * guarantee this function makes is the stream line, not the log line.
  */
 export function reportFatalBootFailure(error: unknown, context = 'goodvibes daemon host'): void {
+  const safeContext = context === 'goodvibes daemon host' ? context : redactSensitiveData(context);
   const summary = summarizeError(error);
-  writeFatalLine(`${context} failed: ${summary}`);
-  if (error instanceof Error && error.stack) writeFatalLine(error.stack);
+  let stack: string | undefined;
+  if (error instanceof Error) {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(error, 'stack');
+      if (descriptor && 'value' in descriptor && typeof descriptor.value === 'string') {
+        stack = redactSensitiveData(descriptor.value);
+      }
+    } catch {
+      // A borrowed stack must not invoke an accessor on the fatal path.
+    }
+  }
+  writeFatalLine(`${safeContext} failed: ${summary}`);
+  if (stack) writeFatalLine(stack);
   try {
-    logger.error(`${context} failed`, { error: summary });
+    logger.error(`${safeContext} failed`, { error: summary });
     flushActivityLogSync();
   } catch {
     // The reason is already on stderr, which is the guarantee. A log that

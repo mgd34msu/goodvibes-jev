@@ -61,7 +61,8 @@ describe('public policy owner preserves completed mutations and stale-read guard
         if (verb === 'load') expect(f.state.getRegistry().getCandidate()?.bundle.bundleId).toBe('second');
         else expect(f.state.getRegistry().getCurrent()?.bundle.bundleId).toBe(verb === 'promote' ? 'second' : 'first');
         expect(notifications).toBeGreaterThan(0);
-        expect(f.out.at(-1)).toBe('[policy] Policy change applied, but lint findings could not be refreshed: Synthetic lint unavailable');
+        expect(f.out.at(-1)).toBe('[policy] Policy change applied, but lint findings could not be refreshed: [REDACTED]');
+        expect(f.out.join('\n')).not.toContain('Synthetic lint unavailable');
         expect(f.out.join('\n')).not.toContain('Load failed:');
         expect(f.out.join('\n')).not.toContain('Promotion blocked:');
         expect(f.out.join('\n')).not.toContain('Rollback failed:');

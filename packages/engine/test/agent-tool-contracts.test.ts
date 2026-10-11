@@ -11,7 +11,8 @@
  * the runner is a recording fake whose start spawns the owner record exactly as
  * the real runner does (an owner-bound spawn outside every contract).
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import type { ConfigManager } from '../sdk/src/platform/config/index.js';
 import type { ContractRunner, StartedContract } from '../sdk/src/platform/contract/runner.js';
@@ -25,6 +26,9 @@ import { makeContract, makeCriterion, makeUnit } from './contract/fixtures.js';
 
 const PROJECT_ROOT = '/work/agent-tool-contracts';
 const SESSION_ID = 'session-7';
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 function configManager(): Pick<ConfigManager, 'get'> {
   return { get: ((key: string) => (key === 'agents.maxActive' ? 20 : undefined)) as ConfigManager['get'] };
@@ -172,14 +176,18 @@ describe('agent tool spawn', () => {
     expect(runner.starts[0]).toMatchObject({ ask: 'Fix the failing date test', proposedUnits: [{ task: 'Fix the failing date test' }] });
   });
 
-  test('a runner that fails to start the contract fails the call with its reason', async () => {
-    const { manager, runner, tool } = harness();
-    runner.start = () => { throw new Error('No contract runner is composed in this runtime.'); };
+  test('a failed contract start admits no agent while its private error reading is unavailable', async () => {
+    const { manager, runner, tool, ran } = harness();
+    let attemptedStarts = 0;
+    runner.start = () => { attemptedStarts++; throw new Error('No contract runner is composed in this runtime.'); };
 
     const result = await tool.execute({ mode: 'spawn', task: 'Fix the failing date test' });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('No contract runner is composed');
+    expect(result.error).toBe('[REDACTED]');
+    expect(attemptedStarts).toBe(1);
+    expect(startedContract(result)).toBe(false);
+    expect(ran).toHaveLength(0);
     expect(manager.list()).toHaveLength(0);
   });
 });
@@ -282,18 +290,18 @@ describe('a contract leaf cannot spawn', () => {
 
     for (const result of [intoContract, batch, outside]) {
       expect(result.success).toBe(false);
-      expect(result.error).toContain('units are leaves; the contract plans sub-work');
+      expect(result.error).toBe('[REDACTED]');
     }
     // One task of a batch from a unit is enough to refuse the whole batch before the contract starts.
     const mixed = await tool.execute({ mode: 'batch-spawn', tasks: [{ task: 'a' }, { task: 'b', parentAgentId: unit.id, outsideContract: true }] });
     expect(mixed.success).toBe(false);
-    expect(mixed.error).toContain('units are leaves; the contract plans sub-work');
+    expect(mixed.error).toBe('[REDACTED]');
 
     expect(runner.starts).toHaveLength(0);
     expect(manager.list()).toEqual([unit]);
     await flush();
     expect(guardEvents).toHaveLength(4);
-    expect(guardEvents[0]).toMatchObject({
+    for (const guardEvent of guardEvents) expect(guardEvent).toMatchObject({
       type: 'CONTRACT_SPAWN_GUARD_TRIGGERED',
       contractId: 'ctr-0000abcd',
       agentId: unit.id,
@@ -386,18 +394,24 @@ describe('AgentManager startForOwner seam', () => {
     expect(manager.list()).toHaveLength(0);
   });
 
-  test('a runner that throws fails the owner record and the spawn', () => {
+  test('a runner that throws fails the owner record and the spawn', async () => {
+    let attemptedStarts = 0, executions = 0;
     const manager = new AgentManager({
       archetypeLoader: { loadArchetype: () => null },
       messageBus: { registerAgent() {} },
       configManager: configManager(),
-      executor: { async runAgent() {} },
-      contractRunner: { startForOwner() { throw new Error('store unavailable'); } },
+      executor: { async runAgent() { executions++; } },
+      contractRunner: { startForOwner() { attemptedStarts++; throw new Error('store unavailable'); } },
     });
 
     expect(() => manager.spawn({ mode: 'spawn', task: 'add a slugify helper' })).toThrow('store unavailable');
+    expect(attemptedStarts).toBe(1);
+    expect(manager.list()).toHaveLength(1);
     const [record] = manager.list();
-    expect(record).toMatchObject({ status: 'failed', error: 'The contract could not start: store unavailable' });
+    expect(record).toMatchObject({ status: 'failed', error: 'The contract could not start: [REDACTED]' });
+    expect(record?.completedAt).toBeDefined();
+    await flush();
+    expect(executions).toBe(0);
   });
 });
 

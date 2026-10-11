@@ -161,7 +161,11 @@ describe('OpenAI-compatible daemon routes', () => {
     }), context);
     expect(ambiguous?.status).toBe(400);
     const body = await ambiguous!.json() as { error: { message: string } };
-    expect(body.error.message).toContain('openai:gpt-test');
-    expect(body.error.message).toContain('anthropic:gpt-test');
+    expect(body.error.message).toMatch(/^\[REDACTED\](?: \[REDACTED\])*$/);
+    expect(provider.requests).toEqual([]);
+    const listing = await dispatchOpenAICompatibleRoutes(request('/v1/models'), context);
+    expect(listing?.status).toBe(200);
+    const models = await listing!.json() as { data: Array<{ id: string }> };
+    expect(models.data.map((model) => model.id)).toEqual(['anthropic:gpt-test', 'goodvibes/current', 'openai:gpt-test']);
   });
 });

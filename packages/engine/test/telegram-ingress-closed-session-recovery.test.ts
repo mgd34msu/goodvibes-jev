@@ -252,15 +252,16 @@ describe('a skipped update advances the cursor LOUDLY', () => {
         await supervisor.start();
 
         await waitFor(() => alerts.length > 0, 'the owner to be alerted about a skipped message');
-        // The reason travels with it, this is the thing the warn line buried.
+        // The failure is visible without publishing unproved error wording.
         expect(alerts[0]).toContain('could not be processed');
-        expect(alerts[0]).toContain('the store rejected the write');
+        expect(alerts[0]).toContain('[REDACTED]');
+        expect(alerts[0]).not.toContain('the store rejected the write');
         expect(alarm.failure('telegram')?.count).toBe(1);
 
         // Health, read exactly the way the status verb reads it.
         const degraded = supervisor.status;
         expect(degraded.running).toBe(true); // the LOOP is fine; that was the trap
-        expect(degraded.lastError).toContain('the store rejected the write');
+        expect(degraded.lastError).toBe('[REDACTED]');
         expect(resolveChannelHealthState({
           enabled: true,
           configured: true,

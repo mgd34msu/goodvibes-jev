@@ -70,16 +70,26 @@ test('overwrite rules, missing-file warnings and operation errors preserve exist
   const blocked = await executeCapturedFileOperations(f.root, f.projection, [
     { op: 'copy', source: 'input.txt', destination: 'copy.txt' },
   ], f.authorize);
-  expect(blocked.fileOpError).toContain('destination already exists');
+  expect(blocked.fileOpError).toBe('file_ops failed: [REDACTED]');
+  expect(blocked.fileOpResults).toEqual([]);
+  expect(blocked.fileOpWarnings).toBeUndefined();
   expect(blocked.fileOpError).not.toContain(f.projection);
+  expect(readFileSync(join(f.projection, 'input.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
   expect(readFileSync(join(f.projection, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
+  expect(readFileSync(join(f.root, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
   const result = await executeCapturedFileOperations(f.root, f.projection, [
     { op: 'copy', source: 'input.txt', destination: 'copy.txt', overwrite: true },
     { op: 'delete', source: 'missing.txt', dry_run: true },
   ], f.authorize);
+  expect(result.fileOpError).toBeUndefined();
   expect(readFileSync(join(f.projection, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_INPUT');
   expect(result.fileOpResults[1]?.would_delete).toEqual([join(f.root, 'missing.txt')]);
-  expect(result.fileOpWarnings?.[0]).toContain(join(f.root, 'missing.txt'));
+  expect(result.fileOpWarnings).toEqual([
+    `Could not inspect '${join(f.root, 'missing.txt')}' while collecting delete preview: [REDACTED]`,
+  ]);
+  expect(result.fileOpResults[1]?.warnings).toEqual(result.fileOpWarnings);
+  expect(existsSync(join(f.projection, 'missing.txt'))).toBe(false);
+  expect(existsSync(join(f.root, 'missing.txt'))).toBe(false);
   expect(JSON.stringify(result)).not.toContain(f.projection);
   expect(readFileSync(join(f.root, 'copy.txt'), 'utf8')).toBe('SYNTHETIC_OLD');
 });

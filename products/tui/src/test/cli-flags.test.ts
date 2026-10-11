@@ -1,7 +1,9 @@
 import { seedProviderMetadataCacheFixture } from './helpers/provider-metadata-cache-fixture.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import * as runtimeComposition from '../runtime/services.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { publicErrorTextAnswer } from './helpers/user-error-reading.ts';
 import type { Questions } from '@goodvibes-jev/judgment';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -559,9 +561,24 @@ describe('parseCliFlags', () => {
     };
     expect(() => readingFor('credential', 'surfaces.slack.unlistedValue')).toThrow();
     expect(() => readingFor('unlisted-question', 'provider')).toThrow();
-    const previousJudgment = installJudgmentPort(fakePort((name, _question, state) => {
-      return noulAnswer(readingFor(name, (state as { key?: string }).key));
-    }).port);
+    const publicFields = new Set(['config', 'surfaces', 'slack', 'defaultChannel', 'redaction', 'redactedConfigPaths', 'diagnostics', 'service', 'issues']);
+    const publicLines = ['goodvibes-alerts', 'surfaces.slack.signingSecret', 'surfaces.slack.botToken'];
+    const fake = fakePort((name, question, state) => {
+      const diagnostic = publicErrorTextAnswer(publicLines, name, question, state);
+      if (diagnostic !== undefined) return diagnostic;
+      if (state === null || typeof state !== 'object' || Array.isArray(state)) throw new Error('Expected authored config or bundle field');
+      if (name === 'kind' && Object.keys(state).length === 1 && typeof state.field === 'string' && publicFields.has(state.field)) return choiceAnswer(question, 'other', 0.99);
+      return noulAnswer(readingFor(name, typeof state.key === 'string' ? state.key : undefined));
+    });
+    const previousJudgment = installJudgmentPort(fake.port);
+    const createRuntimeServices = runtimeComposition.createRuntimeServices;
+    const composition = spyOn(runtimeComposition, 'createRuntimeServices').mockImplementation(options => {
+      const services = createRuntimeServices(options);
+      // The real composition owns its settings-driven port. Install the authored
+      // egress fixture after that graph exists, preserving its actual closure.
+      installJudgmentPort(fake.port);
+      return services;
+    });
     try {
       const root = makeProjectTempDir('goodvibes-cli-bundle-redaction');
       const configManager = new ConfigManager({
@@ -606,7 +623,7 @@ describe('parseCliFlags', () => {
       expect(importedConfig.get('surfaces.slack.signingSecret')).toBe('');
       expect(importedConfig.get('surfaces.slack.botToken')).toBe('');
       expect(importedConfig.get('surfaces.slack.defaultChannel')).toBe('goodvibes-alerts');
-    } finally { installJudgmentPort(previousJudgment); }
+    } finally { composition.mockRestore(); installJudgmentPort(previousJudgment); }
   });
 
   test('service check reports lifecycle posture with failing readiness exit code', async () => {

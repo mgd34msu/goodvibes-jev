@@ -173,6 +173,7 @@ describe('hosted session roster', () => {
   test('a refused refresh keeps the last known rows and records the reason', async () => {
     const roster = new HostedSessionRoster();
     roster.accept([makeRecord()]);
+    const previous = roster.snapshot();
     roster.bindClient({
       clientId: 'x',
       list: async () => { throw new Error('daemon is down'); },
@@ -181,7 +182,9 @@ describe('hosted session roster', () => {
     await roster.refresh();
 
     expect(roster.snapshot().sessions).toHaveLength(1);
-    expect(roster.snapshot().note).toContain('daemon is down');
+    expect(roster.snapshot().sessions).toBe(previous.sessions);
+    expect(roster.snapshot().capturedAt).toBe(previous.capturedAt);
+    expect(roster.snapshot().note).toBe('the daemon did not answer: [REDACTED]');
   });
 
   test('with no client bound it says so instead of claiming an empty daemon', async () => {

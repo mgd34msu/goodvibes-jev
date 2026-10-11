@@ -25,6 +25,7 @@
 
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import type { AsyncDisposalRegistry } from './async-disposal.js';
 
 /** Where a poller owner registers the call that stops it. */
 export interface DisposalRegistry {
@@ -108,7 +109,7 @@ export interface RuntimePollerOwners {
    * It had a dispose() from the day it was written and simply was not named
    * here, which is the whole reason this list is all-required.
    */
-  readonly homeGraphService: { dispose(): void };
+  readonly homeGraphService: { dispose(): void | Promise<void> };
   /** The composed contract runner: disposing it stops the runner (each contract's engine with it) and releases its store's writer and sweep. */
   readonly contractRunner: { dispose(): void };
   readonly processRegistry: { dispose(): void };
@@ -138,7 +139,7 @@ export interface RuntimePollerOwners {
  * The push-subscription sweep is NOT here: it is constructed inside gateway
  * verb registration, which takes the registry directly and registers its own.
  */
-export function registerRuntimePollers(registry: DisposalRegistry, owners: RuntimePollerOwners): void {
+export function registerRuntimePollers(registry: AsyncDisposalRegistry, owners: RuntimePollerOwners): void {
   registry.add('config file watch', owners.stopConfigWatch);
   registry.add('watcher registry', () => owners.watcherRegistry.dispose());
   registry.add('store snapshot scheduler', () => owners.storeSnapshotScheduler.stop());

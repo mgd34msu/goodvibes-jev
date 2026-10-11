@@ -17,14 +17,14 @@ function fixture() {
     retrySubmission: async () => { nativeCalls.push('retry'); return { status: 'unavailable', message: 'Fixture cannot recover.' }; },
     execute: async () => { throw new Error('Local todos and source submission must not execute native work'); },
   } } as unknown as CommandContext;
-  const run = async (command: string) => { const parsed = parseSlashCommand(command); expect(await registry.execute(parsed.name, [...parsed.args], ctx)).toBe(true); };
+  const run = async (command: string) => { const parsed = parseSlashCommand(command); expect(await registry.executeFromOwner(parsed.name, [...parsed.args], ctx)).toBe(true); };
   const edit = async (kind: Parameters<typeof createAgentWorkspaceBasicCommandEditor>[0], fields: Record<string, string>) => {
     const editor = createAgentWorkspaceBasicCommandEditor(kind);
     const result = buildAgentWorkspaceWorkPlanEditorSubmission(editor, id => fields[id] ?? '');
     expect(result.kind).toBe('dispatch');
     if (result.kind === 'dispatch') await run(result.command);
   };
-  return { store, printed, nativeCalls, run, edit };
+  return { store, printed, nativeCalls, registry, ctx, run, edit };
 }
 
 test('workspace editors reach registered local commands without creating or executing native work', async () => {
@@ -61,4 +61,29 @@ test('malformed and unconfirmed commands have no effects', async () => {
   await f.run('/workplan add Existing'); const before = f.store.listItems();
   for (const command of ['add Bad --execute yes', 'add Bad --owner x --owner y', 'add Bad --notes', 'remove '+before[0]!.id, 'clear-completed', 'done '+before[0]!.id+' extra', 'dispatch_agents', 'submit-file', 'submission-retry extra']) await f.run('/workplan '+command);
   expect(f.store.listItems()).toEqual(before); expect(f.nativeCalls).toEqual([]);
+});
+
+test('plain, model, copied, and nested command contexts cannot edit local todos', async () => {
+  const f = fixture();
+  for (const context of [f.ctx, { ...f.ctx }, { ...f.ctx, invokedByModel: true }]) {
+    await f.registry.execute('workplan', ['add', 'Unauthorized todo'], context);
+    await f.registry.execute('workplan', ['show'], context);
+    await f.registry.execute('workplan', ['markdown'], context);
+    if (context.invokedByModel) await f.registry.executeFromOwner('workplan', ['add', 'Model owner impersonation'], context);
+    expect(f.store.listItems()).toEqual([]);
+  }
+  f.registry.register({ name: 'nested-workplan', description: 'Synthetic nesting control', handler: async (_args, ctx) => {
+    await f.registry.execute('workplan', ['add', 'Nested todo'], ctx);
+    await f.registry.get('workplan')!.handler(['add', 'Copied owner context'], { ...ctx });
+  } });
+  await f.registry.executeFromOwner('nested-workplan', [], f.ctx);
+  expect(f.store.listItems()).toEqual([]); expect(f.nativeCalls).toEqual([]);
+  expect(f.printed.join('\n')).toContain('fresh terminal owner command');
+});
+
+test('a substituted native work-plan accessor is held without invoking it or writing', async () => {
+  const f = fixture(); let reads = 0;
+  Object.defineProperty(f.store, 'addItem', { configurable: true, get() { reads++; throw new Error('Accessor must not execute'); } });
+  await expect(f.registry.executeFromOwner('workplan', ['add', 'Blocked todo'], f.ctx)).rejects.toMatchObject({ problem: 'held' });
+  expect(reads).toBe(0); expect(f.store.listItems()).toEqual([]); expect(f.nativeCalls).toEqual([]);
 });

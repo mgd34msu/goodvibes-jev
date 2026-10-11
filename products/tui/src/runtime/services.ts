@@ -44,7 +44,8 @@ import { ChannelPolicyManager } from '@goodvibes-jev/engine/sdk/platform/channel
 import { ApprovalBroker, GatewayMethodCatalog, SharedSessionBroker } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import { createClientRuntimeServices } from '@goodvibes-jev/engine/sdk/platform/runtime/client-services';
 import { wireIdlePowerAndLiveTurn } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import { createDisposalScope, registerSurfaceRuntimePollers } from './disposal-wiring.ts';
+import { createAsyncDisposalScope } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
+import { registerSurfaceRuntimePollers } from './disposal-wiring.ts';
 import { composeCredentialServices } from './credential-composition.ts';
 import { WatcherRegistry } from '@goodvibes-jev/engine/sdk/platform/watchers';
 import { createWebKnowledgeGapRepairer } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -108,7 +109,10 @@ import type { RuntimeServicesOptions, RuntimeServices } from './runtime-services
 export type { RuntimeServicesOptions, RuntimeServices } from './runtime-services-types.ts';
 
 export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeServices {
-  const disposalScope = createDisposalScope('RuntimeServices'); const workingDirectory = options.workingDir; // disposal seam: see ./disposal-wiring.ts
+  const disposalScope = createAsyncDisposalScope('RuntimeServices');
+  let homeGraphClosing: Promise<void> | undefined;
+  let conversationRewindClosing: Promise<void> | undefined;
+  const workingDirectory = options.workingDir;
   const homeDirectory = options.homeDirectory;
   // Built before anything that touches session state, see session-storage-services.ts.
   const { surface, sessionManager } = createSessionStorageServices({ workingDirectory, homeDirectory, surfaceRoot: GOODVIBES_TUI_SURFACE_ROOT });
@@ -197,7 +201,14 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     fileCache, projectIndex, sessionOrchestration,
   } = client;
   void clientMcpRegistry; void clientSandboxRegistry;
-  disposalScope.registry.add('client runtime services', () => client.dispose());
+  disposalScope.registry.add('client runtime services', () => client.close());
+  disposalScope.registry.add('knowledge store', () => knowledgeStore.close());
+  disposalScope.registry.add('agent knowledge store', () => agentKnowledgeStore.close());
+  disposalScope.registry.add('home graph knowledge store', () => homeGraphKnowledgeStore.close());
+  // Start cancellation in the original leaf order, then drain both tails
+  // before closing storage or the older client floor.
+  disposalScope.registry.add('conversation rewind drain', () => conversationRewindClosing);
+  disposalScope.registry.add('home graph drain', () => homeGraphClosing);
   const contractOperator = createContractOperatorService({ runner: contractRunner, workingDirectory });
   const contractIntake = createContractIntake({ runner: contractRunner, projectRoot: workingDirectory });
 
@@ -475,7 +486,10 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     hosts: hasSessionConversation,
     label: 'the terminal app',
   });
-  disposalScope.registry.add('conversation rewind host', () => { void conversationRewindHost.stop(); });
+  disposalScope.registry.add('conversation rewind host', () => {
+    conversationRewindClosing = conversationRewindHost.stop();
+    void conversationRewindClosing.catch(() => {});
+  });
   const workspaceCheckpointManager = createWorkspaceCheckpointing({ workspaceRoot: workingDirectory, surface, runtimeBus: options.runtimeBus, configManager });
   const { memoryConsolidationScheduler, powerManager, sessionLiveTurnControls } = wireIdlePowerAndLiveTurn({ configManager, memoryRegistry, runtimeBus: options.runtimeBus, isIdle: () => sessionBroker.countBusySessions() === 0 && !pauseController.isPaused('memory-consolidation') && admitExpensiveWork('memory consolidation').allowed, snapshotTick: () => storeSnapshotScheduler.tick(), heartbeat: async () => { await automationManager.triggerHeartbeat({ source: 'wake-catchup' }); }, powerSeam: options.powerSeam });
 
@@ -686,6 +700,14 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     rerootStores: createStoreRerooter({ codeIndexStore, projectIndex, surfaceRoot: GOODVIBES_TUI_SURFACE_ROOT }),
     cancelHostedAgentRuns: () => cancelAllAgentRuns(agentManager),
     dispose: (): void => disposalScope.dispose(),
+    close: (): Promise<void> => disposalScope.close(),
   };
-  registerSurfaceRuntimePollers(disposalScope.registry, services, { stopConfigWatch }); return services;
+  registerSurfaceRuntimePollers(disposalScope.registry, {
+    ...services,
+    homeGraphService: { dispose: () => {
+      homeGraphClosing = homeGraphService.dispose();
+      void homeGraphClosing.catch(() => {});
+    } },
+  }, { stopConfigWatch });
+  return services;
 }

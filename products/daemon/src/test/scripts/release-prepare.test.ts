@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { bumpVersion, parseArgs, prepareRelease, rewriteManifestVersion, scaffoldChangelogText } from '../../../scripts/release-prepare.ts';
-import { checkBinaryVersion } from '../../../scripts/check-version.ts';
+import { checkBinaryVersion, checkSharedBinaryVersion } from '../../../scripts/check-version.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.ts';
 
 const CHANGELOG = '# Changelog\n\nNotes.\n\n## [1.29.0] - 2026-09-30\n\n- previous\n\n---\n\n## [1.28.20] - 2026-08-21\n\n- older\n';
@@ -147,18 +147,30 @@ test('CRLF notes retain line endings and an existing section stays byte-identica
 });
 
 test('actual CLI in a fixture prepares locally and refuses implicit default execution', async () => {
-  const root = fixture(); mkdirSync(join(root, 'scripts'));
+  const oldRoot = fixture(), repo = makeOwnedTempDir('daemon-shared-release');
+  const root = join(repo, 'products/daemon'); mkdirSync(join(root, 'src'), { recursive: true });
+  for (const path of PATHS) copyFileSync(join(oldRoot, path), join(root, path));
+  writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'goodvibes-jev', version: '1.30.0' }));
+  mkdirSync(join(root, 'scripts'));
   const script = join(root, 'scripts/release-prepare.ts');
   copyFileSync(join(import.meta.dir, '../../../scripts/release-prepare.ts'), script);
   copyFileSync(join(import.meta.dir, '../../../scripts/build-preparation-lock.ts'), join(root, 'scripts/build-preparation-lock.ts'));
+  copyFileSync(join(import.meta.dir, '../../../scripts/check-version.ts'), join(root, 'scripts/check-version.ts'));
   const engine = dirname(createRequire(import.meta.url).resolve('@goodvibes-jev/engine/package.json'));
   mkdirSync(join(root, 'node_modules/@goodvibes-jev'), { recursive: true });
   symlinkSync(engine, join(root, 'node_modules/@goodvibes-jev/engine'), 'dir');
   const result = spawnSync(process.execPath, [script, '--version', '1.30.0', '--date', '2026-10-09'], { encoding: 'utf8' });
-  expect(result.status, result.stderr).toBe(0); checkBinaryVersion(root);
+  expect(result.status, result.stderr).toBe(0); checkSharedBinaryVersion(root);
   const before = snapshot(root);
+  const divergent = spawnSync(process.execPath, [script, '--patch', '--no-changelog'], { encoding: 'utf8' });
+  expect(divergent.status).toBe(1); expect(divergent.stderr).toContain('root version'); expect(snapshot(root)).toEqual(before);
+  writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'goodvibes-jev', version: '1.30.1' }));
+  expect(() => checkSharedBinaryVersion(root)).toThrow('must match');
+  const synchronize = spawnSync(process.execPath, [script, '--no-bump', '--no-changelog'], { encoding: 'utf8' });
+  expect(synchronize.status, synchronize.stderr).toBe(0); checkSharedBinaryVersion(root);
+  const synchronized = snapshot(root);
   const invalid = spawnSync(process.execPath, [script], { encoding: 'utf8' });
-  expect(invalid.status).toBe(1); expect(invalid.stderr).toContain('Usage:'); expect(snapshot(root)).toEqual(before);
+  expect(invalid.status).toBe(1); expect(invalid.stderr).toContain('Usage:'); expect(snapshot(root)).toEqual(synchronized);
 });
 
 test('no-bump metadata badge stays stampable by the next explicit bump', async () => {

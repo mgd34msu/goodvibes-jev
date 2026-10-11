@@ -60,7 +60,7 @@ beforeEach(() => {
 afterEach(async () => {
   try {
     for (const runtime of runtimes.splice(0).reverse()) {
-      try { await runtime.processManager.close(); } finally { runtime.dispose(); }
+      try { await runtime.processManager.close(); } finally { await runtime.close(); }
     }
   } finally {
     restoreRead?.(); restoreRead = undefined;
@@ -142,6 +142,13 @@ function fixture() {
 
 const read = (path: string) => ({ files: [{ path }] });
 const setting = (value = 'nord') => ({ mode: 'set', key: 'display.theme', value, confirm: true });
+
+function expectNoReadAdmission(...withheld: string[]) {
+  expect(requests.filter(request => 'disposition' in request.questions || 'secrets' in request.questions
+    || 'platform_source' in request.questions || 'platform_requested' in request.questions)).toHaveLength(0);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
+  for (const value of withheld) expect(JSON.stringify(requests)).not.toContain(value);
+}
 
 test('immediate first Agent turn awaits owner readiness and reads once with a recorded act', async () => {
   const f = fixture(); f.write('ordinary.txt'); reportsMutation = false;
@@ -245,7 +252,8 @@ test('platform source requested in the original host goal is admitted once', asy
   expect(result.success).toBe(true); expect(readBodies).toBe(1); expect(f.prompts()).toBe(0);
   const scopes = requests.filter(request => 'platform_requested' in request.questions);
   expect(scopes).toHaveLength(1); expect(JSON.stringify(scopes[0]?.state)).toContain(f.source.goal);
-  expect(requests.at(-1)?.questions).toHaveProperty('disposition');
+  expect(requests.filter(request => 'disposition' in request.questions)).toHaveLength(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
 });
 
 test.each(['no', 'uncertain'] as const)('platform source with %s requested-scope evidence cannot act', async request => {
@@ -293,7 +301,7 @@ test('a first turn cancelled while the actual rule owner initializes performs no
     await Promise.resolve();
     expect(requests).toHaveLength(0); expect(readBodies).toBe(0);
     abort.abort(); await operation;
-    expect(requests).toHaveLength(0); expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
+    expectNoReadAdmission(); expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
   } finally {
     release(); await Promise.all(pending);
   }
@@ -304,7 +312,7 @@ test.each(['arguments', 'source'] as const)('protected %s are held before any re
   if (location === 'source') f.source.goal = 'Read this using password=synthetic-private';
   const args = location === 'arguments' ? read('password=synthetic-private') : read('ordinary.txt');
   await f.run('read', args).catch(() => undefined);
-  expect(requests).toHaveLength(0); expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
+  expectNoReadAdmission('synthetic-private'); expect(readBodies).toBe(0); expect(f.prompts()).toBe(0);
 });
 
 test('changed original source while path evidence is pending cannot execute', async () => {
@@ -343,7 +351,7 @@ test('an alias outside the admitted project is refused before semantic evidence 
   const outside = join(f.workspace, '..', 'outside-fixture.txt');
   writeFileSync(outside, 'SYNTHETIC OUTSIDE PROJECT'); symlinkSync(outside, join(f.workspace, 'alias.txt'));
   await f.run('read', read('alias.txt')).catch(() => undefined);
-  expect(readBodies).toBe(0); expect(requests).toHaveLength(0);
+  expect(readBodies).toBe(0); expectNoReadAdmission('SYNTHETIC OUTSIDE PROJECT');
 });
 
 test('the actual Agent registry rejects a different genuine manager for the same prepared handle', async () => {

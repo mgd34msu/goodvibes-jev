@@ -1,5 +1,5 @@
 import { knowledgeContentHash } from './content-hash.js';
-import { knowledgeClockIso, knowledgeClockNumber, knowledgeRawRepresentation, retainKnowledgeRepresentation } from './store-record-representation.js';
+import { knowledgeClockIso, knowledgeClockNumber, knowledgeRawRepresentation, retainKnowledgeRepresentation, sameKnowledgeRecord } from './store-record-representation.js';
 import { KnowledgeSourceQualityHeldError } from './source-quality.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactDescriptor } from '../artifacts/types.js';
@@ -100,10 +100,14 @@ async function materializeProjection(
     artifactMetadata: input.artifactMetadata, edgeMetadata: input.edgeMetadata, target: input.target });
   const outputVersion = outputState();
   const stale = () => { throw new KnowledgeSourceQualityHeldError('stale'); };
+  const checkInputCurrent = () => {
+    throwIfAborted(signal);
+    if (authority && (input.store !== store || input.artifactStore !== artifactStore || input.assertCurrent !== authority || input.signal !== signal || outputState() !== outputVersion)) stale();
+  };
   const checkOwner = () => {
     throwIfAborted(signal); authority?.(); graph?.assertCurrent?.();
-    if (authority && (input.store !== store || input.artifactStore !== artifactStore || input.assertCurrent !== authority || input.signal !== signal || outputState() !== outputVersion
-      || readTarget() !== originalTarget || JSON.stringify(readTarget()) !== targetVersion)) stale();
+    checkInputCurrent();
+    if (authority && (readTarget() !== originalTarget || JSON.stringify(readTarget()) !== targetVersion)) stale();
   };
   const check = () => {
     checkOwner();
@@ -205,6 +209,16 @@ async function materializeProjection(
         nodes: graph?.nodes ?? [], edges: [...(graph?.edges ?? []), ...(edgeInput ? [edgeInput] : [])],
         issues: graph?.issues ?? [], assertCurrent: check,
       }), { signal, ...(graph ? { requireAccepted: true } : {}) });
+      checkInputCurrent();
+      if (authority && target) {
+        const committedTarget = target.kind === 'node' ? receipt.nodes.find(record => record.id === target.id)
+          : target.kind === 'source' ? receipt.sources.find(record => record.id === target.id) : undefined;
+        if (committedTarget) {
+          const persistedTarget = target.kind === 'node' ? store.getRecordSnapshot('node', target.id).record
+            : store.getSourceSnapshot({ id: target.id }).source;
+          if (readTarget() !== committedTarget || !persistedTarget || !sameKnowledgeRecord(committedTarget, persistedTarget)) stale();
+        } else if (readTarget() !== originalTarget || JSON.stringify(readTarget()) !== targetVersion) stale();
+      }
       // The graph owner was checked synchronously before the complete commit.
       // Its original read set intentionally changes when those rows publish.
       nodes = receipt.nodes;

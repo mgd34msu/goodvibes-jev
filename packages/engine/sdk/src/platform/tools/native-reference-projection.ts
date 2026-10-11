@@ -26,5 +26,12 @@ export function captureNativeReferenceProjection(value: object, original: Record
     for (const field of boundFields) if (!Object.hasOwn(next, field)
       || JSON.stringify(next[field]) !== JSON.stringify(captured[field])) throw new ToolInputProjectionError('binding-changed');
   };
-  return { args: captured, assertCurrent, executionContext, assertArgs };
+  const schemaArgs = (next: Record<string, unknown>): Record<string, unknown> => {
+    assertArgs(next);
+    // The retained native subject is admission evidence, outside the callable
+    // schema. Every action field still uses the exact public schema unchanged.
+    const callable = { ...next }; delete callable['nativeReferenceSubjects'];
+    return Object.freeze(callable);
+  };
+  return { args: captured, assertCurrent, executionContext, assertArgs, schemaArgs };
 }

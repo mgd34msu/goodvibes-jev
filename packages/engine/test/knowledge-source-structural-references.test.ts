@@ -183,11 +183,13 @@ describe('fresh generated source and extraction references (THE36)', () => {
     const bound = withStoredKnowledgeSourceReferences(candidate(source, extraction), store, source, extraction);
     const requestCount = fake.requests.length;
     await expect(prepareGeneratedFactSupport([structuredClone(bound)])).rejects.toBeInstanceOf(JudgmentInputError);
+    expect(fake.requests).toHaveLength(requestCount);
     const reloaded = new KnowledgeStore({ dbPath }); await reloaded.init();
     const sourceCopy = reloaded.getSource(source.id)!, extractionCopy = reloaded.getExtractionBySourceId(source.id)!;
+    const reopenedRequests = fake.requests.length;
     await expect(prepareGeneratedFactSupport([withStoredKnowledgeSourceReferences(candidate(sourceCopy, extractionCopy), reloaded, sourceCopy, extractionCopy)])).rejects.toBeInstanceOf(JudgmentInputError);
     expect(captureKnowledgeSourceReferences(reloaded, source, extraction)).toBeUndefined();
-    expect(fake.requests).toHaveLength(requestCount);
+    expect(fake.requests).toHaveLength(reopenedRequests);
   });
   test('changed origin, extraction or current source invalidates the captured proof before requests', async () => {
     const fake = readings(); const { store, source, extraction } = await fixture();

@@ -196,6 +196,9 @@ describe('agent_reminder_schedule tool', () => {
       });
 
       expect(result).toEqual(expect.objectContaining({ success: true }));
+      if (!result.success || !('output' in result) || typeof result.output !== 'string') {
+        throw new Error('Successful reminder schedule creation must include output text.');
+      }
       expect(result.output).toContain('Created GoodVibes schedule for Agent reminder');
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-reminder-1"');

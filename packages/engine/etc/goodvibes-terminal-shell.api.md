@@ -4,7 +4,13 @@
 
 ```ts
 
+import { Battery } from '@goodvibes-jev/judgment';
+import { BatteryRun } from '@goodvibes-jev/judgment';
 import { CallOptions } from '@goodvibes-jev/judgment';
+import { ChoiceItem } from '@goodvibes-jev/judgment';
+import { EntryType } from '@goodvibes-jev/judgment';
+import { Fixture } from '@goodvibes-jev/judgment';
+import { FixtureCheck } from '@goodvibes-jev/judgment';
 import { JevContinuation } from '@goodvibes-jev/judgment/decisions';
 import { JevDecision } from '@goodvibes-jev/judgment/decisions';
 import type { JevDecisionBinding } from '@goodvibes-jev/judgment/decisions';
@@ -15,9 +21,11 @@ import { JudgmentRetryProgress } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { Questions } from '@goodvibes-jev/judgment/decisions';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';
+import { RunOptions } from '@goodvibes-jev/judgment';
 import type { Socket } from 'node:net';
 import type { Stakes } from '@goodvibes-jev/judgment';
 import type { StoreApi } from 'zustand';
+import { YesNoItem } from '@goodvibes-jev/judgment';
 import { z } from 'zod/v4';
 
 // @public (undocumented)
@@ -225,8 +233,10 @@ export interface ClusterCommandResult {
 // @public (undocumented)
 export type ClusterSubcommand = (typeof CLUSTER_SUBCOMMANDS)[number];
 
+// Warning: (ae-forgotten-export) The symbol "JudgmentReadingOptions" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
-export function collectSensitiveConfigValues(config: unknown): Promise<readonly string[]>;
+export function collectSensitiveConfigValues(config: unknown, options?: JudgmentReadingOptions): Promise<readonly string[]>;
 
 // @public
 export type ColorCapability = 'none' | 'basic16' | 'ansi256' | 'truecolor';
@@ -723,7 +733,7 @@ export function isNetworkFacing(enabled: unknown, binding: Pick<RuntimeEndpointB
 export function isRedactedValue(value: unknown): boolean;
 
 // @public
-export function isSensitiveConfigPath(path: string): Promise<boolean>;
+export function isSensitiveConfigPath(path: string, options?: JudgmentReadingOptions): Promise<boolean>;
 
 // @public
 export function isTextBackspace(key: string): boolean;
@@ -769,6 +779,30 @@ export function nearestAnsi16Fg(r: number, g: number, b: number): number;
 
 // @public
 export function nearestAnsi256(r: number, g: number, b: number): number;
+
+// Warning: (ae-forgotten-export) The symbol "NOTICE_SEVERITY_OPTIONS" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export type NoticeSeverity = Exclude<keyof typeof NOTICE_SEVERITY_OPTIONS, 'unknown'>;
+
+// @public
+export const noticeSeverity: Battery<    {
+readonly severity: ChoiceItem<    {
+readonly info: "An ordinary update, successful outcome or description of work; no current failure or advisory.";
+readonly warning: "A recoverable problem, incomplete outcome, caution or limitation that deserves attention.";
+readonly critical: "An actual failed operation, lost work, crash or blocked action that needs attention.";
+readonly unknown: "Unintelligible or disconnected material that conveys no notice, update, task description or advisory.";
+}>;
+}>;
+
+// @public (undocumented)
+export interface NoticeSeverityReading {
+    // (undocumented)
+    readonly assertCurrent: () => void;
+    readonly recordPublication: () => void;
+    // (undocumented)
+    readonly severity: NoticeSeverity | undefined;
+}
 
 // @public (undocumented)
 export interface OverlaySurfaceMetrics {
@@ -867,7 +901,127 @@ export function parseWithCatalog<TCommand extends string, TField extends string,
 export const POPULAR_PROVIDERS: ReadonlySet<string>;
 
 // @public
+export function prepareConfigRedaction(config: unknown, options?: JudgmentReadingOptions): Promise<PreparedConfigRedaction>;
+
+// @public (undocumented)
+export interface PreparedConfigRedaction extends RedactedConfigResult {
+    readonly sensitiveValues: readonly string[];
+}
+
+// @public
 export function probeTermCaps(stdout: NodeJS.WriteStream): TermColorCaps;
+
+// @public (undocumented)
+export const PROCESS_OUTPUT_READING_LIMITS: {
+    readonly questions: 64;
+    readonly concurrency: 4;
+    readonly endpointCandidates: 256;
+};
+
+// Warning: (ae-forgotten-export) The symbol "ProcessEndpointCandidate" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function processEndpointCandidates(lines: readonly ProcessOutputEvidenceLine[]): readonly ProcessEndpointCandidate[] | undefined;
+
+// @public (undocumented)
+export const processOutputEndpoint: {
+    readPage(port: JudgmentPort_2, state: EntryType, targets: readonly {
+        readonly id: string;
+        readonly key: string;
+    }[], options: CallOptions): Promise<{
+        observations: Map<string, boolean | undefined>;
+        recordPublication(): void;
+    }>;
+    run(port: JudgmentPort_2, state: EntryType, options?: RunOptions<    {
+    listening: YesNoItem;
+    }> | undefined): Promise<BatteryRun<    {
+    listening: YesNoItem;
+    }>>;
+    name: string;
+    version: number;
+    description: string;
+    items: {
+        listening: YesNoItem;
+    };
+    fixtures: readonly Fixture<    {
+    listening: YesNoItem;
+    }>[];
+    accuracyFloor: number;
+    model?: string;
+    fixtureCount: number;
+    checkFixtures(port: JudgmentPort_2, options?: {
+        readonly signal?: AbortSignal;
+    }): Promise<readonly FixtureCheck[]>;
+};
+
+// @public (undocumented)
+export const processOutputError: {
+    readPage(port: JudgmentPort_2, state: EntryType, targets: readonly {
+        readonly id: string;
+        readonly key: string;
+    }[], options: CallOptions): Promise<{
+        observations: Map<string, boolean | undefined>;
+        recordPublication(): void;
+    }>;
+    run(port: JudgmentPort_2, state: EntryType, options?: RunOptions<    {
+    error: YesNoItem;
+    }> | undefined): Promise<BatteryRun<    {
+    error: YesNoItem;
+    }>>;
+    name: string;
+    version: number;
+    description: string;
+    items: {
+        error: YesNoItem;
+    };
+    fixtures: readonly Fixture<    {
+    error: YesNoItem;
+    }>[];
+    accuracyFloor: number;
+    model?: string;
+    fixtureCount: number;
+    checkFixtures(port: JudgmentPort_2, options?: {
+        readonly signal?: AbortSignal;
+    }): Promise<readonly FixtureCheck[]>;
+};
+
+// @public (undocumented)
+export interface ProcessOutputEvidence {
+    // (undocumented)
+    readonly done: boolean;
+    // (undocumented)
+    readonly lines: readonly ProcessOutputEvidenceLine[];
+    // (undocumented)
+    readonly partials: {
+        readonly stdout: string;
+        readonly stderr: string;
+    };
+}
+
+// @public (undocumented)
+export interface ProcessOutputEvidenceLine {
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly raw: string;
+    // (undocumented)
+    readonly stream: 'stdout' | 'stderr';
+    // (undocumented)
+    readonly text: string;
+}
+
+// @public (undocumented)
+export interface ProcessOutputReading {
+    readonly assertAuthorityCurrent: () => void;
+    // (undocumented)
+    readonly assertCurrent: () => void;
+    // (undocumented)
+    readonly errors: ReadonlyMap<string, boolean | undefined>;
+    // (undocumented)
+    readonly port: number | undefined;
+    // (undocumented)
+    readonly recordPublication: () => void;
+}
 
 // @public
 export interface ProcessRegistryDeps {
@@ -928,6 +1082,14 @@ export interface ProcessRegistryDeps {
 // @public
 export function rawReplyReader(target: RemoteDaemonTarget, fetchImpl?: DaemonFetch): DaemonFetch;
 
+// @public
+export function readNoticeSeverity(text: string, options?: Pick<JudgmentReadingOptions, 'signal' | 'assertCurrent'>): Promise<NoticeSeverityReading>;
+
+// @public (undocumented)
+export function readProcessOutput(evidence: ProcessOutputEvidence, lineIds: readonly string[], options: Pick<JudgmentReadingOptions, 'signal' | 'assertCurrent'> & {
+    readonly authoritySignal: AbortSignal;
+}): Promise<ProcessOutputReading>;
+
 // @public (undocumented)
 export interface Rect {
     // (undocumented)
@@ -941,24 +1103,26 @@ export interface Rect {
 }
 
 // @public (undocumented)
-export function redactConfig<T>(config: T): Promise<RedactedConfigResult<T>>;
+export function redactConfig(config: unknown, options?: JudgmentReadingOptions): Promise<RedactedConfigResult>;
 
 // @public (undocumented)
 export const REDACTED_VALUE = "<redacted>";
 
 // @public (undocumented)
-export interface RedactedConfigResult<T> {
+export interface RedactedConfigResult {
+    // (undocumented)
+    readonly assertCurrent: () => void;
     // (undocumented)
     readonly redactedPaths: readonly string[];
     // (undocumented)
-    readonly value: T;
+    readonly value: unknown;
 }
 
 // @public (undocumented)
-export function redactSerializedSecrets(serialized: string, secretValues: readonly string[]): string;
+export function redactSerializedSecrets(serialized: string, secretValues: readonly string[], options?: JudgmentReadingOptions): Promise<string>;
 
 // @public (undocumented)
-export function redactText(input: string): string;
+export function redactText(input: string, options?: JudgmentReadingOptions): Promise<string>;
 
 // @public
 export interface RejectedFlagSpec {
@@ -1067,6 +1231,12 @@ export interface ResolveRemoteTargetInput {
 
 // @public (undocumented)
 export function resolveRuntimeEndpointBinding(config: Pick<ConfigManager, 'get'>, endpoint: RuntimeEndpointId): RuntimeEndpointBinding;
+
+// @public
+export function retainCliConfig(manager: ConfigManager): {
+    raw: Readonly<GoodVibesConfig>;
+    assertCurrent: () => void;
+};
 
 // @public (undocumented)
 export function runClusterCommand(input: RunClusterCommandInput): Promise<ClusterCommandResult>;
@@ -1393,6 +1563,7 @@ export function writeTreeStatusMarker(line: Line, glyph: string | null, fg: stri
 // sdk/src/platform/runtime/fleet/registry.ts:103:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:105:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts
+// terminal-shell/src/cli-config-owner.ts:36:55 - (ae-forgotten-export) The symbol "GoodVibesConfig" needs to be exported by the entry point index.d.ts
 // terminal-shell/src/terminal-output-guard.ts:70:3 - (ae-forgotten-export) The symbol "WritableStreamLike" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)

@@ -69,6 +69,9 @@ describe('concrete schedule effect admission', () => {
       await withMockHost(async calls => {
         const result = await state.fixture.run(state.admitted(item.factory), item.args);
         expect(result).toEqual(expect.objectContaining({ success: true }));
+        if (!result.success || !('output' in result) || typeof result.output !== 'string') {
+          throw new Error('Successful recorded schedule admission must include output text.');
+        }
         expect(result.output).not.toContain('confirm:true');
         expect(result.output).not.toContain('explicitUserRequest');
         expect(calls()).toBe(item.name === 'edit' ? 3 : 1);

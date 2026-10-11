@@ -54,6 +54,7 @@ import { makeLongLivedProjectTempDir } from '../helpers/project-temp.ts';
 import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.ts';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
+import { authoredPrivacyAnswer, errorSpan, errorText } from '../helpers/authored-diagnostic-readings.ts';
 import { createAgentConversationSender } from '../../runtime/agent-conversation-sender.ts';
 
 /** A date a few days out, so it sits inside the default ten-day lead window. */
@@ -127,7 +128,13 @@ function harness(): Harness {
     getConversationTitle: () => 'occasions-push-test',
   });
   runtimes.push(services);
-  const semantic = fakePort((name, question) => {
+  const readDiagnostic = authoredPrivacyAnswer({ parts: [
+    [errorText('No agent conversation sender is '), errorSpan('sender'), errorText(', so a message addressed to the agent has nowhere to land. The agent product registers one through ChannelDeliveryRouter.agentDelivery.register().')],
+    [errorText('This runtime has no active conversation to land a message in yet.')],
+  ], fields: { sender: 'other' } });
+  const semantic = fakePort((name, question, state) => {
+    const diagnostic = readDiagnostic(name, question, state);
+    if (diagnostic !== undefined) return diagnostic;
     if (name === 'subject') return choiceAnswer(question, 'other', 0.99);
     if (name === 'names') return noulAnswer(0.99);
     throw new Error(`Unscripted occasion fixture question: ${name}`);

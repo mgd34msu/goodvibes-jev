@@ -733,6 +733,17 @@ export class AgentOrchestrator {
     if (autonomousSource && (!originalPermissionManager?.admitAutonomous || !originalPermissionManager.autonomousPreparation))
       throw new Error('Native contract member requires the shared autonomous permission owner');
     const processManager = this.toolDeps?.processManager;
+    let runSettlement: Promise<void> | undefined;
+    const beforeRunSettlement = authority && capturedReplHistory ? () => {
+      if (runSettlement) return runSettlement;
+      const retained = Promise.withResolvers<void>();
+      runSettlement = retained.promise;
+      try {
+        disposeCapturedReplHistory(capturedReplHistory);
+        retained.resolve(processManager?.stopOwnedBoundaries(authority));
+      } catch (failure) { retained.reject(failure); }
+      return runSettlement;
+    } : undefined;
     const contractHooks = this.toolDeps?.contractHooks;
     if (authority && !originalPermissionManager)
       throw new Error('captured agent requires original-owner read authorization');
@@ -849,12 +860,7 @@ export class AgentOrchestrator {
             },
           }
         : contractHooks,
-      ...(authority && capturedReplHistory
-        ? { beforeRunSettlement: async () => {
-            disposeCapturedReplHistory(capturedReplHistory);
-            await processManager?.stopOwnedBoundaries(authority);
-          } }
-        : {}),
+      ...(beforeRunSettlement ? { beforeRunSettlement } : {}),
       archetypeLoader: this.toolDeps?.archetypeLoader,
       providerOptimizer: this.toolDeps?.providerOptimizer,
       providerRegistry: this.toolDeps!.providerRegistry!,

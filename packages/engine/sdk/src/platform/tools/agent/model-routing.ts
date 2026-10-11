@@ -6,8 +6,8 @@
  * bare id resolves via the shared resolver (model-id-resolution.ts): unique
  * across the registry -> auto-qualify; ambiguous/unknown -> a rich error
  * naming real candidates. Storage stays provider-qualified either way.
- * Omitted `modelCandidates` falls back to the prior format-only validation
- * so a caller that hasn't threaded the registry through yet is unaffected.
+ * When `modelCandidates` is omitted, the input must already be a
+ * provider-qualified key; format validation checks it without registry resolution.
  */
 
 import { splitModelRegistryKey } from '../../providers/registry-helpers.js';

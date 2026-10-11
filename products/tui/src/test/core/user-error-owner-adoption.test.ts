@@ -2,21 +2,44 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { wireStreamEventMetrics, createStreamMetrics, type WireStreamEventMetricsOptions } from '../../core/stream-event-wiring.ts';
+import { preparePublicErrorText, publicErrorTextAnswer, withPublicErrorText, type PublicErrorTextReadings } from '../helpers/user-error-reading.ts';
+import { yesNo, STAKES_BANDS } from '@goodvibes-jev/judgment';
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
 const flush = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
+
+test('public diagnostic fixture refuses unauthored, malformed and unrelated readings', async () => {
+  const question = yesNo('Synthetic diagnostic fixture control', STAKES_BANDS.high.yesNo).question;
+  const projection = { phase: 'source', parts: [{ kind: 'text', text: 'authored public cause' }], target: 'whole-line' };
+  expect(publicErrorTextAnswer(['authored public cause'], 'lineHasCredential', question, projection)).toEqual(noulAnswer(0.01));
+  expect(() => publicErrorTextAnswer(['authored public cause'], 'lineHasCredential', question, { ...projection, parts: [{ kind: 'text', text: 'undeclared cause' }] })).toThrow('Unexpected public diagnostic source');
+  expect(() => publicErrorTextAnswer(['authored public cause'], 'spanIsCredential', question, { ...projection, target: 'span-1' })).toThrow('Unexpected public diagnostic credential projection');
+  expect(publicErrorTextAnswer(['authored public cause'], 'credentialRemains', question, projection)).toBeUndefined();
+  const before = installJudgmentPort(undefined);
+  try {
+    await expect(withPublicErrorText(['Authorization: Bearer synthetic-private-value'], () => { throw new Error('Should remain held'); })).rejects.toThrow('Public diagnostic reading did not settle');
+  } finally { installJudgmentPort(before); }
+});
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(r => { resolve = r; });
   return { promise, resolve };
 }
-function reader(options: { wait?: Promise<void>; reject?: boolean; auth?: boolean; sessionEnded?: boolean } = {}) {
-  const fake = fakePort((name, question) => question.type === 'choice'
-    ? choiceAnswer(question, name === 'failure__category' ? options.auth ? 'authentication' : 'unknown' : 'none', 0.99)
-    : noulAnswer(name === 'user__session_ended' && options.sessionEnded ? 0.99 : 0.01));
+function reader(options: { wait?: Promise<void>; reject?: boolean; auth?: boolean; sessionEnded?: boolean; publicLines?: readonly string[]; publicReadings?: PublicErrorTextReadings } = {}) {
+  const fake = fakePort((name, question, state) => {
+    const diagnostic = publicErrorTextAnswer(options.publicLines ?? [], name, question, state, options.publicReadings);
+    if (diagnostic !== undefined) return diagnostic;
+    if (name === 'failure__category') return choiceAnswer(question, options.auth ? 'authentication' : 'unknown', 0.99);
+    if (name === 'failure__connection_failure') return choiceAnswer(question, 'none', 0.99);
+    if (question.type === 'noul' && ['failure__billing', 'failure__rate_limited', 'failure__context_exceeded', 'failure__transient_network', 'failure__provider_unusable', 'failure__before_response', 'user__session_ended'].includes(name)) {
+      return noulAnswer(name === 'user__session_ended' && options.sessionEnded ? 0.99 : 0.01);
+    }
+    throw new Error(`Unexpected user error question: ${name}`);
+  });
   installJudgmentPort({ ...fake.port, async ask(request) {
+    if (request.context?.battery?.startsWith('engine.redaction.')) return fake.port.ask(request);
     await options.wait;
     if (options.reject) throw new Error('reading unavailable');
     return fake.port.ask(request);
@@ -56,11 +79,21 @@ function fixture(overrides: Partial<WireStreamEventMetricsOptions> = {}) {
 }
 
 test('live stream asks the public owner: prose mentioning 401, 429 and timeout is not classified by regex', async () => {
-  const requests = reader(); const f = fixture();
+  const line = 'Documentation mentions 401, 429 and timeout but the failure is unknown';
+  const text = { kind: 'text', text: 'Documentation mentions 401, 429 and timeout but the failure is ' };
+  const tail = { kind: 'text', text: '' };
+  const requests = reader({ publicLines: [line], publicReadings: {
+    ordinaryFields: ['failure'],
+    credentialProjections: [{ phase: 'source', target: 'span-1', parts: [text, { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'failure' }, tail] }],
+    residualProjections: [{ parts: [text, { kind: 'withheld', reference: 'span-1' }, tail] }],
+  } }); await preparePublicErrorText([line]);
+  requests.length = 0;
+  const f = fixture();
   try {
     f.turns.emit('TURN_ERROR', { turnId: 'turn-a', error: 'Documentation mentions 401, 429 and timeout but the failure is unknown' });
     await flush();
     expect(requests).toHaveLength(1);
+    expect(Object.keys(requests[0]?.questions ?? {})).toContain('failure__category');
     expect(f.messages[0]).toContain('Provider error: Documentation');
     expect(f.messages[0]).not.toContain('Authentication failed');
     expect(f.surfaced()).toBe(1);
@@ -89,7 +122,7 @@ test('subscription wording comes from the public reader', async () => {
 });
 
 test('reader failure reports unavailable interpretation without guessing a class', async () => {
-  reader({ reject: true }); const f = fixture();
+  reader({ reject: true, publicLines: ['401 timeout quota'] }); await preparePublicErrorText(['401 timeout quota']); const f = fixture();
   try { f.turns.emit('TURN_ERROR', { turnId: 'turn-a', error: '401 timeout quota' }); await flush();
     expect(f.messages).toHaveLength(1); expect(f.messages[0]).toContain('Error details unavailable');
     expect(f.messages[0]).toContain('401 timeout quota'); expect(f.messages[0]).not.toContain('Authentication failed');
@@ -126,17 +159,25 @@ test('typed HTTP status and errno retain structural authority even when prose sa
 
 test('the bounded owner preserves error arrival order when reads resolve backwards', async () => {
   let entered = 0; const first = deferred(); const second = deferred();
+  const diagnostic = fakePort((name, question, state) => {
+    const answer = publicErrorTextAnswer(['first', 'second'], name, question, state);
+    if (answer === undefined) throw new Error(`Unexpected ordered diagnostic question: ${name}`);
+    return answer;
+  });
   // Both return deliberately unavailable readings. This tests delivery order,
   // not the reader's answer schema, which the structural/semantic tests cover.
-  installJudgmentPort({ model: 'jev-1.13.0', async ask() {
+  installJudgmentPort({ model: 'jev-1.13.0', async ask(request) {
+    if (request.context?.battery === 'engine.redaction.credential') return diagnostic.port.ask(request);
     const index = entered++; await (index === 0 ? first.promise : second.promise); throw new Error('unavailable');
   } });
+  await preparePublicErrorText(['first', 'second']);
   const f = fixture();
   try {
     f.turns.emit('TURN_ERROR', { turnId: 'turn-a', error: 'first' });
     f.turns.emit('TURN_ERROR', { turnId: 'turn-a', error: 'second' });
     second.resolve(); await flush(); expect(f.messages).toEqual([]);
     first.resolve(); await flush(); expect(f.messages.map(line => line.split('Original error: ')[1])).toEqual(['first', 'second']);
+    expect(entered).toBe(2);
   } finally { f.close(); }
 });
 
@@ -176,7 +217,7 @@ test('a terminal turn rejects late duplicate errors and stale terminal events ca
     f.turns.emit('TURN_COMPLETED', { turnId: 'turn-a' });
     f.turns.emit('TURN_ERROR', { turnId: 'turn-a', error: 'late' }); await flush(); expect(f.messages).toEqual([]);
     f.turns.emit('TURN_SUBMITTED', { turnId: 'turn-b' });
-    const pending = deferred(); reader({ wait: pending.promise });
+    const pending = deferred(); reader({ wait: pending.promise, publicLines: ['current'] }); await preparePublicErrorText(['current']);
     f.turns.emit('TURN_ERROR', { turnId: 'turn-b', error: 'current' });
     f.turns.emit('TURN_CANCEL', { turnId: 'turn-a' }); pending.resolve(); await flush();
     expect(f.messages).toHaveLength(1); expect(f.messages[0]).toContain('current');

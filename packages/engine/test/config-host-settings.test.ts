@@ -131,8 +131,13 @@ describe('public instance-owned boolean host settings', () => {
     write(config.getProjectConfigPath()!, {}); config.load();
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
     writeFileSync(config.getConfigPath(), '{invalid');
-    expect(() => config.getHostBooleanSetting(KEY).setProjectValue(true)).toThrow('could not be read');
+    expect(() => config.getHostBooleanSetting(KEY).setProjectValue(true))
+      .toThrow(`Host config load failed for ${config.getConfigPath()}: [REDACTED]`);
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
+    expect(readFileSync(config.getConfigPath(), 'utf8')).toBe('{invalid');
+    // The native project write precedes the failed cross-tier refresh. Its
+    // durable restrictive value remains truthful even though refresh refuses.
+    expect(JSON.parse(readFileSync(config.getProjectConfigPath()!, 'utf8'))).toEqual(host(true));
   });
 
   test('an inaccessible project parent is a failed read, never absence revealing global false', () => {
@@ -141,7 +146,7 @@ describe('public instance-owned boolean host settings', () => {
     const directory = join(options.workingDir, '.goodvibes', 'agent');
     chmodSync(directory, 0);
     try {
-      expect(() => config.load()).toThrow('could not be accessed');
+      expect(() => config.load()).toThrow(`Host config load failed for ${config.getProjectConfigPath()!}: [REDACTED]`);
       expect(config.getHostBooleanSetting(KEY).get()).toBe(true);
       expect(() => config.getHostBooleanSetting(KEY).set(false)).toThrow('could not be read');
       expect(config.getHostBooleanSetting(KEY).get()).toBe(true);

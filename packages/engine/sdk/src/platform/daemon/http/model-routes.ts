@@ -19,7 +19,8 @@ import type { SecretsManager } from '../../config/secrets.js';
 import type { ProviderAuthRouteDescriptor, ProviderRuntimeMetadata } from '../../providers/interface.js';
 import { findModelDefinition } from '../../providers/registry-models.js';
 import { resolveModelReference } from '../../providers/model-id-resolution.js';
-import { BUILTIN_COMPAT_PROVIDERS, BUILTIN_PROVIDER_ENV_KEYS } from '../../providers/builtin-catalog.js';
+import { BUILTIN_COMPAT_PROVIDERS } from '../../providers/builtin-catalog.js';
+import { BUILTIN_PROVIDER_ENV_KEYS } from '../../config/provider-credential-catalog.js';
 import {
   REASONING_EFFORT_SEVERITY,
   readReasoningEffortLevel,

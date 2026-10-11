@@ -478,7 +478,7 @@ for (const mode of ['missing', 'stale'] as const) {
     await withActualDismissalService(async f => {
       const registry = new CommandRegistry(); registerPlanningRuntimeCommands(registry);
       const out: string[] = []; const getState = f.service.getState.bind(f.service);
-      let expectedBytes: Buffer | undefined; let requests = 0;
+      let expectedBytes: Uint8Array | undefined; let requests = 0;
       f.service.getState = async input => {
         const selected = await getState(input);
         if (mode === 'stale') {
@@ -494,7 +494,7 @@ for (const mode of ['missing', 'stale'] as const) {
       f.service.upsertState = async () => { throw new Error('Dismissal must not submit a numeric public view'); };
       await registry.execute('project-plan', ['dismiss'], makeContext(f.service, out, []));
       if (expectedBytes === undefined) throw new Error('Dismissal did not read the selected planning revision');
-      expect(readFileSync(f.path)).toEqual(expectedBytes); expect(f.requests()).toBe(requests);
+      expect(readFileSync(f.path).equals(expectedBytes)).toBe(true); expect(f.requests()).toBe(requests);
       const after = await new ProjectPlanningService(f.openStore()).getState({ projectId: 'proj' });
       expect(after.state?.metadata?.active).toBe(true);
       expect(after.state?.metadata?.dismissedAt).toBeUndefined();

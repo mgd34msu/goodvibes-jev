@@ -54,7 +54,7 @@ import { MemoryConsolidationScheduler } from '../state/memory-consolidation-sche
 import { PowerManager, wireRuntimePower, createUnavailablePowerSeam, type PowerPlatformSeam } from '../power/index.js';
 import { emitProviderVoiceUsage } from './emitters/providers.js';
 import { AppendOnlyRetentionScheduler, runStartupAppendOnlySweep } from './retention/append-only-registry.js';
-import { createDisposalScope, registerRuntimePollers } from './disposal.js';
+import { createAsyncDisposalScope, registerRuntimePollers } from './disposal.js';
 import { composeJudgment, type JudgmentServices } from './judgment-services.js';
 import type { BrowserJudgmentCapability } from '@goodvibes-jev/engine/daemon-sdk';
 import { resolveMemoryVectorDbPath } from '../state/memory-vector-store.js';
@@ -343,6 +343,7 @@ export interface RuntimeServices {
    * handed runtime services by its caller does not own them.
    */
   dispose(): void;
+  close(): Promise<void>;
 }
 
 export {
@@ -351,7 +352,7 @@ export {
 } from './provider-optimizer-wiring.js';
 
 export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeServices {
-  const disposalScope = createDisposalScope('RuntimeServices'); // see ./disposal.ts
+  const disposalScope = createAsyncDisposalScope('RuntimeServices');
   const workingDirectory = options.workingDir;
   const homeDirectory = options.homeDirectory;
   const surfaceRoot = requireSurfaceRoot(options.surfaceRoot, 'RuntimeServicesOptions surfaceRoot');
@@ -1194,6 +1195,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     workspaceCheckpointManager,
     integrationHelpers,
     dispose: (): void => disposalScope.dispose(),
+    close: (): Promise<void> => disposalScope.close(),
     async rerootStores(newWorkingDir: string): Promise<void> {
       const newMemoryDbPath = join(newWorkingDir, '.goodvibes', surfaceRoot, 'memory.sqlite');
       await memoryStore.reroot(newMemoryDbPath);

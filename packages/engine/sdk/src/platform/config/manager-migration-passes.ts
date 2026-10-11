@@ -18,6 +18,7 @@ import {
   migrateWrfcSettings,
 } from './migrations.js';
 import { migrateSandboxQemuRemoval } from './sandbox-qemu-migration.js';
+import { migrateLegacyDaemonReleaseFeed } from './schema-domain-update.js';
 import { isFrozenDefaultDump, stripFrozenDefaults } from './settings-io.js';
 import {
   PAYMENTS_BUDGET_AMOUNTS_READER_FLOOR,
@@ -506,7 +507,8 @@ export function runDaemonTierMigrationPasses(
   receipt: MigrationReceiptSink,
   ownership: MigrationOwnership,
 ): Record<string, unknown> {
-  const renamed = applyPaymentsBudgetMigrationPass(parsed, sourcePath, receipt, ownership);
+  const updated = applyDaemonReleaseFeedMigrationPass(parsed, sourcePath, ownership);
+  const renamed = applyPaymentsBudgetMigrationPass(updated, sourcePath, receipt, ownership);
   return applyOccasionsFinalStretchMigrationPass(renamed, sourcePath, receipt, ownership);
 }
 
@@ -531,7 +533,8 @@ export function runLoadMigrationPasses(
   receipt: MigrationReceiptSink,
   ownership: MigrationOwnership = OWNS_FILE,
 ): Record<string, unknown> {
-  let config = applyDangerDaemonMigrationPass(parsed, sourcePath);
+  let config = applyDaemonReleaseFeedMigrationPass(parsed, sourcePath, ownership);
+  config = applyDangerDaemonMigrationPass(config, sourcePath);
   config = applyLegacySettingsMigrationPass(config, sourcePath, receipt, ownership);
   config = applyFleetMaxSizeMigrationPass(config, sourcePath, receipt, ownership);
   config = applyControlPlaneBaseUrlMigrationPass(config, sourcePath, receipt, ownership);
@@ -543,4 +546,12 @@ export function runLoadMigrationPasses(
   config = applyContractSettingsMigrationPass(config, sourcePath, receipt, ownership);
   config = applySandboxQemuMigrationPass(config, sourcePath, receipt, ownership);
   return applyDefaultStripMigrationPass(config, sourcePath, receipt, ownership);
+}
+
+/** Persist an exact old default only in the runtime that owns this settings file. */
+export function applyDaemonReleaseFeedMigrationPass(parsed: Record<string, unknown>, sourcePath: string, ownership: MigrationOwnership): Record<string, unknown> {
+  const result = migrateLegacyDaemonReleaseFeed(parsed);
+  if (result === parsed) return parsed;
+  if (ownership.ownsFile && ownership.beforeWrite?.() !== false) persistMigratedFile(sourcePath, result, 'Daemon release feed migration');
+  return result;
 }

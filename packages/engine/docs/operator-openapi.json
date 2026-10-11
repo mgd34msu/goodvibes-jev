@@ -5537,6 +5537,9 @@
                     "id": {
                       "type": "string"
                     },
+                    "mutationRevision": {
+                      "type": "string"
+                    },
                     "name": {
                       "type": "string"
                     },
@@ -6300,6 +6303,7 @@
                   },
                   "required": [
                     "id",
+                    "mutationRevision",
                     "name",
                     "labels",
                     "createdAt",
@@ -6343,6 +6347,12 @@
                 "properties": {
                   "id": {
                     "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   },
                   "name": {
                     "type": "string"
@@ -6891,6 +6901,9 @@
                         "type": "object",
                         "properties": {
                           "id": {
+                            "type": "string"
+                          },
+                          "mutationRevision": {
                             "type": "string"
                           },
                           "name": {
@@ -7656,6 +7669,7 @@
                         },
                         "required": [
                           "id",
+                          "mutationRevision",
                           "name",
                           "labels",
                           "createdAt",
@@ -7786,6 +7800,25 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "expectedMutationRevision",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "admission",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            }
           }
         ]
       },
@@ -7805,6 +7838,9 @@
                   "type": "object",
                   "properties": {
                     "id": {
+                      "type": "string"
+                    },
+                    "mutationRevision": {
                       "type": "string"
                     },
                     "name": {
@@ -8570,6 +8606,7 @@
                   },
                   "required": [
                     "id",
+                    "mutationRevision",
                     "name",
                     "labels",
                     "createdAt",
@@ -8623,6 +8660,15 @@
                 "properties": {
                   "jobId": {
                     "type": "string"
+                  },
+                  "expectedMutationRevision": {
+                    "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   },
                   "name": {
                     "type": "string"
@@ -9164,6 +9210,15 @@
                 "properties": {
                   "jobId": {
                     "type": "string"
+                  },
+                  "expectedMutationRevision": {
+                    "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   }
                 },
                 "required": [
@@ -9240,6 +9295,15 @@
                 "properties": {
                   "jobId": {
                     "type": "string"
+                  },
+                  "expectedMutationRevision": {
+                    "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   }
                 },
                 "required": [
@@ -13526,6 +13590,9 @@
                     "id": {
                       "type": "string"
                     },
+                    "mutationRevision": {
+                      "type": "string"
+                    },
                     "name": {
                       "type": "string"
                     },
@@ -14289,6 +14356,7 @@
                   },
                   "required": [
                     "id",
+                    "mutationRevision",
                     "name",
                     "labels",
                     "createdAt",
@@ -14332,6 +14400,12 @@
                 "properties": {
                   "name": {
                     "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   },
                   "prompt": {
                     "type": "string"
@@ -14812,6 +14886,9 @@
                         "type": "object",
                         "properties": {
                           "id": {
+                            "type": "string"
+                          },
+                          "mutationRevision": {
                             "type": "string"
                           },
                           "name": {
@@ -15577,6 +15654,7 @@
                         },
                         "required": [
                           "id",
+                          "mutationRevision",
                           "name",
                           "labels",
                           "createdAt",
@@ -16631,6 +16709,25 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "expectedMutationRevision",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "admission",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            }
           }
         ]
       }
@@ -16699,6 +16796,15 @@
                 "properties": {
                   "scheduleId": {
                     "type": "string"
+                  },
+                  "expectedMutationRevision": {
+                    "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   }
                 },
                 "required": [
@@ -16775,6 +16881,15 @@
                 "properties": {
                   "scheduleId": {
                     "type": "string"
+                  },
+                  "expectedMutationRevision": {
+                    "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   }
                 },
                 "required": [
@@ -23295,6 +23410,17 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "admission",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
+            }
           }
         ]
       },
@@ -23518,7 +23644,7 @@
       "post": {
         "operationId": "channels.drafts.save",
         "summary": "Save Channel Draft",
-        "description": "Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation.",
+        "description": "Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.",
         "tags": [
           "channels"
         ],
@@ -23667,6 +23793,12 @@
                   },
                   "sendError": {
                     "type": "string"
+                  },
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
                   }
                 },
                 "required": [
@@ -25401,7 +25533,7 @@
       "post": {
         "operationId": "channels.routing.assign",
         "summary": "Assign Channel Routing Rule",
-        "description": "Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation.",
+        "description": "Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.",
         "tags": [
           "channels"
         ],
@@ -25471,6 +25603,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "channelId": {
                     "type": "string"
                   },
@@ -25656,6 +25794,17 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "admission",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "autonomous"
+              ]
             }
           }
         ]
@@ -101840,6 +101989,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "occasionId": {
                     "type": "string"
                   },
@@ -102019,6 +102174,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "occasionId": {
                     "type": "string"
                   },
@@ -102117,6 +102278,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "title": {
                     "type": "string"
                   },
@@ -102221,6 +102388,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "occasionId": {
                     "type": "string"
                   }
@@ -102471,6 +102644,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "interviewId": {
                     "type": "string"
                   },
@@ -102793,6 +102972,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "interviewId": {
                     "type": "string"
                   },
@@ -103455,6 +103640,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "title": {
                     "type": "string"
                   },
@@ -103963,6 +104154,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "occasionId": {
                     "type": "string"
                   },
@@ -104121,241 +104318,273 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ranAt": {
-                      "type": "number"
-                    },
-                    "today": {
-                      "type": "string"
-                    },
-                    "hold": {
-                      "anyOf": [
-                        {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ranAt": {
+                          "type": "number"
+                        },
+                        "today": {
                           "type": "string"
                         },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "nudge": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
+                        "hold": {
+                          "anyOf": [
+                            {
                               "type": "string"
                             },
-                            "raisedAt": {
-                              "type": "number"
-                            },
-                            "subjects": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "occasionId": {
-                                    "type": "string"
-                                  },
-                                  "title": {
-                                    "type": "string"
-                                  },
-                                  "person": {
-                                    "type": "string"
-                                  },
-                                  "kind": {
-                                    "type": "string",
-                                    "enum": [
-                                      "gift-giving",
-                                      "remember-only",
-                                      "neither"
-                                    ]
-                                  },
-                                  "proximity": {
-                                    "type": "string",
-                                    "enum": [
-                                      "approaching",
-                                      "soon",
-                                      "imminent"
-                                    ]
-                                  },
-                                  "subject": {
-                                    "type": "string",
-                                    "enum": [
-                                      "owner",
-                                      "other",
-                                      "unattributed"
-                                    ]
-                                  },
-                                  "acknowledged": {
-                                    "type": "boolean"
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "nudge": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "raisedAt": {
+                                  "type": "number"
+                                },
+                                "subjects": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "occasionId": {
+                                        "type": "string"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "person": {
+                                        "type": "string"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "gift-giving",
+                                          "remember-only",
+                                          "neither"
+                                        ]
+                                      },
+                                      "proximity": {
+                                        "type": "string",
+                                        "enum": [
+                                          "approaching",
+                                          "soon",
+                                          "imminent"
+                                        ]
+                                      },
+                                      "subject": {
+                                        "type": "string",
+                                        "enum": [
+                                          "owner",
+                                          "other",
+                                          "unattributed"
+                                        ]
+                                      },
+                                      "acknowledged": {
+                                        "type": "boolean"
+                                      }
+                                    },
+                                    "required": [
+                                      "occasionId",
+                                      "title",
+                                      "person",
+                                      "kind",
+                                      "proximity",
+                                      "subject",
+                                      "acknowledged"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 },
-                                "required": [
-                                  "occasionId",
-                                  "title",
-                                  "person",
-                                  "kind",
-                                  "proximity",
-                                  "subject",
-                                  "acknowledged"
-                                ],
-                                "additionalProperties": false
-                              }
+                                "message": {
+                                  "type": "string"
+                                },
+                                "answerable": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "raisedAt",
+                                "subjects",
+                                "message",
+                                "answerable"
+                              ],
+                              "additionalProperties": false
                             },
-                            "message": {
-                              "type": "string"
-                            },
-                            "answerable": {
-                              "type": "boolean"
+                            {
+                              "type": "null"
                             }
-                          },
-                          "required": [
-                            "id",
-                            "raisedAt",
-                            "subjects",
-                            "message",
-                            "answerable"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "conflictMessages": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "resumedInterviews": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "delivered": {
-                      "type": "boolean"
-                    },
-                    "deliveryChannel": {
-                      "type": "string"
-                    },
-                    "deliveryId": {
-                      "anyOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "deliveries": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "channel": {
+                        "conflictMessages": {
+                          "type": "array",
+                          "items": {
                             "type": "string"
-                          },
-                          "delivered": {
-                            "type": "boolean"
-                          },
-                          "deliveryId": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "failure": {
-                            "anyOf": [
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
                           }
                         },
-                        "required": [
-                          "channel",
-                          "delivered",
-                          "deliveryId",
-                          "failure"
-                        ],
-                        "additionalProperties": false
-                      }
-                    },
-                    "mirrored": {
-                      "type": "number"
-                    },
-                    "housekeeping": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "sweptAt": {
-                              "type": "number"
-                            },
-                            "expiredAcknowledgements": {
-                              "type": "number"
-                            },
-                            "orphanedRecords": {
-                              "type": "number"
-                            },
-                            "expiredOpenItems": {
-                              "type": "number"
-                            },
-                            "agedGiftRecords": {
-                              "type": "number"
-                            },
-                            "droppedInterviews": {
-                              "type": "number"
-                            },
-                            "staleMirrors": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "sweptAt",
-                            "expiredAcknowledgements",
-                            "orphanedRecords",
-                            "expiredOpenItems",
-                            "agedGiftRecords",
-                            "droppedInterviews",
-                            "staleMirrors"
-                          ],
-                          "additionalProperties": false
+                        "resumedInterviews": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         },
-                        {
-                          "type": "null"
+                        "delivered": {
+                          "type": "boolean"
+                        },
+                        "deliveryChannel": {
+                          "type": "string"
+                        },
+                        "deliveryId": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "deliveries": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "channel": {
+                                "type": "string"
+                              },
+                              "delivered": {
+                                "type": "boolean"
+                              },
+                              "deliveryId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "failure": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "channel",
+                              "delivered",
+                              "deliveryId",
+                              "failure"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "mirrored": {
+                          "type": "number"
+                        },
+                        "housekeeping": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "sweptAt": {
+                                  "type": "number"
+                                },
+                                "expiredAcknowledgements": {
+                                  "type": "number"
+                                },
+                                "orphanedRecords": {
+                                  "type": "number"
+                                },
+                                "expiredOpenItems": {
+                                  "type": "number"
+                                },
+                                "agedGiftRecords": {
+                                  "type": "number"
+                                },
+                                "droppedInterviews": {
+                                  "type": "number"
+                                },
+                                "staleMirrors": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "sweptAt",
+                                "expiredAcknowledgements",
+                                "orphanedRecords",
+                                "expiredOpenItems",
+                                "agedGiftRecords",
+                                "droppedInterviews",
+                                "staleMirrors"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
-                      ]
+                      },
+                      "required": [
+                        "ranAt",
+                        "today",
+                        "hold",
+                        "nudge",
+                        "conflictMessages",
+                        "resumedInterviews",
+                        "delivered",
+                        "deliveryChannel",
+                        "deliveryId",
+                        "deliveries",
+                        "mirrored",
+                        "housekeeping"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "complete": {
+                          "type": "boolean",
+                          "enum": [
+                            false
+                          ]
+                        },
+                        "acceptedDeliveries": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "stopped": {
+                          "type": "string",
+                          "enum": [
+                            "request-retired-after-delivery",
+                            "delivery-processing-stopped"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "complete",
+                        "acceptedDeliveries",
+                        "stopped"
+                      ],
+                      "additionalProperties": false
                     }
-                  },
-                  "required": [
-                    "ranAt",
-                    "today",
-                    "hold",
-                    "nudge",
-                    "conflictMessages",
-                    "resumedInterviews",
-                    "delivered",
-                    "deliveryChannel",
-                    "deliveryId",
-                    "deliveries",
-                    "mirrored",
-                    "housekeeping"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               }
             }
@@ -104379,7 +104608,14 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  }
+                },
                 "additionalProperties": false
               }
             }
@@ -106662,6 +106898,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "section": {
                     "type": "string"
                   },
@@ -106793,6 +107035,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "fieldId": {
                     "type": "string"
                   },
@@ -107498,6 +107746,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "fieldId": {
                     "type": "string"
                   },
@@ -107715,6 +107969,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "admission": {
+                    "type": "string",
+                    "enum": [
+                      "autonomous"
+                    ]
+                  },
                   "fieldId": {
                     "type": "string"
                   },

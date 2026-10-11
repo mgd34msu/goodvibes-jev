@@ -59,11 +59,64 @@ const MAX_TEXT_CHARS = 1_000_000;
  * Internal protocol adapters use this to separate validated identity from raw content.
  * A host may add structural rejections (e.g. Node proxies), never transform or exempt data.
  */
+interface RetainedJsonSlot {
+  readonly key: string | symbol;
+  readonly value: unknown;
+  readonly writable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
+  readonly configurable: boolean | undefined;
+}
+interface RetainedJsonObject {
+  readonly value: object;
+  readonly prototype: unknown;
+  readonly slots: readonly RetainedJsonSlot[];
+}
+export interface RetainedOwnedJson {
+  readonly snapshot: unknown;
+  readonly assertCurrent: () => void;
+}
+
+const ownJsonKeys = Reflect.ownKeys;
+const ownJsonDescriptor = Object.getOwnPropertyDescriptor;
+const jsonPrototype = Object.getPrototypeOf;
+const sameJsonSlot = Object.is;
+
 export function captureOwnedJson(value: unknown, rejectObject?: (value: object) => boolean): unknown {
+  return captureOwnedJsonInternal(value, rejectObject);
+}
+
+/** Retain original data slots while the canonical traversal detaches its snapshot. */
+export function retainOwnedJson(value: unknown, rejectObject?: (value: object) => boolean): RetainedOwnedJson {
+  const objects: RetainedJsonObject[] = [];
+  const snapshot = captureOwnedJsonInternal(value, rejectObject, objects);
+  const assertCurrent = () => {
+    try {
+      for (const record of objects) {
+        if (jsonPrototype(record.value) !== record.prototype) throw new Error();
+        const keys = ownJsonKeys(record.value);
+        if (keys.length !== record.slots.length) throw new Error();
+        for (let index = 0; index < keys.length; index++) {
+          const slot = record.slots[index];
+          if (!slot || keys[index] !== slot.key) throw new Error();
+          const descriptor = ownJsonDescriptor(record.value, slot.key);
+          if (!descriptor || !('value' in descriptor) || !sameJsonSlot(descriptor.value, slot.value)
+            || descriptor.writable !== slot.writable || descriptor.enumerable !== slot.enumerable
+            || descriptor.configurable !== slot.configurable) throw new Error();
+        }
+      }
+    } catch { throw new JudgmentInputError('unsupported-input'); }
+  };
+  assertCurrent();
+  return Object.freeze({ snapshot, assertCurrent });
+}
+
+function captureOwnedJsonInternal(value: unknown, rejectObject?: (value: object) => boolean,
+  retained?: RetainedJsonObject[]): unknown {
   let nodes = 0;
   let chars = 0;
   let slots = 0;
   const ancestors = new Set<object>();
+  const observed = retained ? new WeakSet<object>() : undefined;
   const unsupported = (): never => { throw new JudgmentInputError('unsupported-input'); };
   function capture(entry: unknown, depth: number): unknown {
     if (++nodes > MAX_NODES || depth > MAX_DEPTH) return unsupported();
@@ -82,6 +135,17 @@ export function captureOwnedJson(value: unknown, rejectObject?: (value: object) 
     // Neither species construction nor hidden serialization/iterator hooks are JSON data.
     if (Object.getOwnPropertySymbols(descriptors).length > 0 || (array && Object.hasOwn(descriptors, 'constructor'))) return unsupported();
     if (Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return unsupported();
+    if (retained && observed && !observed.has(entry)) {
+      observed.add(entry);
+      const keys = ownJsonKeys(entry);
+      if (keys.length !== ownJsonKeys(descriptors).length) return unsupported();
+      retained.push({ value: entry, prototype, slots: keys.map(key => {
+        const descriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(descriptors, key)?.value;
+        if (!descriptor || !('value' in descriptor)) return unsupported();
+        return { key, value: descriptor.value, writable: descriptor.writable,
+          enumerable: descriptor.enumerable, configurable: descriptor.configurable };
+      }) });
+    }
     const length: unknown = array ? descriptors['length']?.value : 0;
     if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || (slots += length) > MAX_NODES) return unsupported();
     const copy: object = array ? new Array(length) : Object.create(null) as object;

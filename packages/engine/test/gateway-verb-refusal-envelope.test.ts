@@ -118,9 +118,11 @@ describe('invokeGatewayMethodCall: a foreign refusal reaches the wire as itself'
     });
     const result = await invoke(helper);
     expect(result.status).toBe(500);
+    expect(result.ok).toBe(false);
     const body = result.body as Record<string, unknown>;
     expect(typeof body.error).toBe('string');
-    expect(body.error).toContain('the store is unreachable');
+    expect(body.error).toBe('[REDACTED]');
+    expect(body.error).not.toContain('the store is unreachable');
     expect(body.status).toBe(500);
     expect(body.category).toBe('service');
   });

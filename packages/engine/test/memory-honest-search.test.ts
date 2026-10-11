@@ -12,6 +12,23 @@ import {
 } from '../sdk/src/platform/state/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { useMemoryReadings } from './_helpers/memory-readings.ts';
+import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.js';
+
+function memoryRequests(readings: Pick<ReturnType<typeof useMemoryReadings>, 'requests'>, battery: 'engine.state.memory-search' | 'engine.state.memory-review-priority') {
+  for (const request of readings.requests) {
+    if (request.context?.battery === battery) continue;
+    expect(request.context?.battery).toBe(fieldKind.name);
+    expect(request.questions).toEqual({ kind: fieldKind.items.kind.question });
+    const state = request.state;
+    if (!state || typeof state !== 'object' || Array.isArray(state) || !('field' in state) || typeof state.field !== 'string') {
+      throw new Error('Unexpected memory logger privacy projection');
+    }
+    expect(state).toEqual({ field: state.field });
+    expect(['ready', 'id', 'cls', 'path']).toContain(state.field);
+  }
+  return readings.requests.filter(request => request.context?.battery === battery);
+}
+
 
 /**
  * The recall-honesty contract applied END TO END through a search: literal /
@@ -95,14 +112,14 @@ describe('runHonestMemorySearch: semantic fallback is honest, never a silent emp
     expect(result.mode).toBe('literal');
     // The literal match is ranked by one rerank request per retrieved record.
     expect(result.records.map((r) => r.summary)).toEqual(['beta outage postmortem']);
-    expect(readings.requests).toHaveLength(1);
-    expect(readings.requests[0]!.state).toEqual({ query: 'beta', candidate: { class: 'incident', summary: 'beta outage postmortem', tags: [] } });
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(1);
+    expect(memoryRequests(readings, 'engine.state.memory-search')[0]!.state).toEqual({ query: 'beta', candidate: { class: 'incident', summary: 'beta outage postmortem', tags: [] } });
   });
 
   test('a search with no query ranks nothing and makes no request', async () => {
     const { store } = await seededStore();
     await runHonestMemorySearch(store, {}, {});
-    expect(readings.requests).toHaveLength(0);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(0);
   });
 });
 

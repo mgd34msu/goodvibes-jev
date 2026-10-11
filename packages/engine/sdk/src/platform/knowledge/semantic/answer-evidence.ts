@@ -12,6 +12,7 @@ import { createSemanticWriteGuard, type SemanticWriteGuard } from './primary-sou
 import { KnowledgeEvidenceRelevanceHeldError, type AnswerEvidenceCandidate } from './evidence-ranking/reader.js';
 import { prepareAnswerEvidenceRelevanceBatches } from './evidence-ranking/batch.js';
 import type { KnowledgeStore } from '../store.js';
+import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
 import type {
   KnowledgeNodeRecord,
   KnowledgeSearchResult,
@@ -144,14 +145,26 @@ export async function collectAnswerEvidence(
   });
   const excerpts = prepareAnswerSourceExcerptBatches(store, query, items.flatMap((item, index) => item.source
     ? [{ source: item.source, context: JSON.stringify({ facts: candidates[index]!.facts ?? [] }) }] : []), guard, signal);
+  const assertCandidateAndExcerptsCurrent = () => {
+    try {
+      store.assertRecordSnapshotFrame(() => {
+        candidateWindow?.assertCurrent();
+        excerpts.assertCurrent();
+      });
+    } catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') {
+        throw new KnowledgeEvidenceRelevanceHeldError('stale');
+      }
+      throw error;
+    }
+  };
   excerpts.start();
   candidateWindow?.assertCurrent();
   const plan = await prepareAnswerEvidenceRelevanceBatches({ query, candidates }, { signal, assertCurrent: () => {
-    try { candidateWindow?.assertCurrent(); excerpts.assertCurrent(); }
+    try { assertCandidateAndExcerptsCurrent(); }
     catch { throw new KnowledgeEvidenceRelevanceHeldError(signal?.aborted ? 'aborted' : 'stale'); }
   } });
-  candidateWindow?.assertCurrent();
-  excerpts.assertCurrent();
+  assertCandidateAndExcerptsCurrent();
   const byReference = new Map(candidates.map((candidate, index) => [candidate.reference, items[index]!]));
   const selected = plan.accepted.map((reading) => ({ ...byReference.get(reading.reference)!, score: reading.probability,
     scoreScale: 'relevance-probability' as const }));
@@ -172,7 +185,7 @@ export async function collectAnswerEvidence(
     rejectedSourceIds: new Set(plan.rejected.flatMap((reading) => {
       const source = byReference.get(reading.reference)?.source;
       return source ? [source.id] : [];
-    })), assertCurrent: () => { candidateWindow?.assertCurrent(); excerpts.assertCurrent(); } });
+    })), assertCurrent: assertCandidateAndExcerptsCurrent });
 }
 
 /** A claim's source and subject identities carry meaning; their database keys stay local. */
@@ -231,9 +244,7 @@ export function initialEvidenceCandidate(item: EvidenceItem, reference: string, 
     if (relatedIds.size > 32) throw new KnowledgeEvidenceRelevanceHeldError('budget');
     const subjects = [...relatedIds].flatMap((id) => {
       if (!selectedNodeIds.has(id)) {
-        if (requiredIds.has(id) && !guard.watch(`required-subject:${id}`, () => store.getNode(id) !== null)) {
-          throw new KnowledgeEvidenceRelevanceHeldError('malformed');
-        }
+        if (requiredIds.has(id)) throw new KnowledgeEvidenceRelevanceHeldError('malformed');
         return [];
       }
       const node = guard.node(id);

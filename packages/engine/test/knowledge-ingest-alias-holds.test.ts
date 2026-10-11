@@ -15,6 +15,7 @@ import { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } f
 import { getKnowledgeNodeObservation, prepareStagedObservedKnowledgeNodeInput } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { KnowledgeExtractionJudgmentHoldError } from '../sdk/src/platform/knowledge/extraction-policy.js';
 import { createCompressedPdfBuffer } from './_helpers/homegraph-service-fixtures.js';
+import { knowledgeIngestErrorReadings } from './_helpers/knowledge-ingest-error-readings.js';
 
 let root: string;
 let previous: JudgmentPort | undefined;
@@ -256,6 +257,7 @@ test('ordinary URL fetch and artifact parse failures still produce failed source
   try {
     settled(); await ingest();
     fetch.mockRejectedValue(new Error('Synthetic fetch failed'));
+    installJudgmentPort(knowledgeIngestErrorReadings().port);
     const failed = await ingest(true);
     expect(failed.source.status).toBe('failed');
     expect(failed.source.crawlError).toContain('Synthetic fetch failed');
@@ -264,6 +266,31 @@ test('ordinary URL fetch and artifact parse failures still produce failed source
     expect(parsed.source.status).toBe('failed');
     expect(parsed.source.crawlError).toContain('PDF extraction failed');
     expect(await reopen()).toEqual(snapshot(ctx.store));
+  } finally { fetch.mockRestore(); }
+});
+
+for (const change of ['source', 'port', 'cancel'] as const) test(`ordinary failure diagnostics preserve ${change} ownership before marking a source failed`, async () => {
+  const { ctx, ingest, reopen, fetch } = await fixture('url');
+  try {
+    settled(); const first = await ingest();
+    fetch.mockRejectedValue(new Error('Synthetic fetch failed'));
+    const diagnostic = knowledgeIngestErrorReadings(), controller = new AbortController();
+    let changed = false, expected = snapshot(ctx.store);
+    installJudgmentPort({ ...diagnostic.port, async ask(request) {
+      if (!changed && request.context?.battery === 'engine.redaction.credential') {
+        changed = true;
+        if (change === 'source') await ctx.store.upsertSource({ ...ctx.store.getSource(first.source.id)!, title: 'Concurrent diagnostic source' });
+        if (change === 'port') installJudgmentPort(diagnostic.port);
+        if (change === 'cancel') controller.abort();
+        expected = snapshot(ctx.store);
+      }
+      return diagnostic.port.ask(request);
+    } });
+    await expect(ingest(true, controller.signal)).rejects.toThrow();
+    expect(changed).toBe(true);
+    expect(snapshot(ctx.store)).toEqual(expected);
+    expect(await reopen()).toEqual(expected);
+    expect(ctx.store.getSource(first.source.id)?.status).toBe('indexed');
   } finally { fetch.mockRestore(); }
 });
 

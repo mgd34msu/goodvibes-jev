@@ -139,7 +139,11 @@ export async function runNativeMutation<T>(input: {
     assertCurrent();
     const admission = await admitExternalRequest(host, { connectionId: randomUUID(), destination: input.method, signal, assertCurrent },
       { sourceOf: () => source, assertCurrent, signal }, { tool: effect === 'send' ? 'send_message' : 'write', args, effect,
-        serverPolicy: { principalKind: 'paired-token', admin: true, scopes, effect, method: input.method } });
+        serverPolicy: { principalKind: 'paired-token', admin: true, scopes, effect, method: input.method } }).catch(error => {
+          // Before claim, the original native source can identify retirement
+          // hidden by a failed reading. No effect has been attempted here.
+          assertCurrent(); throw error;
+        });
     try {
       assertCurrent();
       if (!admission.result.approved || admission.result.autonomousDecision?.outcome !== 'act') {

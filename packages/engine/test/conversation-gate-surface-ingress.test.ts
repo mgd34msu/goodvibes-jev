@@ -22,16 +22,48 @@ import { ntfyInboundDedup } from '../sdk/src/platform/adapters/inbound-dedup.ts'
 import { trackDisposables } from './_helpers/disposables.ts';
 
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { securityPort } from './helpers/security-readings.ts';
 let prior: ReturnType<typeof installJudgmentPort>;
+let intentConfidence: number;
+let beforeIntentAnswer: (() => void) | undefined;
+const completeMessage = `${'Please review this conversation. '.repeat(100)}Do not fix the parser; explain the status only.`;
 beforeEach(() => {
+  intentConfidence = 0.99;
+  beforeIntentAnswer = undefined;
   const work = new Set(['fix the parser in src/parse.ts', 'fix the login bug', 'refactor the session broker', 'deploy the worker']);
-  const replies: Record<string, string> = { yes: 'approve', 'no, not now': 'reject' };
-  prior = installJudgmentPort(fakePort((_name, question, state) => {
-    if (question.type === 'noul') return noulAnswer(0.01);
-    const input = state as { proposal: unknown; reply: string };
-    return choiceAnswer(question, input.proposal === null ? (work.has(input.reply) ? 'work' : 'conversation') : replies[input.reply] ?? 'message', 0.99);
-  }).port);
+  const conversation = new Set(['Testing', 'hey', 'what is the status?', 'thanks!', 'testing 1 2 3', 'Hey, are you there?', 'yes', completeMessage]);
+  const replies: Readonly<Record<string, 'approve' | 'reject'>> = { yes: 'approve', 'no, not now': 'reject' };
+  const intent = fakePort((name, question, state) => {
+    expect(name).toBe('reading');
+    expect(question.type).toBe('choice');
+    const input = state as { message: string };
+    expect(state).toEqual({ message: expect.any(String) });
+    if (!work.has(input.message) && !conversation.has(input.message)) throw new Error('Unknown inbound intent fixture');
+    beforeIntentAnswer?.();
+    return choiceAnswer(question, work.has(input.message) ? 'work' : 'conversation', intentConfidence);
+  });
+  const reply = fakePort((name, question, state) => {
+    expect(name).toBe('reading');
+    expect(question.type).toBe('choice');
+    const input = state as { proposal: { task: string; summary: string }; reply: string };
+    expect(state).toEqual({ proposal: {
+      task: `Respond to this message: ${input.proposal.summary}`, summary: expect.any(String),
+    }, reply: expect.any(String) });
+    expect(work.has(input.proposal.summary)).toBe(true);
+    const answer = replies[input.reply];
+    if (!answer) throw new Error('Unknown proposal reply fixture');
+    return choiceAnswer(question, answer, 0.99);
+  });
+  const security = securityPort();
+  prior = installJudgmentPort({
+    model: intent.port.model,
+    ask(request) {
+      if (request.context?.battery === 'engine.daemon.inbound-intent') return intent.port.ask(request);
+      if (request.context?.battery === 'engine.daemon.work-proposal-reply') return reply.port.ask(request);
+      return security.port.ask(request);
+    },
+  });
 });
 afterEach(() => installJudgmentPort(prior));
 
@@ -155,6 +187,7 @@ function buildHarness(
     spawns,
     notices,
     queuedReplies,
+    setConfig: (key: string, value: unknown) => { config[key] = value; },
     rawSpawn: context.trySpawnAgent,
     /** Send one inbound ntfy message on the agent topic. */
     async send(message: string) {
@@ -173,6 +206,34 @@ function buildHarness(
 }
 
 describe('conversation gate at the surface spawn boundary', () => {
+  test('the intent reading receives the complete original message including its final correction', async () => {
+    const harness = buildHarness();
+    await harness.send(completeMessage);
+    expect(harness.spawns).toHaveLength(1);
+    expect(harness.spawns[0]!.outsideContract).toBe(true);
+    expect(harness.proposals.listPending()).toHaveLength(0);
+  });
+
+  test('an unsettled intent starts neither conversation nor work', async () => {
+    intentConfidence = 0.7;
+    const harness = buildHarness();
+    const response = await harness.send('fix the login bug');
+    expect(response.status).toBe(202);
+    expect((await response.json() as Record<string, unknown>).outcome).toBe('work-intent-unsettled');
+    expect(harness.spawns).toHaveLength(0);
+    expect(harness.proposals.listPending()).toHaveLength(0);
+    expect(harness.notices).toHaveLength(0);
+  });
+
+  test('a gate configuration changed during the reading cannot publish or start work', async () => {
+    const harness = buildHarness();
+    beforeIntentAnswer = () => harness.setConfig('conversationGate.mode', 'off');
+    await expect(harness.send('fix the login bug')).rejects.toThrow('Conversation gate source is no longer current');
+    expect(harness.spawns).toHaveLength(0);
+    expect(harness.proposals.listPending()).toHaveLength(0);
+    expect(harness.notices).toHaveLength(0);
+  });
+
   test('the reported incident: "Testing" gets a reply and starts no workstream', async () => {
     const harness = buildHarness();
     const response = await harness.send('Testing');

@@ -57,9 +57,11 @@ export class OccasionReadingWork {
     this.owner?.assertCurrent();
   };
   snapshot<T>(source: T): T {
+    this.assertCurrent();
     const captured = snapshotJudgmentInput(source) as T;
     const identity = JSON.stringify(captured);
     this.retain(() => { if (JSON.stringify(snapshotJudgmentInput(source)) !== identity) throw new OccasionReadingHeldError(); });
+    this.assertCurrent();
     return captured;
   }
   async wait<T>(work: () => Promise<T>): Promise<T> {

@@ -135,7 +135,7 @@ describe('the compiled Agent binary says why it will not start', () => {
     expect(run.stderr.length).toBeGreaterThan(0);
     expect(run.stderr).toContain('goodvibes-agent failed to launch');
     expect(run.stderr).toContain(settingsPath);
-    expect(run.stderr).toContain('JSON Parse error');
+    expect(run.stderr).toContain('could not be read as JSON: [REDACTED]');
   });
 
   test('the fatal boot failure is reached, not the interactive-terminal refusal', () => {
@@ -196,7 +196,7 @@ describe('the shape that shipped writes NOTHING once the output guard is on', ()
     expect(activity).toContain('Intercepted terminal output while TUI renderer was active');
     expect(activity).toContain('goodvibes-agent failed to launch');
     expect(activity).toContain('[ERROR] Fatal error');
-    expect(activity).toContain(join(home, 'work', 'settings.json'));
+    expect(activity).toContain('"text": "[REDACTED]"');
   });
 });
 

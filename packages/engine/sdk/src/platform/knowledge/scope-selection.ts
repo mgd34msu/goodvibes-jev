@@ -10,7 +10,7 @@ import { knowledgeScopeSelection } from './batteries/scope-selection.js';
 import { knowledgeSourceJudgmentUris } from './source-structural-references.js';
 import { DEFAULT_KNOWLEDGE_SPACE_ID, getKnowledgeSpaceId, getExplicitKnowledgeSpaceId, resolveKnowledgeSpaceScope, type KnowledgeSpaceScopeInput } from './spaces.js';
 import { knowledgeIssueMatchesScope, knowledgeNodeMatchesScope, knowledgeSourceMatchesScope } from './scope-records.js';
-import { knowledgeRecordVersion, sameKnowledgeRecord } from './store-record-representation.js';
+import { knowledgeRawRepresentation, knowledgeRecordVersion, sameKnowledgeRecord } from './store-record-representation.js';
 import { KnowledgeRecordAdmissionHeldError } from './store-record-snapshot.js';
 import type { KnowledgeStore } from './store.js';
 import type { KnowledgeEdgeRecord, KnowledgeIssueRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
@@ -136,17 +136,23 @@ export async function prepareKnowledgeScopeSelection(
       throw new KnowledgeScopeSelectionHeldError('stale');
     }
   };
-  const assertInputIdentity = () => {
+  const assertOriginalIdentity = () => {
     if (operationSignal.aborted || shouldStop?.()) throw new KnowledgeScopeSelectionHeldError('aborted');
     if (knowledgeRecordVersion(bounds()) !== boundsVersion || options.signal !== signal || options.assertCurrent !== callerCurrent
       || options.assertPreparedInputCurrent !== preparedCurrent || options.shouldStop !== shouldStop
       || knowledgeRecordVersion(captureStrictRepairJson(scope)) !== scopeVersion) throw new KnowledgeScopeSelectionHeldError('stale');
+  };
+  const assertInputIdentity = () => {
+    assertOriginalIdentity();
     assertSynchronousCurrent(callerCurrent);
+    assertOriginalIdentity();
+  };
+  const assertAuthorityCurrent = () => {
+    if (authority) authority.assertCurrent(); else assertInputIdentity();
   };
   const assertInputCurrent = () => {
     store.assertRecordSnapshotFrame(() => {
-      authority?.assertCurrent();
-      assertInputIdentity(); withLookup(() => { withRecordGenerations(observed, () => { for (const check of observed) check(); }); });
+      assertAuthorityCurrent(); withLookup(() => { withRecordGenerations(observed, () => { for (const check of observed) check(); }); });
     });
   };
   const assertCurrent = () => {
@@ -242,7 +248,10 @@ export async function prepareKnowledgeScopeSelection(
       if (!adopt) return currentGeneration({ kind: value.kind, id: value.record.id });
       const snapshot = value.kind === 'source' ? (() => { const source = store.getSourceSnapshot({ id: value.record.id });
         return { record: source.source, generation: source.generation }; })() : store.getRecordSnapshot('node', value.record.id);
-      if (adopt && !sameKnowledgeRecord(value.record, snapshot.record)) throw new KnowledgeScopeSelectionHeldError('stale');
+      if (adopt && !sameKnowledgeRecord(value.record, snapshot.record)) {
+        assertJudgmentInput(knowledgeRawRepresentation(value.record));
+        throw new KnowledgeScopeSelectionHeldError('stale');
+      }
       return snapshot.generation;
     };
     const originalGeneration = generation(true);
@@ -251,7 +260,10 @@ export async function prepareKnowledgeScopeSelection(
       if (!extraction) return null;
       if (!adopt) return currentGeneration({ kind: 'extraction', id: extraction.id });
       const snapshot = store.getRecordSnapshot('extraction', extraction.id);
-      if (adopt && !sameKnowledgeRecord(extraction, snapshot.record)) throw new KnowledgeScopeSelectionHeldError('stale');
+      if (adopt && !sameKnowledgeRecord(extraction, snapshot.record)) {
+        assertJudgmentInput(knowledgeRawRepresentation(extraction));
+        throw new KnowledgeScopeSelectionHeldError('stale');
+      }
       return snapshot.generation;
     })() : undefined;
     const originalExtractionGeneration = extractionGeneration(true);
@@ -363,8 +375,7 @@ export async function prepareKnowledgeScopeSelection(
   if (jobs.length > 2_000) throw new KnowledgeScopeSelectionHeldError('budget');
   const assertRecordCurrent = (key: string) => {
     store.assertRecordSnapshotFrame(() => {
-      authority?.assertCurrent();
-      assertInputIdentity();
+      assertAuthorityCurrent();
       withLookup(() => {
         const checks = scopedChecks.get(key) ?? [];
         withRecordGenerations(checks, () => { for (const check of checks) check(); });
@@ -377,9 +388,13 @@ export async function prepareKnowledgeScopeSelection(
       authority = captureJudgmentPort(knowledgeScopeSelection.name, { signal: operationSignal, assertCurrent: assertInputIdentity, prepareResultCapture: prepareRepairJudgmentResult });
       let resultModel: string | undefined;
       await mapLimit(jobs, 4, async job => {
-        const captured = captureJudgmentPort(knowledgeScopeSelection.name, { signal: operationSignal,
-          assertCurrent: () => { assertRecordCurrent(job.key); },
-          prepareResultCapture: prepareRepairJudgmentResult });
+        let captured: ReturnType<typeof captureJudgmentPort> | undefined;
+        store.assertRecordSnapshotFrame(() => {
+          captured = captureJudgmentPort(knowledgeScopeSelection.name, { signal: operationSignal,
+            assertCurrent: () => { assertRecordCurrent(job.key); },
+            prepareResultCapture: prepareRepairJudgmentResult });
+        });
+        if (!captured) throw new KnowledgeScopeSelectionHeldError('stale');
         if (captured.identity !== authority?.identity) throw new KnowledgeScopeSelectionHeldError('stale');
         const run = await knowledgeScopeSelection.run(captured.port, job.state, { signal: captured.signal, site: knowledgeScopeSelection.name });
         captured.assertCurrent();
@@ -434,7 +449,7 @@ export async function prepareKnowledgeScopeSelection(
     const current = () => {
       try {
         store.assertRecordSnapshotFrame(() => {
-          authority?.assertCurrent(); assertInputIdentity();
+          assertAuthorityCurrent();
           if (edgeVersion(records) !== inputVersion || knowledgeRecordVersion(captureStrictRepairJson(window)) !== windowVersion
             || edgeVersion(store.listEdges().filter(includes)) !== version
             || (openIncident && topologyVersion(store.listEdges()) !== originalTopologyVersion)

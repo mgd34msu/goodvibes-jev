@@ -32,6 +32,7 @@ import {
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { authoredPrivacyAnswer } from './_helpers/authored-error-readings.ts';
 
 const roots: string[] = [];
 
@@ -224,8 +225,23 @@ test('reroot during a directory reading aborts before descent, indexing or stale
   let started!: () => void;
   const waiting = new Promise<void>(resolve => { started = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const fake = fakePort(() => noulAnswer(0.01));
+  const fake = fakePort((name, _question, state) => {
+    expect(state).toEqual({ directories: [
+      { id: 'directory_0', name: '.config', relativePath: '.config' },
+      { id: 'directory_1', name: 'src', relativePath: 'src' },
+    ] });
+    expect(['directory_0', 'directory_1']).toContain(name);
+    return noulAnswer(0.01);
+  });
+  const countPrivacy = authoredPrivacyAnswer({ parts: [], fields: { filesScanned: 'other' } });
+  const diagnostic = fakePort((name, question, state) => {
+    const answer = countPrivacy(name, question, state);
+    if (answer === undefined) throw new Error('Unexpected reroot diagnostic question');
+    return answer;
+  });
   installJudgmentPort({ ...fake.port, async ask(request) {
+    if (request.context?.battery === 'engine.redaction.field-kind') return diagnostic.port.ask(request);
+    expect(request.context?.battery).toBe('engine.walk.skip-directory');
     started(); await gate; return fake.port.ask(request);
   } });
   try {

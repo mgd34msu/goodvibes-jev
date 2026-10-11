@@ -17,6 +17,7 @@ import { createAgentTerminalTool, createAgentProcessTool } from '../../tools/age
 import { createAgentChannelSendTool } from '../../tools/agent-channel-send-tool.ts';
 import { getSessionUntrustedContentLedger, resetSessionUntrustedContentLedgerForTests } from '../../trust/untrusted-content.ts';
 import { recordedEffectFixture } from '../helpers/recorded-effect-admission.ts';
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { runWorkspaceAction } from '../../tools/agent-harness-workspace-action-runner.ts';
 import { runWorkspaceEditorAction } from '../../tools/agent-harness-workspace-editor-runner.ts';
 import { runLocalWorkspaceAction } from '../../tools/agent-harness-local-operations.ts';
@@ -33,6 +34,7 @@ import { harnessCatalogInvocationAuthority } from '../../tools/agent-harness-cat
 import { connectedHostOperatorTokenPath } from '../../runtime/connected-host-auth.ts';
 import { EXPLICIT_USER_REQUEST_HEADER } from '../../agent/daemon-operator-client.ts';
 
+const fetchOwner: { fetch: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch> } = globalThis;
 let prior: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog;
 const roots: string[] = [];
 beforeEach(() => {
@@ -57,7 +59,7 @@ afterEach(() => {
 });
 
 function processScene() {
-  const root = mkdtempSync(join(tmpdir(), 'agent-process-effect-')); roots.push(root);
+  const root = makeProjectTempDir('agent-process-effect'); roots.push(root);
   let launches = 0, stops = 0, writes = 0; let duringLaunch: (() => void) | undefined, duringWrite: (() => void) | undefined;
   const manager = new ProcessManager();
   let entry: BackgroundProcess = { id: 'fixture-process', pid: 1, cmd: 'fixture', startTime: 1, stdout: [], stderr: [], exitCode: null, done: false, killDeadline: null };
@@ -254,7 +256,7 @@ test('checkpoint clear authenticates at the concrete owner boundary', async () =
 
 test('learned-behavior creation does not require a human editor confirmation field', async () => {
   const process = processScene();
-  const editor: AgentWorkspaceLocalEditor = { kind: 'learned-behavior', title: 'Fixture', selectedFieldIndex: 0, message: '', fields: [
+  const editor: AgentWorkspaceLocalEditor = { kind: 'learned-behavior', mode: 'create', title: 'Fixture', selectedFieldIndex: 0, message: '', fields: [
     { id: 'target', label: 'Target', value: 'skill', required: true, multiline: false, hint: '' },
     { id: 'name', label: 'Name', value: 'Fixture skill', required: true, multiline: false, hint: '' },
     { id: 'description', label: 'Description', value: 'Fixture skill description', required: true, multiline: false, hint: '' },
@@ -270,7 +272,7 @@ test('learned-behavior creation does not require a human editor confirmation fie
 
 test.each(['absent', 'provided'] as const)('workspace model child preserves %s audit provenance without inventing confirmation', async provenance => {
   const process = processScene(); const children: Record<string, unknown>[] = [];
-  const editor: AgentWorkspaceLocalEditor = { kind: 'artifact-export-file', title: 'Fixture export', selectedFieldIndex: 0, message: '', fields: [
+  const editor: AgentWorkspaceLocalEditor = { kind: 'artifact-export-file', mode: 'create', title: 'Fixture export', selectedFieldIndex: 0, message: '', fields: [
     { id: 'artifactId', label: 'Artifact', value: 'fixture-artifact', required: true, multiline: false, hint: '' },
     { id: 'destinationPath', label: 'Destination', value: join(process.root, 'fixture-export.txt'), required: true, multiline: false, hint: '' },
   ] };
@@ -338,7 +340,7 @@ test.each(['draft', 'route'] as const)('admitted %s synchronization selects fres
   const requests: Array<{ input: Record<string, unknown>; headers: Headers }> = [];
   const connectedEnv = globalThis.process.env.GOODVIBES_CONNECTED_HOST_TOKEN, daemonEnv = globalThis.process.env.GOODVIBES_DAEMON_TOKEN;
   delete globalThis.process.env.GOODVIBES_CONNECTED_HOST_TOKEN; delete globalThis.process.env.GOODVIBES_DAEMON_TOKEN;
-  const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+  const fetchSpy = spyOn(fetchOwner, 'fetch').mockImplementation(async (_url, init) => {
     requests.push({ input: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
     return Response.json(kind === 'draft' ? { saved: true } : { assignmentId: 'fixture-native-assignment' });
   });

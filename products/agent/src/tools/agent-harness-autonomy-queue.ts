@@ -1,12 +1,12 @@
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
-import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
+import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { contractMethodsForAutonomy } from './agent-harness-personal-ops-discovery.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-snapshot.ts';
 import { autonomyLiveNativeFacts, captureAutonomyLiveRecords, controlAvailable, firstAvailableControlRoute,
   type AutonomyLiveRecordBundle, type AutonomyLiveNativeFacts } from './agent-harness-autonomy-live-records.ts';
 import { watcherReadModelLiveRecords, watcherReadModelNativeFacts } from './agent-harness-autonomy-watcher-read-models.ts';
-import type { AgentHarnessAutonomyQueueArgs, AutonomyQueueItem, AutonomyQueueLiveRecord, AutonomyQueueRecordControl, AutonomyQueueRecordOutput, AutonomyQueueResolution, AutonomyQueueStatus, OperatorContractMethod } from './agent-harness-autonomy-queue-types.ts';
+import type { AgentHarnessAutonomyQueueArgs, AutonomyQueueItem, AutonomyQueueLiveRecord, AutonomyQueueRecordControl, AutonomyQueueRecordOutput, AutonomyQueueResolution, AutonomyQueueStatus } from './agent-harness-autonomy-queue-types.ts';
 export type { AutonomyQueueResolution } from './agent-harness-autonomy-queue-types.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 
@@ -20,35 +20,9 @@ function readLimit(value: unknown, fallback: number): number {
   return Math.max(1, Math.min(200, Math.trunc(parsed)));
 }
 
-function operatorContractMethods(): readonly OperatorContractMethod[] {
-  const contract = getOperatorContract();
-  const methods = Array.isArray(contract.operator?.methods)
-    ? contract.operator.methods as OperatorContractMethod[]
-    : [];
-  return methods.filter((method) => method.id);
-}
-
-function methodSearchText(method: OperatorContractMethod): string {
-  return [
-    method.id,
-    method.title,
-    method.description,
-    method.category,
-    method.http?.method,
-    method.http?.path,
-  ].filter(Boolean).join('\n').toLowerCase();
-}
-
-function methodIdsMatching(tokens: readonly string[]): readonly string[] {
-  if (tokens.length === 0) return [];
-  return operatorContractMethods()
-    .filter((method) => {
-      const text = methodSearchText(method);
-      return tokens.some((token) => text.includes(token));
-    })
-    .map((method) => method.id)
-    .sort((left, right) => left.localeCompare(right));
-}
+type AutonomyMethods = Awaited<ReturnType<typeof contractMethodsForAutonomy>>;
+type AutonomyMethodReadiness = { readonly status: 'unread' }
+  | { readonly status: 'qualified'; readonly methods: AutonomyMethods };
 
 function statusRank(status: AutonomyQueueStatus): number {
   if (status === 'attention') return 5;
@@ -184,6 +158,7 @@ function describeItem(item: AutonomyQueueItem, includeParameters: boolean, looku
         batchCreate: item.batchCreateRoute ?? null,
       },
       methodIds: item.methodIds ?? [],
+      unavailableMethodIds: item.unavailableMethodIds ?? [],
       policy: 'Queue rows are read-only. Create, run, pause, resume, cancel, approve, deny, send, and schedule effects require current recorded admission on their owning route.',
     } : {}),
   };
@@ -206,13 +181,17 @@ function nativeFactsForBundle(records: AutonomyLiveRecordBundle): AutonomyLiveNa
 }
 
 function buildQueueItems(context: CommandContext, watcherReadModelRecords: readonly AutonomyQueueLiveRecord[],
-  records: AutonomyLiveRecordBundle, facts: AutonomyLiveNativeFacts = nativeFactsForBundle(records),
+  records: AutonomyLiveRecordBundle, methodReadiness: AutonomyMethodReadiness,
+  facts: AutonomyLiveNativeFacts = nativeFactsForBundle(records),
   watcherFacts: readonly Pick<AutonomyQueueLiveRecord, 'status'>[] = watcherReadModelRecords): readonly AutonomyQueueItem[] {
   const snapshot = buildAgentWorkspaceRuntimeSnapshot(context);
-  const approvalMethods = methodIdsMatching(['approval']);
-  const automationMethods = methodIdsMatching(['automation']);
-  const scheduleMethods = methodIdsMatching(['schedule', 'reminder']);
-  const taskMethods = methodIdsMatching(['task', 'work-plan', 'workplan']);
+  const methods = methodReadiness.status === 'qualified' ? methodReadiness.methods : undefined;
+  const approvalMethods = methods?.approvals.available ?? [];
+  const automationMethods = methods?.automation.available ?? [];
+  const scheduleMethods = methods?.schedules.available ?? [];
+  const taskMethods = methods?.tasks.available ?? [];
+  const methodStatus = (available: readonly string[]): AutonomyQueueStatus => methodReadiness.status === 'unread'
+    ? 'blocked' : available.length > 0 ? 'ready' : 'needs-setup';
   const readyChannels = snapshot.channels.filter((channel) => channel.ready).length;
   const configuredTargets = snapshot.channels.filter((channel) => channel.defaultTarget === 'configured').length;
   const researchRuns = records.researchRuns;
@@ -229,29 +208,23 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
     ? 'attention'
     : facts.tasks.some((record) => record.status === 'running' || record.status === 'queued')
       ? 'active'
-      : taskMethods.length > 0
-        ? 'ready'
-        : 'needs-setup';
+      : methodStatus(taskMethods);
   const approvalStatus: AutonomyQueueStatus = facts.approvals.some((record) => record.status === 'pending' || record.status === 'claimed')
     ? 'attention'
-    : approvalMethods.length > 0
-      ? 'ready'
-      : 'needs-setup';
+    : methodStatus(approvalMethods);
   const automationStatus: AutonomyQueueStatus = automationStates.some((record) => record.status === 'failed' || record.status === 'blocked')
     ? 'attention'
     : facts.automationRuns.some((record) => record.status === 'queued' || record.status === 'running')
       || watcherFacts.some((record) => record.status === 'queued' || record.status === 'running')
       ? 'active'
-      : automationMethods.length > 0 || watcherFacts.length > 0 || facts.watcherReceipts.length > 0
+      : watcherFacts.length > 0 || facts.watcherReceipts.length > 0
         ? 'ready'
-        : 'needs-setup';
+        : methodStatus(automationMethods);
   const scheduleStatus: AutonomyQueueStatus = facts.schedules.some((record) => record.status === 'error')
     ? 'attention'
     : facts.schedules.some((record) => record.status === 'enabled')
       ? 'active'
-      : scheduleMethods.length > 0
-        ? 'ready'
-        : 'needs-setup';
+      : methodStatus(scheduleMethods);
   const scheduleReadyRoutines = snapshot.localRoutines.filter((routine) => (
     routine.enabled === true
     && routine.reviewState === 'reviewed'
@@ -282,6 +255,7 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       cancelRoute: 'workspace action:"run" actionId:"workplan-status"',
       createRoute: 'workspace action:"run" actionId:"workplan-add"',
       methodIds: taskMethods,
+      unavailableMethodIds: methods?.tasks.unavailable,
     },
     {
       id: 'research-runs',
@@ -338,6 +312,7 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       modelRoute: 'host action:"methods" query:"task"',
       ...(taskCancelRoute ? { cancelRoute: taskCancelRoute } : {}),
       methodIds: taskMethods,
+      unavailableMethodIds: methods?.tasks.unavailable,
       liveRecords: taskRecords,
     },
     {
@@ -359,6 +334,7 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       modelRoute: 'host action:"methods" query:"approval"',
       cancelRoute: 'workspace action:"run" actionId:"approval-cancel"',
       methodIds: approvalMethods,
+      unavailableMethodIds: methods?.approvals.unavailable,
       liveRecords: approvalRecords,
     },
     {
@@ -388,12 +364,13 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       modelRoute: 'workspace action:"actions" categoryId:"automation"',
       cancelRoute: 'workspace action:"run" actionId:"automation-run-cancel"',
       methodIds: automationMethods,
+      unavailableMethodIds: methods?.automation.unavailable,
       liveRecords: automationRecords,
     },
     {
       id: 'autonomous-schedule-requests',
       label: 'Autonomous schedule requests',
-      status: scheduleMethods.length > 0 ? 'ready' : 'needs-setup',
+      status: methodStatus(scheduleMethods),
       owner: 'agent-and-connected-host',
       kind: 'schedule',
       visible: true,
@@ -407,6 +384,7 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       modelRoute: 'schedule action:"create"',
       createRoute: 'schedule action:"create" task:"..." successCriteria:"..." scheduleKind:"..." scheduleValue:"..."',
       methodIds: scheduleMethods,
+      unavailableMethodIds: methods?.schedules.unavailable,
     },
     {
       id: 'connected-schedules',
@@ -430,12 +408,15 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       cancelRoute: 'schedule action:"pause" scheduleId:"..."',
       createRoute: 'schedule action:"create" task:"..." successCriteria:"..." scheduleKind:"..." scheduleValue:"..."',
       methodIds: scheduleMethods,
+      unavailableMethodIds: methods?.schedules.unavailable,
       liveRecords: scheduleRecords,
     },
     {
       id: 'reminder-requests',
       label: 'Reminder requests',
-      status: scheduleMethods.length > 0 ? readyChannels > 0 || configuredTargets > 0 ? 'ready' : 'needs-setup' : 'needs-setup',
+      status: methodStatus(scheduleMethods) === 'ready'
+        ? readyChannels > 0 || configuredTargets > 0 ? 'ready' : 'needs-setup'
+        : methodStatus(scheduleMethods),
       owner: 'agent-and-connected-host',
       kind: 'reminder',
       visible: true,
@@ -449,6 +430,7 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       modelRoute: 'schedule action:"remind"',
       createRoute: 'schedule action:"remind" message:"..." scheduleKind:"..." scheduleValue:"..."',
       methodIds: scheduleMethods,
+      unavailableMethodIds: methods?.schedules.unavailable,
     },
     {
       id: 'routine-schedule-promotions',
@@ -469,6 +451,7 @@ function buildQueueItems(context: CommandContext, watcherReadModelRecords: reado
       modelRoute: 'workspace action:"actions" categoryId:"routines"',
       createRoute: 'workspace action:"run" actionId:"schedule-promote-routine"',
       methodIds: scheduleMethods,
+      unavailableMethodIds: methods?.schedules.unavailable,
     },
     {
       id: 'delegated-subagents',
@@ -516,7 +499,8 @@ function nextActions(items: readonly AutonomyQueueItem[]): readonly string[] {
 }
 
 export function autonomyQueueCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const items = buildQueueItems(context, [], emptyLiveRecords, autonomyLiveNativeFacts(context), watcherReadModelNativeFacts(context));
+  const items = buildQueueItems(context, [], emptyLiveRecords, { status: 'unread' },
+    autonomyLiveNativeFacts(context), watcherReadModelNativeFacts(context));
   const counts = items.reduce<Record<AutonomyQueueStatus, number>>((acc, item) => {
     acc[item.status] += 1;
     return acc;
@@ -527,34 +511,63 @@ export function autonomyQueueCatalogStatus(context: CommandContext): Record<stri
     cancellable: items.filter((item) => item.cancellable).length,
     ...counts,
     readOnly: true,
+    methodReadiness: 'pending',
   };
 }
 
-function retainQueueSources(context: CommandContext, items: readonly AutonomyQueueItem[], options: CatalogRankingOptions,
-  watchers: readonly AutonomyQueueLiveRecord[], records: AutonomyLiveRecordBundle, producerGuards: readonly (() => void)[]) {
+function captureQueueSourceGuard(context: CommandContext, items: readonly AutonomyQueueItem[],
+  watchers: readonly AutonomyQueueLiveRecord[], records: AutonomyLiveRecordBundle, methods: AutonomyMethodReadiness,
+  assertRestrictions: () => void, assertChildren: () => void) {
   const revision = JSON.stringify(items);
   const assertSourcesCurrent = () => {
-    options.signal?.throwIfAborted();
-    for (const guard of producerGuards) guard();
-    if (JSON.stringify(captureCatalogData(buildQueueItems(context, watchers, records))) !== revision) throw new ToolInputProjectionError('stale');
+    assertRestrictions(); assertChildren();
+    if (JSON.stringify(captureCatalogData(buildQueueItems(context, watchers, records, methods))) !== revision) throw new ToolInputProjectionError('stale');
+    assertRestrictions();
   };
-  options.retainCurrent?.(assertSourcesCurrent, 'agent.harness.autonomy-queue.sources');
   return assertSourcesCurrent;
 }
 
 async function captureQueueItems(context: CommandContext, options: CatalogRankingOptions) {
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const producerGuards: (() => void)[] = [];
-  const readingOptions: CatalogRankingOptions = { ...options, retainCurrent(guard, key) {
-    producerGuards.push(guard); options.retainCurrent?.(guard, key);
-  } };
-  const records = await captureAutonomyLiveRecords(context, readingOptions);
-  const watchers = await watcherReadModelLiveRecords(context, readingOptions);
-  options.signal?.throwIfAborted(); options.assertCurrent?.();
-  for (const guard of producerGuards) guard();
-  const items = captureCatalogData(buildQueueItems(context, watchers, records));
-  const assertSourcesCurrent = retainQueueSources(context, items, options, watchers, records, producerGuards);
-  assertSourcesCurrent();
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
+  const signal = options.signal, sourceOwner = options.sourceOwner;
+  const callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
+  const ownerCurrent = sourceOwner ? captureCatalogMethods(sourceOwner, ['capture', 'screen', 'project', 'release']) : () => {};
+  const assertRestrictions = () => { optionsCurrent(); ownerCurrent(); signal?.throwIfAborted(); };
+  const assertCaller = () => {
+    assertRestrictions();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) {
+      try { void Promise.resolve(result).catch(() => {}); } catch { /* Asynchronous callbacks cannot establish current ownership. */ }
+      throw new ToolInputProjectionError('held');
+    }
+    assertRestrictions();
+  };
+  const children = new Map<string | (() => void), Set<() => void>>();
+  const assertChildren = () => { for (const guards of children.values()) for (const guard of guards) guard(); };
+  const readingOptions: CatalogRankingOptions = { signal, sourceOwner, assertCurrent: assertCaller,
+    retainCurrent(guard, key) {
+      const guards = children.get(key ?? guard) ?? new Set<() => void>();
+      guards.add(guard); children.set(key ?? guard, guards);
+    },
+  };
+  // Active children retain their complete source. Completed children fence each
+  // phase and publication without reentering every later privacy callback.
+  const readChild = async <T>(read: () => Promise<T>): Promise<T> => {
+    assertCaller(); assertChildren(); assertCaller();
+    const result = await read();
+    assertCaller(); assertChildren(); assertCaller();
+    return result;
+  };
+  const methods: AutonomyMethodReadiness = { status: 'qualified',
+    methods: captureCatalogData(await readChild(() => contractMethodsForAutonomy(readingOptions))) };
+  const records = await readChild(() => captureAutonomyLiveRecords(context, readingOptions));
+  const watchers = await readChild(() => watcherReadModelLiveRecords(context, readingOptions));
+  const items = captureCatalogData(buildQueueItems(context, watchers, records, methods));
+  const assertSourcesCurrent = captureQueueSourceGuard(context, items, watchers, records, methods, assertRestrictions, assertChildren);
+  assertSourcesCurrent(); assertCaller();
+  for (const [key, guards] of children) for (const guard of guards) retainCurrent?.(guard, typeof key === 'string' ? key : undefined);
+  retainCurrent?.(assertSourcesCurrent, 'agent.harness.autonomy-queue.sources');
+  assertCaller(); assertSourcesCurrent();
   return { items, assertSourcesCurrent };
 }
 

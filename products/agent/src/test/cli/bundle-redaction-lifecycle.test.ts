@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { captureStructuredCredentialReferenceConfigValue, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { captureStructuredCredentialReferenceConfigValue, ConfigManager, type JudgmentFallbackSettings } from '@goodvibes-jev/engine/sdk/platform/config';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { handleBundleCommand } from '../../cli/bundle-command.ts';
 import { parseGoodVibesCli } from '../../cli/parser.ts';
@@ -34,7 +34,7 @@ function fixture(url: string) {
   const config = new ConfigManager({ surfaceRoot: 'agent', workingDir: root, homeDir: root });
   config.setDynamic('judgment.endpoint', url);
   config.setDynamic('judgment.keySource', 'env');
-  config.setDynamic('payments.cardNumber', privateCard);
+  config.setDynamic('relay.label', `Synthetic checkout card ${privateCard}`);
   config.setDynamic('payments.currency', 'USD');
   config.setDynamic('surfaces.slack.signingSecret', privateSigningValue);
   seedProviderMetadataCacheFixture({ configManager: config, workingDirectory: root, homeDirectory: root });
@@ -53,9 +53,10 @@ describe('Agent support bundle retained canonical redaction', () => {
     const references = [
       { endpoint: backend.url, model: 'jev-1.13.0', keySource: 'env', keyName: 'TYPESAFE_API_KEY' },
       { endpoint: backend.url, model: 'jev-1.13.0', keySource: 'secret', keyName: 'bundle.judgment.backup' },
-    ];
+    ] satisfies readonly JudgmentFallbackSettings[];
     f.config.setDynamic('judgment.fallbacks', references);
     const original = f.config.getRaw(); const logs: string[] = []; const cancel = new AbortController();
+    expect(f.config.get('relay.label')).toContain(privateCard);
     const started = performance.now(), cpu = process.cpuUsage(); let guards = 0;
     const measureTimer = setInterval(() => {
       const used = process.cpuUsage(cpu);
@@ -75,19 +76,25 @@ describe('Agent support bundle retained canonical redaction', () => {
       expect(result.exitCode).toBe(0);
       expect(backend.calls.length).toBeGreaterThan(0);
       expect(backend.questionCounts().family ?? 0).toBe(0);
+      expect(backend.questionCounts().route ?? 0).toBe(0);
+      const credentialKeys = backend.calls.filter(call => Object.hasOwn(bundleRecord(call.questions), 'credential'))
+        .map(call => bundleRecord(call.state).key);
+      expect(credentialKeys.length).toBeGreaterThan(0);
+      expect(new Set(credentialKeys).size).toBe(credentialKeys.length);
       const payload = readFileSync(f.path, 'utf-8');
       const parsed = bundleRecord(JSON.parse(payload));
       expect(parsed.version).toBe(2);
       const exportedConfig = bundleRecord(parsed.config);
-      expect(bundleRecord(exportedConfig.payments)).toMatchObject({ cardNumber: '<redacted>', currency: 'USD' });
+      expect(bundleRecord(exportedConfig.payments)).toMatchObject({ currency: 'USD' });
+      expect(bundleRecord(exportedConfig.relay).label).toBe('[REDACTED]');
       const exportedReferences = captureStructuredCredentialReferenceConfigValue('judgment.fallbacks', bundleRecord(exportedConfig.judgment).fallbacks);
-      expect(exportedReferences).toEqual(references);
+      expect([...exportedReferences]).toEqual(references);
       const importRoot = makeProjectTempDir('agent-bundle-reference-import');
       const importedConfig = new ConfigManager({ surfaceRoot: 'agent', workingDir: importRoot, homeDir: importRoot });
       const imported = await handleBundleCommand({ cli: parseGoodVibesCli(['bundle', 'import', f.path]), configManager: importedConfig,
         workingDirectory: importRoot, homeDirectory: importRoot });
       expect(imported.exitCode).toBe(0);
-      expect(captureStructuredCredentialReferenceConfigValue('judgment.fallbacks', importedConfig.get('judgment.fallbacks'))).toEqual(references);
+      expect([...captureStructuredCredentialReferenceConfigValue('judgment.fallbacks', importedConfig.get('judgment.fallbacks'))]).toEqual(references);
       expect(f.config.getRaw()).toEqual(original);
       for (const output of [payload, JSON.stringify(backend.calls), JSON.stringify(logs), result.output]) {
         expect(output).not.toContain(privateCard);
@@ -102,12 +109,17 @@ describe('Agent support bundle retained canonical redaction', () => {
     }
   }, 60_000);
 
-  test.each(['cancel', 'config replacement'] as const)('%s during a real canonical read prevents the export file', async mode => {
+  test.each(['cancel', 'config replacement', 'config ABA', 'config no-op'] as const)('%s during a real canonical read prevents the export file', async mode => {
     const backend = startBundleJudgmentFixture(true); const f = fixture(backend.url); const cancel = new AbortController();
     try {
       const pending = handleBundleCommand(f.runtime, { signal: cancel.signal }).then(() => undefined, (error: unknown) => error);
       await backend.entered.promise;
-      if (mode === 'cancel') cancel.abort(); else f.config.setDynamic('payments.currency', 'EUR');
+      if (mode === 'cancel') cancel.abort();
+      else {
+        const original = f.config.get('payments.currency');
+        f.config.setDynamic('payments.currency', mode === 'config no-op' ? original : 'EUR');
+        if (mode === 'config ABA') f.config.setDynamic('payments.currency', original);
+      }
       backend.release.resolve();
       expect(await pending).toBeInstanceOf(Error);
       expect(existsSync(f.path)).toBe(false);

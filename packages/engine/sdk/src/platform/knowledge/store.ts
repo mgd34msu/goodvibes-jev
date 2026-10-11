@@ -1,6 +1,8 @@
 import { KnowledgeRecordAdmissionHeldError, knowledgeEdgeSnapshotFromRows, knowledgeRecordGenerationFromRows, knowledgeRecordSnapshotFromRows, type KnowledgeRecordSnapshot } from './store-record-snapshot.js';
 import { captureKnowledgeStoreInput, copyKnowledgeRepresentation, prepareKnowledgeOwnedClocks } from './store-record-representation.js';
 import { JudgmentInputError, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { validateCurrentKnowledgeSchema } from './store-current-schema-validation.js';
+import { prepareNativeKnowledgeSchemaReadPlan } from '../state/knowledge-schema-read-plan.js';
 import { createNativeCiContinuationTable, validateNativeCiContinuationTable } from './store-native-ci-continuation.js';
 import { createNativeConversationStorage, validateNativeConversationCaptureTable, migrateNativeConversationCaptureTable } from './store-native-intake.js';
 import type { NativeConversationStorage } from '../workflow/work-ledger/native-intake-types.js';
@@ -15,7 +17,7 @@ import { createKnowledgeEdgeChanges, validateKnowledgeEdgeChanges, knowledgeEdge
 import { snapshotNodeInput } from './activation/projection.js';
 import { KnowledgeNodeActivationHeldError, type KnowledgeNodeActivationOptions } from './activation/types.js';
 import { resolveKnowledgeNodeObservation, retainKnowledgeNodeObservation } from './store-node-observation.js';
-import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPreparedNodeWrites, preparedNodeWrite, markPreparedNodeWritten, type NodeMutationDraft, type KnowledgePreparedNodeWrites } from './store-node-activation.js';
+import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPreparedNodeWrites, preparedNodeWrite, preparedNodeWrites, markPreparedNodeWritten, type NodeMutationDraft, type KnowledgePreparedNodeWrites } from './store-node-activation.js';
 export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
 import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
@@ -666,35 +668,9 @@ export class KnowledgeStore {
 
   async replaceSourceRecord(record: KnowledgeSourceRecord): Promise<void> {
     // A restored value is a new observation; never revive an earlier row identity.
-    record = snapshotNodeInput(record);
+    record = copyKnowledgeRepresentation(record, snapshotNodeInput(record));
     await this.init();
-    this.sqlite.run(`
-      INSERT OR REPLACE INTO knowledge_sources (
-        id, connector_id, source_type, title, source_uri, canonical_uri, summary, description,
-        tags, folder_path, status, artifact_id, content_hash, last_crawled_at, crawl_error,
-        session_id, metadata, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      record.id,
-      record.connectorId,
-      record.sourceType,
-      record.title ?? null,
-      record.sourceUri ?? null,
-      record.canonicalUri ?? null,
-      record.summary ?? null,
-      record.description ?? null,
-      JSON.stringify([...record.tags]),
-      record.folderPath ?? null,
-      record.status,
-      record.artifactId ?? null,
-      record.contentHash ?? null,
-      record.lastCrawledAt ?? null,
-      record.crawlError ?? null,
-      record.sessionId ?? null,
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
-    ]);
+    writeKnowledgeSourceRow(this.sqlite, record);
     this.sources.set(record.id, record);
     await this.sqlite.save();
   }
@@ -948,7 +924,7 @@ export class KnowledgeStore {
       throw new Error('Guarded knowledge writes require at most 100 distinct existing nodes and issues.');
     }
     const prepared = await this.prepareNodeWrites(input.nodes);
-    const nodes = input.nodes.map((_, index) => preparedNodeWrite(this, prepared, index, this.nodeActivationScope));
+    const nodes = preparedNodeWrites(this, prepared, this.nodeActivationScope);
     const nodeView = new Map(this.nodes);
     for (const { record } of nodes) nodeView.set(record.id, record);
     const issues = input.issues.map((issue) => prepareKnowledgeIssueRecord({ issues: this.issues, sources: this.sources, nodes: nodeView }, issue));
@@ -1256,7 +1232,8 @@ export class KnowledgeStore {
   private async initialize(): Promise<void> {
     await this.sqlite.init(createSchema, {
       storeName: 'knowledge store', schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
-      validateCurrentSchema: db => { validateWorkLedgerTable(db); validateNativeWorkExecutionTable(db); validateNativeWorkExecutionIntentTable(db); validateNativeConversationCaptureTable(db); validateNativeWorkSettlementTable(db); validateNativeCiContinuationTable(db); validateKnowledgeEdgeChanges(db); },
+      validateCurrentSchema: validateCurrentKnowledgeSchema,
+      nativeSchemaReadPlan: prepareNativeKnowledgeSchemaReadPlan(),
       migrations: [
         { toVersion: 1, migrate: createSchema },
         { toVersion: 2, migrate: createWorkLedgerTable },

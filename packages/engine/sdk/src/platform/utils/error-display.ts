@@ -3,16 +3,23 @@ import {
   categoryForCode,
   categoryForStatus,
   connectionSummary,
-  judgmentPort,
+  captureJudgmentPort,
+  JudgmentPortMissingError,
   readFailure,
   settleCategory,
   summaryDependsOnWording,
   type FailureConclusions,
+  type JudgmentReadingOptions,
+  type JudgmentPortCapture,
 } from '@goodvibes-jev/engine/errors';
-import { AppError, ProviderError, readRetryWait, type PlatformErrorCategory, type PlatformErrorSource, type ProviderErrorOptions } from '../types/errors.js';
+import { AppError, ProviderError, type PlatformErrorCategory, type PlatformErrorSource, type ProviderErrorOptions } from '../types/errors.js';
 import type { StructuredDaemonErrorBody } from '../types/daemon-error-contract.js';
-import { redactSensitiveData } from './redaction.js';
+import { captureFailureSnapshot } from '../gate/failure-input-snapshot.js';
+import { assertJudgmentInput, captureOwnedJson, JudgmentInputError } from '../gate/judgment-input.js';
+import { captureRedactionSource, redactSensitiveData, redactSensitiveDataAsync } from './redaction.js';
+import { assertRedactionCurrent } from './redaction-reading.js';
 import { displayPayload, MAX_DISPLAY_MESSAGE_CHARS, payloadSpans } from './batteries/display-payload.js';
+import { MAX_RETRY_WAIT_MESSAGE_CHARS, numberSpans, retryWait } from '../types/batteries/retry-wait.js';
 
 const MAX_ERROR_LENGTH = 240;
 
@@ -202,9 +209,9 @@ interface ErrorStructure {
   readonly fromProvider: boolean;
 }
 
-function structureOf(error: unknown, options: ErrorNormalizationOptions): ErrorStructure {
+function structureOf(error: unknown, options: ErrorNormalizationOptions, protectedMessage?: string): ErrorStructure {
   // Redact Bearer tokens and API keys before any further processing.
-  const rawMessage = redactSensitiveData(extractErrorMessage(error));
+  const rawMessage = protectedMessage ?? redactSensitiveData(extractErrorMessage(error));
   const statusCode = error instanceof AppError
     ? error.statusCode
     : error && typeof error === 'object' && 'statusCode' in error && typeof (error as { statusCode?: unknown }).statusCode === 'number'
@@ -236,8 +243,94 @@ export function normalizeError(error: unknown, options: ErrorNormalizationOption
   return normalizeWith(error, options, undefined);
 }
 
-function normalizeWith(error: unknown, options: ErrorNormalizationOptions, display: string | undefined): NormalizedError {
-  const { rawMessage, statusCode, provider, fixed, fromProvider } = structureOf(error, options);
+type ErrorReadingOptions = ErrorNormalizationOptions & JudgmentReadingOptions & { readonly site: string };
+
+/** The canonical failure snapshot has a new local stack; it is not source evidence. */
+function failureSnapshotData(value: unknown): unknown {
+  if (!(value instanceof Error)) return value;
+  return Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(value))
+    .filter(([key]) => key !== 'stack')
+    .map(([key, descriptor]) => [key, key === 'cause' ? failureSnapshotData(descriptor.value) : descriptor.value]));
+}
+
+/** Retain the original local data and native class, never transmit this capture. */
+export function captureNormalizationSource(error: unknown, options: ErrorNormalizationOptions & JudgmentReadingOptions): () => void {
+  const signal = options.signal, callerCurrent = options.assertCurrent;
+  const callbacks = ['signal', 'assertCurrent', 'prepareResultCapture', 'captureResult', 'assertResult'] as const;
+  const callbackDescriptors = callbacks.map((key) => Object.getOwnPropertyDescriptor(options, key));
+  const prototypes: object[] = [];
+  let ancestor: object | null = error !== null && typeof error === 'object' ? error : null;
+  while (ancestor && prototypes.length < 64) { prototypes.push(ancestor); ancestor = Object.getPrototypeOf(ancestor) as object | null; }
+  if (ancestor) throw new JudgmentInputError('unsupported-input');
+  // Bun retains its lazy stack as an accessor. It is neither read nor transmitted.
+  const stack = error instanceof Error ? Object.getOwnPropertyDescriptor(error, 'stack') : undefined;
+  const symbols = error instanceof Error ? Object.getOwnPropertySymbols(error) : [];
+  const nativeFields = ['name', 'message', 'statusCode', 'status', 'code', 'category', 'source', 'provider',
+    'requestId', 'providerCode', 'phase', 'guidance', 'retryAfterMs', 'recoverable', 'operation', 'providerType'] as const;
+  const field = (key: string): unknown => {
+    if (error === null || typeof error !== 'object') return undefined;
+    let owner: object | null = error;
+    for (let depth = 0; owner && depth < 64; depth++) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (descriptor) {
+        if (!('value' in descriptor)) throw new JudgmentInputError('unsupported-input');
+        return descriptor.value;
+      }
+      owner = Object.getPrototypeOf(owner) as object | null;
+    }
+    if (owner) throw new JudgmentInputError('unsupported-input');
+    return undefined;
+  };
+  const read = () => {
+    const failure = failureSnapshotData(captureFailureSnapshot(error));
+    let native: unknown = failure;
+    if (error instanceof Error) {
+      const descriptors = Object.getOwnPropertyDescriptors(error);
+      if (Object.entries(descriptors).some(([key, item]) => key !== 'stack' && !('value' in item))
+        || Object.getOwnPropertySymbols(error).some((key, index) => key !== symbols[index]
+          || !('value' in (Object.getOwnPropertyDescriptor(error, key) ?? {})))
+        || Object.getOwnPropertySymbols(error).length !== symbols.length)
+        throw new JudgmentInputError('unsupported-input');
+      native = Object.fromEntries(Object.entries(descriptors).filter(([key]) => key !== 'stack').map(([key, item]) =>
+        [key, { value: key === 'cause' ? failureSnapshotData(captureFailureSnapshot(item.value)) : item.value,
+          enumerable: item.enumerable, configurable: item.configurable, writable: item.writable }]));
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(options);
+    const optionsPrototype: unknown = Object.getPrototypeOf(options);
+    if ((optionsPrototype !== Object.prototype && optionsPrototype !== null)
+      || Object.getOwnPropertySymbols(options).length > 0 || Object.values(descriptors).some((item) => !('value' in item)))
+      throw new JudgmentInputError('unsupported-input');
+    const data = Object.fromEntries(Object.entries(descriptors).filter(([key]) => !callbacks.some((callback) => callback === key))
+      .map(([key, item]) => [key, { value: item.value, enumerable: item.enumerable, configurable: item.configurable, writable: item.writable }]));
+    const symbolValues = error instanceof Error ? symbols.map((key) => Object.getOwnPropertyDescriptor(error, key)?.value) : [];
+    return JSON.stringify(captureOwnedJson({ native, failure, symbolValues,
+      fields: Object.fromEntries(nativeFields.map((key) => [key, field(key)])), options: data }));
+  };
+  const captured = read();
+  const assertSource = () => {
+    const actualStack = error instanceof Error ? Object.getOwnPropertyDescriptor(error, 'stack') : undefined;
+    let owner: object | null = error !== null && typeof error === 'object' ? error : null;
+    for (const prototype of prototypes) {
+      if (owner !== prototype) throw new Error('Error normalization source is no longer current.');
+      owner = Object.getPrototypeOf(owner) as object | null;
+    }
+    if (signal?.aborted || owner !== null
+      || actualStack?.value !== stack?.value || actualStack?.get !== stack?.get || actualStack?.set !== stack?.set
+      || actualStack?.enumerable !== stack?.enumerable || actualStack?.configurable !== stack?.configurable
+      || actualStack?.writable !== stack?.writable
+      || callbacks.some((key, index) => {
+        const actual = Object.getOwnPropertyDescriptor(options, key), original = callbackDescriptors[index];
+        return actual?.value !== original?.value || actual?.get !== original?.get || actual?.set !== original?.set
+          || actual?.enumerable !== original?.enumerable || actual?.configurable !== original?.configurable
+          || actual?.writable !== original?.writable;
+      }) || read() !== captured) throw new Error('Error normalization source is no longer current.');
+  };
+  return () => { assertSource(); assertRedactionCurrent(callerCurrent); assertSource(); };
+}
+
+function normalizeWith(error: unknown, options: ErrorNormalizationOptions, display: string | undefined,
+  structure?: ErrorStructure): NormalizedError {
+  const { rawMessage, statusCode, provider, fixed, fromProvider } = structure ?? structureOf(error, options);
   const cleanedMessage = cleanMessage(rawMessage, options.fallbackMessage, display);
   const category = settleCategory(fixed, statusCode, fromProvider, options.failure) as PlatformErrorCategory;
   const source = inferSource(error, options.source, options.failure);
@@ -284,27 +377,78 @@ function normalizeWith(error: unknown, options: ErrorNormalizationOptions, displ
  */
 export async function readNormalizedError(
   error: unknown,
-  options: ErrorNormalizationOptions & { readonly site: string },
+  options: ErrorReadingOptions,
 ): Promise<NormalizedError> {
-  const { rawMessage, statusCode, code, fixed, fromProvider } = structureOf(error, options);
-  if (rawMessage.trim().length === 0) return normalizeError(error, options);
+  const sourceCurrent = captureNormalizationSource(error, options);
+  const redactionSource = captureRedactionSource();
+  const assertSource = () => { sourceCurrent(); redactionSource.assertCurrent(); sourceCurrent(); };
+  assertSource();
+  // Native fields settle categories even when a privacy reading is unavailable.
+  const native = structureOf(error, options, '[REDACTED]');
+  let owner: JudgmentPortCapture;
+  try { owner = captureJudgmentPort(options.site, { ...options, assertCurrent: assertSource }); }
+  catch (failure) {
+    if (!(failure instanceof JudgmentPortMissingError)) throw failure;
+    assertSource();
+    const normalized = normalizeWith(error, { ...options, failure: undefined }, undefined, native);
+    assertSource();
+    return normalized;
+  }
+  const assertCurrent = () => { owner.assertCurrent(); };
+  assertCurrent();
+  const rawMessage = await redactSensitiveDataAsync(extractErrorMessage(error), { ...options, signal: owner.signal, assertCurrent });
+  assertCurrent();
+  const structure = { ...native, rawMessage };
+  const { statusCode, code, fixed, fromProvider } = structure;
+  if (rawMessage.trim().length === 0 || rawMessage === '[REDACTED]') {
+    const normalized = normalizeWith(error, { ...options, failure: undefined }, undefined, structure);
+    assertCurrent();
+    return normalized;
+  }
   const wordingMatters = categoryDependsOnWording(fixed, statusCode, fromProvider)
     || sourceDependsOnWording(error, options.source)
     || summaryDependsOnWording(statusCode);
   const readsWait = error instanceof ProviderError && error.retryAfterMs === undefined;
+  const evidence = { message: rawMessage, status: statusCode, code, errorName: error instanceof Error ? error.name : undefined };
+  try { assertJudgmentInput(evidence); }
+  catch (failure) {
+    if (!(failure instanceof JudgmentInputError)
+      || (failure.problem !== 'credential-material' && failure.problem !== 'card-material')) throw failure;
+    assertCurrent();
+    const normalized = normalizeWith(error, { ...options, failure: undefined }, undefined, native);
+    assertCurrent();
+    return normalized;
+  }
   const [failure, display, retryWaitMs] = await Promise.all([
     wordingMatters
-      ? readFailure({
-        message: rawMessage,
-        status: statusCode,
-        code,
-        errorName: error instanceof Error ? error.name : undefined,
-      }, options.site)
+      ? readFailure(evidence, options.site, { port: owner.port, signal: owner.signal, beforeAttempt: assertCurrent })
       : Promise.resolve(options.failure),
-    extractStructuredMessage(rawMessage) === undefined ? readDisplayMessage(rawMessage, options.site) : Promise.resolve(undefined),
-    readsWait ? readRetryWait(error, options.site) : Promise.resolve(options.retryWaitMs),
+    extractStructuredMessage(rawMessage) === undefined ? readDisplayMessage(rawMessage, options.site, owner) : Promise.resolve(undefined),
+    readsWait ? readProtectedRetryWait(rawMessage, statusCode, options.site, owner) : Promise.resolve(options.retryWaitMs),
   ]);
-  return normalizeWith(error, { ...options, failure, retryWaitMs }, display);
+  assertCurrent();
+  const normalized = normalizeWith(error, { ...options, failure, retryWaitMs }, display, structure);
+  assertCurrent();
+  return normalized;
+}
+
+async function readProtectedRetryWait(message: string, status: number | undefined, site: string,
+  owner: JudgmentPortCapture): Promise<number | undefined> {
+  const evidence = { message: message.slice(0, MAX_RETRY_WAIT_MESSAGE_CHARS), status };
+  const spans = numberSpans(evidence.message);
+  if (spans.length === 0) return undefined;
+  owner.assertCurrent();
+  const run = await retryWait.read(owner.port, evidence, spans,
+    { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  owner.assertCurrent();
+  if (run.outcome === 'act' && run.waitMs !== undefined) {
+    run.recordAction(`took a retry wait of ${run.waitMs}ms from the message (${run.span!.text} ${run.unit.choice})`);
+    return run.waitMs;
+  }
+  run.recordAction(run.waitMs === undefined
+    ? 'took no retry wait from the message: no number reads as the wait'
+    : `took no retry wait from the message: the reading of ${run.span!.text} ${run.unit.choice} is ${run.outcome}, not act`);
+  return undefined;
 }
 
 /**
@@ -313,11 +457,13 @@ export async function readNormalizedError(
  * removes a part. A message longer than the display ever shows is read from
  * its opening.
  */
-async function readDisplayMessage(rawMessage: string, site: string): Promise<string> {
+async function readDisplayMessage(rawMessage: string, site: string, owner: JudgmentPortCapture): Promise<string> {
   const message = rawMessage.slice(0, MAX_DISPLAY_MESSAGE_CHARS);
   const spans = payloadSpans(message);
   if (spans.length === 0) return message.trim();
-  const run = await displayPayload.read(judgmentPort(site), message, spans, { site });
+  owner.assertCurrent();
+  const run = await displayPayload.read(owner.port, message, spans, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+  owner.assertCurrent();
   const removed = spans.filter((span) => {
     const reading = run.readings.get(span.number);
     return reading?.verdict === 'yes' && reading.outcome === 'act';
@@ -344,7 +490,7 @@ export function formatError(error: unknown, options: ErrorNormalizationOptions =
 /** {@link formatError} with the wording read by Jev where it matters (see {@link readNormalizedError}). */
 export async function readFormattedError(
   error: unknown,
-  options: ErrorNormalizationOptions & { readonly site: string },
+  options: ErrorReadingOptions,
 ): Promise<string> {
   return formatNormalized(await readNormalizedError(error, options));
 }

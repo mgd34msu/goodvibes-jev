@@ -1,59 +1,15 @@
 /**
- * daemon-handover.ts, moving an installed daemon binary onto the daemon
- * product's own release line, once, at a surface's launch.
+ * Move an identified legacy daemon onto the monorepo native release cohort.
+ * The surface probes the existing product banner, downloads and verifies every
+ * fixed payload plus its source manifest, then publishes through self-update.ts.
+ * Binary, ordinary Bun runtime, notices, provenance, sqlite-vec and installation
+ * receipt move together. Existing homes and settings remain with their owners.
  *
- * ── The state this exists for ──────────────────────────────────────────────
- *
- * A daemon binary built before the daemon became its own product resolves
- * release tags from whichever repository its compiled-in `update.releasesUrl`
- * default names. That default lives in the binary: no settings file carries it
- * and no settings migration rewrites it. A daemon carrying the wrong one asks
- * for an asset its release line does not publish, takes a 404, and applies
- * nothing, hourly, forever.
- *
- * A persisted `update.releasesUrl` override does not repair it either. The
- * updater those binaries ship claims every GoodVibes executable sitting beside
- * the daemon as an update target, and `applyVerifiedUpdate` verifies EVERY
- * target before it writes anything, so a binary pointed at the daemon
- * repository asks for a terminal asset that repository does not publish and
- * takes the same 404. There is no remote write path to reach it with either:
- * the control plane's `config.set` verb is a catalog descriptor with no
- * registered handler.
- *
- * ── What this does instead ─────────────────────────────────────────────────
- *
- * The surface performs the handover itself. It reads the version of the
- * `goodvibes-daemon` binary installed beside it; if that binary predates the
- * split it downloads the current daemon from the daemon repository,
- * checksum-verifies it against that release's SHA256SUMS.txt, replaces it with the outgoing build kept at `<path>.previous`, and restarts the
- * service so the running process is the new one. After that the installed daemon
- * is at or above the split floor, its own baked default already names its own
- * repository, and this path goes quiet permanently.
- *
- * IT REPLACES EXACTLY ONE FILE: the daemon binary. Not the surface executable
- * beside it, which is on its own release line and updated by its own product's
- * self-update. Not the shared sqlite-vec addon in `lib/`, which serves every
- * binary in the directory and travels with the surface's own updates. Replacing
- * only the file whose product this handover is about is what keeps it from being
- * the same cross-product overreach that breaks the pre-split updater.
- *
- * ── Honesty rules ──────────────────────────────────────────────────────────
- *
- *   - A daemon binary whose version cannot be READ is never swapped. "I could
- *     not identify it" and "it is old" are different answers and only the second
- *     one justifies replacing a working file.
- *   - A package-manager-managed daemon is never swapped in place; that fights
- *     the next global install, exactly as a product's own updater refuses to.
- *   - The resolved release must itself be at or above the split floor. A
- *     handover that installed something older than what it replaced would be a
- *     downgrade wearing a migration's name.
- *   - Every swap prints a receipt naming both versions and how the running
- *     daemon was restarted, so the replacement is never silent.
- *
- * Fetch, filesystem, subprocess and clock are all injectable, so the whole
- * decision and the whole swap are provable without a network, a real binary, or
- * a real service manager. The floor, the release URLs and the service name are
- * parameters, so a product that ships a different daemon line states its own.
+ * Package-managed and unidentified executables are held. A release must reach
+ * the selected version floor. Retained physical source identity and cancellation
+ * are checked before publication, and service acknowledgement remains separate
+ * from the truthful disk receipt. Rollback requires a complete verified prior
+ * native cohort; a legacy binary alone is never described as that cohort.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -65,27 +21,25 @@ import {
   realUpdateFileIo,
   resolveArtifactNames,
   resolveLatestReleaseTag,
+  resolveDaemonNativeTargets,
+  retainDaemonNativeFiles,
   type UpdateFetchLike,
   type UpdateFileIo,
 } from '../self-update.js';
 import { detectInstallKind } from '../install-kind.js';
 import { MANAGED_DAEMON_SERVICE_NAME } from './daemon-autostart.js';
+import { DAEMON_RELEASES_LATEST_URL } from '../../config/schema-domain-update.js';
 
-/** The daemon's own repository, the only place daemon binaries are published. */
-export const DAEMON_REPO_RELEASES_LATEST_URL = 'https://github.com/mgd34msu/goodvibes-daemon/releases/latest';
+/** The selected monorepo release feed for native daemon payloads. */
+export const DAEMON_REPO_RELEASES_LATEST_URL = DAEMON_RELEASES_LATEST_URL;
 
-/** `https://github.com/o/r/releases/download/<tag>` for the daemon repository. */
+/** Download root for an exact selected monorepo release tag. */
 export function daemonReleaseDownloadBaseUrl(tag: string): string {
-  return `https://github.com/mgd34msu/goodvibes-daemon/releases/download/${tag}`;
+  return `https://github.com/mgd34msu/goodvibes-jev/releases/download/${tag}`;
 }
 
-/**
- * The first daemon version released from the daemon's own repository. A binary
- * below this carries a compiled-in releases URL naming a repository that does
- * not publish daemon assets; a binary at or above it resolves its own repository
- * without help and must be left alone.
- */
-export const DAEMON_SPLIT_FLOOR_VERSION = '1.28.0';
+/** First selected monorepo native cohort version for legacy adoption. */
+export const DAEMON_SPLIT_FLOOR_VERSION = '2.0.23';
 
 /** How long the `--version` probe is allowed to take before it counts as unreadable. */
 export const DAEMON_VERSION_PROBE_TIMEOUT_MS = 5_000;
@@ -117,7 +71,7 @@ const defaultRunCommand: RunCommandLike = (command, args) => {
  * into a number that would justify replacing it.
  */
 export function parseDaemonVersionOutput(output: string): string | null {
-  const match = output.trim().match(/(?:^|\s)v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)\s*$/);
+  const match = output.trim().match(/^goodvibes-daemon\s+v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)$/);
   return match?.[1] ?? null;
 }
 
@@ -131,7 +85,7 @@ export function readInstalledDaemonVersion(
   return parseDaemonVersionOutput(result.stdout);
 }
 
-/** True when `version` predates the daemon's own repository. */
+/** True when the installed version predates the selected native adoption floor. */
 export function isPreSplitDaemonVersion(
   version: string,
   floorVersion: string = DAEMON_SPLIT_FLOOR_VERSION,
@@ -189,7 +143,7 @@ export function decideDaemonHandover(input: DaemonHandoverDecisionInput): Daemon
     return { action: 'skip', reason: 'already-split' };
   }
   const artifacts = resolveArtifactNames(input.platform, input.arch);
-  if (!artifacts) return { action: 'skip', reason: 'unsupported-platform' };
+  if (!artifacts || !resolveDaemonNativeTargets(binaryPath, input.platform, input.arch)) return { action: 'skip', reason: 'unsupported-platform' };
   return {
     action: 'handover',
     binaryPath,
@@ -231,6 +185,9 @@ export interface PerformDaemonHandoverOptions {
   readonly binaryPath: string;
   /** The release asset that replaces it. */
   readonly assetName: string;
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: string;
+  readonly runCommand?: RunCommandLike;
   readonly signal?: AbortSignal;
   readonly progress?: DaemonHandoverProgress;
   /** Injectable so tests never touch a real file. */
@@ -257,10 +214,19 @@ export async function performDaemonHandover(
 ): Promise<{ readonly tag: string }> {
   options = { ...options, io: captureUpdateFileIo(options.io ?? realUpdateFileIo) };
   const progress = options.progress ?? createDaemonHandoverProgress();
+  const platform = options.platform ?? process.platform, arch = options.arch ?? process.arch;
+  const targets = resolveDaemonNativeTargets(options.binaryPath, platform, arch);
+  if (!targets || targets[0]?.assetName !== options.assetName) throw new Error('Daemon handover native target identity is invalid');
+  const io = options.io ?? realUpdateFileIo;
+  const assertInstallationCurrent = retainDaemonNativeFiles(targets, io);
   const fetchImpl = abortableFetch(options.fetchImpl, options.signal);
   const releasesLatestUrl = options.releasesLatestUrl ?? DAEMON_REPO_RELEASES_LATEST_URL;
   const floorVersion = options.floorVersion ?? DAEMON_SPLIT_FLOOR_VERSION;
+  const installedVersion = readInstalledDaemonVersion(options.binaryPath, options.runCommand ?? defaultRunCommand);
+  if (!installedVersion || compareVersions(installedVersion, floorVersion) >= 0) throw new Error('Daemon handover requires an identified older daemon at its retained native path');
+  assertInstallationCurrent();
   const tag = await resolveLatestReleaseTag(fetchImpl, releasesLatestUrl, options.signal ? { signal: options.signal } : {});
+  assertInstallationCurrent();
   if (compareVersions(tag, floorVersion) < 0) {
     throw new Error(
       `the daemon repository's current release is ${tag}, below the ${floorVersion} split floor, refusing to hand over to it`,
@@ -273,14 +239,10 @@ export async function performDaemonHandover(
     await applyVerifiedUpdate({
       fetchImpl,
       downloadBaseUrl: (options.downloadBaseUrl ?? daemonReleaseDownloadBaseUrl)(tag),
-      targets: [
-        {
-          label: 'daemon binary',
-          path: options.binaryPath,
-          assetName: options.assetName,
-          executable: true,
-        },
-      ],
+      targets,
+      platform,
+      daemonNative: { execPath: options.binaryPath, platform, arch, version: tag, allowLegacyBinary: true },
+      beforeCommit: assertInstallationCurrent,
       io: baseIo,
       ...(options.signal ? { signal: options.signal } : {}),
     });
@@ -444,6 +406,9 @@ export async function runDaemonHandover(options: RunDaemonHandoverOptions): Prom
       fetchImpl: options.fetchImpl,
       binaryPath: decision.binaryPath,
       assetName: decision.assetName,
+      platform: options.platform,
+      arch: options.arch,
+      runCommand,
       signal: controller.signal,
       progress,
       ...(options.io ? { io: options.io } : {}),
@@ -475,7 +440,7 @@ export async function runDaemonHandover(options: RunDaemonHandoverOptions): Prom
     );
     options.print(
       `daemon handover: replaced the daemon v${from} with v${normalizeVersion(result.tag)} from its own repository, ${restart.detail}.`
-        + ` The build it replaced is kept beside it for one-command rollback.`,
+        + ` Replaced files are retained; rollback requires a complete verified previous cohort.`,
     );
     return {
       action: 'handed-over',

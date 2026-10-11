@@ -9,6 +9,7 @@ import { executeToolCalls } from '../sdk/src/platform/core/orchestrator-tool-run
 import { ToolCallAbortRegistry } from '../sdk/src/platform/core/orchestrator-live-turn.ts';
 import type { PermissionManager } from '../sdk/src/platform/permissions/manager.ts';
 import type { Tool, ToolDefinition, ToolExecuteOptions } from '../sdk/src/platform/types/tools.ts';
+import { ToolError } from '../sdk/src/platform/types/errors.ts';
 
 const SECRET_REASON = 'synthetic-private-cancellation-context';
 const SCHEMA: ToolDefinition = {
@@ -42,7 +43,8 @@ async function within<T>(promise: Promise<T>): Promise<T> {
 const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const settledError = (work: Promise<unknown>): Promise<unknown> => work.then(() => null, (error: unknown) => error);
 function expectCancelled(error: unknown): void {
-  expect(error).toMatchObject({ message: 'the judgment call was cancelled' });
+  expect(error).toMatchObject({ message: error instanceof ToolError ? '[REDACTED]' : 'the judgment call was cancelled' });
+  if (error instanceof ToolError) expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: 'exec' });
   const cause = (error as Error).cause;
   expect(cause ?? error).toMatchObject({ name: 'JudgmentError', kind: 'aborted' });
   expect(cause instanceof Error ? cause.cause : undefined).toBeUndefined();
@@ -72,14 +74,16 @@ function reader(confidence = 0.99, neither = false) {
     recorder: { recordReadings(id) { readings.push(id); }, recordAction(id) { actions.push(id); } },
     async ask(request) { return { ...await fake.port.ask(request), decisionId: `repair-${fake.requests.length}` }; },
   };
-  return { port, readings, actions, requests: fake.requests };
+  return { port, readings, actions, get requests() { return fake.requests.filter(request => 'pick' in request.questions || 'boolean_value' in request.questions); } };
 }
 function delayedReader() {
   const started = deferred<AbortSignal | undefined>(); const release = deferred<void>();
   const base = reader(); let requests = 0;
   installJudgmentPort({ ...base.port, async ask(request) {
-    requests++;
-    if (requests === 1) { started.resolve(request.signal); await release.promise; }
+    if ('pick' in request.questions || 'boolean_value' in request.questions) {
+      requests++;
+      if (requests === 1) { started.resolve(request.signal); await release.promise; }
+    }
     return base.port.ask(request);
   } });
   return { ...base, started, release, count: () => requests };

@@ -100,7 +100,9 @@ describe('the runner when the route planner finds no route', () => {
   const PLANNER_ROUTE = { model: 'provider-a:planner', provider: 'provider-a', reason: 'planner route' } as const;
 
   test('no route for a unit fails the contract when its group starts, and no unit agent is spawned', async () => {
+    const purposes: string[] = [];
     const routeSelector: ContractRouteSelector = async ({ purpose }) => {
+      purposes.push(purpose);
       if (purpose === 'planner') return PLANNER_ROUTE;
       throw noRoute;
     };
@@ -111,7 +113,8 @@ describe('the runner when the route planner finds no route', () => {
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('failed');
     expect(done.failureKind).toBe('other');
-    expect(done.error).toContain(`group g1 could not start: ${noRoute.message}`);
+    expect(done.error).toBe('group g1 could not start: [REDACTED]');
+    expect(purposes).toEqual(['planner', 'unit']);
     expect(done.units[0]!.route).toBeUndefined();
     expect(eventsOf(h, 'CONTRACT_UNIT_SPAWNED')).toEqual([]);
   });
@@ -142,7 +145,8 @@ describe('the runner when the route planner finds no route', () => {
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('failed');
     expect(done.failureKind).toBe('other');
-    expect(done.error).toContain(`the owner's reply to ${escalation.id} could not be acted on: ${noRoute.message}`);
+    expect(done.error).toBe(`the owner's reply to ${escalation.id} could not be acted on: [REDACTED]`);
+    expect(plannerRoutes).toBe(2);
     expect(planner.of('amend')).toEqual([]);
   });
 });

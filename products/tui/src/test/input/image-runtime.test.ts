@@ -15,6 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import { CommandRegistry } from '../../input/command-registry.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { registerImageRuntimeCommands } from '../../input/commands/image-runtime.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 interface FakeGenerateResult {
   providerId: string;
@@ -156,11 +157,30 @@ describe('/imagine: honest degradation', () => {
     const artifactStore = makeFakeArtifactStore();
     const { ctx, printed } = makeCtx(mediaProviders, artifactStore);
 
-    await registry.execute('imagine', ['a', 'cat'], ctx);
+    await withPublicErrorText(['provider API rejected the request'], () => registry.execute('imagine', ['a', 'cat'], ctx));
 
+    expect(provider.calls).toHaveLength(1);
+    expect(artifactStore.created).toEqual([]);
     expect(printed).toHaveLength(1);
     expect(printed[0]).toContain('Image generation failed:');
     expect(printed[0]).toContain('provider API rejected the request');
+  });
+
+  test('an unprepared private provider error stays masked and cannot store an artifact', async () => {
+    const registry = new CommandRegistry();
+    registerImageRuntimeCommands(registry);
+    const provider = makeFakeProvider({ throwError: new Error('Bearer synthetic-private-provider-token') });
+    const artifactStore = makeFakeArtifactStore();
+    const { ctx, printed } = makeCtx(makeFakeMediaProviders(provider), artifactStore);
+
+    await registry.execute('imagine', ['a', 'cat'], ctx);
+
+    expect(provider.calls).toHaveLength(1);
+    expect(artifactStore.created).toEqual([]);
+    expect(printed).toHaveLength(1);
+    expect(printed[0]).toMatch(/^Image generation failed: \[REDACTED(?:_[A-Z]+)*\]$/);
+    expect(printed.join('\n')).not.toContain('synthetic-private-provider-token');
+    expect(printed.join('\n')).not.toContain('Generated');
   });
 });
 

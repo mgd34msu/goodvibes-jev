@@ -16,9 +16,10 @@ export { executionVerification } from './batteries/execution-verification.js';
 export { registry as gateJudgmentRegistry } from './judgment-registry.js';
 
 /** Full-size validated snapshots for asynchronous callers; never a projected reading. */
-export { snapshotJudgmentInput, captureOwnedJson, assertJudgmentInput } from './judgment-input.js';
+export { snapshotJudgmentInput, captureOwnedJson, retainOwnedJson, assertJudgmentInput } from './judgment-input.js';
+export type { RetainedOwnedJson } from './judgment-input.js';
 export { captureJudgmentFailure } from './failure-input.js';
 export { decideAutonomous } from './autonomous-decision.js';
 export type { AutonomousDecisionInput, AutonomousDecision, AutonomousContinuation, AutonomousCondition } from './autonomous-decision.js';
-export { admitJudgmentJson, captureStrictJudgmentJson, prepareJudgmentResult, JudgmentResultAdmissionError } from './judgment-result.js';
-export type { JudgmentResultAdmissionFailure, JudgmentResultAdmissionProblem } from './judgment-result.js';
+export { admitJudgmentJson, captureStrictJudgmentJson, retainStrictJudgmentJson, prepareJudgmentResult, JudgmentResultAdmissionError } from './judgment-result.js';
+export type { JudgmentResultAdmissionFailure, JudgmentResultAdmissionProblem, RetainedStrictJudgmentJson } from './judgment-result.js';

@@ -1,11 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import { InputTokenizer } from '@goodvibes-jev/engine/sdk/platform/core';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { ToolResult } from '@goodvibes-jev/engine/sdk/platform/types';
 import { CommandRegistry, isDirectOwnerCommandContext, type CommandContext } from '../../input/command-registry.ts';
 import { registerOnboardingRuntimeCommands } from '../../input/commands/onboarding-runtime.ts';
 import { SetupPairingController } from '../../shell/setup-pairing-controller.ts';
 import { readAgentHostPairing } from '../../runtime/connected-host-pairing-store.ts';
-import { createAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
+import { registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
+import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
+import { researchScreeningFixture, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 import { setupPairingFixture, untilPairing } from '../helpers/setup-pairing-fixture.ts';
 
 async function withRuntime(run: (runtime: {
@@ -15,7 +23,7 @@ async function withRuntime(run: (runtime: {
   controller: SetupPairingController;
   starts: Array<{ readonly apply: boolean; readonly name: string }>;
   printed: string[];
-  tool: ReturnType<typeof createAgentHarnessTool>;
+  runHarness: (args: Record<string, unknown>) => Promise<ToolResult>;
 }) => Promise<void>) {
   const fixture = setupPairingFixture();
   const registry = new CommandRegistry();
@@ -33,9 +41,44 @@ async function withRuntime(run: (runtime: {
     },
   } as unknown as CommandContext;
   registerOnboardingRuntimeCommands(registry);
-  const tool = createAgentHarnessTool({ commandRegistry: registry, commandContext: context, toolRegistry: new ToolRegistry() });
-  try { await run({ fixture, registry, context, controller, starts, printed, tool }); fixture.assertPrivateOutput(printed.join('\n')); }
-  finally { controller.dispose(); await fixture.stop(); }
+  await fixture.configManager.flushConfigFileChanges();
+  const manager = new PermissionManager(undefined, createPermissionConfigReader(fixture.configManager), new PolicyRuntimeState());
+  const tools = new ToolRegistry(manager), screening = researchScreeningFixture();
+  bindAgentResearchSourceOwner(tools, screening.owner);
+  registerAgentHarnessTool(tools, registry, context);
+  const scripted = fakePort((name, question) => {
+    if (question.type === 'noul') return noulAnswer(name === 'mutates' ? 0.999 : 0.001);
+    if (name === 'disposition') return choiceAnswer(question, 'act', 0.999);
+    if (name === 'kind') return choiceAnswer(question, 'other', 0.999);
+    if (name === 'family' || name === 'capability') return choiceAnswer(question, 'generic', 0.999);
+    throw new Error(`Unscripted native pairing fixture question ${name}`);
+  });
+  const log = new SqliteDecisionLog(':memory:');
+  const previous = installJudgmentPort(withDecisionLog(scripted.port, log));
+  let sequence = 0;
+  const source = { goal: 'Exercise the exact fixture command without acquiring keyboard owner authority.',
+    criteria: ['Preserve the native owner-only pairing phrase and unchanged fixture credential store.'] };
+  const sourceOf = () => source;
+  const runHarness = async (args: Record<string, unknown>) => {
+    await manager.prepareAutonomousOwner();
+    const callId = `pairing-model-${++sequence}`;
+    const preparation = manager.autonomousPreparation(callId, sourceOf);
+    const call = await tools.prepareCall(callId, 'agent_harness', args,
+      { port: preparation.port, assertCurrent: preparation.assertCurrent });
+    const admission = await manager.admitAutonomous(callId, call.name, call.args, { sourceOf,
+      schemaRevision: call.schemaRevision, preparedCall: { registry: tools, call } });
+    expect(admission.result.autonomousDecision?.outcome).toBe('act');
+    const result = await tools.executePrepared(call, admission);
+    fixture.assertPrivateOutput(JSON.stringify(scripted.requests));
+    fixture.assertPrivateOutput(result.output ?? '');
+    expect(log.query({ site: 'engine.gate.autonomous-tool' }).length).toBe(sequence);
+    return result;
+  };
+  try { await run({ fixture, registry, context, controller, starts, printed, runHarness }); fixture.assertPrivateOutput(printed.join('\n')); }
+  finally {
+    controller.dispose(); await fixture.stop(); await cleanupResearchScreeningFixtures();
+    installJudgmentPort(previous); log[Symbol.dispose]();
+  }
 }
 
 function expectUnchanged(fixture: ReturnType<typeof setupPairingFixture>) {
@@ -168,7 +211,7 @@ describe('setup pairing owner-command authority', () => {
 describe('actual agent_harness pairing boundary', () => {
   for (const args of [['pair', '--apply'], ['pair', '--apply', '--yes'], ['pair', '--apply', 'PAIR', '000000000000']]) {
     test(`harness confirmation flags cannot replace keyboard confirmation: ${args.join(' ')}`, async () => withRuntime(async r => {
-      const result = await r.tool.execute({ mode: 'run_command', commandName: 'setup', args,
+      const result = await r.runHarness({ mode: 'run_command', commandName: 'setup', args,
         confirm: true, explicitUserRequest: 'Pair this Agent with the host and create persistent administrative access.' });
       expect(result.success).toBe(true); // Command execution succeeds; the command reports its refusal.
       expect(r.starts).toEqual([]);
@@ -187,7 +230,7 @@ describe('actual agent_harness pairing boundary', () => {
       // A wrapper clearing the public flag still cannot forge provenance.
       await r.registry.get('setup')!.handler(['pair', '--apply'], { ...context, invokedByModel: false });
     } });
-    const result = await r.tool.execute({ mode: 'run_command', commandName: 'pair-relay',
+    const result = await r.runHarness({ mode: 'run_command', commandName: 'pair-relay',
       confirm: true, explicitUserRequest: 'Run the nested pairing helper.' });
     expect(result.success).toBe(true);
     expect(modelContext).toBe(true);
@@ -196,7 +239,7 @@ describe('actual agent_harness pairing boundary', () => {
   }));
 
   test('harness can read a preview without receiving an action-time phrase', async () => withRuntime(async r => {
-    const result = await r.tool.execute({ mode: 'run_command', commandName: 'setup', args: ['pair'],
+    const result = await r.runHarness({ mode: 'run_command', commandName: 'setup', args: ['pair'],
       confirm: true, explicitUserRequest: 'Preview the selected host pairing.' });
     expect(result.success).toBe(true);
     expect(result.output).toContain(r.fixture.host);

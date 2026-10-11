@@ -1,5 +1,6 @@
 /** Explicit Discord account/DM scope over the canonical source and registration owners. */
 import { realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { acquireCrossProcessLock } from '@goodvibes-jev/engine/sdk/platform/state/durable-file-io';
 import { createInboxRouteResolver } from '@goodvibes-jev/engine/sdk/platform/channels';
@@ -25,6 +26,64 @@ export function createDiscordDaemonInboxFactory(options: DiscordDaemonInboxOptio
   factories: DiscordDaemonInboxSourceFactories = {}) {
   return createMultiOwnerDaemonInboxFactory([createDiscordDaemonInboxSourceFactory(options, factories)]);
 }
+
+/** Operator-selected bot identity and DM registry; the host separately owns both screening services. */
+export function createConfiguredDiscordDaemonInboxSourceFactory(
+  screening: DiscordDaemonInboxOptions['screening'],
+  factories: DiscordDaemonInboxSourceFactories = {},
+): DaemonInboxSourceFactory {
+  return async (context, routing, controls) => {
+    const config = context.configManager;
+    const keys = ['surfaces.discord.inboxBotUserId', 'surfaces.discord.inboxChannelIds'] as const;
+    const [userId, registry] = keys.map(key => config.get(key));
+    const snowflake = (value: unknown): value is string => typeof value === 'string'
+      && /^[1-9]\d{0,19}$/.test(value) && BigInt(value) < (1n << 64n);
+    if (!snowflake(userId) || typeof registry !== 'string' || registry.length > 4_300) {
+      throw new Error('Discord inbox requires its expected bot user ID and explicit one-to-one DM channel IDs');
+    }
+    const channelIds = registry.split(',').map(value => value.trim());
+    if (channelIds.length < 1 || channelIds.length > 200 || channelIds.some(id => !snowflake(id))
+      || new Set(channelIds).size !== channelIds.length) {
+      throw new Error('Discord inbox DM registry must contain 1–200 unique canonical channel IDs');
+    }
+    if (!controls.onConfigurationChange) throw new Error('Discord inbox requires its native configuration subscription owner');
+    const subscribe = controls.onConfigurationChange;
+    const lifetime = new AbortController();
+    const unsubscribe: Array<() => void> = [];
+    let source: OwnedInboxSource | undefined;
+    let closing: Promise<void> | undefined;
+    const current = () => {
+      if (lifetime.signal.aborted || config.get(keys[0]) !== userId || config.get(keys[1]) !== registry) {
+        throw new Error('Discord inbox configured account or DM registry changed');
+      }
+    };
+    const close = (): Promise<void> => {
+      if (!closing) {
+        lifetime.abort();
+        closing = Promise.resolve().then(async () => {
+          const results = await Promise.allSettled([
+            ...unsubscribe.map(release => Promise.resolve().then(release)),
+            Promise.resolve().then(() => source?.close()),
+          ]);
+          if (results.some(result => result.status === 'rejected')) throw new Error('Configured Discord inbox did not close cleanly');
+        });
+      }
+      return closing;
+    };
+    try {
+      for (const key of keys) unsubscribe.push(subscribe(key, () => lifetime.abort()));
+      current();
+      source = await createDiscordDaemonInboxSourceFactory({
+        account: { userId },
+        channels: { channelIds, signal: lifetime.signal, assertCurrent: current,
+          revision: createHash('sha256').update(JSON.stringify([userId, [...channelIds].sort()])).digest('hex') },
+        screening,
+      }, factories)(context, routing, controls);
+      current();
+      return { ...source, close, unregister() { void close().catch(() => {}); } };
+    } catch (error) { await close(); throw error; }
+  };
+}
 export function createDiscordDaemonInboxSourceFactory(options: DiscordDaemonInboxOptions,
   factories: DiscordDaemonInboxSourceFactories = {}): DaemonInboxSourceFactory {
   const createOwner = factories.createOwner ?? createDiscordInboxOwner;
@@ -37,7 +96,8 @@ export function createDiscordDaemonInboxSourceFactory(options: DiscordDaemonInbo
     if (!controls.onAccountInvalidation) throw new Error('Discord inbox requires account and configuration invalidation');
     const clustered = context.configManager.get('cluster.enabled') === true;
     if (clustered && !controls.gatePollingOwned) throw new Error('Clustered Discord inbox requires owned gate retirement');
-    const keys = ['surfaces.discord.enabled', 'surfaces.discord.applicationId', 'surfaces.discord.guildId', 'surfaces.discord.defaultChannelId'] as const;
+    const keys = ['surfaces.discord.enabled', 'surfaces.discord.applicationId', 'surfaces.discord.guildId', 'surfaces.discord.defaultChannelId',
+      'surfaces.discord.inboxBotUserId', 'surfaces.discord.inboxChannelIds'] as const;
     const settings = keys.map(key => context.configManager.get(key));
     if (settings[0] !== true) throw new Error('Discord inbox composition requires Discord to be enabled');
     let generation = 0, closed = false;

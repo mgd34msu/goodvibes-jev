@@ -110,7 +110,9 @@ describe('recorded turn intent and project priming', () => {
     await prepareConversationForTurn(conversation, providerRegistry(), text, undefined, 'session', null, {
       onClassification: (reading) => maybeEmitAdaptivePlannerDecision(text, true, planner, runtimeBus, () => createEmitterContext('session', 'turn'), 'turn', reading),
     });
-    expect(readings.requests).toHaveLength(2);
+    const feature = assertReadingPartition(readings.requests, ['engine.core.turn-shape', 'engine.core.execution-strategy'], ['strategy', 'outcome', 'decisionId', 'reasonCode']);
+    expect(feature[0]?.state).toEqual({ purpose: 'conversation', work: text });
+    expect(JSON.stringify(feature[1]?.state)).toContain(text);
     expect(planner.getLatest()?.inputs.riskScore).toBeCloseTo(2 / 3);
     expect(planner.getLatest()?.inputs.taskDescription).toBe(text);
     expect(planner.getLatest()?.selected).toBe('cohort');
@@ -139,3 +141,13 @@ test('a non-multimodal provider still receives text-only input before judgment',
   expect(conversation.getMessageSnapshot().some((message) => message.role === 'user' && message.content === 'the text content')).toBe(true);
   expect(systemMessages(conversation).some((message) => message.includes('Images have been removed'))).toBe(true);
 });
+
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
+  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
+  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
+  expect(requests).toHaveLength(batteries.length + fields.length);
+  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
+  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
+  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
+  return feature;
+}

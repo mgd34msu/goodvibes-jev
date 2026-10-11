@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort, JudgmentAuthorityRetiredError } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/store.js';
@@ -10,12 +10,13 @@ import { KnowledgeConnectorRegistry } from '../sdk/src/platform/knowledge/connec
 import { ingestBrowserKnowledge } from '../sdk/src/platform/knowledge/browser-history/ingest.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { RuntimeEventBus, type KnowledgeEvent } from '../sdk/src/platform/runtime/events/index.js';
-import type { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { loadSqlJsEngine, type SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { runKnowledgeServiceJobByKind, type KnowledgeServiceJobRunnerContext } from '../sdk/src/platform/knowledge/service-jobs.js';
 import { createDaemonKnowledgeRouteHandlers } from '../daemon-sdk/src/knowledge-routes.js';
 import type { DaemonKnowledgeRouteContext } from '../daemon-sdk/src/knowledge-route-types.js';
 import { KNOWLEDGE_BROWSER_SYNC_RESULT_SCHEMA } from '../sdk/src/platform/control-plane/operator-contract-schemas-knowledge.js';
 import { firstJsonSchemaFailure } from '../transport-http/src/client-plumbing.js';
+import { knowledgeIngestErrorReadings } from './_helpers/knowledge-ingest-error-readings.js';
 
 let root: string;
 let previous: JudgmentPort | undefined;
@@ -90,6 +91,7 @@ describe('browser capture and compilation outcomes', () => {
   test('alias hold reports retained capture, preserves rich evidence and retries the same source', async () => {
     const f = await fixture();
     const retained = await retainRichSource(f);
+    installJudgmentPort(knowledgeIngestErrorReadings().port);
     const result = await f.ingest();
     expect(result).toMatchObject({ imported: 0, failed: 1, captured: 1, sources: [], outcomes: [{
       canonicalUri: uri, sourceId: retained.source.id, capture: 'completed', compilation: 'held',
@@ -134,7 +136,7 @@ describe('browser capture and compilation outcomes', () => {
     expect(project.status).toBe('active');
     await f.store.upsertSource({ ...first.sources[0]!, tags: [...first.sources[0]!.tags, 'new-staged-topic'] });
     const reader = fakePort((name) => noulAnswer(name === 'serve' ? 0.01 : 0.99));
-    installJudgmentPort(reader.port);
+    installJudgmentPort(knowledgeIngestErrorReadings(reader.port).port);
     f.events.length = 0;
     const result = await f.ingest();
     expect(reader.requests.length).toBeGreaterThan(0);
@@ -147,6 +149,24 @@ describe('browser capture and compilation outcomes', () => {
     expect(reopened.getNode(project.id)).toEqual(project);
     expect(reopened.listNodes().some((node) => node.title === 'new-staged-topic')).toBe(false);
     expect(f.events.some((event) => event.type === 'KNOWLEDGE_INGEST_COMPLETED' || event.type === 'KNOWLEDGE_COMPILE_COMPLETED')).toBe(false);
+  });
+
+  test('a source change during diagnostic reading cannot publish the prior capture outcome', async () => {
+    const f = await fixture();
+    const retained = await retainRichSource(f);
+    const diagnostic = knowledgeIngestErrorReadings();
+    let changed = false;
+    installJudgmentPort({ ...diagnostic.port, async ask(request) {
+      if (!changed && request.context?.battery === 'engine.redaction.credential') {
+        changed = true;
+        await f.store.upsertSource({ ...f.store.getSource(retained.source.id)!, title: 'Concurrent diagnostic owner' });
+      }
+      return diagnostic.port.ask(request);
+    } });
+    await expect(f.ingest()).rejects.toBeInstanceOf(JudgmentAuthorityRetiredError);
+    expect(changed).toBe(true);
+    expect((await f.reopen()).getSource(retained.source.id)?.title).toBe('Concurrent diagnostic owner');
+    expect(f.events.map(event => event.type)).toEqual(['KNOWLEDGE_INGEST_STARTED']);
   });
 
   test('completed compilation can retain pending-review drafts without asserting factual acceptance', async () => {
@@ -164,17 +184,18 @@ describe('browser capture and compilation outcomes', () => {
 
   test('operational compile failure is failed, retains capture and rolls back compiler writes', async () => {
     const f = await fixture();
-    const database = sqlite(f.store), run = database.run.bind(database);
+    installJudgmentPort(knowledgeIngestErrorReadings().port);
+    const SQL = await loadSqlJsEngine(), run = SQL.Database.prototype.run;
     let edgeWrites = 0;
-    database.run = (sql, params) => {
+    const write = spyOn(SQL.Database.prototype, 'run').mockImplementation(function(this: InstanceType<typeof SQL.Database>, sql, params) {
       if (sql.includes('INSERT OR REPLACE INTO knowledge_edges') && ++edgeWrites === 2) {
         throw new Error('Synthetic compiler SQL failure');
       }
-      run(sql, params);
-    };
+      run.call(this, sql, params);
+    });
     let result;
     try { result = await f.ingest(); }
-    finally { database.run = run; }
+    finally { write.mockRestore(); }
     expect(edgeWrites).toBe(2);
     expect(result).toMatchObject({ imported: 0, failed: 1, captured: 1, sources: [], outcomes: [{
       capture: 'completed', compilation: 'failed',

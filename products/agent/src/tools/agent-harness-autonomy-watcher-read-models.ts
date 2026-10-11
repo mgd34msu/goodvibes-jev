@@ -9,8 +9,9 @@ import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/too
 import { types as nodeTypes } from 'node:util';
 import { safeRecordIdPart } from './agent-harness-personal-ops-records.ts';
 import type { AutonomyQueueLiveRecord, AutonomyQueueRecordControl, AutonomyQueueRecordOutput } from './agent-harness-autonomy-queue-types.ts';
+import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
 
-type WatcherReadModelLane = 'watcher-run' | 'provider-source';
+type WatcherReadModelLane = 'watcher-run' | 'provider-source' | 'native-watcher';
 type WatcherReadModelSourceKind = 'daemon-read-model' | 'sdk-read-model';
 
 interface WatcherReadModelSource {
@@ -185,6 +186,12 @@ function routeFromKeys(record: Record<string, unknown>, keys: readonly string[])
 
 /** Literal automation-run grammar and published boolean source state are native facts. */
 function nativeStatus(record: Record<string, unknown>, lane: WatcherReadModelLane): string {
+  if (lane === 'native-watcher') {
+    switch (record.state) {
+      case 'stopped': case 'starting': case 'running': case 'degraded': case 'failed': return record.state;
+      default: return 'unknown';
+    }
+  }
   const status = record.status;
   if (lane === 'watcher-run') {
     switch (status) {
@@ -246,21 +253,70 @@ function collectFromSource(source: unknown, path: string, kind: WatcherReadModel
   } finally { visited.delete(source); }
 }
 
-function captureWatcherRecords(context: CommandContext): { readonly entries: readonly CollectedWatcherRecord[]; readonly assertCurrent: () => void } {
+function captureNativeWatchers(context: CommandContext) {
+  const guards: (() => void)[] = [];
+  let holder: unknown = context;
+  for (const key of ['platform', 'readModels', 'watchers']) {
+    if (holder === undefined || holder === null) break;
+    if (typeof holder !== 'object' || nodeTypes.isProxy(holder)) throw new ToolInputProjectionError('invalid');
+    guards.push(captureCatalogMethods(holder, [key]));
+    holder = modelReadingServicePath(holder, [key]);
+  }
+  const assertHolders = () => { for (const guard of guards) guard(); };
+  if (holder === undefined || holder === null) return { snapshot: null, entries: [], assertCurrent: assertHolders };
+  if (typeof holder !== 'object' || nodeTypes.isProxy(holder)) throw new ToolInputProjectionError('invalid');
+  const methods = captureCatalogMethods(holder, ['getSnapshot', 'subscribe']);
+  const read = modelReadingServicePath(holder, ['getSnapshot']);
+  if (read === undefined) {
+    // Legacy daemon aliases have their own complete record reader below.
+    return { snapshot: null, entries: [], assertCurrent: () => { assertHolders(); methods(); } };
+  }
+  if (typeof read !== 'function') throw new ToolInputProjectionError('invalid');
+  const observation = captureNativeReadModelObservation(holder);
+  const acquire = (): unknown => {
+    assertHolders(); methods(); observation();
+    const snapshot: unknown = read.call(holder);
+    assertHolders(); methods(); observation();
+    return snapshot;
+  };
+  const original = acquire(), snapshot = captureCatalogData(original), complete = capturePersonalOpsData(original);
+  const data = readRecord(snapshot);
+  if (!Array.isArray(data.watchers)) throw new ToolInputProjectionError('invalid');
+  const entries: CollectedWatcherRecord[] = data.watchers.map((watcher, index) => {
+    if (!watcher || typeof watcher !== 'object' || Array.isArray(watcher)) throw new ToolInputProjectionError('invalid');
+    const record = readRecord(watcher);
+    if (typeof record.id !== 'string' || typeof record.kind !== 'string' || typeof record.state !== 'string')
+      throw new ToolInputProjectionError('invalid');
+    return { path: `context.platform.readModels.watchers.getSnapshot().watchers[${index}]`,
+      kind: 'daemon-read-model', lane: 'native-watcher', record };
+  });
+  const assertCurrent = () => {
+    assertHolders(); methods(); observation();
+    assertPersonalOpsDataCurrent(original, complete);
+    assertPersonalOpsDataCurrent(acquire(), complete);
+    assertHolders(); methods(); observation();
+  };
+  assertCurrent(); return { snapshot, entries, assertCurrent };
+}
+
+function captureWatcherRecords(context: CommandContext) {
+  const native = captureNativeWatchers(context);
   const sources = watcherSources(context);
   const methods: (() => void)[] = [];
   const collect = () => sources.flatMap(source => collectFromSource(source.source, source.path, source.kind, source.lane, methods));
-  const entries = collect();
-  const snapshot = capturePersonalOpsData(entries);
+  const legacyEntries = collect();
+  const snapshot = capturePersonalOpsData(legacyEntries);
   const assertCurrent = () => {
+    native.assertCurrent();
     for (const guard of methods) guard();
     const current = watcherSources(context);
     if (current.some((source, index) => source.source !== sources[index]?.source)) throw new ToolInputProjectionError('held');
     const refreshed = current.flatMap(source => collectFromSource(source.source, source.path, source.kind, source.lane, []));
     assertPersonalOpsDataCurrent(refreshed, snapshot);
     for (const guard of methods) guard();
+    native.assertCurrent();
   };
-  assertCurrent(); return { entries, assertCurrent };
+  assertCurrent(); return { entries: [...legacyEntries, ...native.entries], legacyEntries, native, assertCurrent };
 }
 
 /** Startup counts never expose producer text or acquire semantic authority. */
@@ -414,6 +470,7 @@ function normalizeRun(entry: CollectedWatcherRecord, index: number, status: stri
 }
 
 function normalizeProviderSource(entry: CollectedWatcherRecord, index: number, status: string): AutonomyQueueLiveRecord | null {
+  const nativeWatcher = entry.lane === 'native-watcher';
   const providerId = firstString(entry.record, ['providerId', 'provider', 'service', 'kind', 'sourceKind']) || 'provider';
   const sourceId = firstString(entry.record, ['sourceId', 'providerSourceId', 'watcherId', 'subscriptionId', 'accountId', 'id']) || `${index + 1}`;
   const scope = firstString(entry.record, ['scope', 'sourceScope', 'mailbox', 'folder', 'label']);
@@ -423,7 +480,7 @@ function normalizeProviderSource(entry: CollectedWatcherRecord, index: number, s
   const inspectRoute = routeFromKeys(entry.record, SOURCE_READ_KEYS)
     || `autonomy action:"item" queueItemId:"automation-runs" query:"${safeRecordIdPart(sourceId)}" includeParameters:true`;
   const refreshRoute = routeFromKeys(entry.record, SOURCE_REFRESH_KEYS);
-  const preview = firstString(entry.record, ['lastEventPreview', 'preview', 'snippet', 'lastMessage']);
+  const preview = nativeWatcher ? outputPreview(entry.record) : firstString(entry.record, ['lastEventPreview', 'preview', 'snippet', 'lastMessage']);
   const output: AutonomyQueueRecordOutput | undefined = preview
     ? {
       status: 'preview',
@@ -435,7 +492,8 @@ function normalizeProviderSource(entry: CollectedWatcherRecord, index: number, s
     : undefined;
   return {
     id: `watcher-source:${safeRecordIdPart(entry.path)}:${safeRecordIdPart(sourceId)}`,
-    label: `Provider source: ${safePreview(providerId, 48)} ${safePreview(sourceId, 64)}`,
+    label: nativeWatcher ? `Watcher: ${safePreview(firstString(entry.record, ['label']) || sourceId, 64)}`
+      : `Provider source: ${safePreview(providerId, 48)} ${safePreview(sourceId, 64)}`,
     status,
     phase: firstString(entry.record, ['sourceKind', 'kind', 'type']) || providerId,
     updatedAt: readIso(entry.record.updatedAt ?? entry.record.syncedAt ?? entry.record.currentAt ?? entry.record.createdAt),
@@ -479,27 +537,52 @@ function normalizeProviderSource(entry: CollectedWatcherRecord, index: number, s
 }
 
 export async function watcherReadModelLiveRecords(context: CommandContext, options: CatalogRankingOptions = {}): Promise<readonly AutonomyQueueLiveRecord[]> {
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
+  const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
+  const assertCaller = () => {
+    optionsCurrent(); signal?.throwIfAborted();
+    const result: unknown = callerCurrent?.();
+    if (result !== undefined) { void Promise.resolve(result).catch(() => {}); throw new ToolInputProjectionError('held'); }
+    optionsCurrent(); signal?.throwIfAborted();
+  };
+  assertCaller();
   const source = captureWatcherRecords(context);
-  const signal = options.signal;
-  const assertSource = () => { signal?.throwIfAborted(); source.assertCurrent(); };
-  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  const assertSource = () => { optionsCurrent(); signal?.throwIfAborted(); source.assertCurrent(); };
+  const assertCurrent = () => { assertSource(); assertCaller(); assertSource(); };
   const current = { ...options, assertCurrent };
   assertCurrent();
-  const protectedEntries = await protectPersonalOpsData(source.entries, current);
-  if (!Array.isArray(protectedEntries) || protectedEntries.length !== source.entries.length) throw new ToolInputProjectionError('held');
+  const protectedData = readRecord(await protectPersonalOpsData({ entries: source.legacyEntries, nativeSnapshot: source.native.snapshot }, current));
+  const protectedEntries = protectedData.entries;
+  if (!Array.isArray(protectedEntries) || protectedEntries.length !== source.legacyEntries.length) throw new ToolInputProjectionError('held');
+  const safeEntries: CollectedWatcherRecord[] = source.legacyEntries.map((entry, index) => {
+    const protectedEntry = readRecord(protectedEntries[index]);
+    if (typeof protectedEntry.path !== 'string') throw new ToolInputProjectionError('held');
+    return { path: protectedEntry.path, kind: entry.kind, lane: entry.lane, record: readRecord(protectedEntry.record) };
+  });
+  if (source.native.snapshot !== null) {
+    const protectedWatchers = readRecord(protectedData.nativeSnapshot).watchers;
+    if (!Array.isArray(protectedWatchers) || protectedWatchers.length !== source.native.entries.length) throw new ToolInputProjectionError('held');
+    for (const [index, entry] of source.native.entries.entries()) {
+      const record = readRecord(protectedWatchers[index]);
+      const originalSource = readRecord(entry.record.source), protectedSource = readRecord(record.source);
+      if (record.id !== entry.record.id || record.kind !== entry.record.kind || record.state !== entry.record.state
+        || protectedSource.id !== originalSource.id || protectedSource.kind !== originalSource.kind)
+        throw new ToolInputProjectionError('held');
+      safeEntries.push({ ...entry, record });
+    }
+  }
   const records: AutonomyQueueLiveRecord[] = [];
   for (const [index, entry] of source.entries.entries()) {
     assertCurrent();
-    const protectedEntry = readRecord(protectedEntries[index]);
-    const record = readRecord(protectedEntry.record);
-    if (typeof protectedEntry.path !== 'string') throw new ToolInputProjectionError('held');
-    const safeEntry: CollectedWatcherRecord = { path: protectedEntry.path, kind: entry.kind, lane: entry.lane, record };
+    const safeEntry = safeEntries[index];
+    if (!safeEntry) throw new ToolInputProjectionError('held');
+    const record = safeEntry.record;
     const native = nativeStatus(entry.record, entry.lane);
-    const status = native === 'unknown' ? await readPersonalOpsReceiptStatus(record, current) : native;
+    const status = native === 'unknown' && entry.lane !== 'native-watcher' ? await readPersonalOpsReceiptStatus(record, current) : native;
     const result = entry.lane === 'watcher-run' ? normalizeRun(safeEntry, index, status) : normalizeProviderSource(safeEntry, index, status);
     if (result) records.push(result);
   }
-  assertCurrent(); options.retainCurrent?.(assertSource, 'personal-ops-watcher-source');
+  assertCurrent(); retainCurrent?.(assertSource, 'personal-ops-watcher-source'); assertCurrent();
   const seen = new Set<string>();
   return records.filter(record => { if (seen.has(record.id)) return false; seen.add(record.id); return true; }).slice(0, 20);
 }

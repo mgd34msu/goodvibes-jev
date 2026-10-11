@@ -14,7 +14,7 @@ import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/
 import { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } from '../sdk/src/platform/knowledge/store-node-authority.js';
 import { getKnowledgeNodeObservation } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { KnowledgeExtractionJudgmentHoldError, KNOWLEDGE_EXTRACTOR_VERSION } from '../sdk/src/platform/knowledge/extraction-policy.js';
-import type { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { loadSqlJsEngine, type SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 
 let root: string;
 let previous: JudgmentPort | undefined;
@@ -73,17 +73,19 @@ describe('atomic knowledge compilation', () => {
 
     test(`${route}: late edge SQL failure rolls back preceding extraction, node and revision writes`, async () => {
       const { ctx, dbPath, run, reopen } = await fixture(route);
-      const before = state(ctx.store), bytes = readFileSync(dbPath), database = sqlite(ctx.store), originalRun = database.run.bind(database);
+      const before = state(ctx.store), bytes = readFileSync(dbPath), database = sqlite(ctx.store);
+      const SQL = await loadSqlJsEngine(), originalRun = SQL.Database.prototype.run;
       let edges = 0, nodeWrites = 0, extractionWrites = 0, revisions = 0;
-      database.run = (sql, params) => {
+      const write = spyOn(SQL.Database.prototype, 'run').mockImplementation(function(this: InstanceType<typeof SQL.Database>, sql, params) {
         if (sql.includes('INSERT OR REPLACE INTO knowledge_nodes')) nodeWrites++;
         if (sql.includes('INSERT OR REPLACE INTO knowledge_extractions')) extractionWrites++;
         if (sql.includes('INTO knowledge_node_revisions')) revisions++;
         if (sql.includes('INSERT OR REPLACE INTO knowledge_edges') && ++edges === 2) throw new Error('fixture late compile SQL failure');
-        originalRun(sql, params);
-      };
+        originalRun.call(this, sql, params);
+      });
       try { await expect(run()).rejects.toThrow('fixture late compile SQL failure'); }
-      finally { database.run = originalRun; }
+      finally { write.mockRestore(); }
+      expect(edges).toBe(2);
       expect(nodeWrites).toBeGreaterThan(0); expect(revisions).toBeGreaterThan(0);
       if (route === 'recompile') expect(extractionWrites).toBe(1);
       expect(state(ctx.store)).toEqual(before); expect(readFileSync(dbPath)).toEqual(bytes);

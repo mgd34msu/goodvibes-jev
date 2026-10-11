@@ -213,9 +213,21 @@ describe('conversation commit ownership', () => {
     (lifetime) => compactConversation(c.host, registry, 'test/model', 'manual', 'test', { ...context(c.host), ...lifetime })).catch((error: unknown) => error);
     try {
       await held.entered.promise; owner.dispose(); expect(await pending).toBeInstanceOf(Error);
-      const stored = log.query().length; held.release.resolve(); await flush();
+      const beforeRecords = log.query(); const stored = beforeRecords.length; held.release.resolve(); await flush();
       expect(c.replacements).toBe(0); expect(c.lineage).toBe(0); expect(owner.lastCommit).toBeNull();
-      expect(events).toEqual(['COMPACTION_CHECK']); expect(log.query()).toHaveLength(stored);
+      expect(events).toEqual(['COMPACTION_CHECK']);
+      const after = log.query();
+      expect(after).toHaveLength(stored + 2);
+      const previousIds = new Set(beforeRecords.map(record => record.id));
+      const late = after.filter(record => !previousIds.has(record.id));
+      expect(late.map(record => record.context?.battery)).toEqual(['engine.redaction.residual-credential', 'engine.redaction.field-kind']);
+      expect(late.map(record => record.status)).toEqual(['failed', 'failed']);
+      expect(late.map(record => {
+        const questions = record.questions;
+        if (questions === null || typeof questions !== 'object' || Array.isArray(questions)) throw new Error('Expected a canonical question map');
+        return Object.keys(questions);
+      })).toEqual([['credentialRemains'], ['kind']]);
+      for (const record of beforeRecords) expect(after.find(entry => entry.id === record.id)).toEqual(record);
     } finally { held.release.resolve(); owner.dispose(); }
   });
 
@@ -314,7 +326,10 @@ describe('source and conversation currentness', () => {
     const fake = compactionQualityPort(); installJudgmentPort(fake.port); const c = conversation(); const stale = context(c.host);
     stale.messages = stale.messages.slice(0, -1);
     await expect(compactConversation(c.host, registry, 'test/model', 'manual', 'test', stale)).rejects.toThrow('changed before compaction');
-    expect(fake.requests).toEqual([]); expect(c.replacements).toBe(0); expect(c.lineage).toBe(0);
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]?.context?.battery).toBe('engine.redaction.field-kind');
+    expect(fake.requests[0]?.state).toEqual({ field: 'error' });
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['kind']); expect(c.replacements).toBe(0); expect(c.lineage).toBe(0);
   });
 
   test('a queued route refuses its obsolete input before calling the mutation callback', async () => {

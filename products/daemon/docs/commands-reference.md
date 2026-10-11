@@ -416,7 +416,7 @@ goodvibes-daemon version
 ```
 
 Print the product binary name and manifest version, and exit 0. Same as `--version`/`-v`.
-The daemon manifest currently says `1.28.25`; the repository root version is separate.
+The daemon manifest and compiled fallback use the repository root version, currently `2.0.23`.
 
 ## Passthrough commands
 

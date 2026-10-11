@@ -350,6 +350,7 @@ export function registerDraftMethods(
       const reference = referenceRequest ? await resolveNativeDraftReferenceRequest(referenceRequest, store) : undefined;
       if (referenceRequest) assertNativeDraftReferenceRequest(referenceRequest);
       assertRequest(); context.signal?.throwIfAborted();
+      if (reference) validateWebhook(reference.target.webhook);
       if (reference) input.id = reference.id;
       const selectedId = input.id ?? crypto.randomUUID();
       if (autonomous) input.id = selectedId;
@@ -389,6 +390,7 @@ export function registerDraftMethods(
       const reference = referenceRequest ? await resolveNativeDraftReferenceRequest(referenceRequest, store) : undefined;
       if (referenceRequest) assertNativeDraftReferenceRequest(referenceRequest);
       assertRequest(); context.signal?.throwIfAborted();
+      if (reference) validateWebhook(reference.target.webhook);
       const draftId = reference?.id ?? parseDraftId(body);
       const publicId = reference?.reference ?? draftId;
       const target = reference ?? (autonomous ? store.retainTarget(draftId) : undefined);

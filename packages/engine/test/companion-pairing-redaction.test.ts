@@ -1,5 +1,17 @@
-import { describe, expect, test } from 'bun:test';
-import { useFailureReadings } from './_helpers/failure-readings.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { authoredErrorReadingsPort, errorSpan, errorText } from './_helpers/authored-error-readings.ts';
+
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetFailureReadings();
+  previous = installJudgmentPort(authoredErrorReadingsPort({
+    parts: [[errorText('ETIMEDOUT: '), errorSpan('ETIMEDOUT'), errorText('')]],
+    fields: { ETIMEDOUT: 'content' },
+  }, [{ message: 'ETIMEDOUT: [REDACTED_TEXT]',
+    reading: { category: 'timeout', connection: 'timed_out', transientNetwork: true } }]).port);
+});
+afterEach(() => { installJudgmentPort(previous); forgetFailureReadings(); });
 
 /**
  * Error normalize/summarize redaction smoke, verifies that the
@@ -10,7 +22,6 @@ import { useFailureReadings } from './_helpers/failure-readings.ts';
  * COVERAGE.md has been updated to reflect the actual scope.
  */
 describe('normalize/summarize redaction smoke', () => {
-  useFailureReadings([['companion pairing handshake', { category: 'timeout', connection: 'timed_out', transientNetwork: true }]]);
 
   test('normalizeError does not expose Bearer token in summary', async () => {
     const { normalizeError } = await import('../sdk/src/platform/utils/error-display.js');
@@ -20,11 +31,13 @@ describe('normalize/summarize redaction smoke', () => {
     expect(result.summary).not.toContain('sk-prod-999');
   });
 
-  test('the synchronous normalizeError keeps an ECONNREFUSED error\'s own message and category', async () => {
+  test('the synchronous normalizeError holds unqualified prose and keeps its native category', async () => {
     const { normalizeError } = await import('../sdk/src/platform/utils/error-display.js');
-    const result = normalizeError(new Error('ECONNREFUSED 127.0.0.1:3000'));
+    const error = new Error('ECONNREFUSED 127.0.0.1:3000');
+    const result = normalizeError(error);
     expect(result.category).toBe('unknown');
-    expect(result.summary).toBe('ECONNREFUSED 127.0.0.1:3000');
+    expect(result.summary).toBe('[REDACTED]');
+    expect(error.message).toBe('ECONNREFUSED 127.0.0.1:3000');
   });
 
   test('a pairing timeout read by Jev produces the timed-out summary', async () => {

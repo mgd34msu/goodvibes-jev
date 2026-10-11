@@ -391,7 +391,7 @@ test('a stopped applied updater remains reachable for cancellation and cannot re
 test('handover repair does not activate the shipped default update configuration without an artifact', async () => {
   const defaults = updateConfigDefaults.update;
   expect(defaults.auto).toBe(true);
-  expect(defaults.releasesUrl).toBe('https://github.com/mgd34msu/goodvibes-daemon/releases/latest');
+  expect(defaults.releasesUrl).toBe('https://github.com/mgd34msu/goodvibes-jev/releases/latest');
   const h = lifecycleWith(undefined, { configOverrides: { 'update.auto': defaults.auto, 'update.releasesUrl': defaults.releasesUrl } });
   h.runtime.onStarted();
   expect(updaterOf(h.runtime)).toBeNull();

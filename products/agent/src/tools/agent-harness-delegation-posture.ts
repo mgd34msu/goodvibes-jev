@@ -407,13 +407,14 @@ function captureDelegationBackend(context: CommandContext) {
 
 function retainDelegationSources(context: CommandContext, sources: ReturnType<typeof delegationSources>, options: CatalogRankingOptions, assertBackend: () => void) {
   const revision = JSON.stringify(sources);
-  const assertCurrent = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
     assertBackend();
     if (JSON.stringify(delegationSources(context)) !== revision) throw new ToolInputProjectionError('stale');
     assertBackend();
   };
-  options.retainCurrent?.(assertCurrent, 'agent.harness.delegation-posture.sources');
+  options.retainCurrent?.(assertSourceCurrent, 'agent.harness.delegation-posture.sources');
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); assertSourceCurrent(); };
   assertCurrent(); return assertCurrent;
 }
 

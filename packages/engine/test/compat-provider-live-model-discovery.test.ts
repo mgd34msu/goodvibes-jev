@@ -108,7 +108,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
         expect(result.asOf).toBe('2026-07-12');
-        expect(result.error).toContain('502');
+        expect(result.error).toBe('[REDACTED]');
         expect(provider.models).toEqual(['qwen/qwen3-32b', 'llama-3.3-70b-versatile']);
         expect(provider.models.length).toBeGreaterThan(0);
       },
@@ -124,7 +124,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
-        expect(result.error).toContain('connect ECONNREFUSED');
+        expect(result.error).toBe('[REDACTED]');
         expect(provider.models.length).toBeGreaterThan(0);
       },
     );
@@ -167,7 +167,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
           const provider = makeProvider({ modelsCachePath: cachePath });
           const result = await provider.refreshModels(true);
           expect(result.source).toBe('cache');
-          expect(result.error).toContain('503');
+          expect(result.error).toBe('[REDACTED]');
           expect(provider.models).toEqual(['live-model-a', 'live-model-b']);
         },
       );
@@ -184,7 +184,8 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.models).toEqual(['chat-model']);
-        expect(chat.requests.map((request) => request.state)).toEqual([
+        // Diagnostic privacy readings are separate from chat-model decisions.
+        expect(chat.requests.filter((request) => 'chat' in request.questions).map((request) => request.state)).toEqual([
           { provider: 'groq', model_id: 'chat-model' },
           { provider: 'groq', model_id: 'text-embedding-large' },
           { provider: 'groq', model_id: 'whisper-large-v3' },
@@ -211,7 +212,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const result = await provider.refreshModels();
         expect(result.models).toEqual(['mistral-large-latest', 'meta-llama/Llama-3.3-70B-Instruct-Turbo']);
         // Only the entry whose type is not a documented chat type is read.
-        expect(chat.requests.map((request) => (request.state as { model_id?: unknown }).model_id)).toEqual(['text-embedding-large']);
+        expect(chat.requests.filter((request) => 'chat' in request.questions).map((request) => (request.state as { model_id?: unknown }).model_id)).toEqual(['text-embedding-large']);
       },
     );
   });
@@ -285,7 +286,7 @@ describe('AnthropicCompatProvider.refreshModels (gateway live discovery)', () =>
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
         expect(result.asOf).toBe('2026-07-12');
-        expect(result.error).toContain('500');
+        expect(result.error).toBe('[REDACTED]');
         expect(provider.models).toEqual(['MiniMax-M2.7', 'MiniMax-M2.5']);
       },
     );

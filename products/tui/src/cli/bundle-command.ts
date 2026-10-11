@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import { createShellPathService } from '@/runtime/index.ts';
 import { listProviderRuntimeSnapshots } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { RuntimeServices } from '../runtime/services.ts';
@@ -14,10 +13,9 @@ import type { CliCommandOutput } from '@goodvibes-jev/engine/terminal-shell';
 import { getPackageVersion } from './help.ts';
 import { classifyProviderSetup } from '../providers/provider-classification.ts';
 import { buildCliServicePosture } from './service-posture.ts';
-import { REDACTED_VALUE, collectSensitiveConfigValues, isRedactedValue, redactConfig, redactSerializedSecrets } from '@goodvibes-jev/engine/terminal-shell';
+import { REDACTED_VALUE, isRedactedValue, prepareConfigRedaction, redactSerializedSecrets, retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 
 interface BundleInspectSummary {
   readonly type: string;
@@ -132,16 +130,17 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
       globalHome: runtime.homeDirectory,
       configManager: runtime.configManager,
     });
-    const rawConfig = runtime.configManager.getRaw();
     const configManager = runtime.configManager;
+    const retainedConfig = retainCliConfig(configManager);
+    const rawConfig = retainedConfig.raw;
     const workingDirectory = runtime.workingDirectory, homeDirectory = runtime.homeDirectory;
-    const snapshot = captureStrictJudgmentJson(rawConfig);
     const signal = options.signal, callerCurrent = options.assertCurrent;
     const sourceCurrent = () => {
       signal?.throwIfAborted();
       if (options.signal !== signal || options.assertCurrent !== callerCurrent || runtime.configManager !== configManager
-        || runtime.workingDirectory !== workingDirectory || runtime.homeDirectory !== homeDirectory
-        || !isDeepStrictEqual(captureStrictJudgmentJson(configManager.getRaw()), snapshot)) throw new Error('Support bundle input changed before export.');
+        || runtime.workingDirectory !== workingDirectory || runtime.homeDirectory !== homeDirectory) throw new Error('Support bundle input changed before export.');
+      try { retainedConfig.assertCurrent(); }
+      catch { throw new Error('Support bundle input changed before export.'); }
     };
     const assertCurrent = () => {
       sourceCurrent();
@@ -157,8 +156,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
       const providers = await buildProviderReadiness(services);
       owner.assertCurrent();
       const reading = { ...options, signal: owner.signal, assertCurrent: owner.assertCurrent };
-      const sensitiveValues = await collectSensitiveConfigValues(rawConfig, reading);
-      const redactedConfig = await redactConfig(rawConfig, reading);
+      const redactedConfig = await prepareConfigRedaction(rawConfig, reading);
       const service = await buildCliServicePosture(runtime, { ...reading, logTailBytes: 8192 });
       const bundle = {
         version: 2,
@@ -189,7 +187,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
         },
       };
       const targetPath = shellPaths.resolveWorkspacePath(outputPath);
-      const serialized = await redactSerializedSecrets(JSON.stringify(bundle, null, 2), sensitiveValues, reading);
+      const serialized = await redactSerializedSecrets(JSON.stringify(bundle, null, 2), redactedConfig.sensitiveValues, reading);
       redactedConfig.assertCurrent();
       owner.assertCurrent();
       mkdirSync(dirname(targetPath), { recursive: true });
@@ -204,7 +202,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
         }, `Support bundle exported: ${targetPath}\n  redactedConfigKeys: ${redactedConfig.redactedPaths.length}\n  serviceIssues: ${service.issues.length}`),
         exitCode: 0,
       };
-    });
+    }, { catalog: { contextWindowEnrichment: 'none' } });
   }
 
   if (sub === 'import') {

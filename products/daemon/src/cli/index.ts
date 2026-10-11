@@ -33,3 +33,5 @@ export type { DaemonInboxSourceFactory } from '../runtime/multiowner-inbox-compo
 export { createProductionDaemonRuntime } from './production-runtime.js';
 export { createProductionDaemonInboxFactory, BUILTIN_DAEMON_INBOX_PROVIDERS } from '../runtime/production-inbox-composition.js';
 export type { ProductionDaemonInboxOptions } from '../runtime/production-inbox-composition.js';
+export { createConfiguredDiscordDaemonInboxSourceFactory, createDiscordDaemonInboxFactory, createDiscordDaemonInboxSourceFactory } from '../runtime/discord-inbox-composition.js';
+export type { DiscordDaemonInboxOptions, DiscordDaemonInboxSourceFactories } from '../runtime/discord-inbox-composition.js';

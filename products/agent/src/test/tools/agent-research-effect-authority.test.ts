@@ -32,7 +32,7 @@ function compareFixture(options: { mode?: PermissionMode; artifactText?: string;
   beforeChat?: () => Promise<void>; beforeModels?: () => Promise<void>; beforeCreate?: () => Promise<void> } = {}) {
   const owner = effectAdmissionFixture(options.mode);
   if (options.sourceOwner !== null) bindAgentResearchSourceOwner(owner.registry, options.sourceOwner ?? ordinaryResearchOwner());
-  let writes = 0; let chats = 0; let drained = 0;
+  let writes = 0; let chats = 0; let drained = 0; let backendGetterReads = 0;
   const record: ArtifactRecord = { id: 'source-1', kind: 'document', mimeType: 'text/plain', sizeBytes: 16, sha256: createHash('sha256').update(options.artifactText ?? 'Synthetic source content.').digest('hex'), createdAt: 1,
     acquisitionMode: 'inline-data', fetchMode: 'not-applicable', metadata: { purpose: 'synthetic', ...options.artifactMetadata }, contentPath: '/synthetic/source', metadataPath: '/synthetic/source-metadata' };
   let current = record;
@@ -44,18 +44,24 @@ function compareFixture(options: { mode?: PermissionMode; artifactText?: string;
     list: () => [current], get: id => id === current.id ? current : null,
     async readContent() { return { record: current, buffer: Buffer.from(content) }; },
   };
-  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat(request) { chats++; await options.beforeChat?.(); drained++; return { content: `${request.model} synthetic response`, toolCalls: [] }; } };
+  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat(request) { chats++; await options.beforeChat?.(); drained++; return { content: `${request.model} synthetic response`, toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
   let currentProvider = provider;
+  const providerRegistry = { getForModel: () => currentProvider };
   const raw = createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
     modelCatalog: { async listModels() { await options.beforeModels?.(); return ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })); } },
-    providerRegistry: { getForModel: () => currentProvider },
+    providerRegistry,
   });
   const tool = owner.tool(raw);
   return { owner, tool, raw, inputs, attemptedInputs, replaceArtifact() { current = { ...record, metadata: { purpose: 'replacement' } }; },
     replaceProvider() { currentProvider = { ...provider }; },
-    replaceProviderMethod() { provider.chat = async () => ({ content: 'Replacement provider response', toolCalls: [] }); },
+    replaceProviderMethod() { provider.chat = async () => ({ content: 'Replacement provider response', toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }); },
+    replaceBackendWithGetter(backend: 'provider' | 'artifact') {
+      const method = backend === 'provider' ? providerRegistry.getForModel : store.readContent;
+      Object.defineProperty(backend === 'provider' ? providerRegistry : store, backend === 'provider' ? 'getForModel' : 'readContent',
+        { configurable: true, get() { backendGetterReads++; return method; } });
+    },
     replaceArtifactContent() { content = 'Unrecorded replacement content.'; },
-    get writes() { return writes; }, get chats() { return chats; }, get drained() { return drained; } };
+    get writes() { return writes; }, get chats() { return chats; }, get drained() { return drained; }, get backendGetterReads() { return backendGetterReads; } };
 }
 
 test('caller confirmation and request text cannot authorize research run or source writes', async () => {
@@ -203,6 +209,15 @@ test.each(['owner', 'method'] as const)('changed provider %s during a metered re
   expect(await pending).toMatchObject({ success: false }); expect(f.writes).toBe(0); expect(f.drained).toBe(f.chats);
 });
 
+test.each(['provider', 'artifact'] as const)('a late %s backend accessor is held without invoking it after metered waits', async backend => {
+  const entered = deferred(); const release = deferred();
+  const f = compareFixture({ async beforeChat() { entered.resolve(); await release.promise; } });
+  const pending = f.tool.execute({ mode: 'run', artifactId: 'source-1', prompt: 'Synthetic comparison' });
+  await awaitStarted(entered, pending); f.replaceBackendWithGetter(backend); release.resolve();
+  expect(await pending).toMatchObject({ success: false }); expect(f.backendGetterReads).toBe(0);
+  expect(f.writes).toBe(0); expect(f.drained).toBe(f.chats);
+});
+
 test('cancellation drains ignored provider waits and refuses all later artifact writes', async () => {
   const started = deferred(); const release = deferred(); const controller = new AbortController();
   const f = compareFixture({ async beforeChat() { started.resolve(); await release.promise; } });
@@ -279,7 +294,7 @@ test.each(['overwrite', 'symlink'] as const)('native artifact %s during provider
   const record = store.getRecord(source.id)!;
   const entered = deferred(); const release = deferred(); const owner = effectAdmissionFixture();
   bindAgentResearchSourceOwner(owner.registry, ordinaryResearchOwner());
-  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat() { entered.resolve(); await release.promise; return { content: 'Synthetic response', toolCalls: [] }; } };
+  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat() { entered.resolve(); await release.promise; return { content: 'Synthetic response', toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
   const tool = owner.tool(createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
     modelCatalog: { listModels: () => ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })) },
     providerRegistry: { getForModel: () => provider },
@@ -296,7 +311,7 @@ test('replacement of a native artifact storage root during prompt-only provider 
   const root = mkdtempSync(join(tmpdir(), 'native-comparison-root-')); roots.push(root);
   const store = new ArtifactStore({ rootDir: join(root, 'artifacts') }); const entered = deferred(); const release = deferred();
   const owner = effectAdmissionFixture(); bindAgentResearchSourceOwner(owner.registry, ordinaryResearchOwner());
-  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat() { entered.resolve(); await release.promise; return { content: 'Synthetic response', toolCalls: [] }; } };
+  const provider: LLMProvider = { name: 'synthetic', models: ['a', 'b'], async chat() { entered.resolve(); await release.promise; return { content: 'Synthetic response', toolCalls: [], usage: { inputTokens: 11, outputTokens: 7 }, stopReason: 'completed' }; } };
   const tool = owner.tool(createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
     modelCatalog: { listModels: () => ['a', 'b'].map(modelId => ({ modelId, providerId: 'synthetic', registryKey: `synthetic:${modelId}`, selectable: true })) },
     providerRegistry: { getForModel: () => provider },

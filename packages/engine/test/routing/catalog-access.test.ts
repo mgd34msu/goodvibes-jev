@@ -54,10 +54,10 @@ describe('access readings', () => {
       const first = await new ProviderAccessReadings({ path }).readAll(providers);
       expect(first.get('x')).toBe('subscription');
       expect(first.get('y')).toBe('metered');
-      expect(requests).toHaveLength(2);
+      expect(requests.filter((request) => 'local' in request.questions && 'plan' in request.questions)).toHaveLength(2);
       const again = await new ProviderAccessReadings({ path }).readAll([...providers, { id: 'z', name: 'Z', envVars: [], sampleModels: [] }]);
       expect(again.get('x')).toBe('subscription');
-      expect(requests).toHaveLength(3);
+      expect(requests.filter((request) => 'local' in request.questions && 'plan' in request.questions)).toHaveLength(3);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

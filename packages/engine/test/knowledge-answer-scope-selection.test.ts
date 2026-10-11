@@ -137,6 +137,78 @@ describe('retained scope at answer and public consumers', () => {
     await Promise.resolve();
     expect(fake.requests).toEqual([]);
   });
+  test('a caller correction to the original query after scope reading prevents every ranking dispatch', async () => {
+    const store = await fixture(); await source(store, 'useful', 'Network recovery');
+    const input = { query, scope: {}, mode: 'search' as const };
+    const fake = readings(); let scopeAnswered = false;
+    installJudgmentPort({ ...fake.port, async ask(request) {
+      const result = await fake.port.ask(request);
+      if ('included' in request.questions) scopeAnswered = true;
+      return result;
+    } });
+    await expect(readPublicKnowledgeSelection(store, input, { assertCurrent() {
+      if (scopeAnswered) input.query = 'A corrected original question.';
+    } })).rejects.toMatchObject({ reason: 'stale' });
+    expect(scopeAnswered).toBe(true);
+    expect(fake.requests.filter(request => 'useful' in request.questions)).toEqual([]);
+    expect(store.listUsageRecords()).toEqual([]);
+  });
+  test('a late request getter holds before evaluation or a ranking request', async () => {
+    const store = await fixture(); await source(store, 'useful', 'Network recovery');
+    const input = { query, scope: {}, mode: 'search' as const };
+    const fake = readings(); let scopeAnswered = false, getterInstalled = false, getterCalls = 0;
+    installJudgmentPort({ ...fake.port, async ask(request) {
+      const result = await fake.port.ask(request);
+      if ('included' in request.questions) scopeAnswered = true;
+      return result;
+    } });
+    await expect(readPublicKnowledgeSelection(store, input, { assertCurrent() {
+      if (scopeAnswered && !getterInstalled) {
+        Object.defineProperty(input, 'query', { get() { getterCalls++; return query; } });
+        getterInstalled = true;
+      }
+    } })).rejects.toMatchObject({ reason: 'stale' });
+    expect(getterCalls).toBe(0);
+    expect(fake.requests.filter(request => 'useful' in request.questions)).toEqual([]);
+    expect(store.listUsageRecords()).toEqual([]);
+  });
+  test('hidden named work-scope changes in the owner callback retire the original request', async () => {
+    const store = await fixture(); await source(store, 'useful', 'Network recovery');
+    const input = { query, writeScope: ['packages/network'], scope: {}, mode: 'search' as const };
+    const fake = readings(); let scopeAnswered = false;
+    installJudgmentPort({ ...fake.port, async ask(request) {
+      const result = await fake.port.ask(request);
+      if ('included' in request.questions) scopeAnswered = true;
+      return result;
+    } });
+    await expect(readPublicKnowledgeSelection(store, input, { assertCurrent() {
+      if (scopeAnswered) Object.defineProperty(input.writeScope, 'additionalMeaning', { value: 'A different original work scope', configurable: true });
+    } })).rejects.toMatchObject({ reason: 'stale' });
+    expect(scopeAnswered).toBe(true);
+    expect(fake.requests.filter(request => 'useful' in request.questions)).toEqual([]);
+    expect(store.listUsageRecords()).toEqual([]);
+  });
+  test('a caller correction to an empty original query cannot publish an empty selection', async () => {
+    const store = await fixture(); const fake = readings();
+    const input = { query: '', scope: {}, mode: 'search' as const };
+    await expect(readPublicKnowledgeSelection(store, input, { assertCurrent() {
+      input.query = query;
+    } })).rejects.toMatchObject({ reason: 'stale' });
+    expect(fake.requests).toEqual([]);
+    expect(store.listUsageRecords()).toEqual([]);
+  });
+  test('a caller correction to the original query holds before store initialization', async () => {
+    const store = await fixture(); const fake = readings();
+    const input = { query, scope: {}, mode: 'search' as const };
+    const init = store.init.bind(store); let initializations = 0;
+    store.init = async () => { initializations++; await init(); };
+    await expect(readPublicKnowledgeSelection(store, input, { assertCurrent() {
+      input.query = 'A corrected original question.';
+    } })).rejects.toMatchObject({ reason: 'stale' });
+    expect(initializations).toBe(0);
+    expect(fake.requests).toEqual([]);
+    expect(store.listUsageRecords()).toEqual([]);
+  });
   test.each(['source', 'extraction'] as const)('a %s correction during scope initialization prevents adoption and every dispatch', async (kind) => {
     const store = await fixture(); const useful = await source(store, 'useful', 'Network recovery');
     const fake = readings(); const init = store.init.bind(store); let calls = 0;

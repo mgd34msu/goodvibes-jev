@@ -102,8 +102,7 @@ structure. Source accounting and independent product acceptance are tracked in
 [THE-18](https://linear.app/the-artificery/issue/TA-18/port-daemon-composition-and-remote-cluster-infrastructure); passing workspace checks does not close them.
 
 Remaining deployment/qualification gates include configured standalone protected
-screening bootstrap, configured account-bound Discord bot DM registry qualification, product release
-and update policy, final native cross-platform execution and live-provider/Jev
+screening host setup, final native cross-platform execution, release availability and live-provider/Jev
 calibration. Real Jev wiring is not equivalent to live semantic qualification.
 
 ## Explicit local release preparation
@@ -114,13 +113,14 @@ From `products/daemon`:
 bun run release:prepare --no-bump --no-changelog
 ```
 
-That opt-in command synchronizes the product version fallback (and a version badge
-if present); ordinary builds only validate consistency. Once version ownership is
-chosen, the same tool accepts exactly one of `--patch`, `--minor`, `--major`, or
-`--version X.Y.Z` instead of `--no-bump`. Changelog scaffolding requires a
+That opt-in command synchronizes the product manifest and version fallback with
+the `goodvibes-jev` root release version (and a version badge if present). Root
+`sync:version` owns the SDK and daemon version surfaces; native builds only validate
+their shared consistency. Explicit exact or arithmetic version modes must select
+the current root version. Changelog scaffolding requires a
 product-owned `CHANGELOG.md` and explicit `--date YYYY-MM-DD` instead of
 `--no-changelog`. It does not commit, tag, publish, deploy, choose an updater feed
-or settle the separate root/product release policy. Inspect the diff in a clean,
+or change the root-owned release version. Inspect the diff in a clean,
 exclusive checkout: ordinary write rollback is not a crash-safe concurrent transaction.
 See [release preparation boundaries](cli-and-package-contracts.md#explicit-release-preparation).
 

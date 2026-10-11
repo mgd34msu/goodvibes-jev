@@ -77,20 +77,20 @@ function roundTrip(f: Awaited<ReturnType<typeof fixture>>, expected: readonly st
 }
 for (const mode of ['partial', 'none'] as const) {
   test(`captured ${mode} validator exception retains exact-byte undo and redo for both edits`, async () => {
-    const f = await fixture();
-    const result = await f.edit(async () => { throw new Error('Synthetic validator exception'); }).execute({ edits, validate: { after: ['build'] }, transaction: { mode } });
-    expect(result.success).toBe(false); expect(result.error).toContain('Synthetic validator exception');
+    const f = await fixture(); let validators = 0;
+    const result = await f.edit(async () => { validators++; throw new Error('Synthetic validator exception'); }).execute({ edits, validate: { after: ['build'] }, transaction: { mode } });
+    expect(result.success).toBe(false); expect(result.error).toBe('Unexpected error: [REDACTED]'); expect(validators).toBe(1);
     roundTrip(f, edited);
   });
   test(`captured ${mode} terminal repair judgment records an earlier repair and the unhealed sibling`, async () => {
     const f = await fixture(); const base = toolReadingsPort([['', { fixesErrors: true, onlyTheFix: true }]]).port;
     let judgments = 0;
     install({ model: base.model, ask: async (request) => {
-      if (++judgments === 2) throw new JudgmentError('unavailable', 'Synthetic terminal judgment');
+      if ('fixes_errors' in request.questions && ++judgments === 2) throw new JudgmentError('unavailable', 'Synthetic terminal judgment');
       return base.ask(request);
     } });
     const result = await f.edit().execute({ edits, validate: { after: ['build'] }, transaction: { mode } });
-    expect(result.success).toBe(false); expect(judgments).toBe(2); expect(result.error).toContain('Synthetic terminal judgment');
+    expect(result.success).toBe(false); expect(judgments).toBe(2); expect(result.error).toBe('Unexpected error: [REDACTED]');
     roundTrip(f, [repaired, edited[1]!]);
   });
 }
@@ -199,7 +199,7 @@ test('captured denied initial admission leaves files and undo/redo unchanged', a
   const f = await fixture(); const historyUnchanged = preserveHistory(f); f.deny();
   let validators = 0;
   const result = await f.edit(async () => { validators++; throw new Error('must not run'); }).execute({ edits, validate: { after: ['build'] }, transaction: { mode: 'partial' } });
-  expect(result.success).toBe(false); expect(result.error).toContain('access-restricted'); expect(result.output).toBeUndefined(); expect(validators).toBe(0); historyUnchanged();
+  expect(result.success).toBe(false); expect(result.error).toBe('Unexpected error: [REDACTED]'); expect(result.output).toBeUndefined(); expect(validators).toBe(0); historyUnchanged();
   for (let index = 0; index < 2; index++) expect(bytes(f.root, index)).toEqual(Buffer.from(originals[index]!));
 });
 
@@ -261,7 +261,7 @@ test('captured atomic terminal repair exception restores an earlier repair and p
   const base = toolReadingsPort([['', { fixesErrors: true, onlyTheFix: true }]]).port;
   let judgments = 0;
   install({ model: base.model, ask: async (request) => {
-    if (++judgments === 2) throw new JudgmentError('unavailable', 'Synthetic terminal judgment');
+    if ('fixes_errors' in request.questions && ++judgments === 2) throw new JudgmentError('unavailable', 'Synthetic terminal judgment');
     return base.ask(request);
   } });
   const result = await f.edit().execute({ edits, validate: { after: ['build'] }, transaction: { mode: 'atomic' } });

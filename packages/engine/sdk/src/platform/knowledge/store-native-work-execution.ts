@@ -1,3 +1,4 @@
+import { knowledgeSchemaColumns, executionAttemptColumns } from './store-schema-validation-data.js';
 import { createNativeCiContinuationStorage } from './store-native-ci-continuation.js';
 import { nativeSettlementDigest, nativeWorkAttestationSchema, nativeWorkSettlementSchema, type NativeWorkSettlementReceipt } from '../workflow/work-ledger/native-settlement-types.js';
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
@@ -18,7 +19,7 @@ export function createNativeWorkSettlementTable(db: Pick<SqlDatabase, 'run'>): v
   db.run('CREATE TABLE IF NOT EXISTS native_work_execution_settlements (project_id TEXT NOT NULL, key_hash TEXT NOT NULL, format_version INTEGER NOT NULL, state_json TEXT NOT NULL, PRIMARY KEY(project_id, key_hash))');
 }
 export function validateNativeWorkSettlementTable(db: SqlReader): void {
-  validateColumns(db, 'native_work_execution_settlements', [['project_id', 'TEXT', 1, 1], ['key_hash', 'TEXT', 1, 2], ['format_version', 'INTEGER', 1, 0], ['state_json', 'TEXT', 1, 0]]);
+  validateColumns(db, 'native_work_execution_settlements', knowledgeSchemaColumns.settlement);
   for (const row of db.exec('SELECT project_id, key_hash, format_version, state_json FROM native_work_execution_settlements')[0]?.values ?? []) {
     const receipt = nativeWorkSettlementSchema.parse(JSON.parse(String(row[3])));
     if (row[0] !== receipt.projectId || row[1] !== receipt.keyHash || row[2] !== 1) throw new NativeWorkExecutionError('invalid');
@@ -43,14 +44,14 @@ function validateColumns(db: SqlReader, table: string, expected: readonly (reado
   })) throw new NativeWorkExecutionError('invalid');
 }
 export function validateNativeWorkExecutionTable(db: SqlReader): void {
-  validateColumns(db, 'native_work_executions', [['project_id', 'TEXT', 1, 1], ['key_hash', 'TEXT', 1, 2], ['format_version', 'INTEGER', 1, 0], ['state_json', 'TEXT', 1, 0], ['attempt_id', 'TEXT', 1, 0]]);
+  validateColumns(db, 'native_work_executions', knowledgeSchemaColumns.execution);
   // A same-shaped table without attempt uniqueness is not an execution authority.
   const indexes = db.exec('PRAGMA index_list(native_work_executions)')[0]?.values ?? [];
   if (!indexes.some(index => index[2] === 1 && index[4] === 0
-    && JSON.stringify(db.exec(`PRAGMA index_info('${String(index[1]).replaceAll("'", "''")}')`)[0]?.values.map(row => row[2])) === JSON.stringify(['project_id', 'attempt_id']))) throw new NativeWorkExecutionError('invalid');
+    && JSON.stringify(db.exec(`PRAGMA index_info('${String(index[1]).replaceAll("'", "''")}')`)[0]?.values.map(row => row[2])) === JSON.stringify(executionAttemptColumns))) throw new NativeWorkExecutionError('invalid');
 }
 export function validateNativeWorkExecutionIntentTable(db: SqlReader): void {
-  validateColumns(db, 'native_work_execution_intents', [['project_id', 'TEXT', 1, 1], ['attempt_id', 'TEXT', 1, 2], ['format_version', 'INTEGER', 1, 0], ['state_json', 'TEXT', 1, 0]]);
+  validateColumns(db, 'native_work_execution_intents', knowledgeSchemaColumns.intent);
   for (const row of db.exec('SELECT project_id, attempt_id, format_version, state_json FROM native_work_execution_intents')[0]?.values ?? []) {
     const intent = parseNativeWorkExecutionIntent(JSON.parse(String(row[3])));
     if (row[0] !== intent.projectId || row[1] !== intent.target.attemptId || row[2] !== 1) throw new NativeWorkExecutionError('invalid');

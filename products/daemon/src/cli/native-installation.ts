@@ -1,12 +1,12 @@
 /** Read-only native receipt admission shared by the source installer and launcher. */
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, parse, resolve, sep } from 'node:path';
-import { compareVersions, sha256, verifyChecksum } from '@goodvibes-jev/engine/sdk/platform/runtime/self-update';
+import { assertDaemonNativePayloadBytes, compareVersions, parseDaemonCiArtifact, parseDaemonInstallationReceipt, sha256, verifyChecksum, type DaemonInstallationReceipt } from '@goodvibes-jev/engine/sdk/platform/runtime/self-update';
 import { daemonCiPayloads, daemonNativeHost, DAEMON_NATIVE_TARGETS, type DaemonNativeTarget, type DaemonArtifactSource, type DaemonCiArtifact } from './native-artifact.ts';
 const PACKAGE = '@goodvibes-jev/daemon';
 const RECEIPT = 'daemon-installation.json';
 export interface DaemonInstallOwner extends DaemonArtifactSource { readonly version: string; readonly target: DaemonNativeTarget; }
-export interface InstallationReceipt { schema: 1; packageName: typeof PACKAGE; version: string; artifact: DaemonCiArtifact; }
+export type InstallationReceipt = DaemonInstallationReceipt;
 
 export function validateOwner(owner: DaemonInstallOwner): void {
   daemonCiPayloads(owner.target);
@@ -34,11 +34,7 @@ export function targetPaths(prefix: string, target: DaemonNativeTarget = daemonN
   });
 }
 export function expectedModes(artifact: DaemonCiArtifact): void {
-  const payloads = daemonCiPayloads(artifact.target);
-  if (artifact.schema !== 1 || artifact.files.length !== payloads.length) throw new Error('Expected the complete Linux native CI cohort');
-  for (const [index, file] of artifact.files.entries()) {
-    if (file.path !== payloads[index] || file.mode !== (index < 2 ? 0o755 : 0o644)) throw new Error('Native cohort paths/modes do not match the current artifact contract');
-  }
+  parseDaemonCiArtifact(artifact, artifact.target);
 }
 
 export function assertNativeInstallHost(platform: string = process.platform, arch: string = process.arch, target: DaemonNativeTarget = daemonNativeHost(platform, arch)): void {
@@ -63,8 +59,7 @@ export function inspectInstallationIdentity(prefix: string, suffix: '' | '.previ
   const receiptPath = join(prefix, RECEIPT + suffix); assertPath(receiptPath);
   const receiptStat = lstatSync(receiptPath);
   if (!receiptStat.isFile() || (receiptStat.mode & 0o777) !== 0o644) throw new Error('Invalid installation receipt file');
-  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8')) as InstallationReceipt;
-  if (receipt.schema !== 1 || receipt.packageName !== PACKAGE) throw new Error('Receipt is not a daemon installation');
+  const receipt = parseDaemonInstallationReceipt(JSON.parse(readFileSync(receiptPath, 'utf8')), target);
   validateOwner({ ...receipt.artifact, version: receipt.version }); expectedModes(receipt.artifact);
   if (receipt.artifact.target !== target) throw new Error('Installation target differs from the requested native target');
   return receipt;
@@ -84,5 +79,6 @@ export function inspectInstallation(prefix: string, suffix: '' | '.previous', ta
       if (stat.size !== file.size) throw new Error(`Invalid cohort size: ${member.label}`);
     }
   }
+  assertDaemonNativePayloadBytes(receipt.artifact, targetPaths(prefix, target).slice(0, -1).map(member => readFileSync(member.path + suffix)));
   return receipt;
 }

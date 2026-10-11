@@ -115,6 +115,7 @@ export function createAgentConversationSender(
   return {
     id: AGENT_CONVERSATION_SENDER_ID,
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     send: async (message: AgentConversationMessage, lifetime: DeliveryLifetime = {}): Promise<string | undefined> => {
       const target = conversationFor(message);
       // Throwing is the contract's honest answer: the router logs the surface,
@@ -125,12 +126,14 @@ export function createAgentConversationSender(
       if (typeof target === 'string') throw new Error(target);
 
       const addMessage = target.conversation.addAssistantMessage;
-      await runDeliveryPublication({ ...lifetime, assertCurrent() {
-        assertDeliveryCurrent(lifetime);
-        const current = conversationFor(message);
-        if (typeof current === 'string' || current.conversation !== target.conversation
-          || current.conversation.addAssistantMessage !== addMessage) throw new Error('Agent delivery conversation changed.');
-      } }, () => addMessage.call(target.conversation, message.body));
+      if (lifetime.signal !== undefined || lifetime.assertCurrent !== undefined || lifetime.withPublication !== undefined) {
+        await runDeliveryPublication({ ...lifetime, assertCurrent() {
+          assertDeliveryCurrent(lifetime);
+          const current = conversationFor(message);
+          if (typeof current === 'string' || current.conversation !== target.conversation
+            || current.conversation.addAssistantMessage !== addMessage) throw new Error('Agent delivery conversation changed.');
+        } }, () => addMessage.call(target.conversation, message.body));
+      } else addMessage.call(target.conversation, message.body);
       deps.requestRender();
       // Counts and ids only. The body is not logged at any level: a push
       // addressed here can carry closed-tier content (an occasion nudge names a

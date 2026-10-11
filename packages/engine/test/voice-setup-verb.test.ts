@@ -321,7 +321,8 @@ describe('the install/boot provisioning path on the setup service', () => {
     const outcome = await svc.ensureProvisioned({ recoveryHint: '/voice wake setup' });
     expect(outcome.state).toBe('degraded');
     expect(outcome.message).toContain('/voice wake setup');
-    expect(outcome.message).toContain('no route to host');
+    expect(outcome.message).toContain('[REDACTED]');
+    expect(outcome.message).not.toContain('no route to host');
   });
 
   test('an already-provisioned host is not asked to download anything at boot', async () => {

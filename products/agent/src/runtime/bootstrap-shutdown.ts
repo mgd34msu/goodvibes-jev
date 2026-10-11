@@ -31,7 +31,7 @@ export interface RuntimeShutdownDependencies {
   };
   /** Reads and clears the memory-spine reachability recheck timer. */
   readonly takeMemorySpineTimer: () => ReturnType<typeof setInterval> | null;
-  readonly bootstrapUnsubs: (() => void)[];
+  readonly bootstrapUnsubs: (() => void | Promise<void>)[];
   readonly runtimeUnsubs: (() => void)[];
   readonly forensicsCollector: { dispose(): void };
   readonly executionLedger: { dispose(): void };

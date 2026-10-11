@@ -48,6 +48,38 @@ function heldNow(run: () => void, reason: RepairSourceAuthorityHoldReason) {
 const distinct = (index: number): RepairSourceAuthorityInput => ({ ...input(`source-${index}`), query: `Read AC-${index} publisher role` });
 
 describe('repair source authority canonical reader', () => {
+  test('the original caller must return synchronous undefined before dispatch and after settlement', async () => {
+    for (const timing of ['initial', 'settled'] as const) for (const result of ['resolved', 'rejected', 'value'] as const) {
+      const fake = readings(); let active = timing === 'initial';
+      const reader = createRepairSourceAuthorityReader({ assertCurrent() {
+        if (!active) return;
+        if (result === 'resolved') return Promise.resolve();
+        if (result === 'rejected') return Promise.reject(new Error('Original caller rejected'));
+        return 'borrowed authority';
+      } });
+      if (timing === 'settled') { await reader.read([input()]); active = true; }
+      await held(reader.read([input()]), 'stale');
+      expect(fake.requests).toHaveLength(timing === 'settled' ? 1 : 0);
+    }
+  });
+  test('a caller changing its own options retires before wire or reuse', async () => {
+    for (const timing of ['initial', 'settled'] as const) for (const change of ['caller', 'signal', 'timeout'] as const) {
+      const fake = readings(); let active = timing === 'initial';
+      const options = { signal: new AbortController().signal, timeoutMs: 1_000, assertCurrent() {
+        if (!active) return;
+        if (change === 'caller') options.assertCurrent = () => {};
+        if (change === 'signal') options.signal = new AbortController().signal;
+        if (change === 'timeout') options.timeoutMs += 1;
+      } };
+      const reader = createRepairSourceAuthorityReader(options);
+      if (timing === 'settled') {
+        await reader.read([input()]); active = true;
+        expect(() => reader.assertCurrent()).toThrow(Held);
+      }
+      await held(reader.read([input()]), 'stale');
+      expect(fake.requests).toHaveLength(timing === 'settled' ? 1 : 0);
+    }
+  });
   test('registers the versioned role reading with official, vendor, retail, misleading label and injection fixtures', async () => {
     expect(registry.list().map((entry) => entry.name)).toEqual(['engine.knowledge.repair-source-authority']);
     expect(repairSourceAuthority.version).toBe(2); expect(repairSourceAuthority.accuracyFloor).toBeGreaterThanOrEqual(0.95);
@@ -177,6 +209,22 @@ function promotionReadings() {
   installJudgmentPort(fake.port); return fake;
 }
 describe('repair source authority original-read-set and publication boundary', () => {
+  test('the original complete repair wrapper rejects asynchronous and self-mutating callers before dispatch', async () => {
+    for (const change of ['async', 'input', 'caller'] as const) {
+      const item = await fixture(), fake = readings();
+      const options = { store: item.store, spaceId, gap: item.gap, subjects: [item.subject],
+        sources: [{ source: item.source, extraction: item.extraction, text: repairProfileSourceText(item.extraction) }],
+        assertCurrent() {
+          if (change === 'async') return Promise.resolve();
+          if (change === 'input') options.sources[0]!.text += ' changed inside the caller';
+          if (change === 'caller') options.assertCurrent = () => undefined;
+        },
+      };
+      const before = snapshot(item.store);
+      await held(prepareRepairSourceAuthorities(options), 'stale');
+      expect(fake.requests).toHaveLength(0); expect(snapshot(item.store)).toBe(before);
+    }
+  });
   test('projects claimed labels as claims, keeps arbitrary metadata local and uses canonical tier', async () => {
     const item = await fixture(), fake = readings('vendor'); const plan = await prepare(item);
     expect(plan.sources).toEqual([{ authority: 'vendor' }]); expect(() => plan.assertCurrent()).not.toThrow();

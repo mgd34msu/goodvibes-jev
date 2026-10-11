@@ -3,7 +3,10 @@ import type { SourceAnchor } from './static-source-readings.ts';
 
 export interface LexicalSourceAnchor extends SourceAnchor {
   readonly lexicalKind: 'source-text' | 'comment' | 'prose';
-  readonly literalValues?: readonly string[];
+  readonly literalValues?: readonly (string | {
+    readonly encoding: 'utf-16-code-units';
+    readonly codeUnits: readonly number[];
+  })[];
 }
 
 /** Deferred-work policy can survive an identifier-only revision in the shared definition file. */
@@ -89,7 +92,10 @@ export function internalSourceAnchors(path: string, text: string): LexicalSource
     const end = Math.min(text.length, starts[range.endLine + 1]! - 1);
     const id = `line_${line + 1}`;
     anchors.set(id, { id, line: line + 1, col: 1, text: text.slice(start, end), lexicalKind: 'source-text',
-      ...(range.values.size ? { literalValues: [...range.values] } : {}) });
+      ...(range.values.size ? { literalValues: [...range.values].map(value => value.isWellFormed() ? value : {
+        encoding: 'utf-16-code-units' as const,
+        codeUnits: Array.from({ length: value.length }, (_, index) => value.charCodeAt(index)),
+      }) } : {}) });
   }
   const ranges = [...comments.values()].sort((a, b) => a.pos - b.pos);
   for (let index = 0; index < ranges.length; index++) {

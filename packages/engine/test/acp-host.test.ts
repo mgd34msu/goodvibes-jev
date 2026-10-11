@@ -13,7 +13,8 @@
  *    steer/kill dispatch and the awaiting-approval attention classification;
  *  - the acp.* verbs over a real catalog.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { join } from 'node:path';
 import {
   AcpHostService,
@@ -26,6 +27,9 @@ import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-c
 import { registerAcpGatewayMethods } from '../sdk/src/platform/control-plane/routes/acp.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'fake-acp-agent.ts');
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 function fakeAgent(mode: string): DiscoveredAcpAgent {
   return { id: 'fake', title: 'Fake Agent', binaryPath: process.execPath, args: ['run', FIXTURE, mode] };
@@ -123,13 +127,23 @@ describe('AcpHostService: handshake-failure honesty', () => {
   }, 15_000);
 
   test('a binary that hangs is bounded by the handshake timeout with the stage named', async () => {
-    const host = new AcpHostService({ handshakeTimeoutMs: 1_500 });
+    const handshakeTimeoutMs = 1_500;
+    let registeredSessions = 0;
+    const host = new AcpHostService({ handshakeTimeoutMs, registerSession() { registeredSessions++; } });
     const started = Date.now();
     const hosted = await host.spawnAgent({ agent: fakeAgent('hang'), cwd: import.meta.dir });
     expect(hosted.state).toBe('failed');
+    expect(hosted.error?.binary).toBe(process.execPath);
     expect(hosted.error?.stage).toBe('initialize');
-    expect(hosted.error?.message).toContain('timed out');
-    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(hosted.error?.message).toBe('[REDACTED]');
+    expect(hosted.sessionId).toBeUndefined();
+    expect(hosted.promptCount).toBe(0);
+    expect(registeredSessions).toBe(0);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(handshakeTimeoutMs);
+    expect(elapsed).toBeLessThan(10_000);
+    expect(host.dismiss(hosted.id)).toBe(true);
+    expect(host.get(hosted.id)).toBeNull();
   }, 15_000);
 });
 

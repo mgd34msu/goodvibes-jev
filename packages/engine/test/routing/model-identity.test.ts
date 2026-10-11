@@ -79,7 +79,7 @@ describe('resolver', () => {
       await new ModelIdentityResolver({ universe: 'test', candidates: () => candidates, path }).resolve({ id: 'gpt-4o-2024-08-06' }, 'test');
       const again = new ModelIdentityResolver({ universe: 'test', candidates: () => candidates, path });
       expect(again.known({ id: 'gpt-4o-2024-08-06' })).toBe('openai/gpt-4o');
-      expect(requests).toHaveLength(1);
+      expect(requests.filter((request) => request.questions.pick?.type === 'choice')).toHaveLength(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

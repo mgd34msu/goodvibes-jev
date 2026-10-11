@@ -203,8 +203,7 @@ test('ordinary atomic snapshot mode exception rolls back earlier writes and pres
   try {
     const result = await f.tool.execute({ files: [first, second, { path: 'later.txt', content: 'must not write' }], transaction: { mode: 'atomic' } });
     expect(result.success).toBe(false);
-    expect(result.error).toContain('synthetic snapshot mode failure');
-    expect(result.error).toContain('Rolled back 1 file(s): first.txt');
+    expect(result.error).toBe("Atomic transaction failed on 'second.txt': Atomic transaction cannot safely snapshot 'second.txt': [REDACTED]. Rolled back 1 file(s): first.txt");
     expect(stat.mock.calls[1]?.[0]).toBe(join(f.root, 'second.txt'));
     unchanged(f); expect(existsSync(join(f.root, 'later.txt'))).toBe(false);
     expect(f.undo.undoDepth()).toBe(1); expect(f.undo.redoDepth()).toBe(1);

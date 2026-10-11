@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { authoredPrivacyAnswer } from '../helpers/authored-diagnostic-readings.ts';
 import * as Knowledge from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import * as Providers from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { KnowledgeApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
@@ -53,9 +54,40 @@ describe('foundation surface stability gate', () => {
     resetPeerFoundationState();
     const note = '# Foundation Surface Note\n\nThis note proves the in-process knowledge API remains consumable.\n';
     const rejected: string[] = [];
+    let fixtureSourceId = '';
+    const sourceCandidate = { kind: 'source', content: {
+      title: 'Foundation Surface Note', summary: note.trimEnd(), description: note.trimEnd(),
+      sourceType: 'document', tags: ['foundation-surface'], meaning: {},
+      extraction: { format: 'markdown', title: 'Foundation Surface Note', summary: note.trimEnd(),
+        excerpt: note.trimEnd(), sections: ['Foundation Surface Note'], structure: { searchText: note.trimEnd() } },
+    } };
+    const readDiagnostic = authoredPrivacyAnswer({ parts: [], fields: {
+      path: 'other', reason: 'content', projectRoot: 'other', report: 'content', ENOENT: 'content',
+      count: 'other', sampleIds: 'other', gitDir: 'other', ready: 'other', sourceId: 'other', error: 'content', held: 'other',
+    } });
     const familyEvidence = () => runtimeServices.providerRegistry.listModels().map(({ id, displayName, provider }) => ({ id, displayName, provider }));
     const familyReadings: unknown[] = [];
     const readings = fakePort((name, question, state) => {
+      if (name !== 'kind' || (typeof state === 'object' && state !== null && 'field' in state)) {
+        const diagnostic = readDiagnostic(name, question, state);
+        if (diagnostic !== undefined) return diagnostic;
+      }
+      if (name === 'included') {
+        const views = ['all', 'ordinary'];
+        const candidates = [
+          { candidate: sourceCandidate, related: [] },
+          { candidate: { kind: 'node', content: { title: 'Foundation Surface Note',
+            summary: `Compiled section or concept from source ${fixtureSourceId}.`, kind: 'topic',
+            aliases: ['Foundation Surface Note'], meaning: {} } }, related: [sourceCandidate] },
+          { candidate: { kind: 'node', content: { title: 'foundation-surface',
+            summary: 'Topic tag foundation-surface.', kind: 'topic', aliases: ['foundation-surface'],
+            meaning: { tag: 'foundation-surface' } } }, related: [sourceCandidate] },
+        ];
+        const authoredStates = views.flatMap(view => candidates.map(candidate => ({ view, ...candidate,
+          associations: { outsideRequestedScope: false } })));
+        expect(authoredStates.map(value => JSON.stringify(value))).toContain(JSON.stringify(state));
+        return noulAnswer(0.99);
+      }
       if (name === 'family' && familyEvidence().some((model) => JSON.stringify(model) === JSON.stringify(state))) {
         familyReadings.push(state);
         // A deliberate synthetic judgment, not a name-based family heuristic.
@@ -155,7 +187,8 @@ describe('foundation surface stability gate', () => {
       sessionId: session.id,
       tags: ['foundation-surface'],
     });
-    expect(knowledge.sources.list(10).map((source) => source.id)).toContain(ingest.source.id);
+    fixtureSourceId = ingest.source.id;
+    expect((await knowledge.sources.list(10)).map((source) => source.id)).toContain(ingest.source.id);
 
     const packet = await knowledge.packets.build('foundation surface note', [], 5, { budgetLimit: 2_000 });
     expect(packet.items.length).toBeGreaterThan(0);

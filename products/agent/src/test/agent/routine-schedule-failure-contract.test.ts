@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  forgetFailureReadings, GoodVibesSdkError, installJudgmentPort, SDKErrorCodes,
+  failureReading, failureState, forgetFailureReadings, GoodVibesSdkError, installJudgmentPort, SDKErrorCodes,
 } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync, redactionCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { isDeepStrictEqual } from 'node:util';
 import {
   buildRoutineSchedulePreview, classifyConnectedHostScheduleError, promoteRoutineToConnectedSchedule,
   type AgentConnectedHostConnection,
@@ -41,27 +43,49 @@ afterEach(() => {
   forgetFailureReadings();
 });
 
-function reading(category: string, confidence = 0.99) {
-  const fake = fakePort((name, question) => {
+async function reading(category: string, confidence = 0.99, publicMessage?: string) {
+  const questions = Object.fromEntries(Object.entries(failureReading.items).map(([name, item]) => [name, item.question]));
+  const publicQuestions = Object.fromEntries(Object.entries(redactionCredential.items).map(([name, item]) => [name, item.question]));
+  const expected = publicMessage === undefined ? undefined : failureState({ message: publicMessage });
+  const projection = publicMessage === undefined ? undefined : {
+    phase: 'source', target: 'whole-line', parts: [{ kind: 'text', text: publicMessage }],
+  };
+  const fake = fakePort((name, question, state) => {
+    if ((name === 'lineHasCredential' || name === 'spanIsCredential')
+      && isDeepStrictEqual(question, publicQuestions[name]) && projection !== undefined && isDeepStrictEqual(state, projection)) return noulAnswer(0.01);
+    if (!Object.hasOwn(questions, name) || !isDeepStrictEqual(question, questions[name]))
+      throw new Error(`Unexpected fixture question: ${name}`);
+    if (expected === undefined || state !== expected) throw new Error('Unexpected complete failure subject');
     if (name === 'category') return choiceAnswer(question, category, confidence);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
-    return noulAnswer(0.01);
+    if (question.type === 'noul') return noulAnswer(0.01);
+    throw new Error(`Unexpected failure question shape: ${name}`);
   });
-  installJudgmentPort(fake.port);
-  return fake.requests;
+  // Privacy readings are independent observations. Count only the complete
+  // canonical failure battery when proving classification adds no decision.
+  const requests: typeof fake.requests = [];
+  installJudgmentPort({
+    model: fake.port.model,
+    async ask(request) {
+      if (isDeepStrictEqual(request.questions, questions)) requests.push(request);
+      return fake.port.ask(request);
+    },
+  });
+  if (publicMessage !== undefined) expect(await redactSensitiveDataAsync(publicMessage)).toBe(publicMessage);
+  return requests;
 }
 
 const classify = (error: unknown) => classifyConnectedHostScheduleError(error, connection, options);
 
 describe('routine schedule public failure contract', () => {
   test.each([401, 403])('HTTP %s is auth even when wording suggests connectivity or 404', async (status) => {
-    const log = reading('network');
+    const log = await reading('network');
     expect((await classify(new GoodVibesSdkError('connection 404 auth', { status }))).kind).toBe('auth_required');
     expect(log).toHaveLength(0);
     expect(requests).toHaveLength(0);
   });
   test.each([400, 402, 409, 429, 500, 503])('HTTP %s cannot be reinterpreted from auth/404/fetch wording', async (status) => {
-    const log = reading('authentication');
+    const log = await reading('authentication');
     expect((await classify({ statusCode: status, message: 'auth 404 fetch connection' })).kind).toBe('connected_host_error');
     expect(log).toHaveLength(0);
     expect(requests).toHaveLength(0);
@@ -71,13 +95,13 @@ describe('routine schedule public failure contract', () => {
     expect(requests).toHaveLength(0);
   });
   test.each([SDKErrorCodes.CANCELLED, SDKErrorCodes.PAYMENT_REQUIRED, SDKErrorCodes.CONFLICT])('typed %s does not grant a probe or retry', async (code) => {
-    const log = reading('not_found');
+    const log = await reading('not_found');
     expect((await classify(new GoodVibesSdkError('auth 404 fetch', { code }))).kind).toBe('connected_host_error');
     expect(log).toHaveLength(0);
     expect(requests).toHaveLength(0);
   });
   test('AbortError is a stop, even if its words or cause describe a network failure', async () => {
-    const log = reading('network');
+    const log = await reading('network');
     const error = new Error('fetch 404 auth', { cause: { code: 'ECONNRESET' } });
     error.name = 'AbortError';
     expect((await classify(error)).kind).toBe('connected_host_error');
@@ -91,7 +115,7 @@ describe('routine schedule public failure contract', () => {
     Object.assign(new Error('opaque'), { code: 'ENOTFOUND' }),
     new DOMException('opaque', 'TimeoutError'),
   ])('uses typed transport evidence without asking judgment', async (error) => {
-    const log = reading('authentication');
+    const log = await reading('authentication');
     expect((await classify(error)).kind).toBe('connected_host_unavailable');
     expect(log).toHaveLength(0);
     expect(requests).toHaveLength(0);
@@ -108,6 +132,7 @@ describe('routine schedule public failure contract', () => {
   });
   test('probe transport failure preserves the original error', async () => {
     response = async () => { throw new Error('probe failed'); };
+    await reading('not_found', 0.99, 'original');
     expect(await classify(new GoodVibesSdkError('original', { status: 404 }))).toMatchObject({ kind: 'connected_host_route_unavailable', error: 'original' });
   });
   test.each([
@@ -115,18 +140,21 @@ describe('routine schedule public failure contract', () => {
     ['network', 'connected_host_unavailable'], ['timeout', 'connected_host_unavailable'],
     ['not_found', 'connected_host_incompatible'], ['unknown', 'connected_host_error'],
   ] as const)('reads unresolved wording through the engine battery: %s', async (category, kind) => {
-    const log = reading(category);
+    const log = await reading(category, 0.99, 'Opaque fixture failure');
     expect((await classify(new Error('Opaque fixture failure'))).kind).toBe(kind);
     expect(log).toHaveLength(1);
     expect(log[0]?.state).toContain('Message: Opaque fixture failure');
+    expect(log[0]?.state).toBe(failureState({ message: 'Opaque fixture failure' }));
   });
   test('weak reading does not classify or probe', async () => {
-    reading('not_found', 0.2);
+    await reading('not_found', 0.2, 'opaque');
     expect((await classify(new Error('opaque'))).kind).toBe('connected_host_error');
     expect(requests).toHaveLength(0);
   });
   test('pre-bootstrap and failed judgment preserve original failure without heuristic fallback', async () => {
-    expect(await classify(new Error('auth 404 fetch connect'))).toMatchObject({ kind: 'connected_host_error', error: 'auth 404 fetch connect' });
+    const original = new Error('auth 404 fetch connect');
+    expect(await classify(original)).toMatchObject({ kind: 'connected_host_error', error: '[REDACTED]' });
+    expect(original.message).toBe('auth 404 fetch connect');
     installJudgmentPort({ model: 'offline-fixture', ask: async () => { throw new Error('judgment unavailable'); } });
     expect((await classify(new Error('not found'))).kind).toBe('connected_host_error');
     expect(requests).toHaveLength(0);
@@ -135,13 +163,13 @@ describe('routine schedule public failure contract', () => {
 
 describe('real routine promotion and browser SDK transport', () => {
   test('missing token never reaches SDK, judgment or status probe', async () => {
-    const log = reading('network');
+    const log = await reading('network');
     expect((await promoteRoutineToConnectedSchedule({ ...connection, token: null }, preview)).kind).toBe('auth_required');
     expect(requests).toHaveLength(0);
     expect(log).toHaveLength(0);
   });
   test.each([401, 403])('revoked/denied token HTTP %s adds no retries beyond SDK auth handling', async (status) => {
-    const log = reading('network');
+    const log = await reading('network');
     response = async () => new Response('opaque', { status });
     expect((await promoteRoutineToConnectedSchedule(connection, preview)).kind).toBe('auth_required');
     // The SDK retries a 401 once after rereading its token; classification adds none.
@@ -156,14 +184,14 @@ describe('real routine promotion and browser SDK transport', () => {
     expect(requests.map(({ method }) => method)).toEqual(['POST', 'GET']);
   });
   test('SDK transport rejection uses its structured category without judgment', async () => {
-    const log = reading('network');
+    const log = await reading('network');
     response = async () => { throw new Error('socket fixture interrupted'); };
     expect((await promoteRoutineToConnectedSchedule(connection, preview)).kind).toBe('connected_host_unavailable');
     expect(requests).toHaveLength(1);
     expect(log).toHaveLength(0);
   });
   test('transport abort is not replayed or probed', async () => {
-    const log = reading('network');
+    const log = await reading('network');
     response = async () => { throw new DOMException('User stopped', 'AbortError'); };
     expect((await promoteRoutineToConnectedSchedule(connection, preview)).kind).toBe('connected_host_error');
     expect(requests).toHaveLength(1);

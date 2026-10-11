@@ -1,12 +1,16 @@
 /** Real native admission, captured initialization, engine allocation and recovery. */
 import { expect, spyOn, test } from 'bun:test';
+import { hashState, SqliteDecisionLog } from '@goodvibes-jev/judgment';
+import { noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { IsolatedWorktree } from '../../sdk/src/platform/agents/worktree.js';
 import { deserializeContract, type DurableContractRequest, type NativeContractSource } from '../../sdk/src/platform/contract/index.js';
 import { createContractInputAuthority } from '../../sdk/src/platform/contract/input-authority.js';
 import { createOrchestrationEngine, type OrchestrationEngine } from '../../sdk/src/platform/orchestration/engine.js';
 import { RuntimeEventBus } from '../../sdk/src/platform/runtime/events/index.js';
+import { redactSensitiveDataAsync } from '../../sdk/src/platform/utils/redaction.js';
 import { makeFakeConfigManager, makeRecord } from '../_helpers/orchestration-harness.js';
 import { makeHarness, makeRepo, oneUnitPlan, waitFor, type Harness, type HarnessOptions } from './runner-support.js';
 import { terminal } from './steps-support.js';
@@ -55,6 +59,12 @@ test('two source-bound native contracts in one repository isolate duplicate g1/u
 
 test('actual native materialization failure cannot grant member authority after preparing or failed snapshot import', async () => {
   const root = makeRepo(); let h!: Harness; let engine!: OrchestrationEngine; let preparing = '';
+  let materializationFailure: unknown;
+  const recoveryReason = 'worktree initialization did not complete; retained resource requires recovery';
+  const recoveryProjection = { phase: 'source', parts: [{ kind: 'text', text: recoveryReason }], target: 'whole-line' };
+  const recoveryHash = hashState(recoveryProjection);
+  const log = new SqliteDecisionLog(':memory:');
+  let recoveryReadings = 0;
   // Fail the real raw-blob materializer after Git has registered its no-checkout
   // tree. README already exists, so materializeFiles' exclusive write fails.
   const original = IsolatedWorktree.prototype.create;
@@ -62,9 +72,18 @@ test('actual native materialization failure cannot grant member authority after 
     await original.call(this, startPoint, checkout);
     if (!checkout && (this.branch.startsWith('ws/') || this.branch.startsWith('ws-ns/'))) writeFileSync(join(this.path, 'README.md'), 'partial materialization\n');
   });
-  const f = fixture(root, { createEngine: input => {
+  const f = fixture(root, { decisionLog: log, port: context => {
+    if ((context.name === 'lineHasCredential' || context.name === 'spanIsCredential') && isDeepStrictEqual(context.state, recoveryProjection)) {
+      recoveryReadings++; return noulAnswer(0.01);
+    }
+    return undefined;
+  }, createEngine: input => {
     engine = createOrchestrationEngine({ ...input, agentManager: h.manager, runtimeBus: h.bus, configManager: makeFakeConfigManager(), runWorktreeSetup: () => undefined,
-      initializeWorktree: async worktree => { try { await input.initializeWorktree!(worktree); } finally { preparing = engine.serializeWorkstream('g1')!; } } });
+      initializeWorktree: async worktree => {
+        try { await input.initializeWorktree!(worktree); }
+        catch (error) { materializationFailure = error; throw error; }
+        finally { preparing = engine.serializeWorkstream('g1')!; }
+      } });
     return engine;
   } });
   h = f.h;
@@ -80,8 +99,12 @@ test('actual native materialization failure cannot grant member authority after 
     const contract = deserializeContract(serializedContract);
     if (contract === null) throw new Error('Native contract snapshot failed restore');
     const item = engine.getWorkstream('g1')!.items[0]!;
-    expect(contract.status).toBe('failed'); expect(contract.error).toContain('EEXIST'); expect(h.agentsOf('u1')).toHaveLength(0);
+    expect(contract.status).toBe('failed');
+    expect(contract.error).toBe("unit u1's work item failed: worktree isolation setup failed: [REDACTED]");
+    expect(item.failureReason).toBe('worktree isolation setup failed: [REDACTED]');
+    expect(h.agentsOf('u1')).toHaveLength(0);
     const path = item.worktreePath!; const branch = item.worktreeBranch!;
+    expect(materializationFailure).toMatchObject({ code: 'EEXIST', syscall: 'open', path: join(path, 'README.md') });
     expect(readFileSync(join(path, 'README.md'), 'utf8')).toBe('partial materialization\n');
     expect(item.worktreeInitialized).toBe(false); expect(item.worktreeKept).toBe(true);
     // Mutable authority validates repository/branch/ancestry, not completed
@@ -99,13 +122,19 @@ test('actual native materialization failure cannot grant member authority after 
           registerCancellationSignal: () => undefined, releaseCancellationSignal: () => undefined },
         prepareInputAuthority: async resource => { grants++; return createContractInputAuthority(contract, resource.path, { mutable: true, branch: resource.branch }); } });
       restored.push(recovered); expect(recovered.importWorkstream(snapshot)).toBe(true);
+      const beforeReading = recoveryReadings;
+      expect(await redactSensitiveDataAsync(recoveryReason)).toBe(recoveryReason);
+      expect(recoveryReadings).toBe(beforeReading + 2);
+      expect(log.query({ site: 'engine.redaction.credential', status: 'answered' }).some(entry => entry.stateHash === recoveryHash)).toBe(true);
       if (stage === 'failed') expect(recovered.retryItem('u1')).toBe(true); else recovered.start('g1');
       await waitFor(() => recovered.getWorkstream('g1')!.items[0]!.state === 'failed' || spawns > 0, 'readiness recovery guard');
       expect(grants).toBe(0); expect(spawns).toBe(0); await recovered.join();
-      expect(recovered.getWorkstream('g1')!.items[0]!.failureReason).toContain('requires recovery');
-      expect(recovered.getWorkstream('g1')!.items[0]!.worktreeInitialized).toBe(false);
+      const recoveredItem = recovered.getWorkstream('g1')!.items[0]!;
+      expect(recoveredItem.failureReason).toBe(`worktree isolation setup failed: ${recoveryReason}`);
+      expect(recoveredItem.worktreeInitialized).toBe(false);
+      expect(recoveredItem.worktreePath).toBe(path); expect(recoveredItem.worktreeBranch).toBe(branch);
       expect(existsSync(path)).toBe(true);
       expect(readFileSync(join(path, 'README.md'), 'utf8')).toBe('partial materialization\n');
     }
-  } finally { creation.mockRestore(); for (const recovered of restored) { recovered.dispose(); await recovered.join(); } await f.close(); }
+  } finally { creation.mockRestore(); for (const recovered of restored) { recovered.dispose(); await recovered.join(); } await f.close(); log[Symbol.dispose](); }
 }, 30_000);

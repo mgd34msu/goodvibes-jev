@@ -1,3 +1,4 @@
+import { knowledgeSchemaColumns } from './store-schema-validation-data.js';
 /** One durable transaction publishes native continuation claim and its exact ledger successor. */
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
 import type { DurableContractKey } from '../contract/durable-admission.js';
@@ -11,7 +12,7 @@ export function createNativeCiContinuationTable(db: Pick<SqlDatabase, 'run'>): v
 }
 export function validateNativeCiContinuationTable(db: Reader): void {
   const columns = db.exec('PRAGMA table_info(native_ci_continuations)')[0]?.values;
-  const expected = [['project_id', 'TEXT', 1, 1], ['continuation_id', 'TEXT', 1, 2], ['format_version', 'INTEGER', 1, 0], ['state_json', 'TEXT', 1, 0]] as const;
+  const expected = knowledgeSchemaColumns.continuation;
   if (!columns || columns.length !== expected.length || expected.some(([name, type, required, primary]) => {
     const row = columns.find(value => value[1] === name); return !row || row[2] !== type || row[3] !== required || row[5] !== primary;
   })) throw new Error('Invalid native CI continuation table');

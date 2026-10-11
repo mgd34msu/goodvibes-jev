@@ -33,8 +33,8 @@ interface RemoteMethodHandoff {
   readonly surface: RemoteSurface;
   readonly methodId: string;
   readonly route: string;
-  readonly effect: 'confirmed-connected-host-state';
-  readonly confirmationRequired: true;
+  readonly effect: 'connected-host-state';
+  readonly recordedAdmissionRequired: true;
   readonly input: Record<string, unknown>;
   readonly modelRoute: string;
   readonly policy: string;
@@ -69,7 +69,7 @@ export function remoteCatalogStatus(_context: CommandContext): Record<string, un
     readModes: 4,
     mutationModes: 4,
     policy:
-      'Distributed remote execution surface. Read modes call remote.snapshot, remote.peers.list, remote.work.list, and remote.pair.requests.list via agent_operator_method. Mutation modes (approve/reject pair requests, invoke peer command, cancel work) require confirm:true and explicitUserRequest and return an agent_operator_method handoff.',
+      'Distributed remote execution surface. Read modes call remote.snapshot, remote.peers.list, remote.work.list, and remote.pair.requests.list via agent_operator_method. Mutation modes (approve/reject pair requests, invoke peer command, cancel work) require current recorded Jev act admission and return an agent_operator_method handoff. Executing that handoff requires fresh admission on the operator route. Native pairing retains its independent protocol.',
   };
 }
 
@@ -83,7 +83,7 @@ export function remoteSnapshotSummary(_args: AgentHarnessRemoteArgs): Record<str
     methodId: 'remote.snapshot',
     route: 'GET /api/remote',
     effect: 'read-only-network',
-    confirmationRequired: false,
+    recordedAdmissionRequired: false,
     modelRoute: previewHarnessText('agent_operator_method methodId:"remote.snapshot" input:{}'),
     description:
       'Returns a distributed remote execution snapshot: connected peers, queued/leased work, and pair request counts.',
@@ -98,7 +98,7 @@ export function remotePeersSummary(_args: AgentHarnessRemoteArgs): Record<string
     methodId: 'remote.peers.list',
     route: 'GET /api/remote/peers',
     effect: 'read-only-network',
-    confirmationRequired: false,
+    recordedAdmissionRequired: false,
     modelRoute: previewHarnessText('agent_operator_method methodId:"remote.peers.list" input:{}'),
     description: 'Lists connected and recently-disconnected remote peers.',
     policy:
@@ -112,7 +112,7 @@ export function remoteWorkSummary(_args: AgentHarnessRemoteArgs): Record<string,
     methodId: 'remote.work.list',
     route: 'GET /api/remote/work',
     effect: 'read-only-network',
-    confirmationRequired: false,
+    recordedAdmissionRequired: false,
     modelRoute: previewHarnessText('agent_operator_method methodId:"remote.work.list" input:{}'),
     description: 'Lists queued and leased remote work items.',
     policy:
@@ -126,7 +126,7 @@ export function remotePairRequestsSummary(_args: AgentHarnessRemoteArgs): Record
     methodId: 'remote.pair.requests.list',
     route: 'GET /api/remote/pair/requests',
     effect: 'read-only-network',
-    confirmationRequired: false,
+    recordedAdmissionRequired: false,
     modelRoute: previewHarnessText('agent_operator_method methodId:"remote.pair.requests.list" input:{}'),
     description: 'Lists pending, approved, and rejected remote pairing requests.',
     policy:
@@ -135,7 +135,7 @@ export function remotePairRequestsSummary(_args: AgentHarnessRemoteArgs): Record
 }
 
 // ---------------------------------------------------------------------------
-// Mutation surfaces, confirmed, return agent_operator_method handoff objects
+// Mutation surfaces return handoffs after the dispatcher checks recorded admission
 // ---------------------------------------------------------------------------
 
 export function remotePairApproveHandoff(args: AgentHarnessRemoteArgs): RemoteMethodHandoff {
@@ -147,14 +147,14 @@ export function remotePairApproveHandoff(args: AgentHarnessRemoteArgs): RemoteMe
     surface: 'remote_pair_approve',
     methodId: 'remote.pair.requests.approve',
     route: 'POST /api/remote/pair/requests/{requestId}/approve',
-    effect: 'confirmed-connected-host-state',
-    confirmationRequired: true,
+    effect: 'connected-host-state',
+    recordedAdmissionRequired: true,
     input,
     modelRoute: previewHarnessText(
-      `agent_operator_method methodId:"remote.pair.requests.approve" input:${JSON.stringify(input)} confirm:true explicitUserRequest:"..."`,
+      `agent_operator_method methodId:"remote.pair.requests.approve" input:${JSON.stringify(input)}`,
     ),
     policy:
-      'Mutation. Approves a pending remote pair request by requestId. Route it through agent_operator_method with confirm:true and the user\'s explicit request.',
+      'Approves a pending remote pair request by requestId. This handoff requires current recorded Jev act admission; the agent_operator_method call requires fresh admission. The native pairing protocol remains required.',
   };
 }
 
@@ -167,14 +167,14 @@ export function remotePairRejectHandoff(args: AgentHarnessRemoteArgs): RemoteMet
     surface: 'remote_pair_reject',
     methodId: 'remote.pair.requests.reject',
     route: 'POST /api/remote/pair/requests/{requestId}/reject',
-    effect: 'confirmed-connected-host-state',
-    confirmationRequired: true,
+    effect: 'connected-host-state',
+    recordedAdmissionRequired: true,
     input,
     modelRoute: previewHarnessText(
-      `agent_operator_method methodId:"remote.pair.requests.reject" input:${JSON.stringify(input)} confirm:true explicitUserRequest:"..."`,
+      `agent_operator_method methodId:"remote.pair.requests.reject" input:${JSON.stringify(input)}`,
     ),
     policy:
-      'Mutation. Rejects a pending remote pair request by requestId. Route it through agent_operator_method with confirm:true and the user\'s explicit request.',
+      'Rejects a pending remote pair request by requestId. This handoff requires current recorded Jev act admission; the agent_operator_method call requires fresh admission. The native pairing protocol remains required.',
   };
 }
 
@@ -188,14 +188,14 @@ export function remotePeersInvokeHandoff(args: AgentHarnessRemoteArgs): RemoteMe
     surface: 'remote_peers_invoke',
     methodId: 'remote.peers.invoke',
     route: 'POST /api/remote/peers/{peerId}/invoke',
-    effect: 'confirmed-connected-host-state',
-    confirmationRequired: true,
+    effect: 'connected-host-state',
+    recordedAdmissionRequired: true,
     input,
     modelRoute: previewHarnessText(
-      `agent_operator_method methodId:"remote.peers.invoke" input:${JSON.stringify(input)} confirm:true explicitUserRequest:"..."`,
+      `agent_operator_method methodId:"remote.peers.invoke" input:${JSON.stringify(input)}`,
     ),
     policy:
-      'Mutation. Invokes a command on a connected remote peer. Requires peerId and command. Route through agent_operator_method with confirm:true and the user\'s explicit request.',
+      'Invokes a command on a connected remote peer. Requires peerId and command, current recorded Jev act admission for this handoff, and fresh admission on the agent_operator_method call. The peer must satisfy the native pairing protocol.',
   };
 }
 
@@ -208,13 +208,13 @@ export function remoteWorkCancelHandoff(args: AgentHarnessRemoteArgs): RemoteMet
     surface: 'remote_work_cancel',
     methodId: 'remote.work.cancel',
     route: 'POST /api/remote/work/{workId}/cancel',
-    effect: 'confirmed-connected-host-state',
-    confirmationRequired: true,
+    effect: 'connected-host-state',
+    recordedAdmissionRequired: true,
     input,
     modelRoute: previewHarnessText(
-      `agent_operator_method methodId:"remote.work.cancel" input:${JSON.stringify(input)} confirm:true explicitUserRequest:"..."`,
+      `agent_operator_method methodId:"remote.work.cancel" input:${JSON.stringify(input)}`,
     ),
     policy:
-      'Mutation. Cancels a queued or leased remote work item by workId. Route through agent_operator_method with confirm:true and the user\'s explicit request.',
+      'Cancels a queued or leased remote work item by workId. This handoff requires current recorded Jev act admission; the agent_operator_method call requires fresh admission and its native owner checks.',
   };
 }

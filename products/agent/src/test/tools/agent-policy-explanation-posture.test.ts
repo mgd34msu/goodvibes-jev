@@ -71,6 +71,60 @@ describe('agent-policy-explanation: approval posture agreement', () => {
     await expect(explainAgentPolicyDecision(fakeContext({}), registryWithWriteTool(), { toolName: 'write' })).rejects.toThrow('judgment port');
   });
 
+  for (const mode of ['channel_draft_send', 'set_keybinding', 'run_local_model_smoke']) {
+    for (const fields of [{}, { confirm: false }, { confirm: true, explicitUserRequest: 'Run this selected route.' }]) {
+      test(`${mode}: ${JSON.stringify(fields)} cannot satisfy recorded effect admission`, async () => {
+        let executions = 0;
+        const registry = new ToolRegistry();
+        registry.register({
+          definition: {
+            name: 'agent_harness', description: 'Actual harness effect mode explanation',
+            parameters: { type: 'object', properties: { mode: { type: 'string' }, confirm: { type: 'boolean' }, explicitUserRequest: { type: 'string' } } },
+          },
+          execute: async () => { executions++; return { success: true, output: '' }; },
+        });
+        const result = await explainAgentPolicyDecision(fakeContext({ 'behavior.autoApprove': true }), registry,
+          { toolName: 'agent_harness', toolArgs: { mode, ...fields } });
+        expect(result.status).toBe('found');
+        if (result.status !== 'found') throw new Error('Expected effect explanation');
+        expect(result.explanation).toMatchObject({
+          status: 'held',
+          preflight: {
+            approvedWithoutMoreInput: false, permissionEvaluated: false,
+            toolConfirmationRequired: false, toolConfirmationSatisfied: false,
+            recordedAdmissionRequired: true, recordedAdmissionEvaluated: false,
+          },
+        });
+        const layers = result.explanation.policyLayers as readonly { layer: string; outcome: string; reason: string }[];
+        expect(layers.find(layer => layer.layer === 'Recorded effect admission')).toMatchObject({
+          outcome: 'not_evaluated',
+          reason: 'This effect route requires current recorded Jev act admission for the exact invocation and current source and boundary checks. Caller confirmation fields do not establish that authority.',
+        });
+        const required = result.explanation.requiredActions as readonly string[];
+        expect(required.join('\n')).toContain('current recorded Jev act admission');
+        expect(required.join('\n')).not.toContain('confirm:true');
+        expect(executions).toBe(0);
+      });
+    }
+  }
+
+  test('a read category cannot erase the code-owned effect admission requirement', async () => {
+    installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'read', 0.99)).port);
+    const registry = new ToolRegistry();
+    registry.register({
+      definition: { name: 'agent_harness', description: 'Actual harness mode explanation', parameters: { type: 'object' } },
+      execute: async () => { throw new Error('An explanation must not execute a route'); },
+    });
+    const result = await explainAgentPolicyDecision(fakeContext({}), registry,
+      { toolName: 'agent_harness', toolArgs: { mode: 'channel_draft_send', confirm: true, explicitUserRequest: 'Deliver the draft.' } });
+    expect(result.status).toBe('found');
+    if (result.status !== 'found') throw new Error('Expected effect explanation');
+    expect(result.explanation).toMatchObject({
+      status: 'held', category: 'read',
+      preflight: { recordedAdmissionRequired: true, recordedAdmissionEvaluated: false, approvedWithoutMoreInput: false },
+    });
+  });
+
   test('autoApprove=true, mode=prompt (the reproduced A2 bug): explanation posture honestly says auto-approve is on', async () => {
     const context = fakeContext({ 'behavior.autoApprove': true, 'permissions.mode': 'prompt' });
     const resolved = await explainAgentPolicyDecision(context, registryWithWriteTool(), { toolName: 'write' });

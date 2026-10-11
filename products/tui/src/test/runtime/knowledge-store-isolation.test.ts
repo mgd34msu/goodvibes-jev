@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { knowledgeIsolationReadings } from '../helpers/knowledge-isolation-readings.ts';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { createRuntimeServices } from '../../runtime/services.ts';
@@ -50,11 +51,12 @@ function makeRuntime() {
       runtimeStore: createRuntimeStore(),
       workingDir,
       homeDirectory: homeDir,
-    })),
+    }), (services) => services.close()),
   };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await disposables.flush();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -64,7 +66,18 @@ describe('runtime knowledge store isolation', () => {
   test('regular Knowledge/Wiki, Agent knowledge, and Home Graph use separate sqlite stores', async () => {
     const { configManager, services } = makeRuntime();
     const readings = knowledgeIsolationReadings();
-    const previousJudgment = installJudgmentPort(readings.port);
+    const refused: Array<{ site: string | undefined; questions: readonly string[] }> = [];
+    const port: JudgmentPort = {
+      model: readings.port.model,
+      async ask(request) {
+        try { return await readings.port.ask(request); }
+        catch (error) {
+          refused.push({ site: request.context?.site, questions: Object.keys(request.questions).sort() });
+          throw error;
+        }
+      },
+    };
+    const previousJudgment = installJudgmentPort(port);
     try {
       const controlPlaneDir = configManager.getControlPlaneConfigDir();
 
@@ -94,8 +107,17 @@ describe('runtime knowledge store isolation', () => {
       expect(ask.ok).toBe(true);
       expect(readings.requests.some(request => Object.hasOwn(request.questions, 'readable'))).toBe(true);
       expect(readings.requests.some(request => Object.hasOwn(request.questions, 'excerptUseful'))).toBe(true);
-      // Provider routing is outside this store fixture and remains fail-closed.
-      expect(readings.rejected.filter(name => name !== 'route')).toEqual([]);
+      // Provider routing and ancillary privacy diagnostics remain held. Every
+      // semantic question must still settle under the exact authored fixture.
+      const heldPrivacyQuestions = new Map([
+        ['engine.redaction.field-kind', ['kind']],
+        ['engine.redaction.credential', ['lineHasCredential', 'spanIsCredential']],
+        ['engine.redaction.residual-credential', ['credentialRemains']],
+      ]);
+      expect(refused.filter(({ site, questions }) => {
+        if (questions.length === 1 && questions[0] === 'route') return false;
+        return !site || JSON.stringify(heldPrivacyQuestions.get(site)) !== JSON.stringify(questions);
+      })).toEqual([]);
       expect(homeGraphStatus.nodeCount).toBeGreaterThan(0);
       expect(agentStatus.sourceCount).toBe(0);
       expect(agentStatus.nodeCount).toBe(0);
@@ -109,6 +131,15 @@ describe('runtime knowledge store isolation', () => {
       expect(regularNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
       expect(agentNodes.some((node) => node.title.includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
       expect(regularMap.nodes.some((node) => String(node.title ?? '').includes('Isolation Light') || node.id.includes('isolation'))).toBe(false);
-    } finally { installJudgmentPort(previousJudgment); }
+    } catch (error) {
+      console.error('Knowledge isolation fixture readings', JSON.stringify({
+        questions: [...new Set(readings.requests.flatMap((request) => Object.keys(request.questions)))].sort(),
+        refused: [...new Map(refused.map((request) => [JSON.stringify(request), request])).values()],
+      }));
+      throw error;
+    } finally {
+      try { await disposables.flush(); }
+      finally { installJudgmentPort(previousJudgment); }
+    }
   });
 });

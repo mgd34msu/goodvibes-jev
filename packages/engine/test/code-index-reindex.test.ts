@@ -5,7 +5,11 @@
  * no-op gates (setting off / index never built / failed tool), and contained failure
  * handling, all without a live sqlite store, via a fake CodeIndexReindexTarget.
  */
-import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
+import { authoredPrivacyAnswer, errorText } from './_helpers/authored-error-readings.ts';
+import { redactSensitiveDataAsync } from '../sdk/src/platform/utils/redaction.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   CodeIndexReindexScheduler,
   extractReindexPaths,
@@ -129,6 +133,7 @@ describe('scheduler: no-op gates', () => {
 
 describe('scheduler: contained failure & honest activity', () => {
   test('reindexFile throwing is caught, recorded as error, never rethrown', async () => {
+    expect(await redactSensitiveDataAsync('disk gone')).toBe('disk gone');
     const { target } = makeTarget({ reindex: async () => { throw new Error('disk gone'); } });
     const s = new CodeIndexReindexScheduler({ target, workingDirectory: ROOT, debounceMs: 1 });
     s.onToolExecuted('write', { files: [{ path: 'a.ts', content: 'x' }] }, true);
@@ -154,3 +159,15 @@ describe('scheduler: contained failure & honest activity', () => {
     expect(calls).toEqual(['/elsewhere/z.ts']);
   });
 });
+
+
+const readDiagnostic = authoredPrivacyAnswer({ parts: [[errorText('disk gone')]] });
+let previousDiagnosticPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  previousDiagnosticPort = installJudgmentPort(fakePort((name, question, state) => {
+    const answer = readDiagnostic(name, question, state);
+    if (answer === undefined) throw new Error('Unexpected authored diagnostic question');
+    return answer;
+  }).port);
+});
+afterEach(() => { installJudgmentPort(previousDiagnosticPort); });

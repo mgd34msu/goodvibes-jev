@@ -27,6 +27,7 @@ export function createMSTeamsDeliveryStrategy(
   return {
     id: 'channel-delivery:msteams',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'msteams';
     },
@@ -82,6 +83,7 @@ export function createMattermostDeliveryStrategy(
   return {
     id: 'channel-delivery:mattermost',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'mattermost';
     },
@@ -134,6 +136,7 @@ export function createMatrixDeliveryStrategy(
   return {
     id: 'channel-delivery:matrix',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'matrix';
     },

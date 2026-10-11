@@ -27,9 +27,8 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/config';
 import { mapLimit } from '@goodvibes-jev/judgment';
 import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { captureStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { retainStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { redactSensitiveDataAsync, redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { isDeepStrictEqual } from 'node:util';
 
 export const REDACTED_VALUE = '<redacted>';
 
@@ -54,12 +53,13 @@ export async function isSensitiveConfigPath(path: string, options: JudgmentReadi
 
 function captureConfig(config: unknown, options: JudgmentReadingOptions) {
   // Raw values stay local. This structural capture does not authorize transmission.
-  const snapshot = captureStrictJudgmentJson(config);
+  const retained = retainStrictJudgmentJson(config);
+  const snapshot = retained.snapshot;
   const signal = options.signal, callerCurrent = options.assertCurrent;
   const sourceCurrent = () => {
     signal?.throwIfAborted();
-    if (options.signal !== signal || options.assertCurrent !== callerCurrent
-      || !isDeepStrictEqual(captureStrictJudgmentJson(config), snapshot)) throw new Error('Config changed during redaction.');
+    if (options.signal !== signal || options.assertCurrent !== callerCurrent) throw new Error('Config changed during redaction.');
+    retained.assertCurrent();
   };
   const assertSource = () => {
     sourceCurrent();
@@ -113,9 +113,7 @@ function valuePaths(value: unknown, path: string, out: Map<string, unknown>): vo
 }
 
 /** The sensitive paths of a config tree, asked once for the whole tree. */
-async function sensitivePaths(source: ReturnType<typeof captureConfig>): Promise<ReadonlySet<string>> {
-  const candidates = new Map<string, unknown>();
-  valuePaths(source.snapshot, '', candidates);
+async function sensitivePaths(source: ReturnType<typeof captureConfig>, candidates: ReadonlyMap<string, unknown>): Promise<ReadonlySet<string>> {
   const paths = [...candidates.keys()];
   const sensitive = await mapLimit(paths, PATH_READING_CONCURRENCY, async (path) =>
     isStructuredCredentialReferenceConfigKey(path) ? true
@@ -153,24 +151,12 @@ export interface RedactedConfigResult {
   readonly assertCurrent: () => void;
 }
 
-export async function redactConfig(config: unknown, options: JudgmentReadingOptions = {}): Promise<RedactedConfigResult> {
-  const source = captureConfig(config, options);
-  const sensitive = await sensitivePaths(source);
-  const redactedPaths: string[] = [];
-  const value = redactUnknown(source.snapshot, '', sensitive, redactedPaths);
-  source.assertCurrent();
-  return { value, redactedPaths, assertCurrent: source.assertCurrent };
+export interface PreparedConfigRedaction extends RedactedConfigResult {
+  /** Local masking inputs; never publish these values. */
+  readonly sensitiveValues: readonly string[];
 }
 
-export function redactText(input: string, options: JudgmentReadingOptions = {}): Promise<string> {
-  return redactSensitiveDataAsync(input, options);
-}
-
-export async function collectSensitiveConfigValues(config: unknown, options: JudgmentReadingOptions = {}): Promise<readonly string[]> {
-  const source = captureConfig(config, options);
-  const candidates = new Map<string, unknown>();
-  valuePaths(source.snapshot, '', candidates);
-  const sensitive = await sensitivePaths(source);
+function sensitiveValues(candidates: ReadonlyMap<string, unknown>, sensitive: ReadonlySet<string>): readonly string[] {
   // A sensitive container's strings are all masked with it; collect them too.
   const values: string[] = [];
   const collect = (value: unknown): void => {
@@ -179,8 +165,37 @@ export async function collectSensitiveConfigValues(config: unknown, options: Jud
     else if (value && typeof value === 'object') Object.values(value).forEach(collect);
   };
   for (const [path, value] of candidates) if (sensitive.has(path) && !isStructuredCredentialReferenceConfigKey(path)) collect(value);
-  source.assertCurrent();
   return [...new Set(values.filter((value) => holdsValue(value)))].sort((left, right) => right.length - left.length);
+}
+
+/** Classify one retained config once for its masked output and local secret sweeps. */
+export async function prepareConfigRedaction(config: unknown, options: JudgmentReadingOptions = {}): Promise<PreparedConfigRedaction> {
+  const source = captureConfig(config, options);
+  const candidates = new Map<string, unknown>();
+  valuePaths(source.snapshot, '', candidates);
+  const sensitive = await sensitivePaths(source, candidates);
+  source.assertCurrent();
+  const redactedPaths: string[] = [];
+  const value = redactUnknown(source.snapshot, '', sensitive, redactedPaths);
+  const values = sensitiveValues(candidates, sensitive);
+  source.assertCurrent();
+  return { value, redactedPaths, sensitiveValues: values, assertCurrent: source.assertCurrent };
+}
+
+export async function redactConfig(config: unknown, options: JudgmentReadingOptions = {}): Promise<RedactedConfigResult> {
+  const prepared = await prepareConfigRedaction(config, options);
+  prepared.assertCurrent();
+  return { value: prepared.value, redactedPaths: prepared.redactedPaths, assertCurrent: prepared.assertCurrent };
+}
+
+export function redactText(input: string, options: JudgmentReadingOptions = {}): Promise<string> {
+  return redactSensitiveDataAsync(input, options);
+}
+
+export async function collectSensitiveConfigValues(config: unknown, options: JudgmentReadingOptions = {}): Promise<readonly string[]> {
+  const prepared = await prepareConfigRedaction(config, options);
+  prepared.assertCurrent();
+  return prepared.sensitiveValues;
 }
 
 export async function redactSerializedSecrets(serialized: string, secretValues: readonly string[], options: JudgmentReadingOptions = {}): Promise<string> {

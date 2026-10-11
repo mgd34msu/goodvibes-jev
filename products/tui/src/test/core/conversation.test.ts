@@ -192,7 +192,7 @@ describe('ConversationManager', () => {
     test('a user-action receipt is a notice: it reaches the notice sink in full and leaves the splash up', () => {
       const c = new ConversationManager(() => 120);
       const seen: Array<{ content: string; restored: boolean }> = [];
-      c.setNoticeSink((content, { restored }) => seen.push({ content, restored }));
+      c.setNoticeSink((content, { restored }) => { seen.push({ content, restored }); });
       const receipt = 'Recovery point removed (session sess-abc123); it will not be offered again, even if the file reappears.';
       c.addTypedSystemMessage(receipt, 'system');
       expect(seen).toEqual([{ content: receipt, restored: false }]);

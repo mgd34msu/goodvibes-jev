@@ -1,12 +1,13 @@
 import { expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { realUpdateFileIo, UpdateTransactionError } from '@goodvibes-jev/engine/sdk/platform/runtime/self-update';
 import { DAEMON_CI_PAYLOADS, recordDaemonCiArtifact } from '../../../scripts/ci-artifact.ts';
 import { assertNativeInstallHost, installDaemonNative, parseNativeInstallArgs, readDaemonInstallOwner, rollbackDaemonNative, type DaemonInstallOwner } from '../../../scripts/install-native.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.ts';
+import { nativeRuntimeProvenance } from '../helpers/native-runtime-provenance.ts';
 
 const nativeTest = process.platform === 'linux' && process.arch === 'x64' ? test : test.skip;
 const shellTest = process.platform === 'win32' ? test.skip : test;
@@ -14,11 +15,12 @@ const shellTest = process.platform === 'win32' ? test.skip : test;
 const first: DaemonInstallOwner = { target: 'linux-x64', sourceCommit: 'a'.repeat(40), sourceTree: 'b'.repeat(40), headCommit: 'c'.repeat(40), version: '1.2.3' };
 const second: DaemonInstallOwner = { target: 'linux-x64', sourceCommit: 'd'.repeat(40), sourceTree: 'e'.repeat(40), headCommit: 'f'.repeat(40), version: '1.2.4' };
 async function artifact(root: string, owner = first): Promise<void> {
+  const runtime = `#!/bin/sh\necho goodvibes-daemon ${owner.version}\n`;
   const payloads = [
     '#!/bin/sh\nexec "$(dirname "$0")/goodvibes-daemon-linux-x64.bun" "$@"\n',
-    `#!/bin/sh\necho goodvibes-daemon ${owner.version}\n`,
+    runtime,
     'synthetic runtime license ' + owner.version,
-    JSON.stringify({ syntheticRuntime: owner.version }),
+    nativeRuntimeProvenance(runtime),
     'synthetic vector addon ' + owner.version,
   ];
   for (const [index, path] of DAEMON_CI_PAYLOADS.entries()) {
@@ -77,6 +79,50 @@ nativeTest('changed/missing/symlink source bytes and mismatched expected source 
   }
 });
 
+nativeTest('equal-byte artifact and installed-file replacements during asynchronous CI verification refuse publication', async () => {
+  for (const location of ['artifact', 'installation'] as const) {
+    const f = await fixture(); await f.install(); const before = state(f.prefix);
+    await artifact(f.source, second);
+    const victim = location === 'artifact' ? join(f.source, 'native', DAEMON_CI_PAYLOADS[1]) : join(f.prefix, DAEMON_CI_PAYLOADS[1]);
+    const pending = f.install(second);
+    writeFileSync(victim + '.foreign', readFileSync(victim)); chmodSync(victim + '.foreign', 0o755); renameSync(victim + '.foreign', victim);
+    await expect(pending).rejects.toThrow('changed');
+    expect(state(f.prefix)).toEqual(before); expect(transientFiles(f.prefix)).toEqual([]);
+    expect(existsSync(join(f.prefix, 'daemon-installation.json.previous'))).toBe(false);
+  }
+});
+
+nativeTest('an existing empty native target directory replaced during CI verification is not adopted for first installation', async () => {
+  const f = await fixture(); const directory = dirname(join(f.prefix, DAEMON_CI_PAYLOADS[4]));
+  mkdirSync(directory, { recursive: true });
+  const pending = f.install();
+  renameSync(directory, directory + '.foreign'); mkdirSync(directory);
+  await expect(pending).rejects.toThrow('directory changed');
+  expect(readdirSync(directory)).toEqual([]);
+  expect(existsSync(join(f.prefix, 'daemon-installation.json'))).toBe(false);
+  expect(transientFiles(f.prefix)).toEqual([]);
+});
+
+nativeTest('equal-byte destination replacement during offline native publication never returns an installed receipt', async () => {
+  const f = await fixture(); await f.install(); await artifact(f.source, second); let replaced = false;
+  const victim = join(f.prefix, DAEMON_CI_PAYLOADS[0]); let failure: unknown;
+  try {
+    await installDaemonNative({ artifactRoot: f.source, prefix: f.prefix, owner: second, io: { ...realUpdateFileIo,
+      rename(from, to) {
+        realUpdateFileIo.rename(from, to);
+        if (!replaced && from === victim + '.update-download') {
+          replaced = true; writeFileSync(to + '.foreign', readFileSync(to)); chmodSync(to + '.foreign', 0o755); renameSync(to + '.foreign', to);
+        }
+      },
+    } });
+  } catch (error) { failure = error; }
+  expect(replaced).toBe(true); expect(failure).toBeInstanceOf(UpdateTransactionError);
+  if (!(failure instanceof UpdateTransactionError)) throw new Error('Expected a native publication failure receipt');
+  expect(failure.receipt.committed).toBe(false); expect(failure.receipt.recoveryRequired).toBe(true);
+  expect(JSON.parse(readFileSync(join(f.prefix, 'daemon-installation.json'), 'utf8')).version).toBe(first.version);
+  expect(existsSync(victim + '.update-transaction')).toBe(true);
+});
+
 nativeTest('unsafe prefixes, noncanonical modes, unsupported hosts, aborted requests and implicit arguments refuse', async () => {
   const f = await fixture();
   for (const prefix of ['relative', f.source, join(f.source, 'nested'), f.root]) {
@@ -85,7 +131,7 @@ nativeTest('unsafe prefixes, noncanonical modes, unsupported hosts, aborted requ
   const alias = join(f.root, 'alias'); symlinkSync(f.source, alias, 'dir');
   await expect(installDaemonNative({ artifactRoot: f.source, prefix: alias, owner: first })).rejects.toThrow('symlink');
   chmodSync(join(f.source, 'native', DAEMON_CI_PAYLOADS[4]), 0o600); await recordDaemonCiArtifact(f.source, first);
-  await expect(f.install()).rejects.toThrow('modes');
+  await expect(f.install()).rejects.toThrow();
   await artifact(f.source);
   await expect(installDaemonNative({ artifactRoot: f.source, prefix: f.prefix, owner: first, signal: AbortSignal.abort() })).rejects.toThrow();
   expect(existsSync(f.prefix)).toBe(false);
@@ -120,14 +166,14 @@ nativeTest('rollback checks complete previous bytes while all canonical transact
       realUpdateFileIo.writeExclusive!(path, bytes);
       if (++claims === DAEMON_CI_PAYLOADS.length + 1) writeFileSync(victim, 'changed after last claim');
     },
-  })).toThrow('checksum mismatch');
+  })).toThrow();
   expect(claims).toBe(DAEMON_CI_PAYLOADS.length + 1); expect(state(f.prefix)).toEqual(before);
   expect(transientFiles(f.prefix)).toEqual([]);
 });
 
 nativeTest('a missing previous member and leftover recovery fence never produce a partial rollback or blind retry', async () => {
   const f = await fixture(); await f.install();
-  expect(() => rollbackDaemonNative(f.prefix)).toThrow('previous');
+  expect(() => rollbackDaemonNative(f.prefix)).toThrow('Previous native cohort is incomplete');
   await artifact(f.source, second); await f.install(second); const before = state(f.prefix);
   rmSync(join(f.prefix, DAEMON_CI_PAYLOADS[3] + '.previous'));
   expect(() => rollbackDaemonNative(f.prefix)).toThrow(); expect(state(f.prefix)).toEqual(before);

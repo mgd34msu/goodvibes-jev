@@ -9,6 +9,7 @@ import { acquireDaemonNative, assertQualifiedDaemonAcquisitionTarget, stageDaemo
 import { installDaemonNative, rollbackDaemonNative } from '../../../scripts/install-native.ts';
 import { verifiedDaemonNativePath } from '../../cli/native-launch.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.ts';
+import { nativeRuntimeProvenance } from '../helpers/native-runtime-provenance.ts';
 
 // These are inert fixture bytes. Nothing here claims execution of an ARM64 binary.
 async function fixture(target: DaemonNativeTarget) {
@@ -16,7 +17,7 @@ async function fixture(target: DaemonNativeTarget) {
   const owner: DaemonInstallOwner = { target, sourceCommit: 'a'.repeat(40), sourceTree: 'b'.repeat(40), headCommit: 'c'.repeat(40), version: '1.2.3' };
   for (const [index, path] of daemonCiPayloads(target).entries()) {
     const file = join(source, 'native', path); mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${target} fixture ${index}`); chmodSync(file, index < 2 ? 0o755 : 0o644);
+    writeFileSync(file, index === 3 ? nativeRuntimeProvenance(`${target} fixture 1`, target) : `${target} fixture ${index}`); chmodSync(file, index < 2 ? 0o755 : 0o644);
   }
   await recordDaemonCiArtifact(source, owner);
   const artifact = await readVerifiedDaemonCiArtifact(source, owner);

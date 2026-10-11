@@ -2,6 +2,9 @@ import type { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
+import { capturePersonalOpsData, assertPersonalOpsDataCurrent } from './agent-harness-personal-ops-source.ts';
+import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureNativeReadModelObservation } from './agent-harness-autonomy-live-records.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { WorkPlanItem } from '@goodvibes-jev/engine/sdk/platform/workflow';
 import { AGENT_TEMPLATES, AGENT_TOOL_MODES, agentOrchestrationDecisionCards } from './agent-harness-agent-orchestration-policy.ts';
@@ -683,12 +686,14 @@ export function agentOrchestrationCatalogStatus(context: CommandContext, toolReg
   };
 }
 
-function orchestrationSources(context: CommandContext, toolRegistry?: ToolRegistry) {
-  return captureCatalogData({ records: exportAgents(context), remote: remoteRuntimeSnapshot(context), workItems: workPlanItems(context), sessionId: context.session.runtime.sessionId,
+function orchestrationSources(context: CommandContext, originalSources: readonly unknown[], toolRegistry?: ToolRegistry) {
+  return captureCatalogData({ originalSources, records: exportAgents(context), remote: remoteRuntimeSnapshot(context), workItems: workPlanItems(context), sessionId: context.session.runtime.sessionId,
     ...(toolRegistry ? { tools: toolRegistry.getToolDefinitions() } : {}) });
 }
 
 function captureOrchestrationBackend(context: CommandContext, toolRegistry?: ToolRegistry) {
+  // Canonical evidence uses complete acquired DTOs; public remote cards remain bounded.
+  const originalSources: unknown[] = [];
   const guards = [captureCatalogMethods(context, ['ops', 'platform', 'workspace', 'session', 'clients']),
     captureCatalogMethods(context.ops, ['agentManager', 'remoteRuntime']), captureCatalogMethods(context.platform, ['artifactStore', 'readModels']),
     captureCatalogMethods(context.workspace, ['workPlanStore']), captureCatalogMethods(context.session, ['runtime']),
@@ -697,14 +702,70 @@ function captureOrchestrationBackend(context: CommandContext, toolRegistry?: Too
   if (context.ops.remoteRuntime) guards.push(captureCatalogMethods(context.ops.remoteRuntime, ['listContracts', 'listPools', 'listArtifacts']));
   if (context.platform.artifactStore) guards.push(captureCatalogMethods(context.platform.artifactStore, ['list']));
   if (context.workspace.workPlanStore) guards.push(captureCatalogMethods(context.workspace.workPlanStore, ['listItems']));
-  const retainPublished = (subject: object, key: string) => {
+  const retainPublished = (subject: object, key: string, children?: readonly string[]) => {
     guards.push(captureCatalogMethods(subject, [key]));
-    const revision = JSON.stringify(captureCatalogData(Reflect.get(subject, key)));
-    guards.push(() => { if (JSON.stringify(captureCatalogData(Reflect.get(subject, key))) !== revision) throw new ToolInputProjectionError('stale'); });
+    const source = modelReadingServicePath(subject, [key]);
+    if (children) {
+      if (source !== undefined && source !== null) {
+        if (typeof source !== 'object') throw new ToolInputProjectionError('invalid');
+        for (const child of children) retainPublished(source, child);
+      }
+      return;
+    }
+    if (source instanceof Map) {
+      const methods = captureCatalogMethods(source, ['entries']);
+      const acquire = () => {
+        methods();
+        if (Object.getPrototypeOf(source) !== Map.prototype || Object.getOwnPropertyNames(source).length
+          || Object.getOwnPropertySymbols(source).length) throw new ToolInputProjectionError('invalid');
+        const entries = Array.from(Map.prototype.entries.call(source));
+        if (entries.some(([key]) => typeof key !== 'string')) throw new ToolInputProjectionError('invalid');
+        methods(); return entries;
+      };
+      const original = acquire(), complete = capturePersonalOpsData(original);
+      originalSources.push({ slot: key, original: complete });
+      guards.push(() => { assertPersonalOpsDataCurrent(original, complete); assertPersonalOpsDataCurrent(acquire(), complete); });
+      return;
+    }
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      const names = ['getSnapshot', 'snapshot', 'toJSON', 'listCaptureOutcomes', 'listOutcomes', 'listCaptures', 'listExports', 'listCloseouts', 'listArtifacts', 'listWorkspaceEvidence', 'listWorkspaceIsolation', 'listWorkspaces', 'listWorktrees', 'list'];
+      const methods = captureCatalogMethods(source, [...names, 'subscribe']); guards.push(methods);
+      let materialized = false;
+      for (const name of names) {
+        const read = modelReadingServicePath(source, [name]);
+        if (typeof read !== 'function') continue;
+        materialized = true;
+        if (name === 'getSnapshot' && typeof modelReadingServicePath(source, ['subscribe']) === 'function') guards.push(captureNativeReadModelObservation(source));
+        const acquire = () => { methods(); let value: unknown;
+          try { value = read.call(source); } catch { throw new ToolInputProjectionError('unavailable'); }
+          methods(); return value;
+        };
+        const original = acquire(), complete = capturePersonalOpsData(original);
+        originalSources.push({ slot: key, method: name, original: complete });
+        guards.push(() => { assertPersonalOpsDataCurrent(original, complete); assertPersonalOpsDataCurrent(acquire(), complete); methods(); });
+      }
+      if (materialized) return;
+    }
+    if (typeof source === 'function') {
+      const acquire = () => { let value: unknown; try { value = source(); } catch { throw new ToolInputProjectionError('unavailable'); } return value; };
+      const original = acquire(), complete = capturePersonalOpsData(original);
+      originalSources.push({ slot: key, original: complete });
+      guards.push(() => { assertPersonalOpsDataCurrent(original, complete); assertPersonalOpsDataCurrent(acquire(), complete); });
+      return;
+    }
+    const complete = capturePersonalOpsData(source);
+    if (source !== undefined && source !== null) originalSources.push({ slot: key, original: complete });
+    guards.push(() => assertPersonalOpsDataCurrent(modelReadingServicePath(subject, [key]), complete));
   };
   const readModels: unknown = Reflect.get(context.platform, 'readModels');
-  if (readModels && typeof readModels === 'object') for (const key of ['remoteRuntime', 'remoteRunners', 'remote', 'worktrees', 'remoteCaptureOutcomes', 'remoteRunnerOutcomes', 'remoteWorkspaces', 'remoteWorkspaceIsolation']) retainPublished(readModels, key);
-  if (context.ops.remoteRuntime) retainPublished(context.ops.remoteRuntime, 'readModels');
+  if (readModels && typeof readModels === 'object') {
+    retainPublished(readModels, 'remoteRuntime', ['captureOutcomes', 'outcomes', 'captures', 'exports', 'closeouts', 'workspaces', 'workspaceIsolation', 'worktrees']);
+    retainPublished(readModels, 'remoteRunners', ['captureOutcomes', 'workspaces']);
+    retainPublished(readModels, 'remote', ['captureOutcomes', 'workspaceIsolation']);
+    retainPublished(readModels, 'worktrees', ['remote']);
+    for (const key of ['remoteCaptureOutcomes', 'remoteRunnerOutcomes', 'remoteWorkspaces', 'remoteWorkspaceIsolation']) retainPublished(readModels, key);
+  }
+  if (context.ops.remoteRuntime) retainPublished(context.ops.remoteRuntime, 'readModels', ['captureOutcomes', 'workspaces']);
   if (context.clients) {
     guards.push(captureCatalogMethods(context.clients, ['operator']));
     const operator = context.clients.operator;
@@ -715,18 +776,19 @@ function captureOrchestrationBackend(context: CommandContext, toolRegistry?: Too
     }
   }
   if (toolRegistry) guards.push(captureCatalogMethods(toolRegistry, ['getToolDefinitions']));
-  return () => { for (const guard of guards) guard(); };
+  return { originalSources: captureCatalogData(originalSources), assertCurrent: () => { for (const guard of guards) guard(); } };
 }
 
 function retainOrchestrationSources(context: CommandContext, sources: ReturnType<typeof orchestrationSources>, options: CatalogRankingOptions, assertBackend: () => void, toolRegistry?: ToolRegistry) {
   const revision = JSON.stringify(sources);
-  const assertCurrent = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
     assertBackend();
-    if (JSON.stringify(orchestrationSources(context, toolRegistry)) !== revision) throw new ToolInputProjectionError('stale');
+    if (JSON.stringify(orchestrationSources(context, sources.originalSources, toolRegistry)) !== revision) throw new ToolInputProjectionError('stale');
     assertBackend();
   };
-  options.retainCurrent?.(assertCurrent, 'agent.harness.agent-orchestration.sources');
+  options.retainCurrent?.(assertSourceCurrent, 'agent.harness.agent-orchestration.sources');
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); assertSourceCurrent(); };
   assertCurrent(); return assertCurrent;
 }
 
@@ -736,7 +798,7 @@ function orchestrationEntries(sources: ReturnType<typeof orchestrationSources>) 
   const workItems = workPlanItemsByAgentId(sources.workItems);
   return (sources.records ?? []).map(record => {
     const id = agentId(record);
-    return { record, underlying: { contract: contracts.get(id), artifacts: artifacts.get(id) ?? [], outcomes: outcomes.get(id) ?? [], workspaces: workspaces.get(id) ?? [], workItems: workItems.get(id) ?? [] },
+    return { record, originalSources: sources.originalSources, underlying: { contract: contracts.get(id), artifacts: artifacts.get(id) ?? [], outcomes: outcomes.get(id) ?? [], workspaces: workspaces.get(id) ?? [], workItems: workItems.get(id) ?? [] },
       full: describeAgent(record, true, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workItems.get(id) ?? []),
       summary: describeAgent(record, false, contracts.get(id), artifacts.get(id) ?? [], outcomes.get(id) ?? [], workspaces.get(id) ?? [], workItems.get(id) ?? []) };
   });
@@ -768,9 +830,9 @@ async function matchingAgents(entries: ReturnType<typeof orchestrationEntries>, 
 
 export async function agentOrchestrationSummary(context: CommandContext, toolRegistry: ToolRegistry, args: AgentHarnessAgentOrchestrationArgs, options: CatalogRankingOptions = {}): Promise<Record<string, unknown>> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const assertBackend = captureOrchestrationBackend(context, toolRegistry);
-  const sources = orchestrationSources(context, toolRegistry);
-  const assertCurrent = retainOrchestrationSources(context, sources, options, assertBackend, toolRegistry);
+  const backend = captureOrchestrationBackend(context, toolRegistry);
+  const sources = orchestrationSources(context, backend.originalSources, toolRegistry);
+  const assertCurrent = retainOrchestrationSources(context, sources, options, backend.assertCurrent, toolRegistry);
   const records = sources.records;
   const toolRegistered = agentToolRegistered(toolRegistry);
   if (!records) {
@@ -825,7 +887,7 @@ export async function agentOrchestrationSummary(context: CommandContext, toolReg
 
 export async function describeAgentOrchestrationAgent(context: CommandContext, args: AgentHarnessAgentOrchestrationArgs, options: CatalogRankingOptions = {}): Promise<AgentOrchestrationResolution> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
-  const assertBackend = captureOrchestrationBackend(context);
+  const backend = captureOrchestrationBackend(context);
   const lookup = lookupFromArgs(args);
   if (!lookup) {
     return {
@@ -833,8 +895,8 @@ export async function describeAgentOrchestrationAgent(context: CommandContext, a
       usage: 'agent_orchestration_agent requires agentId, target, or query. Use mode:"agent_orchestration" to inspect visible agents.',
     };
   }
-  const sources = orchestrationSources(context);
-  const assertCurrent = retainOrchestrationSources(context, sources, options, assertBackend);
+  const sources = orchestrationSources(context, backend.originalSources);
+  const assertCurrent = retainOrchestrationSources(context, sources, options, backend.assertCurrent);
   const records = sources.records;
   if (!records) {
     return {

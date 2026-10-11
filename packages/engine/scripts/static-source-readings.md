@@ -55,6 +55,17 @@ An unsettled group can be revised through smaller exact candidate subsets.
 Every subset retains the original context and every candidate remains covered.
 A subset that stays unsettled holds validation. This process has a finite
 candidate tree and never substitutes a token-based verdict.
+Reading plan version 2 gives an unsettled single candidate one new exact-identity
+selector request using the named weak-anchor choice and fit questions. Weak-anchor
+version 2 reads actual offered text and decoded literals in complete source
+context; generated ids and coordinates only locate the candidate. It retains the
+original presence answer. A settled `none` choice clears only when every offered
+candidate also has a settled no fit. A positive selection needs both a settled
+choice and a settled yes fit. Uncertain answers, confirmation outcomes and
+contradictions remain held. A settled yes presence cannot be cleared by a
+contradictory negative selection. Each new selector capture binds its named
+battery and original source manifest; older captures cannot supply this new
+measurement. Once answered, a held selector is retained without resampling.
 Before dispatch, complete source windows must fit both actual canonical presence
 and selector budgets. An oversized group splits into smaller windows; a complete
 unit that cannot fit fails without clipping or submitting partial evidence.

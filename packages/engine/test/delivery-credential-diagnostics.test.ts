@@ -37,7 +37,11 @@ for (const mode of ['default', 'structural'] as const) {
       expect(published).not.toContain(sentinel);
       expect(published).not.toContain('owned-reference.json');
       expect(published).toContain('resolution-failed');
-    } else expect(published).toContain(sentinel);
+    } else {
+      expect(published).not.toContain(sentinel);
+      expect(published).toContain('owned-reference.json');
+      expect(published).toContain('[REDACTED]');
+    }
   });
   test(`registry ${mode} diagnostics preserve null resolution without a raw provider error`, async () => {
     const { root, ref, logs } = fixture();
@@ -48,7 +52,11 @@ for (const mode of ['default', 'structural'] as const) {
     expect(await registry.resolveSecret('ntfy', 'primary')).toBeNull();
     const published = JSON.stringify(logs);
     if (mode === 'structural') { expect(published).not.toContain(sentinel); expect(published).toContain('resolution-failed'); }
-    else expect(published).toContain(sentinel);
+    else {
+      expect(published).not.toContain(sentinel);
+      expect(published).toContain('owned-reference.json');
+      expect(published).toContain('[REDACTED]');
+    }
   });
   test(`secret store ${mode} diagnostics keep unvalidated envelope text private`, async () => {
     const { root, logs } = fixture();

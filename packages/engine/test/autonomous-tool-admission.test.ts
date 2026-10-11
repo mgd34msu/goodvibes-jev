@@ -734,6 +734,26 @@ test('unknown-tool recovery does not bypass original-source or protected-input g
   expect(events).toHaveLength(0); expect(requests).toHaveLength(0); expect(executed).toHaveLength(0);
 });
 
+test.each(['complete suffix', 'PAN', 'control byte', 'hidden field', 'accessor'] as const)(
+  'unknown-tool recovery refuses %s input before judgment or events', async shape => {
+    const { deps, executed } = fixture();
+    const bus = new RuntimeEventBus(); const events: ToolEvent[] = [];
+    bus.onDomain('tools', event => events.push(event.payload)); deps.runtimeBus = bus;
+    let gets = 0;
+    const input: Record<string, unknown> = shape === 'complete suffix' ? { text: `${'ordinary '.repeat(3_000)}password=SYNTHETIC_PROTECTED_CREDENTIAL` }
+      : shape === 'PAN' ? { text: '4111111111111111' }
+        : shape === 'control byte' ? { apiKey: 'SYNTHETIC\u0000PROTECTED_CREDENTIAL' } : { text: 'ordinary' };
+    if (shape === 'hidden field') Object.defineProperty(input, 'apiKey', { value: 'SYNTHETIC_PROTECTED_CREDENTIAL', enumerable: false });
+    if (shape === 'accessor') Object.defineProperty(input, 'value', {
+      enumerable: true, get: () => { gets++; return 'password=SYNTHETIC_PROTECTED_CREDENTIAL'; },
+    });
+    await expect(executeToolCalls(deps, 'turn-1', [{ id: 'unknown-protected', name: 'missing_tool', arguments: input }]))
+      .rejects.toMatchObject({ name: shape === 'hidden field' || shape === 'accessor' ? 'ToolInputProjectionError' : 'JudgmentInputError' });
+    expect(gets).toBe(0); expect(events).toHaveLength(0); expect(requests).toHaveLength(0);
+    expect(log.query()).toHaveLength(0); expect(executed).toHaveLength(0);
+  },
+);
+
 test.each(['preparation', 'supporting', 'disposition'] as const)('cancellation releases non-cooperative %s judgment and discards its late answer', async stage => {
   const { deps, registry, executed } = fixture(); const controller = new AbortController();
   deps.turnSignal = controller.signal;

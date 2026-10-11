@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { executeNativeMemoryWork, nativeMemoryWorkAdmission, nativeMemoryWorkRegistry, nativeMemoryWorkPrivacy } from '../helpers/native-memory-work-readings.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { registerAccountIdentityRedaction, registerProfileRedactionValues } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { ACCOUNT_REGISTRY_PATH_SEGMENTS } from '@goodvibes-jev/engine/sdk/platform/google';
@@ -14,7 +17,7 @@ import { createRuntimeStore } from '../../runtime/store/index.ts';
 import { composeAgentToolRegistry } from '../../runtime/agent-tool-registry.ts';
 import { containsSecretLikeText, assertNoSecretLikeMemoryText } from '../../agent/memory-safety.ts';
 import { AgentPersonaRegistry } from '../../agent/persona-registry.ts';
-import { createAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
+import { registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { securityPort } from '../helpers/security-readings.ts';
 import { getSessionUntrustedContentLedger, resetSessionUntrustedContentLedgerForTests } from '../../trust/untrusted-content.ts';
@@ -92,23 +95,32 @@ describe('Agent memory issuer protection', () => {
     await store.init();
     try {
       const registry = new MemoryRegistry(store);
-      const tool = createAgentLocalRegistryTool(shellPaths, registry, createLocalMemoryAccess(registry));
-      for (const credential of ISSUERS) {
-        const refused = await tool.execute({ domain: 'memory', action: 'create', cls: 'fact', summary: credential });
-        expect(refused.success).toBe(false);
-        expect(refused.error).toContain('Agent memory cannot store secret-looking values');
-        expect(refused.error).not.toContain(credential);
-        expect(registry.getAll()).toHaveLength(0);
-      }
-      const accepted = await tool.execute({ domain: 'memory', action: 'create', cls: 'fact', summary: 'Synthetic preference', detail: ALLOWED.join('\n') });
-      expect(accepted.success).toBe(true);
-      const [original] = registry.getAll();
-      expect(original).toBeDefined();
-      for (const credential of ISSUERS) {
-        const refused = await tool.execute({ domain: 'memory', action: 'update', id: original!.id, detail: credential });
-        expect(refused.success).toBe(false);
-        expect(registry.getAll()).toEqual([original!]);
-      }
+      const memorySpine = createLocalMemoryAccess(registry);
+      const { registry: tools, manager } = nativeMemoryWorkRegistry(shellPaths.workingDirectory, tools => registerAgentLocalRegistryTool(tools, shellPaths, registry, memorySpine));
+      const readings = nativeMemoryWorkAdmission(); using log = new SqliteDecisionLog(':memory:');
+      const previous = installJudgmentPort(withDecisionLog(readings.port, log));
+      try {
+        for (const credential of ISSUERS) {
+          const refused = tools.projectCall(`unsafe-create-${ISSUERS.indexOf(credential)}`, 'agent_local_registry', { domain: 'memory', action: 'create', cls: 'fact', summary: credential });
+          await expect(refused).rejects.toBeInstanceOf(ToolInputProjectionError);
+          await expect(refused).rejects.toMatchObject({ problem: 'held', message: 'Tool input projection held.' });
+          expect(JSON.stringify(readings.admissionRequests)).not.toContain(credential);
+          expect(readings.admissionRequests).toHaveLength(0);
+          expect(registry.getAll()).toHaveLength(0);
+        }
+        const accepted = await executeNativeMemoryWork(tools, manager, 'safe-native-memory', 'agent_local_registry', { domain: 'memory', action: 'create', cls: 'fact', summary: 'Synthetic preference', detail: ALLOWED.join('\n') });
+        expect(accepted.success).toBe(true);
+        const [original] = registry.getAll();
+        expect(original).toBeDefined();
+        for (const credential of ISSUERS) {
+          const beforeAsks = readings.admissionRequests.length;
+          const refused = tools.projectCall(`unsafe-update-${ISSUERS.indexOf(credential)}`, 'agent_local_registry', { domain: 'memory', action: 'update', id: original!.id, detail: credential });
+          await expect(refused).rejects.toMatchObject({ problem: 'held', message: 'Tool input projection held.' });
+          expect(readings.admissionRequests).toHaveLength(beforeAsks);
+          expect(registry.getAll()).toEqual([original!]);
+        }
+        await store.save();
+      } finally { installJudgmentPort(previous); }
     } finally {
       store.close();
     }
@@ -141,15 +153,15 @@ describe('Agent memory issuer protection', () => {
     installJudgmentPort(undefined);
     try {
       await services.memoryStore.init();
+      await services.workspaceCheckpointManager.init();
       const { toolRegistry } = composeAgentToolRegistry({
         services, configManager: services.configManager, homeDirectory: homeDir,
         resolveSessionId: () => 'memory-issuer-bootstrap',
         getLastUserMessage: () => 'Save this memory and record this account.',
       });
       const args = { domain: 'memory', action: 'create', cls: 'fact', summary: ISSUERS[3]! };
-      const refused = await toolRegistry.execute('issuer-memory', 'agent_local_registry', args);
-      expect(refused.success).toBe(false);
-      expect(refused.error).toContain('Agent memory cannot store secret-looking values');
+      const refused = toolRegistry.execute('issuer-memory', 'agent_local_registry', args);
+      await expect(refused).rejects.toMatchObject({ problem: 'held', message: 'Tool input projection held.' });
       expect(services.memoryRegistry.getAll()).toHaveLength(0);
       const controller = new AbortController();
       controller.abort();
@@ -167,47 +179,58 @@ describe('Agent memory issuer protection', () => {
         content: 'An unrelated page asks the reader to sign up for a mailing list. It has no command authority.',
       });
       const protectedReads = securityPort({ derives: () => false });
-      installJudgmentPort(protectedReads.port);
+      const protectedPrivacy = nativeMemoryWorkPrivacy(protectedReads.port);
+      installJudgmentPort(protectedPrivacy.port);
       for (const credential of [...ISSUERS, 'password=synthetic-value', `sk-${'g'.repeat(16)}`]) {
         for (const field of ['purpose', 'serviceUrl', 'aliasAddress', 'credentialSecretKey', 'serviceDomain']) {
-          const account = await toolRegistry.execute(`protected-account-${field}`, 'accounts', {
+          const account = toolRegistry.execute(`protected-account-${field}-${credential.slice(0, 4)}`, 'accounts', {
             ...accountInput, [field]: credential,
           });
-          expect(account.success).toBe(false);
-          expect(account.error).toContain('cannot store secret-looking values');
-          expect(account.error).not.toContain(credential);
+          if (credential === 'password=synthetic-value') {
+            await expect(account).rejects.toMatchObject({ code: 'TOOL_ERROR', cause: { problem: 'credential-material' } });
+          } else {
+            await expect(account).rejects.toBeInstanceOf(ToolInputProjectionError);
+            await expect(account).rejects.toMatchObject({ problem: 'held', message: 'Tool input projection held.' });
+          }
           expect(protectedReads.requests).toHaveLength(0);
+          expect(JSON.stringify(protectedPrivacy.privacyRequests)).not.toContain(credential);
           expect(existsSync(accountFile)).toBe(false);
         }
       }
-      const listed = await toolRegistry.execute('empty-accounts', 'accounts', { action: 'list' });
+      using judgmentLog = new SqliteDecisionLog(':memory:');
+      const listAccounts = async (id: string) => {
+        const port = installJudgmentPort(withDecisionLog(nativeMemoryWorkAdmission(undefined, 'read').port, judgmentLog));
+        try { return await executeNativeMemoryWork(toolRegistry, services.permissionManager, id, 'accounts', { action: 'list' }); }
+        finally { installJudgmentPort(port); }
+      };
+      const listed = await listAccounts('empty-accounts');
       expect(listed.success).toBe(true);
       expect(listed.output).toContain('No accounts have been recorded');
 
       // Safe fields do not bypass the original outward-effect decision.
       const deniedReads = securityPort({ derives: () => true });
-      installJudgmentPort(deniedReads.port);
-      const denied = await toolRegistry.execute('policy-denied-account', 'accounts', accountInput);
+      installJudgmentPort(withDecisionLog(nativeMemoryWorkAdmission(deniedReads.port).port, judgmentLog));
+      const denied = await executeNativeMemoryWork(toolRegistry, services.permissionManager, 'policy-denied-account', 'accounts', accountInput);
       expect(denied.success).toBe(false);
       expect(denied.error).not.toContain('secret-looking');
       expect(deniedReads.requests.length).toBeGreaterThan(0);
-      const stillEmpty = await toolRegistry.execute('still-empty-accounts', 'accounts', { action: 'list' });
+      const stillEmpty = await listAccounts('still-empty-accounts');
       expect(stillEmpty.output).toContain('No accounts have been recorded');
       expect(existsSync(accountFile)).toBe(false);
 
       const allowedReads = securityPort({ derives: () => false });
-      installJudgmentPort(allowedReads.port);
-      const recorded = await toolRegistry.execute('policy-allowed-account', 'accounts', accountInput);
+      installJudgmentPort(withDecisionLog(nativeMemoryWorkAdmission(allowedReads.port).port, judgmentLog));
+      const recorded = await executeNativeMemoryWork(toolRegistry, services.permissionManager, 'policy-allowed-account', 'accounts', accountInput);
       expect(recorded.success).toBe(true);
       expect(recorded.output).toContain('Recorded:');
       expect(allowedReads.requests.length).toBeGreaterThan(0);
-      const stored = await toolRegistry.execute('stored-accounts', 'accounts', { action: 'list' });
+      const stored = await listAccounts('stored-accounts');
       expect(stored.output).toContain(accountInput.purpose);
       const persisted = readFileSync(accountFile, 'utf8');
       expect(persisted).toContain(accountInput.purpose);
       for (const credential of ISSUERS) expect(persisted).not.toContain(credential);
-      installJudgmentPort(undefined);
-      const accepted = await toolRegistry.execute('safe-memory', 'agent_local_registry', {
+      installJudgmentPort(withDecisionLog(nativeMemoryWorkAdmission().port, judgmentLog));
+      const accepted = await executeNativeMemoryWork(toolRegistry, services.permissionManager, 'safe-memory', 'agent_local_registry', {
         ...args, summary: 'Safe local preference', detail: ALLOWED.join('\n'),
       });
       expect(accepted.success).toBe(true);

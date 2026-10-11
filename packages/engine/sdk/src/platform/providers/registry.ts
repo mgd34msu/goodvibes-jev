@@ -48,10 +48,10 @@ import { ConfiguredModelFollower } from './registry-configured-model.js';
 import type { LiveModelDiscoveryResult } from './live-model-discovery.js';
 import { applyProviderNativeModelBaseline, removeProviderNativeModels, StartupModelDiscovery, sweepLiveModelDiscovery } from './registry-live-model-discovery.js';
 import type {
-  ModelDefinition, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
+  ModelDefinition, ProviderCatalogOptions, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
 } from './registry-types.js';
 export type {
-  ContextWindowOrigin, ContextWindowProvenance, ModelDefinition, ModelTier, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
+  ContextWindowOrigin, ContextWindowProvenance, ModelDefinition, ModelTier, ProviderCatalogOptions, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
 } from './registry-types.js';
 
 /**
@@ -909,8 +909,8 @@ export class ProviderRegistry {
       });
   }
 
-  initCatalog(): void {
-    initProviderCatalog(this._catalogLifecycleCtx());
+  initCatalog(options: ProviderCatalogOptions = {}): void {
+    initProviderCatalog(this._catalogLifecycleCtx(options.contextWindowEnrichment ?? 'background'));
   }
 
   /** Background, TTL-respecting live model discovery sweep (never blocks/throws); separate from initCatalog() so tests calling that without mocking a provider API aren't surprised by a live network call. Real callers invoke this once at startup too. */
@@ -923,11 +923,11 @@ export class ProviderRegistry {
   /** Providers whose model listing failed in the startup sweep, with the failure (StartupModelDiscovery). */
   unreachableAtStartup(): ReadonlyMap<string, string> { return this.startupDiscovery.unreachable(); }
 
-  async refreshCatalog(): Promise<void> {
-    await refreshProviderCatalog(this._catalogLifecycleCtx());
+  async refreshCatalog(options: ProviderCatalogOptions = {}): Promise<void> {
+    await refreshProviderCatalog(this._catalogLifecycleCtx(options.contextWindowEnrichment ?? 'background'));
   }
 
-  private _catalogLifecycleCtx() {
+  private _catalogLifecycleCtx(contextWindowEnrichment: 'background' | 'none' = 'background') {
     return {
       getCatalogCachePaths: () => this.getCatalogCachePaths(),
       updateCatalogState: (models: readonly CatalogModel[], fetchedAt?: number) =>
@@ -935,8 +935,11 @@ export class ProviderRegistry {
       getCatalogModels: () => this.catalogModels as readonly CatalogModel[],
       favoritesStore: this.favoritesStore,
       benchmarkStore: this.benchmarkStore,
-      refreshCatalog: () => this.refreshCatalog(),
-      afterCatalogApplied: () => { this.routingReadings.readInBackground(() => this.updateCatalogState(this.catalogModels, this.pricingCatalog?.fetchedAt)); this.readContextWindows(); },
+      refreshCatalog: () => this.refreshCatalog({ contextWindowEnrichment }),
+      afterCatalogApplied: () => {
+        this.routingReadings.readInBackground(() => this.updateCatalogState(this.catalogModels, this.pricingCatalog?.fetchedAt));
+        if (contextWindowEnrichment !== 'none') this.readContextWindows();
+      },
     };
   }
 }

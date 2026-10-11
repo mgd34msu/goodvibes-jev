@@ -156,7 +156,7 @@ describe('support-bundle redaction covers credentials named by full key', () => 
   });
 
   test('inline private material under a path-typed field stays out of serialized export and wire', async () => {
-    const privatePem = '-----BEGIN PRIVATE KEY-----\nSyntheticPrivateMaterialAbcdef0123456789+/=\n-----END PRIVATE KEY-----';
+    const privatePem = '-----BEGIN PRIVATE KEY-----\nSyntheticPrivateMaterialAbcdef0123456789+/=\n-----END PRIVATE KEY-----'; // gitleaks:allow synthetic text, not a DER private key
     const fake = fakePort((name, question, state) => {
       if (name === 'kind') {
         const field = state !== null && typeof state === 'object' && 'field' in state ? state.field : undefined;

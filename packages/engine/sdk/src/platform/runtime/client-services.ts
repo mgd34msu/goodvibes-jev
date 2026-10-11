@@ -110,7 +110,7 @@ import { SandboxSessionRegistry } from './sandbox/session-registry.js';
 import { createShellPathService, type ShellPathService } from './shell-paths.js';
 import { claimSurfaceHome } from './home-single-writer.js';
 import { requireSurfaceRoot } from './surface-root.js';
-import { createDisposalScope } from './disposal.js';
+import { createAsyncDisposalScope } from './disposal.js';
 import { createDomainDispatch, type DomainDispatch, type RuntimeStore } from './store/index.js';
 import type { RuntimeEventBus } from './events/index.js';
 import type { FeatureFlagManager } from './feature-flags/index.js';
@@ -274,6 +274,7 @@ export interface ClientRuntimeServices {
 
   /** Stop every poller and bridge this composition started. Idempotent. */
   dispose(): void;
+  close(): Promise<void>;
 }
 
 /**
@@ -406,7 +407,7 @@ export interface ClientRuntimeServicesOptions {
  * for the two graphs to drift on it.
  */
 export function createClientRuntimeServices(options: ClientRuntimeServicesOptions): ClientRuntimeServices {
-  const disposalScope = createDisposalScope('ClientRuntimeServices');
+  const disposalScope = createAsyncDisposalScope('ClientRuntimeServices');
   const workingDirectory = options.workingDir;
   const homeDirectory = options.homeDirectory;
   const surfaceRoot = requireSurfaceRoot(options.surfaceRoot, 'ClientRuntimeServicesOptions surfaceRoot');
@@ -669,6 +670,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     projectIndex,
     judgment,
     dispose: (): void => disposalScope.dispose(),
+    close: (): Promise<void> => disposalScope.close(),
   };
 }
 

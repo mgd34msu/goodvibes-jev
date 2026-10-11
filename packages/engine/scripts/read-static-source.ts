@@ -8,7 +8,7 @@ import { collectInternalIdentifierCandidates, INTERNAL_ID_ROOT, scanTargetsFromE
 import { isInternalIdentifierExempt } from './internal-identifier-rule.ts';
 import { collectDeferredSourceCandidates, TODO_ROOT } from './no-todo-markers.ts';
 import { sourceMarkerAnchors } from './no-todo-marker-rules.ts';
-import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_READINGS_PATH, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, type StaticSourceInput, type StaticSourceReadings, type StaticSourceReceipt } from './static-source-readings.ts';
+import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_READINGS_PATH, STATIC_SOURCE_READING_PLAN_VERSION, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, type StaticSourceInput, type StaticSourceReadings, type StaticSourceReceipt } from './static-source-readings.ts';
 
 export function collectStaticInputs(): StaticSourceInput[] {
   const internal = collectInternalIdentifierCandidates(INTERNAL_ID_ROOT, scanTargetsFromEnvironment(process.env.INTERNAL_ID_DIRS_JSON))
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   console.log(`[static-source] ${inputs.length} complete inputs: ${JSON.stringify(counts)}`);
   if (values.inputs) {
     mkdirSync(dirname(resolve(values.inputs)), { recursive: true });
-    writeFileSync(resolve(values.inputs), `${JSON.stringify({ decisionSourceHash, snapshot, inputs }, null, 2)}\n`);
+    writeFileSync(resolve(values.inputs), `${JSON.stringify({ readingPlanVersion: STATIC_SOURCE_READING_PLAN_VERSION, decisionSourceHash, snapshot, inputs }, null, 2)}\n`);
   }
   if (values['inventory-only']) return;
   if (!values.log) throw new Error('--log is required to retain genuine provider evidence');
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   // Changed input keys remain historical captures, never evidence for a current
   // input. Replaced captures under the same key retain their lineage below.
   const readings: Record<string, unknown> = { ...previous?.readings };
-  const current: StaticSourceReadings = { format: 1, decisionSourceHash, readings, captureSources, captureBatterySources };
+  const current: StaticSourceReadings = { format: 1, readingPlanVersion: STATIC_SOURCE_READING_PLAN_VERSION, decisionSourceHash, readings, captureSources, captureBatterySources };
   const pending = inputs.filter(input => {
     const key = staticInputKey(input);
     const revalidated = values.all ? null : revalidateStaticInput(input, previous);
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(checkpointPath), { recursive: true });
   using journal = openStaticSourceJournal(journalPath);
-  journal.append({ format: 1, decisionSourceHash, readings: {}, captureSources, captureBatterySources });
+  journal.append({ ...current, readings: {} });
   using log = new SqliteDecisionLog(resolve(values.log));
   const port = withDecisionLog(createSystemOnePort(judgmentConfigFromEnv(process.env)), log);
   const abort = new AbortController();
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
   let next = 0;
   let completed = inputs.length - pending.length;
-  const persist = (): void => saveStaticSourceReadings({ format: 1, decisionSourceHash, readings, captureSources, captureBatterySources }, checkpointPath);
+  const persist = (): void => saveStaticSourceReadings(current, checkpointPath);
   const onReceipt = (input: StaticSourceInput, receipt: StaticSourceReceipt): void => {
     const key = staticInputKey(input);
     const prior = readings[key];
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     if (JSON.stringify(value) === JSON.stringify(prior)) return;
     readings[key] = value;
     const capturedInput = priorId !== receipt.presence.id || (receipt.selection && priorSelectionId !== receipt.selection.id) ? input : undefined;
-    journal.append({ format: 1, decisionSourceHash, readings: { [key]: value } }, capturedInput);
+    journal.append({ format: 1, readingPlanVersion: STATIC_SOURCE_READING_PLAN_VERSION, decisionSourceHash, readings: { [key]: value } }, capturedInput);
   };
   const worker = async (): Promise<void> => {
     while (next < pending.length) {
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     if (staticDecisionSourceHash() !== decisionSourceHash || sha256(JSON.stringify(after.map(input => staticInputKey(input)))) !== snapshot) {
       throw new Error(`Source changed during preparation; reusable genuine observations retained in ${checkpointPath}, canonical artifact was not published`);
     }
-    const result: StaticSourceReadings = { format: 1, decisionSourceHash, readings, captureSources, captureBatterySources };
+    const result: StaticSourceReadings = current;
     saveStaticSourceReadings(result, path);
     const held = inputs.filter(input => staticInputStanding(input, result).kind === 'held');
     const violations = inputs.filter(input => staticInputStanding(input, result).kind === 'violation');

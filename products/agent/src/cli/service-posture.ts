@@ -7,7 +7,7 @@ import { resolveRuntimeEndpointBinding } from './endpoints.ts';
 import type { RuntimeEndpointBinding, RuntimeEndpointId } from './endpoints.ts';
 import { classifyBindPosture, isNetworkFacing, redactText } from '@goodvibes-jev/engine/terminal-shell';
 import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { retainCliConfig } from './config-owner.ts';
+import { retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { dialHostForConfiguredHost } from '../config/connected-host-dial.ts';
 
 export interface CliServiceRuntime {

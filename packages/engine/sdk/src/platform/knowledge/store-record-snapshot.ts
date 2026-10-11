@@ -1,7 +1,7 @@
 import { projectKnowledgeSourceReferences } from './source-structural-references.js';
 import { createHash } from 'node:crypto';
 import { assertJudgmentInput, captureOwnedJson } from '../gate/judgment-input.js';
-import type { SQLiteStore } from '../state/sqlite-store.js';
+import type { PersistedKnowledgeRecordSelector, SQLiteStore } from '../state/sqlite-store.js';
 import { mapEdgeRow, mapExtractionRow, mapNodeRow } from './store-schema.js';
 import { isKnowledgeClock, sameKnowledgeRecord } from './store-record-representation.js';
 import type { KnowledgeStore } from './store.js';
@@ -46,6 +46,12 @@ export class KnowledgeRecordAdmissionHeldError extends Error {
 }
 interface AdmissionReceipt { readonly assertCurrent: () => void; }
 const admittedRecords = new WeakMap<AdmissionReceipt, object>();
+interface AdmissionState {
+  readonly store: KnowledgeStore;
+  readonly selector: PersistedKnowledgeRecordSelector;
+  readonly assertGeneration: (generation: string | null) => void;
+}
+const admissionStates = new WeakMap<object, AdmissionState>();
 
 interface SourceReferences { readonly source: KnowledgeSourceRecord; readonly extraction: KnowledgeExtractionRecord | null; readonly proof: object | undefined; }
 /** Complete raw rows are the admission source. An exact current numeric view can
@@ -53,11 +59,12 @@ interface SourceReferences { readonly source: KnowledgeSourceRecord; readonly ex
  * complete-input admission and never inherits a clock exception. */
 export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: RecordKind, record: EvidenceRecord, references?: SourceReferences) {
   const original = captureOwnedJson(record);
+  const selector = Object.freeze({ kind, id: record.id });
   if (references && (kind === 'source' ? references.source !== record : kind === 'extraction' ? references.extraction !== record : true)) throw new KnowledgeRecordAdmissionHeldError('stale');
   const structural = references ? projectKnowledgeSourceReferences(references.source, references.extraction, references.proof) : undefined;
-  const read = () => kind === 'source' ? (() => { const snapshot = store.getSourceSnapshot({ id: record.id }); return { ...snapshot, record: snapshot.source }; })()
-    : store.getRecordSnapshot(kind, record.id);
-  const current = () => kind === 'source' ? store.getSource(record.id) : kind === 'node' ? store.getNode(record.id) : store.getExtraction(record.id);
+  const read = () => kind === 'source' ? (() => { const snapshot = store.getSourceSnapshot({ id: selector.id }); return { ...snapshot, record: snapshot.source }; })()
+    : store.getRecordSnapshot(kind, selector.id);
+  const current = () => kind === 'source' ? store.getSource(selector.id) : kind === 'node' ? store.getNode(selector.id) : store.getExtraction(selector.id);
   const snapshot = read();
   if (current() !== record || !snapshot.raw || !snapshot.record || !sameKnowledgeRecord(original, snapshot.record)) {
     assertJudgmentInput(original);
@@ -82,12 +89,42 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
   for (const column of ['created_at', 'updated_at', ...(kind === 'source' && snapshot.raw.last_crawled_at !== null ? ['last_crawled_at'] : [])]) {
     if (!isKnowledgeClock(snapshot.raw[column])) throw new KnowledgeRecordAdmissionHeldError('malformed');
   }
+  const assertGeneration = (generation: string | null) => {
+    if (generation !== snapshot.generation || !sameKnowledgeRecord(original, record) || current() !== record) throw new KnowledgeRecordAdmissionHeldError('stale');
+  };
   const receipt = Object.freeze({ assertCurrent: () => {
-    const generation = kind === 'source' ? store.getSourceGeneration(record.id) : store.getRecordGeneration(kind, record.id);
-    if (current() !== record || generation !== snapshot.generation || !sameKnowledgeRecord(original, record)) throw new KnowledgeRecordAdmissionHeldError('stale');
+    assertGeneration(kind === 'source' ? store.getSourceGeneration(selector.id) : store.getRecordGeneration(kind, selector.id));
   } });
   admittedRecords.set(receipt, record);
+  admissionStates.set(receipt, Object.freeze({ store, selector, assertGeneration }));
   return receipt;
+}
+
+/** Only authentic original receipts can select this complete private readset. */
+export function assertKnowledgeRecordAdmissions(store: KnowledgeStore, receipts: readonly AdmissionReceipt[]): void {
+  if (!Array.isArray(receipts) || Object.getPrototypeOf(receipts) !== Array.prototype) throw new KnowledgeRecordAdmissionHeldError('malformed');
+  const array: object = receipts, descriptors = Object.getOwnPropertyDescriptors(array);
+  const length: unknown = descriptors.length?.value;
+  if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0 || Reflect.ownKeys(descriptors).length !== length + 1) {
+    throw new KnowledgeRecordAdmissionHeldError('malformed');
+  }
+  const states: AdmissionState[] = [];
+  for (let index = 0; index < length; index++) {
+    const descriptor = descriptors[String(index)];
+    if (!descriptor || !('value' in descriptor)) throw new KnowledgeRecordAdmissionHeldError('malformed');
+    const receipt: unknown = descriptor.value;
+    const state = receipt && typeof receipt === 'object' ? admissionStates.get(receipt) : undefined;
+    if (!state || state.store !== store) throw new KnowledgeRecordAdmissionHeldError('stale');
+    states.push(state);
+  }
+  store.assertRecordSnapshotFrame(() => {
+    const generations = store.getRecordGenerations(states.map(state => state.selector));
+    for (const [index, state] of states.entries()) {
+      const generation = generations[index];
+      if (generation === undefined) throw new KnowledgeRecordAdmissionHeldError('malformed');
+      state.assertGeneration(generation);
+    }
+  });
 }
 
 /** Preserve complete caller containers, including named array properties and

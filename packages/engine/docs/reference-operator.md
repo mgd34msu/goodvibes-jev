@@ -6326,6 +6326,12 @@ Create a durable automation job.
     "id": {
       "type": "string"
     },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "name": {
       "type": "string"
     },
@@ -6857,6 +6863,9 @@ Create a durable automation job.
   "type": "object",
   "properties": {
     "id": {
+      "type": "string"
+    },
+    "mutationRevision": {
       "type": "string"
     },
     "name": {
@@ -7622,6 +7631,7 @@ Create a durable automation job.
   },
   "required": [
     "id",
+    "mutationRevision",
     "name",
     "labels",
     "createdAt",
@@ -7664,6 +7674,15 @@ Delete a durable automation job.
   "properties": {
     "jobId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -7715,6 +7734,15 @@ Disable a durable automation job.
   "properties": {
     "jobId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -7767,6 +7795,15 @@ Enable a durable automation job.
   "properties": {
     "jobId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -7840,6 +7877,9 @@ Return automation jobs and recent runs. Without ?limit/?cursor returns { jobs: [
         "type": "object",
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "mutationRevision": {
             "type": "string"
           },
           "name": {
@@ -8605,6 +8645,7 @@ Return automation jobs and recent runs. Without ?limit/?cursor returns { jobs: [
         },
         "required": [
           "id",
+          "mutationRevision",
           "name",
           "labels",
           "createdAt",
@@ -8729,6 +8770,15 @@ Update a durable automation job. (Renamed from automation.jobs.patch in the 1.0.
   "properties": {
     "jobId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     },
     "name": {
       "type": "string"
@@ -9210,6 +9260,9 @@ Update a durable automation job. (Renamed from automation.jobs.patch in the 1.0.
   "type": "object",
   "properties": {
     "id": {
+      "type": "string"
+    },
+    "mutationRevision": {
       "type": "string"
     },
     "name": {
@@ -9975,6 +10028,7 @@ Update a durable automation job. (Renamed from automation.jobs.patch in the 1.0.
   },
   "required": [
     "id",
+    "mutationRevision",
     "name",
     "labels",
     "createdAt",
@@ -14119,6 +14173,12 @@ Create a schedule record.
     "name": {
       "type": "string"
     },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "prompt": {
       "type": "string"
     },
@@ -14582,6 +14642,9 @@ Create a schedule record.
   "type": "object",
   "properties": {
     "id": {
+      "type": "string"
+    },
+    "mutationRevision": {
       "type": "string"
     },
     "name": {
@@ -15347,6 +15410,7 @@ Create a schedule record.
   },
   "required": [
     "id",
+    "mutationRevision",
     "name",
     "labels",
     "createdAt",
@@ -15389,6 +15453,15 @@ Delete a schedule record.
   "properties": {
     "scheduleId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -15440,6 +15513,15 @@ Disable a schedule record.
   "properties": {
     "scheduleId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -15492,6 +15574,15 @@ Enable a schedule record.
   "properties": {
     "scheduleId": {
       "type": "string"
+    },
+    "expectedMutationRevision": {
+      "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -15558,6 +15649,9 @@ Return schedule records.
         "type": "object",
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "mutationRevision": {
             "type": "string"
           },
           "name": {
@@ -16323,6 +16417,7 @@ Return schedule records.
         },
         "required": [
           "id",
+          "mutationRevision",
           "name",
           "labels",
           "createdAt",
@@ -23131,6 +23226,12 @@ Remove a channel draft from the daemon-side store.
   "properties": {
     "draftId": {
       "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -23364,7 +23465,7 @@ Return daemon-mirrored channel drafts for cross-device sync. Webhook values are 
 
 #### `channels.drafts.save`
 
-Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation.
+Mirror a channel draft to the daemon-side store. Webhook values must be redacted before transmission; raw webhook tokens are rejected. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.
 
 - Title: `Save Channel Draft`
 - Source: `builtin`
@@ -23426,6 +23527,12 @@ Mirror a channel draft to the daemon-side store. Webhook values must be redacted
     },
     "sendError": {
       "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -25132,7 +25239,7 @@ Return repair actions exposed by a channel surface.
 
 #### `channels.routing.assign`
 
-Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation.
+Create or update a channel-to-profile routing rule in the daemon-persisted routing table. Requires explicit confirmation or fresh recorded native admission for a paired autonomous caller.
 
 - Title: `Assign Channel Routing Rule`
 - Source: `builtin`
@@ -25150,6 +25257,12 @@ Create or update a channel-to-profile routing rule in the daemon-persisted routi
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "channelId": {
       "type": "string"
     },
@@ -25238,6 +25351,12 @@ Remove a channel-to-profile routing rule from the daemon-persisted routing table
   "properties": {
     "assignmentId": {
       "type": "string"
+    },
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
     }
   },
   "required": [
@@ -103951,6 +104070,12 @@ Record that the owner has one occurrence in hand, so nothing is pushed at them a
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "occasionId": {
       "type": "string"
     },
@@ -104025,6 +104150,12 @@ Record yes, no or later for one occurrence. A no goes silent for the rest of thi
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "occasionId": {
       "type": "string"
     },
@@ -104192,6 +104323,12 @@ Write the confirmed occasion as one line in the owner profile, under Important d
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "title": {
       "type": "string"
     },
@@ -104301,6 +104438,12 @@ Stop re-raising a conflict the owner has dealt with. The conflict itself is neve
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "occasionId": {
       "type": "string"
     }
@@ -104432,6 +104575,12 @@ Record one answer and return the next question, if there is one. The interview g
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "interviewId": {
       "type": "string"
     },
@@ -104726,6 +104875,12 @@ Close the interview with what the owner settled on and write it to the gift hist
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "interviewId": {
       "type": "string"
     },
@@ -105442,6 +105597,12 @@ Write the confirmed plan as one line in the owner profile, under Plans, carrying
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "title": {
       "type": "string"
     },
@@ -105905,6 +106066,12 @@ Remove one occasion and every record the machine kept against it, answers, gift 
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "occasionId": {
       "type": "string"
     },
@@ -106103,7 +106270,14 @@ Run one pass immediately: reap expired and orphaned state, find the occasions en
 ```json
 {
   "type": "object",
-  "properties": {},
+  "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    }
+  },
   "additionalProperties": false
 }
 ```
@@ -106112,241 +106286,273 @@ Run one pass immediately: reap expired and orphaned state, find the occasions en
 
 ```json
 {
-  "type": "object",
-  "properties": {
-    "ranAt": {
-      "type": "number"
-    },
-    "today": {
-      "type": "string"
-    },
-    "hold": {
-      "anyOf": [
-        {
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "ranAt": {
+          "type": "number"
+        },
+        "today": {
           "type": "string"
         },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "nudge": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "id": {
+        "hold": {
+          "anyOf": [
+            {
               "type": "string"
             },
-            "raisedAt": {
-              "type": "number"
-            },
-            "subjects": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "occasionId": {
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "person": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "gift-giving",
-                      "remember-only",
-                      "neither"
-                    ]
-                  },
-                  "proximity": {
-                    "type": "string",
-                    "enum": [
-                      "approaching",
-                      "soon",
-                      "imminent"
-                    ]
-                  },
-                  "subject": {
-                    "type": "string",
-                    "enum": [
-                      "owner",
-                      "other",
-                      "unattributed"
-                    ]
-                  },
-                  "acknowledged": {
-                    "type": "boolean"
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nudge": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "raisedAt": {
+                  "type": "number"
+                },
+                "subjects": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "occasionId": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "person": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "gift-giving",
+                          "remember-only",
+                          "neither"
+                        ]
+                      },
+                      "proximity": {
+                        "type": "string",
+                        "enum": [
+                          "approaching",
+                          "soon",
+                          "imminent"
+                        ]
+                      },
+                      "subject": {
+                        "type": "string",
+                        "enum": [
+                          "owner",
+                          "other",
+                          "unattributed"
+                        ]
+                      },
+                      "acknowledged": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "occasionId",
+                      "title",
+                      "person",
+                      "kind",
+                      "proximity",
+                      "subject",
+                      "acknowledged"
+                    ],
+                    "additionalProperties": false
                   }
                 },
-                "required": [
-                  "occasionId",
-                  "title",
-                  "person",
-                  "kind",
-                  "proximity",
-                  "subject",
-                  "acknowledged"
-                ],
-                "additionalProperties": false
-              }
+                "message": {
+                  "type": "string"
+                },
+                "answerable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "raisedAt",
+                "subjects",
+                "message",
+                "answerable"
+              ],
+              "additionalProperties": false
             },
-            "message": {
-              "type": "string"
-            },
-            "answerable": {
-              "type": "boolean"
+            {
+              "type": "null"
             }
-          },
-          "required": [
-            "id",
-            "raisedAt",
-            "subjects",
-            "message",
-            "answerable"
-          ],
-          "additionalProperties": false
+          ]
         },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "conflictMessages": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "resumedInterviews": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "delivered": {
-      "type": "boolean"
-    },
-    "deliveryChannel": {
-      "type": "string"
-    },
-    "deliveryId": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "deliveries": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "channel": {
+        "conflictMessages": {
+          "type": "array",
+          "items": {
             "type": "string"
-          },
-          "delivered": {
-            "type": "boolean"
-          },
-          "deliveryId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "failure": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
-        "required": [
-          "channel",
-          "delivered",
-          "deliveryId",
-          "failure"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "mirrored": {
-      "type": "number"
-    },
-    "housekeeping": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "sweptAt": {
-              "type": "number"
-            },
-            "expiredAcknowledgements": {
-              "type": "number"
-            },
-            "orphanedRecords": {
-              "type": "number"
-            },
-            "expiredOpenItems": {
-              "type": "number"
-            },
-            "agedGiftRecords": {
-              "type": "number"
-            },
-            "droppedInterviews": {
-              "type": "number"
-            },
-            "staleMirrors": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "sweptAt",
-            "expiredAcknowledgements",
-            "orphanedRecords",
-            "expiredOpenItems",
-            "agedGiftRecords",
-            "droppedInterviews",
-            "staleMirrors"
-          ],
-          "additionalProperties": false
+        "resumedInterviews": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
-        {
-          "type": "null"
+        "delivered": {
+          "type": "boolean"
+        },
+        "deliveryChannel": {
+          "type": "string"
+        },
+        "deliveryId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deliveries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "string"
+              },
+              "delivered": {
+                "type": "boolean"
+              },
+              "deliveryId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "failure": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "channel",
+              "delivered",
+              "deliveryId",
+              "failure"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "mirrored": {
+          "type": "number"
+        },
+        "housekeeping": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "sweptAt": {
+                  "type": "number"
+                },
+                "expiredAcknowledgements": {
+                  "type": "number"
+                },
+                "orphanedRecords": {
+                  "type": "number"
+                },
+                "expiredOpenItems": {
+                  "type": "number"
+                },
+                "agedGiftRecords": {
+                  "type": "number"
+                },
+                "droppedInterviews": {
+                  "type": "number"
+                },
+                "staleMirrors": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "sweptAt",
+                "expiredAcknowledgements",
+                "orphanedRecords",
+                "expiredOpenItems",
+                "agedGiftRecords",
+                "droppedInterviews",
+                "staleMirrors"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
-      ]
+      },
+      "required": [
+        "ranAt",
+        "today",
+        "hold",
+        "nudge",
+        "conflictMessages",
+        "resumedInterviews",
+        "delivered",
+        "deliveryChannel",
+        "deliveryId",
+        "deliveries",
+        "mirrored",
+        "housekeeping"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        "acceptedDeliveries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stopped": {
+          "type": "string",
+          "enum": [
+            "request-retired-after-delivery",
+            "delivery-processing-stopped"
+          ]
+        }
+      },
+      "required": [
+        "complete",
+        "acceptedDeliveries",
+        "stopped"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "ranAt",
-    "today",
-    "hold",
-    "nudge",
-    "conflictMessages",
-    "resumedInterviews",
-    "delivered",
-    "deliveryChannel",
-    "deliveryId",
-    "deliveries",
-    "mirrored",
-    "housekeeping"
-  ],
-  "additionalProperties": false
+  ]
 }
 ```
 
@@ -109264,6 +109470,12 @@ Add one prose bullet to a section, carrying its provenance suffix. Same three-la
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "section": {
       "type": "string"
     },
@@ -109380,6 +109592,12 @@ Delete a mechanical field and every retained history comment for it, or one pros
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "fieldId": {
       "type": "string"
     },
@@ -110045,6 +110263,12 @@ Record or correct one mechanical field, moving any previous value into a retaine
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "fieldId": {
       "type": "string"
     },
@@ -110246,6 +110470,12 @@ Promote a field's most recent superseded value back to the active line, so a wro
 {
   "type": "object",
   "properties": {
+    "admission": {
+      "type": "string",
+      "enum": [
+        "autonomous"
+      ]
+    },
     "fieldId": {
       "type": "string"
     },

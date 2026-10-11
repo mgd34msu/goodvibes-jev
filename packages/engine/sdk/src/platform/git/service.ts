@@ -8,15 +8,6 @@ import type { HookEvent } from '../hooks/types.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
-function isMissingGitIdentityError(error: unknown): boolean {
-  const message = summarizeError(error).toLowerCase();
-  return (
-    message.includes('author identity unknown')
-    || message.includes('please tell me who you are')
-    || message.includes('unable to auto-detect email address')
-  );
-}
-
 /**
  * Extract bare repo-relative conflict paths from a failed merge's message.
  *
@@ -318,35 +309,31 @@ export class GitService {
       if (options?.amend) flags.push('--amend');
       if (options?.noVerify) flags.push('--no-verify');
 
-      const result = await (await this.git()).commit(message, undefined, flags);
-      const output = { hash: result.commit, summary: JSON.stringify(result.summary) };
-      await this.firePost('commit', { message, ...output });
-      return output;
-    } catch (err) {
-      if (options?.fallbackIdentity && isMissingGitIdentityError(err)) {
-        try {
-          const flags: string[] = [];
-          if (options.amend) flags.push('--amend');
-          if (options.noVerify) flags.push('--no-verify');
-          // Keep the normal commit parser on the fallback path too. A silent
-          // rejecting hook can resolve with no commit; reading HEAD afterwards
-          // would mistake the previous commit for a successful new one.
-          const fallbackGit = await createSimpleGit({
+      let commitGit = await this.git();
+      if (options?.fallbackIdentity) {
+        const identity = await Promise.allSettled([
+          commitGit.raw(['var', 'GIT_AUTHOR_IDENT']),
+          commitGit.raw(['var', 'GIT_COMMITTER_IDENT']),
+        ]);
+        if (identity.some(result => result.status === 'rejected')) {
+          commitGit = await createSimpleGit({
             baseDir: this.getCwd(),
             config: [
               `user.name=${options.fallbackIdentity.name}`,
               `user.email=${options.fallbackIdentity.email}`,
             ],
           });
-          const result = await fallbackGit.commit(message, undefined, flags);
-          const output = { hash: result.commit, summary: JSON.stringify(result.summary) };
-          await this.firePost('commit', { message, ...output });
-          return output;
-        } catch (fallbackErr) {
-          await this.fireFail('commit', { message, error: summarizeError(fallbackErr) });
-          throw fallbackErr;
+          await Promise.all([
+            commitGit.raw(['var', 'GIT_AUTHOR_IDENT']),
+            commitGit.raw(['var', 'GIT_COMMITTER_IDENT']),
+          ]);
         }
       }
+      const result = await commitGit.commit(message, undefined, flags);
+      const output = { hash: result.commit, summary: JSON.stringify(result.summary) };
+      await this.firePost('commit', { message, ...output });
+      return output;
+    } catch (err) {
       await this.fireFail('commit', { message, error: summarizeError(err) });
       throw err;
     }

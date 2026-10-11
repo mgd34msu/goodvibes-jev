@@ -87,7 +87,7 @@ describe('the task list is both registries', () => {
     // The local tasks are real and must not be hidden behind an error; the
     // reason is what stops the shortened list from reading as complete.
     expect(result.tasks.map((t) => t.task.id)).toEqual(['l1']);
-    expect(result.daemonUnavailable).toContain('connection reset');
+    expect(result.daemonUnavailable).toBe('[REDACTED]');
   });
 
   test('no daemon configured is reported as such, not as a failure', async () => {

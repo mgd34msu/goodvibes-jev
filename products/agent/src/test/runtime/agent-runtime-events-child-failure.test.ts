@@ -1,6 +1,7 @@
 import { getTestRuntimeServices } from '../helpers/runtime-services.ts';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { RuntimeEventBus, createEventEnvelope } from '@/runtime/index.ts';
 import { AgentManager, ToolRegistry, createAgentTool } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -18,18 +19,23 @@ const flushMicrotasks = async (rounds = 6) => {
   for (let i = 0; i < rounds; i += 1) await Promise.resolve();
 };
 
+const PUBLIC_FAILURE = 'agent went silent for 30s';
 const readings = fakePort((name, question, state) => {
-  if (name !== 'reason' || !JSON.stringify(state).includes('agent went silent for 30s')) {
-    throw new Error('Unexpected synthetic child-failure reading');
+  if (name === 'reason' && JSON.stringify(state) === JSON.stringify({ error: PUBLIC_FAILURE })) {
+    return choiceAnswer(question, 'watchdog_timeout', 0.97);
   }
-  return choiceAnswer(question, 'watchdog_timeout', 0.97);
+  if ((name === 'lineHasCredential' || name === 'spanIsCredential') && JSON.stringify(state) === JSON.stringify({
+    phase: 'source', parts: [{ kind: 'text', text: PUBLIC_FAILURE }], target: 'whole-line',
+  })) return noulAnswer(0.01);
+  throw new Error('Unexpected synthetic child-failure reading');
 });
 let previousPort: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => {
+beforeEach(async () => {
   // Construct the graph before installing the fixture reading: startup installs
   // its own judgment port, which would otherwise replace this synthetic answer.
   getTestRuntimeServices();
   previousPort = installJudgmentPort(readings.port);
+  expect(await redactSensitiveDataAsync(PUBLIC_FAILURE)).toBe(PUBLIC_FAILURE);
 });
 afterEach(() => { installJudgmentPort(previousPort); });
 
@@ -42,11 +48,12 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED child-failure envelope enrich
       configManager,
       messageBus: agentMessageBus,
       // The actual registered reading receives this synthetic failure text.
-      executor: { runAgent: () => Promise.reject(new Error('agent went silent for 30s')) },
+      executor: { runAgent: () => Promise.reject(new Error(PUBLIC_FAILURE)) },
     });
     const record = agentManager.spawn({ mode: 'spawn', outsideContract: true, task: 'investigate the flaky test', template: 'engineer' });
     await flushMicrotasks();
     expect(record.status).toBe('failed');
+    expect(record.error).toBe(PUBLIC_FAILURE);
 
     const toolRegistry = new ToolRegistry();
     toolRegistry.register(createAgentTool({ manager: agentManager, messageBus: agentMessageBus, configManager, contractRunner: getTestRuntimeServices().contractRunner, projectRoot: configDir, resolveSessionId: () => 'session-1' }));

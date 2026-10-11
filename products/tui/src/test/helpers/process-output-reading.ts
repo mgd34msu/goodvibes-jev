@@ -1,13 +1,13 @@
-import type { EntryType } from '@goodvibes-jev/judgment';
+import type { EntryType, JsonValue } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 
-export function processEvidenceRows(state: EntryType, key: string): readonly EntryType[] {
+export function processEvidenceRows(state: EntryType, key: string): readonly JsonValue[] {
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Expected process evidence');
   const rows = state[key];
   if (!Array.isArray(rows)) throw new Error(`Missing process ${key}`);
   return rows;
 }
-function field(row: EntryType | undefined, key: string): EntryType | undefined {
+function field(row: JsonValue | undefined, key: string): JsonValue | undefined {
   return row && typeof row === 'object' && !Array.isArray(row) ? row[key] : undefined;
 }
 /** Exact authored observations over real public batched requests. */

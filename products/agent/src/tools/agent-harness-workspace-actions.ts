@@ -185,13 +185,13 @@ function localActionRouteHint(action: AgentWorkspaceAction): string {
 function workspaceActionRouteHint(action: AgentWorkspaceAction): string {
   if (action.kind === 'settings-import') return 'settings action:"import"';
   if (action.kind === 'setup-checkpoint') {
-    if (action.setupCheckpointOperation === 'mark-current') return 'agent_harness mode:"mark_setup_checkpoint" confirm:true explicitUserRequest:"..."';
-    if (action.setupCheckpointOperation === 'clear') return 'agent_harness mode:"clear_setup_checkpoint" confirm:true explicitUserRequest:"..."';
+    if (action.setupCheckpointOperation === 'mark-current') return 'agent_harness mode:"mark_setup_checkpoint"';
+    if (action.setupCheckpointOperation === 'clear') return 'agent_harness mode:"clear_setup_checkpoint"';
     return 'agent_harness mode:"setup_checkpoint"';
   }
   if (action.id === 'account-route-readiness') return 'models action:"status" includeParameters:true';
   if (action.id === 'account-local-model-cookbook') return 'models action:"local"';
-  if (action.id === 'account-local-server-health') return 'models action:"smoke" confirm:true';
+  if (action.id === 'account-local-server-health') return 'models action:"smoke"';
   if (action.id === 'account-run-local-model-benchmark') return 'agent_model_compare';
   if (action.id === 'account-local-benchmark-evidence') return 'models action:"local" includeParameters:true';
   if (action.id === 'assistant-browser-cockpit') return 'computer action:"open_browser"';
@@ -301,9 +301,9 @@ export function describeWorkspaceAction(
       modelExecution: {
         route: 'settings-import',
         dispatcher: 'run_workspace_action',
-        confirmation: 'required',
-        preview: 'available-without-confirmation',
-        note: 'Imports only Agent-owned shared GoodVibes settings and provider subscription state after explicit user confirmation.',
+        admission: 'current recorded effect admission',
+        preview: 'read-only',
+        note: 'Imports only Agent-owned shared GoodVibes settings and provider subscription state through current recorded settings admission.',
       },
     } : {}),
     ...(action.kind === 'setup-checkpoint' ? {
@@ -315,7 +315,7 @@ export function describeWorkspaceAction(
             ? 'clear_setup_checkpoint'
             : 'setup_checkpoint',
         dispatcher: 'agent_harness',
-        confirmation: action.setupCheckpointOperation === 'show' ? 'not-required' : 'required',
+        admission: action.setupCheckpointOperation === 'show' ? 'read-only' : 'current recorded effect admission',
         note: 'Setup wizard checkpoints persist only the visible current setup step in Agent-owned state so first-run setup can resume across restarts.',
       },
     } : {}),
@@ -323,7 +323,7 @@ export function describeWorkspaceAction(
       modelExecution: {
         route: 'open_ui_surface',
         surfaceId: 'connected-browser-cockpit',
-        confirmation: 'required',
+        admission: 'current recorded effect admission',
         readinessRoute: 'agent_harness mode:"ui_surface" surfaceId:"connected-browser-cockpit" includeParameters:true',
         fallback: 'Inspect host action:"service" endpointId:"web" or host action:"services" when the web cockpit is not enabled.',
         note: 'Opens the connected-host browser/PWA cockpit through the configured web route; readiness inspection also reports certified workspace category coverage, mobile/PWA controls, and first-run receipt evidence without creating a separate Agent-hosted web app.',

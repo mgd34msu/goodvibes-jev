@@ -1,4 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
+import { authoredPrivacyAnswer, errorText } from './_helpers/authored-error-readings.ts';
+import { redactSensitiveDataAsync } from '../sdk/src/platform/utils/redaction.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createPhasedExecutor } from '../sdk/src/platform/runtime/tools/index.js';
 import type { ToolRuntimeContext } from '../sdk/src/platform/runtime/tools/index.js';
 import type { Tool } from '../sdk/src/platform/types/tools.js';
@@ -96,6 +100,7 @@ describe('phased tool phase warnings', () => {
   });
 
   test('posthook throws preserve success and surface visible warnings', async () => {
+    expect(await redactSensitiveDataAsync('audit sink threw')).toBe('audit sink threw');
     const executor = createPhasedExecutor({
       enableHooks: true,
       enablePermissions: false,
@@ -122,3 +127,15 @@ describe('phased tool phase warnings', () => {
     expect(posthooked?.warnings).toEqual(result.warnings);
   });
 });
+
+
+const readDiagnostic = authoredPrivacyAnswer({ parts: [[errorText('audit sink threw')]] });
+let previousDiagnosticPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  previousDiagnosticPort = installJudgmentPort(fakePort((name, question, state) => {
+    const answer = readDiagnostic(name, question, state);
+    if (answer === undefined) throw new Error('Unexpected authored diagnostic question');
+    return answer;
+  }).port);
+});
+afterEach(() => { installJudgmentPort(previousDiagnosticPort); });

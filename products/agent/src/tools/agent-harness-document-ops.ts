@@ -670,13 +670,14 @@ export async function describeDocumentOpsLane(context: CommandContext, args: Age
   const normalized = input.toLowerCase();
   const lanes = captureCatalogData(buildLanes(context));
   const revision = JSON.stringify(lanes);
-  const assertCurrent = () => {
-    options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const assertSourceCurrent = () => {
+    options.signal?.throwIfAborted();
     assertBackend();
     if (JSON.stringify(captureCatalogData(buildLanes(context))) !== revision) throw new ToolInputProjectionError('stale');
     assertBackend();
   };
-  options.retainCurrent?.(assertCurrent, 'agent.harness.document-ops.sources');
+  options.retainCurrent?.(assertSourceCurrent, 'agent.harness.document-ops.sources');
+  const assertCurrent = () => { options.signal?.throwIfAborted(); options.assertCurrent?.(); assertSourceCurrent(); };
   assertCurrent();
   const exact = lanes.find((lane) => lane.id === normalized);
   if (exact) return { status: 'found', lane: describeLane(exact, true) };

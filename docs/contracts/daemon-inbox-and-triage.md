@@ -362,6 +362,22 @@ account-bound registry. The owner and adapter reject group DMs and never infer a
 personal catalog. Register each intended bot-readable DM explicitly; undeclared
 channels cannot be requested or returned from a stored mirror.
 
+The native trusted-host configuration path is
+`createProductionDaemonRuntime({}, screening)`. It reads the expected bot user
+ID from `surfaces.discord.inboxBotUserId` and 1–200 comma-separated, unique DM
+IDs from `surfaces.discord.inboxChannelIds`, then constructs the existing
+`DiscordDaemonInboxOptions` owner. Configuration subscriptions retire that
+registry on identity or membership replacement, including restoration to the
+same value. Shutdown synchronously retires its channel capability and drains
+the canonical source before releasing subscriptions.
+
+The supplied `screening` is the real protected-source capability for the local
+proposal service and pinned `jev-1.13.0` service. The embedding host must
+establish both services' ephemeral retention, current identity and revocation.
+The standalone CLI does not manage such services. Endpoint settings, ordinary
+provider discovery and a reachable localhost service cannot mint that authority;
+configured protected inbox startup requires the trusted host input.
+
 Implementation:
 [discord-owner.ts](../../packages/engine/sdk/src/platform/intake/providers/discord-owner.ts#L16-L123),
 [discord-owner.ts](../../packages/engine/sdk/src/platform/intake/providers/discord-owner.ts#L240-L376),

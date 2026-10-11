@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installJudgmentPort, bindJudgmentPortAuthority } from '@goodvibes-jev/engine/errors';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { prepareProjectFramework, readRepeatedCalls, type RetainedToolObservation } from '../sdk/src/platform/agents/orchestrator-observations.js';
+import { prepareProjectFramework, readRepeatedCalls, OrchestratorObservationHeldError, type RetainedToolObservation } from '../sdk/src/platform/agents/orchestrator-observations.js';
 import { runAgentTask, type AgentOrchestratorRunContext } from '../sdk/src/platform/agents/orchestrator-runner.js';
 import { buildOrchestratorSystemPrompt } from '../sdk/src/platform/agents/orchestrator-prompts.js';
 import { ToolRegistry, assertCurrentExecInvocation } from '../sdk/src/platform/tools/registry.js';
@@ -22,7 +22,16 @@ const roots: string[] = [];
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
+function semanticPort(answer: Parameters<typeof fakePort>[0]) {
+  return fakePort((name, question, state) => {
+    if (name === 'kind') return choiceAnswer(question, 'secret', 0.99);
+    if (name === 'credentialRemains') return noulAnswer(0.03);
+    if (name === 'category') return choiceAnswer(question, 'unknown', 0.99);
+    if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
+    if (['billing', 'rate_limited', 'context_exceeded', 'transient_network', 'provider_unusable', 'before_response'].includes(name)) return noulAnswer(0.03);
+    return answer(name, question, state);
+  });
+}function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 function setup(rounds = 0, output: (n: number) => string = () => 'same result') {
   const root = mkdtempSync(join(tmpdir(), 'orchestrator-observation-')); roots.push(root);
   const controller = new AbortController(), requests: unknown[] = [], events: string[] = [];
@@ -59,7 +68,7 @@ describe('B08 canonical spawn framework', () => {
   test('registered batteries and contradictory scripts override first dependency match', async () => {
     expect(registry.get('engine.agents.project-test-framework')).toBeDefined(); expect(registry.get('engine.agents.repeat-stuck')).toBeDefined();
     const f = setup(); project(f.root, { dependencies: { vitest: '1', jest: '1' }, scripts: { test: 'jest', late: 'full evidence' } });
-    const fake = fakePort((_name, question) => choiceAnswer(question, 'jest', .99)); installJudgmentPort(fake.port);
+    const fake = semanticPort((_name, question) => choiceAnswer(question, 'jest', .99)); installJudgmentPort(fake.port);
     const observation = await prepareProjectFramework(f.context, f.record);
     expect(observation.framework).toBe('jest');
     const prompt = buildOrchestratorSystemPrompt(f.record, undefined, { workingDirectory: f.root, projectFramework: observation });
@@ -69,20 +78,20 @@ describe('B08 canonical spawn framework', () => {
   test('every choice, none, uncertain and absent reader are honest optional labels', async () => {
     const f = setup(); project(f.root, { scripts: { test: 'bun test' }, dependencies: { vitest: '1' } });
     for (const framework of ['vitest', 'jest', 'bun', 'node', 'mocha', 'ava', 'playwright', 'cypress', 'other', 'none']) {
-      installJudgmentPort(fakePort((_n, q) => choiceAnswer(q, framework, .99)).port);
+      installJudgmentPort(semanticPort((_n, q) => choiceAnswer(q, framework, .99)).port);
       expect((await prepareProjectFramework(f.context, f.record)).framework).toBe(framework === 'none' ? undefined : framework === 'bun' ? 'bun:test' : framework);
     }
-    installJudgmentPort(fakePort((_n, q) => choiceAnswer(q, 'vitest', .2)).port); expect((await prepareProjectFramework(f.context, f.record)).framework).toBeUndefined();
+    installJudgmentPort(semanticPort((_n, q) => choiceAnswer(q, 'vitest', .2)).port); expect((await prepareProjectFramework(f.context, f.record)).framework).toBeUndefined();
     installJudgmentPort(undefined); expect((await prepareProjectFramework(f.context, f.record)).framework).toBeUndefined();
   });
   test('complete privacy tails are refused before port lookup', async () => {
     const f = setup(); project(f.root, { scripts: { test: 'jest' }, tail: 'x'.repeat(210_000) + ' password=private-value' });
-    const fake = fakePort((_n, q) => choiceAnswer(q, 'jest', .99)); installJudgmentPort(fake.port);
+    const fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); installJudgmentPort(fake.port);
     await expect(prepareProjectFramework(f.context, f.record)).rejects.toThrow(); expect(fake.requests).toHaveLength(0);
   });
   test('one spawn reading across multiple turns and real prompt use', async () => {
     const f = setup(4, n => String(n)); project(f.root, { dependencies: { vitest: '1' }, scripts: { test: 'jest' } });
-    const fake = fakePort((name, q) => name === 'framework' ? choiceAnswer(q, 'jest', .99) : noulAnswer(.01)); installJudgmentPort(fake.port);
+    const fake = semanticPort((name, q) => name === 'framework' ? choiceAnswer(q, 'jest', .99) : noulAnswer(.01)); installJudgmentPort(fake.port);
     await runAgentTask(f.context, f.record);
     expect(f.record.status).toBe('completed'); expect(fake.requests.filter(r => r.context?.battery === 'engine.agents.project-test-framework')).toHaveLength(1);
     expect(JSON.stringify(f.requests)).toContain('Test framework: jest'); expect(f.executions).toBe(4);
@@ -91,44 +100,59 @@ describe('B08 canonical spawn framework', () => {
 
 describe('B09 canonical repeated-call observation and actual runner', () => {
   test('complete changing results yield no nudge despite exact repeated calls', async () => {
-    const f = setup(5, n => `progress ${n}`), fake = fakePort((_n, _q, state) => { expect(JSON.stringify(state)).toContain('progress'); return noulAnswer(.01); }); installJudgmentPort(fake.port);
-    await runAgentTask(f.context, f.record);
-    expect(f.record.status).toBe('completed'); expect(f.executions).toBe(5); expect(fake.requests).toHaveLength(4);
-    expect(JSON.stringify(fake.requests.at(-1)?.state)).toContain('progress 1'); expect(JSON.stringify(fake.requests.at(-1)?.state)).toContain('progress 5');
+    const f = setup(5, n => `progress ${n}`), fake = semanticPort((_n, _q, state) => { expect(JSON.stringify(state)).toContain('progress'); return noulAnswer(.01); }); installJudgmentPort(fake.port);
+    await runAgentTask(f.context, f.record); expect(f.record.status).toBe('completed'); expect(f.executions).toBe(5); const feature = assertReadingPartition(fake.requests, Array<string>(4).fill('engine.agents.repeat-stuck'), ['agentId', 'model', 'provider', 'toolCallCount']);
+    for (const [index, request] of feature.entries()) {
+      expect(Object.keys(request.questions)).toEqual(['stuck']);
+      expect(request.state).toEqual({
+        calls: Array.from({ length: index + 2 }, (_, turn) => ({
+          signature: 'probe::{"job":"a"}',
+          requested: { id: `call-${turn + 1}-0`, name: 'probe', arguments: { job: 'a' } },
+          executed: { name: 'probe', arguments: '{"job":"a"}' },
+          result: { success: true, output: `progress ${turn + 1}`, callId: `call-${turn + 1}-0` },
+        })),
+        repeatedSignature: 'probe::{"job":"a"}',
+      });
+    }
     expect(JSON.stringify(f.requests)).not.toContain('You are repeating the same tool call'); expect(JSON.stringify(f.requests)).not.toContain('You have already executed this exact call');
   });
   test('settled stuck injects existing three/five thresholds using honest result wording', async () => {
-    const f = setup(5); installJudgmentPort(fakePort(() => noulAnswer(.99)).port); await runAgentTask(f.context, f.record);
+    const f = setup(5); installJudgmentPort(semanticPort(() => noulAnswer(.99)).port); await runAgentTask(f.context, f.record);
     expect(f.record.status).toBe('completed'); expect(f.executions).toBe(5);
     expect(JSON.stringify(f.snapshot)).toContain('You have already executed this exact call'); expect(JSON.stringify(f.requests)).toContain('You are repeating the same tool call');
     expect(JSON.stringify(f.requests)).not.toContain('identical arguments and results');
   });
   test('unavailable, uncertain and malformed hold this run without another provider/tool attempt', async () => {
-    for (const port of [undefined, fakePort(() => noulAnswer(.5)).port, fakePort(() => ({ type: 'noul', noul: NaN })).port]) {
+    for (const port of [undefined, semanticPort(() => noulAnswer(.5)).port, semanticPort(() => ({ type: 'noul', noul: NaN })).port]) {
       const f = setup(5); installJudgmentPort(port); await runAgentTask(f.context, f.record);
       expect(f.executions).toBe(2); expect(f.requests).toHaveLength(2); expect(f.record.status).toBe('failed'); expect(f.record.failureReason).toBe('semantic_observation_held'); expect(f.events).not.toContain('completed');
     }
   });
   test('full actual result tails screen before judgment and prevent later attempts', async () => {
-    const f = setup(5, () => 'x'.repeat(200_000) + ' password=private-value'), fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
-    await runAgentTask(f.context, f.record); expect(fake.requests).toHaveLength(0); expect(f.executions).toBe(2); expect(f.record.status).toBe('failed');
+    const f = setup(5, () => 'x'.repeat(200_000) + ' password=private-value'), fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+    await runAgentTask(f.context, f.record);
+    const diagnostic = assertReadingPartition(fake.requests, ['engine.redaction.residual-credential', 'engine.failure-reading'], ['agentId', 'model', 'provider', 'judgment', 'error']);
+    expect(Object.keys(diagnostic[0]!.questions)).toEqual(['credentialRemains']);
+    expect(Object.keys(diagnostic[1]!.questions)).toEqual(['category', 'billing', 'rate_limited', 'context_exceeded', 'transient_network', 'provider_unusable', 'connection_failure', 'before_response']);
+    expect(JSON.stringify(fake.requests)).not.toContain('private-value');
+    expect(JSON.stringify(fake.requests)).not.toContain('x'.repeat(200_000)); expect(f.executions).toBe(2); expect(f.record.status).toBe('failed');
   });
   test('run cancellation interrupts a non-cooperating judgment without stale messages', async () => {
-    const f = setup(5), start = deferred(), release = deferred(), fake = fakePort(() => noulAnswer(.99));
-    installJudgmentPort({ model: fake.port.model, async ask(request) { start.resolve(); await release.promise; return fake.port.ask(request); } });
+    const f = setup(5), start = deferred(), release = deferred(), fake = semanticPort(() => noulAnswer(.99));
+    installJudgmentPort({ model: fake.port.model, async ask(request) { if (request.context?.battery !== 'engine.agents.repeat-stuck') return fake.port.ask(request); expect(Object.keys(request.questions)).toEqual(['stuck']); expect(JSON.stringify(request.state)).toContain('same'); start.resolve(); await release.promise; return fake.port.ask(request); } });
     const pending = runAgentTask(f.context, f.record); await start.promise; f.record.status = 'cancelled'; f.controller.abort(); await pending;
     release.resolve(); await Promise.resolve(); expect(f.executions).toBe(2); expect(f.events).toEqual(['cancelled']); expect(JSON.stringify(f.requests)).not.toContain('You are repeating');
   });
   test('changed result source and port owner revoke completed observations', async () => {
-    const f = setup(), calls = history(); const fake = fakePort(() => noulAnswer(.99)); installJudgmentPort(fake.port);
+    const f = setup(), calls = history(); const fake = semanticPort(() => noulAnswer(.99)); installJudgmentPort(fake.port);
     const observed = await readRepeatedCalls(calls, f.context, f.record); calls.push(...history(['changed'])); expect(observed.assertCurrent).toThrow();
-    const second = await readRepeatedCalls(history(), f.context, f.record); installJudgmentPort(fakePort(() => noulAnswer(.01)).port); expect(second.assertCurrent).toThrow();
+    const second = await readRepeatedCalls(history(), f.context, f.record); installJudgmentPort(semanticPort(() => noulAnswer(.01)).port); expect(second.assertCurrent).toThrow();
   });
   test('project, request and configuration source changes cannot publish late readings', async () => {
     for (const change of ['project', 'request', 'config', 'same-port']) {
-      const f = setup(), start = deferred(), release = deferred(), fake = fakePort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'jest' } });
+      const f = setup(), start = deferred(), release = deferred(), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'jest' } });
       let current = true;
-      const installed: typeof fake.port = { model: fake.port.model, async ask(request) { start.resolve(); await release.promise; return fake.port.ask(request); } };
+      const installed: typeof fake.port = { model: fake.port.model, async ask(request) { if (request.context?.battery === 'engine.redaction.field-kind') return fake.port.ask(request); start.resolve(); await release.promise; return fake.port.ask(request); } };
       bindJudgmentPortAuthority(installed, () => ({ identity: f.context, assertCurrent() { if (!current) throw new Error('retired'); } }));
       installJudgmentPort(installed);
       const pending = prepareProjectFramework(f.context, f.record); await start.promise;
@@ -143,31 +167,31 @@ describe('B09 canonical repeated-call observation and actual runner', () => {
 describe('actual-run observation lifetime', () => {
   test('framework source swap before provider send holds without a provider request', async () => {
     const f = setup(); project(f.root, { scripts: { test: 'jest' } });
-    installJudgmentPort(fakePort((_n, q) => choiceAnswer(q, 'jest', .99)).port);
+    installJudgmentPort(semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)).port);
     (f.context as { beforeProviderRequest?: () => Promise<void> }).beforeProviderRequest = async () => { project(f.root, { scripts: { test: 'bun test' } }); };
     await runAgentTask(f.context, f.record); expect(f.requests).toHaveLength(0); expect(f.record.status).toBe('failed'); expect(f.events).not.toContain('completed');
   });
   test('port replacement during repeat reading prevents nudge and continuation', async () => {
-    const f = setup(5), start = deferred(), release = deferred(), fake = fakePort(() => noulAnswer(.99));
-    installJudgmentPort({ model: fake.port.model, async ask(request) { start.resolve(); await release.promise; return fake.port.ask(request); } });
+    const f = setup(5), start = deferred(), release = deferred(), fake = semanticPort(() => noulAnswer(.99));
+    installJudgmentPort({ model: fake.port.model, async ask(request) { if (request.context?.battery !== 'engine.agents.repeat-stuck') return fake.port.ask(request); expect(Object.keys(request.questions)).toEqual(['stuck']); expect(JSON.stringify(request.state)).toContain('same'); start.resolve(); await release.promise; return fake.port.ask(request); } });
     const pending = runAgentTask(f.context, f.record); await start.promise;
-    installJudgmentPort(fakePort(() => noulAnswer(.01)).port); await pending; release.resolve();
+    installJudgmentPort(semanticPort(() => noulAnswer(.01)).port); await pending; release.resolve();
     expect(f.executions).toBe(2); expect(f.requests).toHaveLength(2); expect(f.record.failureReason).toBe('semantic_observation_held');
     expect(JSON.stringify(f.requests)).not.toContain('You are repeating'); expect(f.events).not.toContain('completed');
   });
   test('config retirement during final settlement prevents completed delivery', async () => {
-    const f = setup(2); installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
+    const f = setup(2); installJudgmentPort(semanticPort(() => noulAnswer(.01)).port);
     (f.context as { beforeRunSettlement?: () => Promise<void> }).beforeRunSettlement = async () => { (f.context as { configManager?: unknown }).configManager = { get: () => 5 }; };
     await runAgentTask(f.context, f.record); expect(f.record.status).toBe('failed'); expect(f.events).not.toContain('completed');
   });
   test('changed result source while reader is pending is held', async () => {
-    const f = setup(), calls = history(), start = deferred(), release = deferred(), fake = fakePort(() => noulAnswer(.99));
-    installJudgmentPort({ model: fake.port.model, async ask(request) { start.resolve(); await release.promise; return fake.port.ask(request); } });
+    const f = setup(), calls = history(), start = deferred(), release = deferred(), fake = semanticPort(() => noulAnswer(.99));
+    installJudgmentPort({ model: fake.port.model, async ask(request) { if (request.context?.battery !== 'engine.agents.repeat-stuck') return fake.port.ask(request); expect(Object.keys(request.questions)).toEqual(['stuck']); expect(JSON.stringify(request.state)).toContain('same'); start.resolve(); await release.promise; return fake.port.ask(request); } });
     const pending = readRepeatedCalls(calls, f.context, f.record); await start.promise; calls.splice(1, 1, ...history(['new result'])); release.resolve();
     await expect(pending).rejects.toThrow();
   });
   test('exact mechanical turn ceiling remains independent of progressing readings', async () => {
-    const f = setup(10, n => String(n)); f.record.maxTurns = 3; installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
+    const f = setup(10, n => String(n)); f.record.maxTurns = 3; installJudgmentPort(semanticPort(() => noulAnswer(.01)).port);
     await runAgentTask(f.context, f.record); expect(f.executions).toBe(3); expect(f.record.failureReason).toBe('max_turns');
   });
 });
@@ -175,17 +199,16 @@ describe('actual-run observation lifetime', () => {
 describe('review regressions: complete observation through tool effects', () => {
   test('optional missing, malformed, unreadable and over-limit manifests omit without any reading', async () => {
     for (const kind of ['missing', 'malformed', 'unreadable', 'oversize']) {
-      const f = setup(), path = join(f.root, 'package.json'), fake = fakePort((_n, q) => choiceAnswer(q, 'jest', .99));
+      const f = setup(), path = join(f.root, 'package.json'), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99));
       if (kind === 'malformed') writeFileSync(path, '{oops');
       if (kind === 'unreadable') mkdirSync(path);
       if (kind === 'oversize') project(f.root, { harmless: 'x'.repeat(210_000) });
-      installJudgmentPort(fake.port); await runAgentTask(f.context, f.record);
-      expect(fake.requests).toHaveLength(0); expect(f.record.status).toBe('completed'); expect(f.completed).toHaveLength(1);
+      installJudgmentPort(fake.port); await runAgentTask(f.context, f.record); assertReadingPartition(fake.requests, [], ['agentId', 'model', 'provider', 'toolCallCount']); expect(f.record.status).toBe('completed'); expect(f.completed).toHaveLength(1);
       expect(JSON.stringify(f.requests)).not.toContain('Test framework:');
     }
   });
   test('original source covers canonical recorder attachment, before any reading is retained', async () => {
-    const f = setup(), fake = fakePort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'jest' } });
+    const f = setup(), fake = semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)); project(f.root, { scripts: { test: 'jest' } });
     let attachments = 0;
     const port: typeof fake.port = { model: fake.port.model, recorder: { recordReadings() { attachments++; }, recordAction() {} }, async ask(request) {
       const result = await fake.port.ask(request); project(f.root, { scripts: { test: 'bun test' } }); return { ...result, decisionId: 'changed-source' };
@@ -194,7 +217,7 @@ describe('review regressions: complete observation through tool effects', () => 
   });
   test('retry and stream callbacks reject original-source retirement before any outward delta', async () => {
     for (const stage of ['retry', 'delta']) {
-      const f = setup(); project(f.root, { scripts: { test: 'jest' } }); installJudgmentPort(fakePort((_n, q) => choiceAnswer(q, 'jest', .99)).port);
+      const f = setup(); project(f.root, { scripts: { test: 'jest' } }); installJudgmentPort(semanticPort((_n, q) => choiceAnswer(q, 'jest', .99)).port);
       const retire = () => project(f.root, { scripts: { test: 'bun test' } });
       if (stage === 'retry') f.controls.beforeRetry = retire; else f.controls.beforeDelta = retire;
       await runAgentTask(f.context, f.record); expect(f.streams).toHaveLength(0); expect(f.completed).toHaveLength(0); expect(f.executions).toBe(0);
@@ -206,7 +229,7 @@ describe('review regressions: complete observation through tool effects', () => 
     (f.context as { permissionManager?: unknown }).permissionManager = { getBackgroundAgentsMode: () => 'inherit', async checkDetailed() {
       f.record.task = 'replacement'; return { approved: true };
     } };
-    await runAgentTask(f.context, f.record); expect(f.executions).toBe(0); expect(reports).toBe(0); expect(f.completed).toHaveLength(0);
+    await expect(runAgentTask(f.context, f.record)).rejects.toBeInstanceOf(OrchestratorObservationHeldError); expect(f.executions).toBe(0); expect(reports).toBe(0); expect(f.completed).toHaveLength(0);
   });
   test('projection retirement releases owned projection and never invokes tool body', async () => {
     const f = setup(1); let released = 0, bodies = 0;
@@ -214,30 +237,47 @@ describe('review regressions: complete observation through tool effects', () => 
     f.tools.register({ definition: { name: 'probe', description: 'probe', parameters: { type: 'object', properties: { job: { type: 'string' } } } }, async execute() { bodies++; return { success: true, output: 'no' }; } }, {
       inputProjection: { async project(request) { f.record.task = 'replacement'; return { status: 'projected', args: request.args, async release() { released++; } }; } },
     });
-    await runAgentTask(f.context, f.record); expect(bodies).toBe(0); expect(released).toBe(1); expect(f.completed).toHaveLength(0);
+    await expect(runAgentTask(f.context, f.record)).rejects.toBeInstanceOf(OrchestratorObservationHeldError); expect(bodies).toBe(0); expect(released).toBe(1); expect(f.completed).toHaveLength(0);
   });
   test('tool one retirement suppresses tool two, result hook, contract publication and completed event', async () => {
     const f = setup(1); f.controls.batchSize = 2; let hooks = 0, reports = 0; f.record.contractUnitId = 'unit';
     (f.context as { onToolExecuted?: AgentOrchestratorRunContext['onToolExecuted'] }).onToolExecuted = () => { hooks++; };
     (f.context as { contractHooks?: unknown }).contractHooks = { onTurnEnd() { reports++; } };
     f.controls.beforeTool = async () => { f.record.task = 'replacement'; };
-    await runAgentTask(f.context, f.record); expect(f.executions).toBe(1); expect(hooks).toBe(0); expect(reports).toBe(0); expect(f.completed).toHaveLength(0);
+    await expect(runAgentTask(f.context, f.record)).rejects.toBeInstanceOf(OrchestratorObservationHeldError); expect(f.executions).toBe(1); expect(hooks).toBe(0); expect(reports).toBe(0); expect(f.completed).toHaveLength(0);
   });
   test('permission-modified effective arguments and full results reach repeat reader', async () => {
     const f = setup(3); const executed: unknown[] = []; f.controls.beforeTool = async args => { executed.push(args); };
     (f.context as { permissionManager?: unknown }).permissionManager = { getBackgroundAgentsMode: () => 'inherit', async checkDetailed() { return { approved: true, modifiedArgs: { job: 'authorized-effective' } }; } };
-    const fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port); await runAgentTask(f.context, f.record);
-    expect(executed).toEqual(Array.from({ length: 3 }, () => ({ job: 'authorized-effective' })));
-    expect(JSON.stringify(fake.requests[0]?.state)).toContain('authorized-effective'); expect(JSON.stringify(fake.requests[0]?.state)).toContain('same result'); expect(f.completed).toHaveLength(1);
+    const fake = semanticPort(() => noulAnswer(.01)); installJudgmentPort(fake.port); await runAgentTask(f.context, f.record);
+    expect(executed).toEqual(Array.from({ length: 3 }, () => ({ job: 'authorized-effective' }))); const feature = assertReadingPartition(fake.requests, ['engine.agents.repeat-stuck', 'engine.agents.repeat-stuck'], ['agentId', 'model', 'provider', 'toolCallCount']);
+    for (const [index, request] of feature.entries()) {
+      expect(Object.keys(request.questions)).toEqual(['stuck']);
+      expect(request.state).toEqual({
+        calls: Array.from({ length: index + 2 }, (_, turn) => ({
+          signature: 'probe::{"job":"a"}',
+          requested: { id: `call-${turn + 1}-0`, name: 'probe', arguments: { job: 'a' } },
+          executed: { name: 'probe', arguments: '{"job":"authorized-effective"}' },
+          result: { success: true, output: 'same result', callId: `call-${turn + 1}-0` },
+        })),
+        repeatedSignature: 'probe::{"job":"a"}',
+      });
+    } expect(f.completed).toHaveLength(1);
   });
   test('late rejected reader after cancellation is consumed without completion', async () => {
     const f = setup(3), start = deferred(); let reject!: (reason: unknown) => void;
-    installJudgmentPort({ model: 'jev-1.13.0', ask: async () => { start.resolve(); return new Promise<never>((_resolve, rejectWork) => { reject = rejectWork; }); } });
-    const pending = runAgentTask(f.context, f.record); await start.promise; f.record.status = 'cancelled'; f.controller.abort(); await pending;
+    const fake = semanticPort(() => noulAnswer(.99));
+    installJudgmentPort({ model: fake.port.model, ask: async request => {
+      if (request.context?.battery !== 'engine.agents.repeat-stuck') return fake.port.ask(request);
+      expect(Object.keys(request.questions)).toEqual(['stuck']);
+      expect(JSON.stringify(request.state)).toContain('same result');
+      start.resolve(); return new Promise<never>((_resolve, rejectWork) => { reject = rejectWork; });
+    } });
+    const pending = runAgentTask(f.context, f.record); await start.promise; expect(f.executions).toBe(2); expect(f.requests).toHaveLength(2); f.record.status = 'cancelled'; f.controller.abort(); await pending;
     reject(new Error('late rejection')); await new Promise(resolve => setTimeout(resolve, 0)); expect(f.completed).toHaveLength(0); expect(f.events).toEqual(['cancelled']);
   });
   test('repeat owner remains current through next turn permission and blocks tool three after same-port retirement', async () => {
-    const f = setup(4), fake = fakePort(() => noulAnswer(.01)); let current = true, permissions = 0;
+    const f = setup(4), fake = semanticPort(() => noulAnswer(.01)); let current = true, permissions = 0;
     bindJudgmentPortAuthority(fake.port, () => ({ identity: f.context, assertCurrent() { if (!current) throw new Error('retired'); } })); installJudgmentPort(fake.port);
     (f.context as { permissionManager?: unknown }).permissionManager = { getBackgroundAgentsMode: () => 'inherit', async checkDetailed() { if (++permissions === 3) current = false; return { approved: true }; } };
     await runAgentTask(f.context, f.record); expect(f.executions).toBe(2); expect(f.completed).toHaveLength(0); expect(f.record.failureReason).toBe('semantic_observation_held');
@@ -286,7 +326,7 @@ describe('cancelled batch mechanical transcript closure', () => {
     for (const cancelledStatus of [false, true]) {
       const f = setup(1);
       f.controls.beforeTool = async () => { f.record.task = 'retired request'; if (cancelledStatus) f.record.status = 'cancelled'; };
-      await runAgentTask(f.context, f.record);
+      await expect(runAgentTask(f.context, f.record)).rejects.toBeInstanceOf(OrchestratorObservationHeldError);
       expect(JSON.stringify(f.snapshot)).not.toContain('Tool invocation cancelled');
       expect(f.snapshot.filter(message => !!message && typeof message === 'object' && 'role' in message && message.role === 'tool')).toHaveLength(0);
     }
@@ -294,7 +334,7 @@ describe('cancelled batch mechanical transcript closure', () => {
   test('config and canonical-port retirement without abort do not fabricate cancelled results', async () => {
     for (const kind of ['config', 'port']) {
       const f = setup(1); project(f.root, { scripts: { test: 'jest' } });
-      installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'jest', .99)).port);
+      installJudgmentPort(semanticPort((_name, question) => choiceAnswer(question, 'jest', .99)).port);
       let maxTurns = 50;
       (f.context as { configManager?: AgentOrchestratorRunContext['configManager'] }).configManager = { get: (key: string) => key === 'agents.maxTurns' ? maxTurns : undefined } as NonNullable<AgentOrchestratorRunContext['configManager']>;
       f.controls.beforeTool = async () => { if (kind === 'config') maxTurns++; else installJudgmentPort(undefined); };
@@ -305,7 +345,7 @@ describe('cancelled batch mechanical transcript closure', () => {
   });
   test('semantic configuration and port retirement do not block genuine original-run cancellation bookkeeping', async () => {
     const f = setup(1); project(f.root, { scripts: { test: 'jest' } });
-    installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'jest', .99)).port);
+    installJudgmentPort(semanticPort((_name, question) => choiceAnswer(question, 'jest', .99)).port);
     f.controls.beforeTool = async () => {
       (f.context as { configManager?: AgentOrchestratorRunContext['configManager'] }).configManager = { get: () => undefined } as NonNullable<AgentOrchestratorRunContext['configManager']>;
       installJudgmentPort(undefined); f.record.status = 'cancelled'; f.controller.abort();
@@ -318,7 +358,7 @@ describe('cancelled batch mechanical transcript closure', () => {
     const f = setup(1), replacement = new AbortController(); let signal = f.controller.signal;
     (f.context as { getCancellationSignal: NonNullable<AgentOrchestratorRunContext['getCancellationSignal']> }).getCancellationSignal = () => signal;
     f.controls.beforeTool = async () => { f.record.status = 'cancelled'; f.controller.abort(); replacement.abort(); signal = replacement.signal; };
-    await runAgentTask(f.context, f.record);
+    await expect(runAgentTask(f.context, f.record)).rejects.toBeInstanceOf(OrchestratorObservationHeldError);
     expect(JSON.stringify(f.snapshot)).not.toContain('Tool invocation cancelled'); expect(f.completed).toHaveLength(0);
   });
   test('same-record same-signal successor run owns its own conversation even with identical call IDs', async () => {
@@ -332,7 +372,7 @@ describe('cancelled batch mechanical transcript closure', () => {
     f.controls.beforeTool = async () => { if (++bodies === 1) { firstEntered.resolve(); await releaseFirst.promise; } else { secondEntered.resolve(); await releaseSecond.promise; } };
     const first = runAgentTask(f.context, f.record); await firstEntered.promise;
     const second = runAgentTask(f.context, f.record); await secondEntered.promise;
-    f.record.status = 'cancelled'; f.controller.abort(); releaseFirst.resolve(); await first;
+    f.record.status = 'cancelled'; f.controller.abort(); releaseFirst.resolve(); await expect(first).rejects.toBeInstanceOf(OrchestratorObservationHeldError);
     expect(JSON.stringify(sources[0]?.())).not.toContain('Tool invocation cancelled');
     releaseSecond.resolve(); await second;
     expect(JSON.stringify(sources[0]?.())).not.toContain('Tool invocation cancelled');
@@ -401,7 +441,7 @@ describe('real invocation guard retains restriction without minting admission', 
   });
   test('ordinary Exec cannot launch after its asynchronous policy boundary retires the original restriction', async () => {
     const f = setup(), manager = new ProcessManager(), start = deferred(), release = deferred(); let current = true;
-    const answers = fakePort(() => noulAnswer(.001));
+    const answers = semanticPort(() => noulAnswer(.001));
     installJudgmentPort({ model: answers.port.model, async ask(request) { start.resolve(); await release.promise; return answers.port.ask(request); } });
     const launches = spyOn(manager, 'spawn').mockImplementation(async () => { throw new Error('A retired run must not spawn'); });
     const registry = new ToolRegistry(); registry.register(createExecTool(manager, { defaultWorkingDirectory: f.root,
@@ -427,3 +467,13 @@ test('prepared retirement releases only its owned projection exactly once before
   await expect(registry.executePrepared(prepared, () => { admissions++; })).rejects.toThrow(); expect(releases).toBe(1);
   await registry.executePrepared(unrelated, () => { admissions++; }); expect(releases).toBe(2); expect(admissions).toBe(1); expect(bodies).toBe(1);
 });
+
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
+  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
+  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
+  expect(requests).toHaveLength(batteries.length + fields.length);
+  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
+  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
+  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
+  return feature;
+}

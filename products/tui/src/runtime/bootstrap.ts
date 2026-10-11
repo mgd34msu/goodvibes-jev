@@ -91,7 +91,7 @@ export type BootstrapContext = RuntimeContext & {
   /** Mutable ref so async git refreshes propagate without closure capture issues. */
   lastGitInfoRef: { value: GitHeaderInfo | undefined };
   /** Unsubscribe functions owned by bootstrap (cleared on shutdown). */
-  bootstrapUnsubs: Array<() => void>;
+  bootstrapUnsubs: Array<() => void | Promise<void>>;
   /** Ref holding the periodic agent-status interval (use ref, not local var, to keep shutdown in sync). */
   agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null };
   /** Mutable refs for viewport/scroll/render functions; main.ts patches these after constructing UI state. */
@@ -724,6 +724,7 @@ export async function bootstrapRuntime(
         if (externalServicesPromise) externalServices = await externalServicesPromise;
       },
       stopExternalServices: () => externalServices.stop(),
+      closeRuntimeGraph: () => services.close(),
       agentStatusIntervalRef,
       scheduleManager: services.workflow.scheduleManager,
       hookDispatcher: services.hookDispatcher,

@@ -11,7 +11,7 @@ import { OccasionStateStore } from '../sdk/src/platform/occasions/state-store.ts
 import { OccasionsService } from '../sdk/src/platform/occasions/service.ts';
 import type { OccasionMutationOptions } from '../sdk/src/platform/occasions/operation.ts';
 import { registerOccasionsGatewayMethods } from '../sdk/src/platform/control-plane/routes/occasions.ts';
-import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
+import { GatewayMethodCatalog, type GatewayMethodInvocationContext } from '../sdk/src/platform/control-plane/method-catalog.ts';
 import { assertCurrentToolEffect } from '../sdk/src/platform/tools/registry.ts';
 import { captureFileMutation, type MutationPublication } from '../sdk/src/platform/utils/file-mutation.ts';
 import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
@@ -41,11 +41,14 @@ function fixture(persistIo?: ProfilePersistIo, withPublication?: MutationPublica
       const reading: OccasionMutationOptions = { ...receipts, signal: options?.signal, assertCurrent,
         ...(args.action === 'confirm' ? { delegation: captureProfileDelegation(args, options) } : {}) };
       retained = reading;
-      const invocation = { body: args.action === 'confirm'
+      const methodId = args.action === 'confirm' ? 'occasions.confirm' : 'occasions.interview.answer';
+      const invocation = { methodId, body: args.action === 'confirm'
         ? { title: 'Family day', date: '03-14', kind: 'remember-only', surface: 'agent', authority: 'autonomous', said: '' }
-        : { interviewId: 'gift-interview', stepId: 'step-1', text: 'A class' }, signal: options?.signal, isAuthorized: () => { assertCurrent(); return true; } };
+        : { interviewId: 'gift-interview', stepId: 'step-1', text: 'A class' },
+        context: { clientKind: 'goodvibes-agent', principalKind: 'service' } satisfies GatewayMethodInvocationContext,
+        ...(options?.signal ? { signal: options.signal } : {}), isAuthorized: () => { assertCurrent(); return true; } };
       bindProfileMutationOptionsToInvocation(reading, invocation);
-      const result = await catalog.invoke(args.action === 'confirm' ? 'occasions.confirm' : 'occasions.interview.answer', invocation);
+      const result = await catalog.invoke(methodId, invocation);
       assertCurrent();
       return { success: true, output: JSON.stringify(result) };
     },

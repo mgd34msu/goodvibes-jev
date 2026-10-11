@@ -24,7 +24,14 @@ describe('McpPermissionManager coherence evaluation', () => {
     expect(result.verdict).toBe('deny');
     expect(result.incoherent).toBe(true);
     // One capability request plus the gate's three stakes requests, in parallel.
-    expect(readings.requests).toHaveLength(4);
+    const callReadings = readings.requests.filter(request => ['capability', 'mutates', 'family', 'cardDetails']
+      .some(name => Object.hasOwn(request.questions ?? {}, name)));
+    expect(callReadings).toHaveLength(4);
+    const diagnosticReadings = readings.requests.filter(request => !callReadings.includes(request));
+    for (const request of diagnosticReadings) {
+      expect(Object.keys(request.questions ?? {})).toEqual(['kind']);
+      expect(request.state).toEqual({ field: expect.stringMatching(/^(serverName|trustLevel)$/) });
+    }
   });
 
   test('ask-on-risk server asks for high-risk coherent request', async () => {

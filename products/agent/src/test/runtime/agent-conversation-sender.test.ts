@@ -44,6 +44,14 @@ function message(overrides: Partial<AgentConversationMessage> = {}): AgentConver
 }
 
 describe('agent conversation sender', () => {
+  test('ordinary callers can resolve a fresh conversation view without delaying render', async () => {
+    const primary = conversation(); let renders = 0;
+    const sender = createAgentConversationSender({ primaryConversation: () => ({ addAssistantMessage: content => primary.addAssistantMessage(content) }),
+      requestRender() { renders++; } });
+    const pending = sender.send(message());
+    expect(primary.said).toEqual([NUDGE_BODY]); expect(renders).toBe(1); await pending;
+  });
+
   test('retirement before publication leaves the actual transcript empty', async () => {
     const primary = conversation(), controller = new AbortController();
     const sender = createAgentConversationSender({ primaryConversation: () => primary, requestRender() {} });

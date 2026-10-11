@@ -3542,6 +3542,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "automation.jobs.create": ({
         id?: string;
+        admission?: "autonomous";
         name?: string;
         description?: string;
         prompt: string;
@@ -3633,14 +3634,20 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "automation.jobs.delete": {
         jobId: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "automation.jobs.disable": {
         jobId: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "automation.jobs.enable": {
         jobId: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "automation.jobs.list": {
@@ -3654,6 +3661,8 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "automation.jobs.update": ({
         jobId?: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
         name?: string;
         description?: string;
         prompt?: string;
@@ -3767,6 +3776,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "automation.schedules.create": ({
         name?: string;
+        admission?: "autonomous";
         prompt: string;
         cron?: string;
         every?: string;
@@ -3845,14 +3855,20 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "automation.schedules.delete": {
         scheduleId: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "automation.schedules.disable": {
         scheduleId: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "automation.schedules.enable": {
         scheduleId: string;
+        expectedMutationRevision?: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "automation.schedules.list": {};
@@ -4213,6 +4229,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "channels.drafts.delete": {
         draftId: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "channels.drafts.get": {
@@ -4239,6 +4256,7 @@ export interface OperatorMethodInputMap {
         tags?: readonly string[];
         sentResponseId?: string;
         sendError?: string;
+        admission?: "autonomous";
     } & {
         readonly [key: string]: unknown;
     });
@@ -4332,6 +4350,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "channels.routing.assign": ({
+        admission?: "autonomous";
         channelId?: string;
         surfaceKind: string;
         routeId?: string;
@@ -4343,6 +4362,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "channels.routing.delete": {
         assignmentId: string;
+        admission?: "autonomous";
     };
     // (undocumented)
     "channels.routing.list": {
@@ -6415,18 +6435,21 @@ export interface OperatorMethodInputMap {
     });
     // (undocumented)
     "occasions.acknowledge": {
+        admission?: "autonomous";
         occasionId: string;
         source?: "conversation" | "explicit" | "gift-flow";
         occurrence?: string;
     };
     // (undocumented)
     "occasions.answer": {
+        admission?: "autonomous";
         occasionId: string;
         answer: "acknowledged" | "later" | "no" | "yes";
         occurrence?: string;
     };
     // (undocumented)
     "occasions.confirm": {
+        admission?: "autonomous";
         title: string;
         date: string;
         kind: "gift-giving" | "neither" | "remember-only";
@@ -6439,6 +6462,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "occasions.conflict.resolve": {
+        admission?: "autonomous";
         occasionId: string;
     };
     // (undocumented)
@@ -6447,6 +6471,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "occasions.interview.answer": {
+        admission?: "autonomous";
         interviewId: string;
         stepId: string;
         text: string;
@@ -6457,6 +6482,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "occasions.interview.record": {
+        admission?: "autonomous";
         interviewId: string;
         landedOn: string;
     };
@@ -6466,6 +6492,7 @@ export interface OperatorMethodInputMap {
     "occasions.pending": {};
     // (undocumented)
     "occasions.plans.confirm": {
+        admission?: "autonomous";
         title: string;
         from: string;
         to: string;
@@ -6496,6 +6523,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "occasions.remove": {
+        admission?: "autonomous";
         occasionId: string;
         confirmed: boolean;
         authority: string;
@@ -6503,7 +6531,9 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "occasions.state": {};
     // (undocumented)
-    "occasions.sweep": {};
+    "occasions.sweep": {
+        admission?: "autonomous";
+    };
     // (undocumented)
     "ops.memory.get": {};
     // (undocumented)
@@ -6703,6 +6733,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "profile.append": {
+        admission?: "autonomous";
         section: string;
         text: string;
         surface: string;
@@ -6711,6 +6742,7 @@ export interface OperatorMethodInputMap {
     };
     // (undocumented)
     "profile.forget": {
+        admission?: "autonomous";
         fieldId?: string;
         section?: string;
         text?: string;
@@ -6732,6 +6764,7 @@ export interface OperatorMethodInputMap {
     "profile.read": {};
     // (undocumented)
     "profile.set": {
+        admission?: "autonomous";
         fieldId: string;
         value: string;
         surface: string;
@@ -6742,6 +6775,7 @@ export interface OperatorMethodInputMap {
     "profile.status": {};
     // (undocumented)
     "profile.undo": {
+        admission?: "autonomous";
         fieldId: string;
         authority: string;
     };
@@ -9047,6 +9081,7 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "automation.jobs.create": ({
         id: string;
+        mutationRevision: string;
         name: string;
         description?: string;
         labels: readonly string[];
@@ -9214,6 +9249,7 @@ export interface OperatorMethodOutputMap {
     "automation.jobs.list": {
         jobs: readonly (({
             id: string;
+            mutationRevision: string;
             name: string;
             description?: string;
             labels: readonly string[];
@@ -9373,6 +9409,7 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "automation.jobs.update": ({
         id: string;
+        mutationRevision: string;
         name: string;
         description?: string;
         labels: readonly string[];
@@ -10277,6 +10314,7 @@ export interface OperatorMethodOutputMap {
     // (undocumented)
     "automation.schedules.create": ({
         id: string;
+        mutationRevision: string;
         name: string;
         description?: string;
         labels: readonly string[];
@@ -10444,6 +10482,7 @@ export interface OperatorMethodOutputMap {
     "automation.schedules.list": {
         jobs: readonly (({
             id: string;
+            mutationRevision: string;
             name: string;
             description?: string;
             labels: readonly string[];
@@ -23893,6 +23932,10 @@ export interface OperatorMethodOutputMap {
             droppedInterviews: number;
             staleMirrors: number;
         };
+    } | {
+        complete: boolean;
+        acceptedDeliveries: number;
+        stopped: "delivery-processing-stopped" | "request-retired-after-delivery";
     };
     // (undocumented)
     "ops.memory.get": {
@@ -34924,6 +34967,12 @@ export function resolveHttpRetryPolicy(defaultPolicy?: HttpRetryPolicy, override
 
 // @public
 export function restoreJudgmentPort(owner: JudgmentPort, previous: JudgmentPort | undefined): void;
+
+// @public
+export function retainJsonSchemaSource<T>(source: T): {
+    readonly snapshot: T;
+    readonly assertCurrent: () => void;
+};
 
 // @public
 export const RETRYABLE_STATUS_CODES: readonly number[];

@@ -236,9 +236,11 @@ export async function openContractRunner(projectRoot: string, io: ContractCliIo)
       resumed: () => resumeContracts(services.contractRunner, projectRoot),
       sessions,
       dispose: async () => {
-        sessions.dispose();
-        services.dispose();
-        claim.release();
+        try { sessions.dispose(); }
+        finally {
+          try { await services.close(); }
+          finally { claim.release(); }
+        }
       },
     };
   } catch (error) {

@@ -16,6 +16,7 @@ const SDK_ROOT = process.env.WORKSPACE_ROOT ?? resolve(import.meta.dir, '../../.
 const DEFAULT_WORKSPACE_PACKAGES = [
   'packages/engine',
   'packages/judgment',
+  'products/daemon',
 ];
 
 function parseWorkspacePackagesJson(raw: string): string[] {

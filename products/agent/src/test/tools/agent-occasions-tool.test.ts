@@ -512,6 +512,40 @@ describe('occasions tool: reads that do carry dates', () => {
 });
 
 describe('occasions tool: sweep', () => {
+  test.each(['request-retired-after-delivery', 'delivery-processing-stopped'] as const)(
+    'reports accepted deliveries when the native pass stops: %s', async (stopped) => {
+      const { run, calls } = toolWith(() => answers({ complete: false, acceptedDeliveries: 2, stopped }));
+      const result = await run({ action: 'sweep' });
+      expect(result.success).toBe(false);
+      expect(result.output).toContain('The pass stopped before completion.');
+      expect(result.output).toContain('Accepted deliveries before stopping: 2.');
+      expect(result.output).toContain(stopped === 'request-retired-after-delivery'
+        ? 'The request became inactive after delivery' : 'Delivery processing stopped after an accepted delivery');
+      expect(result.output).toContain('Do not retry automatically');
+      expect(result.output).not.toContain('Ran one pass');
+      expect(result.output).not.toContain('today is');
+      expect(result.output).not.toContain('Nothing is due');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.methodId).toBe('occasions.sweep');
+    });
+
+  test.each([
+    { complete: true, acceptedDeliveries: 1, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: 0, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: -1, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: 1.5, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: Number.NaN, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: Number.MAX_SAFE_INTEGER + 1, stopped: 'request-retired-after-delivery' },
+    { complete: false, acceptedDeliveries: 1, stopped: 'unrecognised-stop' },
+  ])('refuses a malformed incomplete native receipt: %j', async (receipt) => {
+    const { run, calls } = toolWith(() => answers(receipt));
+    const result = await run({ action: 'sweep' });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain('shape this build does not recognise');
+    expect(result.output).not.toContain('Accepted deliveries');
+    expect(calls).toHaveLength(1);
+  });
+
   test('quiet hours are reported as a hold, and nothing is described as dropped', async () => {
     const { run } = toolWith(() => answers({
       ranAt: 1, today: '2026-03-01', hold: 'quiet-hours', nudge: null,

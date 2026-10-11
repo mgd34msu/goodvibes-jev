@@ -5,6 +5,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { canonicalJson, choice, hashState, JudgmentError, noul, PINNED_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, deferredWork, INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS, staticOffendingAnchor } from './batteries/static-source.ts';
 import { deferredBatteryPolicyStatements, internalSourceAnchors } from './static-source-anchors.ts';
+import { STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, STATIC_WEAK_ANCHOR_INSTRUCTIONS, staticWeakAnchor } from './batteries/static-weak-anchor.ts';
 
 export type StaticRule = 'internal-identifier' | 'deferred-work';
 export interface SourceAnchor {
@@ -24,6 +25,7 @@ export interface StaticSourceInput {
 }
 export interface StaticSourceReadings {
   readonly format: 1;
+  readonly readingPlanVersion?: 1 | 2;
   readonly decisionSourceHash: string;
   readonly readings: Readonly<Record<string, unknown>>;
   /** Original source manifests prove which policy a retained wire capture used. */
@@ -33,12 +35,13 @@ export interface StaticSourceReadings {
 
 export const STATIC_READINGS_PATH = resolve(import.meta.dir, '../etc/static-source-readings.json.gz');
 export const STATIC_SITE = 'engine.gates.static-source';
+export const STATIC_SOURCE_READING_PLAN_VERSION = 2;
 export const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 
 /** Bind extraction, questions, model and reading bands to the actual source. */
 export function staticDecisionSourceManifest(): ReadonlyArray<readonly [string, string]> {
   const files = [
-    'batteries/static-source.ts', 'static-source-readings.ts', 'internal-identifier-rule.ts',
+    'batteries/static-source.ts', 'batteries/static-weak-anchor.ts', 'static-source-readings.ts', 'internal-identifier-rule.ts',
     'no-todo-marker-rules.ts', 'check-internal-identifiers.ts', 'no-todo-markers.ts', 'read-static-source.ts', 'static-source-anchors.ts',
     '../../judgment/src/batteries/battery.ts', '../../judgment/src/batteries/asking.ts',
     '../../judgment/src/patterns/select.ts', '../../judgment/src/readings/readings.ts',
@@ -84,6 +87,7 @@ export function captureStaticInputs(kind: StaticRule, path: string, text: string
     try {
       validateContextBudget(staticInputState(input), { violation: batteryFor(kind).items.violation.question });
       validateContextBudget({ context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) }, selectionQuestions(input));
+      if (current.length === 1) validateContextBudget({ context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) }, selectionQuestions(input, true));
       return [input];
     } catch (error) {
       if (!(error instanceof JudgmentError) || error.kind !== 'invalid-request') throw error;
@@ -110,9 +114,11 @@ const ownValue = (values: Readonly<Record<string, unknown>> | undefined, key: st
 
 export function parseStaticSourceReadings(value: unknown): StaticSourceReadings | null {
   if (!object(value) || value.format !== 1 || typeof value.decisionSourceHash !== 'string' || !object(value.readings)) return null;
+  if (value.readingPlanVersion !== undefined && value.readingPlanVersion !== 1 && value.readingPlanVersion !== 2) return null;
   if ((value.captureSources !== undefined && !object(value.captureSources))
     || (value.captureBatterySources !== undefined && !object(value.captureBatterySources))) return null;
   return { format: 1, decisionSourceHash: value.decisionSourceHash, readings: value.readings,
+    ...(value.readingPlanVersion !== undefined ? { readingPlanVersion: value.readingPlanVersion } : {}),
     ...(object(value.captureSources) ? { captureSources: value.captureSources } : {}),
     ...(object(value.captureBatterySources) ? { captureBatterySources: value.captureBatterySources } : {}) };
 }
@@ -138,6 +144,7 @@ export function saveStaticSourceReadings(readings: StaticSourceReadings, path = 
 export function loadStaticSourceJournal(path: string, previous: StaticSourceReadings | null): StaticSourceReadings | null {
   if (!existsSync(path)) return previous;
   let decisionSourceHash = previous?.decisionSourceHash;
+  let readingPlanVersion = previous?.readingPlanVersion;
   const readings: Record<string, unknown> = { ...previous?.readings };
   const captureSources: Record<string, unknown> = { ...previous?.captureSources };
   const captureBatterySources: Record<string, unknown> = { ...previous?.captureBatterySources };
@@ -146,11 +153,13 @@ export function loadStaticSourceJournal(path: string, previous: StaticSourceRead
     try { record = parseStaticSourceReadings(JSON.parse(line)); } catch { continue; }
     if (!record) continue;
     decisionSourceHash = record.decisionSourceHash;
+    readingPlanVersion = record.readingPlanVersion;
     Object.defineProperties(readings, Object.getOwnPropertyDescriptors(record.readings));
     Object.defineProperties(captureSources, Object.getOwnPropertyDescriptors(record.captureSources ?? {}));
     Object.defineProperties(captureBatterySources, Object.getOwnPropertyDescriptors(record.captureBatterySources ?? {}));
   }
-  return decisionSourceHash === undefined ? null : { format: 1, decisionSourceHash, readings, captureSources, captureBatterySources };
+  return decisionSourceHash === undefined ? null : { format: 1, decisionSourceHash, readings, captureSources, captureBatterySources,
+    ...(readingPlanVersion !== undefined ? { readingPlanVersion } : {}) };
 }
 
 /** Each answered call reaches durable storage before another dependent call starts. */
@@ -184,9 +193,9 @@ export const staticSelectionContext = (input: StaticSourceInput) => ({ rule: rul
 export const staticSelectionCandidates = (input: StaticSourceInput) => input.anchors.map(anchor => ({ id: anchor.id, content: { ...anchor } }));
 
 /** These are the canonical selector's public configuration applied to the exact offered identities. */
-function selectionQuestions(input: StaticSourceInput): Questions {
+function selectionQuestions(input: StaticSourceInput, weakSelection = false): Questions {
   const options = { ...Object.fromEntries(input.anchors.map(anchor => [anchor.id, null])), none: 'None of the candidates does what is needed.' };
-  return { pick: choice(STATIC_ANCHOR_INSTRUCTIONS, options), ...Object.fromEntries(input.anchors.map((anchor, index) => [`fits_${index}`, noul({ question: STATIC_ANCHOR_FIT_INSTRUCTIONS, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(anchor.id)})` })])) };
+  return { pick: choice(weakSelection ? STATIC_WEAK_ANCHOR_INSTRUCTIONS : STATIC_ANCHOR_INSTRUCTIONS, options), ...Object.fromEntries(input.anchors.map((anchor, index) => [`fits_${index}`, noul({ question: weakSelection ? STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS : STATIC_ANCHOR_FIT_INSTRUCTIONS, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(anchor.id)})` })])) };
 }
 
 export interface StaticCallEvidence {
@@ -205,6 +214,7 @@ export interface StaticCallEvidence {
   readonly captureDecisionSourceHash?: string;
 }
 export interface StaticSourceReceipt {
+  readonly readingPlanVersion?: 1 | 2;
   readonly inputHash: string;
   readonly sourceHash: string;
   readonly decisionSourceHash: string;
@@ -258,14 +268,15 @@ export async function readStaticInput(port: JudgmentPort, log: DecisionLog, inpu
     const receipt = (): StaticSourceReceipt => ({
       ...(object(prior) ? prior : {}), inputHash: staticInputKey(current), sourceHash: current.sourceHash,
       decisionSourceHash: object(prior) && typeof prior.decisionSourceHash === 'string' ? prior.decisionSourceHash : sourceHash,
-      presence, selection, parts: [...parts],
+      readingPlanVersion: STATIC_SOURCE_READING_PLAN_VERSION, presence, selection, parts: [...parts],
       ...(previousCaptures ? { previousCaptures } : {}),
     });
     if (!reusedPresence) progress?.onReceipt(current, receipt());
-    if (reading.verdict === 'yes' && reading.outcome === 'act') {
+    if ((reading.verdict === 'yes' && reading.outcome === 'act') || (reading.outcome !== 'act' && current.anchors.length === 1)) {
       if (!selection) {
         if (object(prior) && prior.selection !== null && prior.selection !== undefined) previousCaptures = [original ?? prior];
-        const selected = await staticOffendingAnchor.select(port, staticSelectionContext(current), staticSelectionCandidates(current), options);
+        const selector = reading.outcome === 'act' ? staticOffendingAnchor : staticWeakAnchor;
+        const selected = await selector.select(port, staticSelectionContext(current), staticSelectionCandidates(current), options);
         selected.recordAction('prepared exact offending source anchor; offline gate preserves held outcomes');
         selection = evidence(log, selected.decisionId, sourceHash);
         progress?.onReceipt(current, receipt());
@@ -290,16 +301,41 @@ export type StaticInputStanding = { readonly kind: 'clear' }
   | { readonly kind: 'violation'; readonly anchor: SourceAnchor }
   | { readonly kind: 'held'; readonly reason: string };
 
-function currentEvidence(value: unknown, input: StaticSourceInput, selection: boolean): StaticCallEvidence | null {
+/** Capture completeness and gate admission share the full canonical answer boundary. */
+function selectionAnswer(value: unknown, input: StaticSourceInput) {
+  if (!object(value)) return null;
+  const pick = value.pick;
+  if (!object(pick) || pick.type !== 'choice' || typeof pick.choice !== 'string' || !probability(pick.confidence) || !object(pick.probabilities)) return null;
+  const fits: number[] = [];
+  for (let index = 0; index < input.anchors.length; index++) {
+    const fit = value[`fits_${index}`];
+    if (!object(fit) || fit.type !== 'noul' || !probability(fit.noul)) return null;
+    fits.push(fit.noul);
+  }
+  const expectedKeys = [...input.anchors.map(anchor => anchor.id), 'none'];
+  if (Object.keys(pick.probabilities).length !== expectedKeys.length) return null;
+  const probabilities: Record<string, number> = {};
+  for (const key of expectedKeys) {
+    const value = pick.probabilities[key];
+    if (!probability(value)) return null;
+    probabilities[key] = value;
+  }
+  try {
+    return { choice: readChoice({ type: 'choice', choice: pick.choice, confidence: pick.confidence, probabilities }, STAKES_BANDS.high.confidence), fits };
+  } catch { return null; }
+}
+
+function currentEvidence(value: unknown, input: StaticSourceInput, selection: boolean, weakSelection = false): StaticCallEvidence | null {
   if (!object(value) || !nonempty(value.id) || !nonempty(value.at) || !Number.isFinite(Date.parse(value.at))
     || value.requestedModel !== PINNED_MODEL || value.observedModel !== PINNED_MODEL
     || !(value.requestId === null || nonempty(value.requestId)) || !object(value.answers)
     || (value.captureDecisionSourceHash !== undefined && !nonempty(value.captureDecisionSourceHash))) return null;
-  const decision = selection ? staticOffendingAnchor : batteryFor(input.kind);
+  const decision = selection ? (weakSelection ? staticWeakAnchor : staticOffendingAnchor) : batteryFor(input.kind);
   const state = selection ? { context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) } : staticInputState(input);
-  const questions = selection ? selectionQuestions(input) : { violation: batteryFor(input.kind).items.violation.question };
+  const questions = selection ? selectionQuestions(input, weakSelection) : { violation: batteryFor(input.kind).items.violation.question };
   if (value.battery !== decision.name || value.version !== decision.version || value.site !== `${STATIC_SITE}.${input.kind}`
     || value.stateHash !== hashState(state) || value.questionsHash !== sha256(canonicalJson(toJson(questions)))) return null;
+  if (selection && selectionAnswer(value.answers, input) === null) return null;
   return { id: value.id, at: value.at, battery: decision.name, version: decision.version, site: `${STATIC_SITE}.${input.kind}`,
     stateHash: hashState(state), questionsHash: sha256(canonicalJson(toJson(questions))), requestedModel: PINNED_MODEL,
     observedModel: PINNED_MODEL, requestId: value.requestId, answers: value.answers,
@@ -372,12 +408,29 @@ function revalidateReceipt(input: StaticSourceInput, receipt: unknown, readings:
 
 function receiptEvidence(input: StaticSourceInput, receipt: Record<string, unknown>, selection: boolean, sourceHash: string,
   manifests: Readonly<Record<string, unknown>>, batterySources: Readonly<Record<string, unknown>>): StaticCallEvidence | null {
+  if (receipt.readingPlanVersion !== undefined && receipt.readingPlanVersion !== 1 && receipt.readingPlanVersion !== 2) return null;
   if (receipt.decisionSourceHash !== sourceHash && (receipt.validatedDecisionSourceHash !== sourceHash
     || !capturePolicyMatches(receipt.decisionSourceHash, input.kind, manifests, batterySources))) return null;
-  const value = currentEvidence(selection ? receipt.selection : receipt.presence, input, selection);
+  const presenceAnswer = object(receipt.presence) && object(receipt.presence.answers) ? receipt.presence.answers.violation : undefined;
+  const weakSelection = selection && input.anchors.length === 1 && object(presenceAnswer) && presenceAnswer.type === 'noul'
+    && probability(presenceAnswer.noul) && readYesNo({ type: 'noul', noul: presenceAnswer.noul }, STAKES_BANDS.high.yesNo).outcome !== 'act';
+  if (weakSelection && receipt.readingPlanVersion !== STATIC_SOURCE_READING_PLAN_VERSION) return null;
+  const value = currentEvidence(selection ? receipt.selection : receipt.presence, input, selection, weakSelection);
   if (!value) return null;
   if (value.captureDecisionSourceHash !== undefined && value.captureDecisionSourceHash !== sourceHash
     && !capturePolicyMatches(value.captureDecisionSourceHash, input.kind, manifests, batterySources)) return null;
+  if (weakSelection) {
+    // This decision did not exist in older manifests. Its genuine per-call
+    // capture must bind the exact new battery, even when presence is retained.
+    const captureHash = value.captureDecisionSourceHash;
+    if (!captureHash) return null;
+    if (captureHash !== sourceHash) {
+      const manifest = ownValue(manifests, captureHash);
+      const batteryHash = sha256(readFileSync(resolve(import.meta.dir, 'batteries/static-weak-anchor.ts'), 'utf8'));
+      if (!Array.isArray(manifest) || !manifest.some(entry => Array.isArray(entry)
+        && entry[0] === 'batteries/static-weak-anchor.ts' && entry[1] === batteryHash)) return null;
+    }
+  }
   return value;
 }
 
@@ -393,7 +446,7 @@ export function staticInputCaptureComplete(input: StaticSourceInput, readings: S
     const reading = readYesNo({ type: 'noul', noul: answer.noul }, STAKES_BANDS.high.yesNo);
     if (reading.outcome === 'act') return reading.verdict === 'no'
       || receiptEvidence(current, value, true, sourceHash, readings.captureSources ?? {}, readings.captureBatterySources ?? {}) !== null;
-    if (current.anchors.length < 2) return true;
+    if (current.anchors.length < 2) return receiptEvidence(current, value, true, sourceHash, readings.captureSources ?? {}, readings.captureBatterySources ?? {}) !== null;
     if (!Array.isArray(value.parts) || value.parts.length !== 2) return false;
     const parts = value.parts;
     const middle = Math.ceil(current.anchors.length / 2);
@@ -412,7 +465,8 @@ function receiptStanding(input: StaticSourceInput, receipt: unknown, sourceHash:
   const answer = object(presence?.answers) ? presence.answers.violation : undefined;
   if (!object(answer) || answer.type !== 'noul' || !probability(answer.noul)) return held('invalid or mismatched presence evidence');
   const reading = readYesNo({ type: 'noul', noul: answer.noul }, STAKES_BANDS.high.yesNo);
-  if (reading.outcome !== 'act') {
+  const weakSelection = reading.outcome !== 'act' && input.anchors.length === 1;
+  if (reading.outcome !== 'act' && !weakSelection) {
     const parts = receipt.parts;
     if (input.anchors.length < 2 || !Array.isArray(parts) || parts.length !== 2) return held('unsettled presence observation');
     const middle = Math.ceil(input.anchors.length / 2);
@@ -423,30 +477,22 @@ function receiptStanding(input: StaticSourceInput, receipt: unknown, sourceHash:
     if (standings.every(standing => standing.kind === 'clear')) return { kind: 'clear' };
     return held('unsettled or incomplete exact subset observations');
   }
-  if (reading.verdict === 'no') return { kind: 'clear' };
+  if (reading.verdict === 'no' && reading.outcome === 'act') return { kind: 'clear' };
   const selectedEvidence = receiptEvidence(input, receipt, true, sourceHash, manifests, batterySources);
-  const selected = object(selectedEvidence?.answers) ? selectedEvidence.answers : null;
-  const pick = selected?.pick;
-  if (!object(pick) || pick.type !== 'choice' || typeof pick.choice !== 'string' || !probability(pick.confidence) || !object(pick.probabilities)) return held('missing or invalid exact anchor evidence');
-  const distribution: Record<string, number> = {};
-  for (let index = 0; index < input.anchors.length; index++) {
-    const fit = selected?.[`fits_${index}`];
-    if (!object(fit) || fit.type !== 'noul' || !probability(fit.noul)) return held('incomplete anchor-fit evidence');
+  const selected = selectionAnswer(selectedEvidence?.answers, input);
+  if (!selected) return held('missing or invalid exact anchor evidence');
+  const chosen = selected.choice;
+  if (weakSelection && chosen.choice === 'none' && chosen.outcome === 'act') {
+    const allNo = selected.fits.every(fit => {
+      const fitting = readYesNo({ type: 'noul', noul: fit }, STAKES_BANDS.high.yesNo);
+      return fitting.verdict === 'no' && fitting.outcome === 'act';
+    });
+    return allNo ? { kind: 'clear' } : held('none selection has unsettled or contradictory candidate fits');
   }
-  const expectedKeys = [...input.anchors.map(anchor => anchor.id), 'none'];
-  if (Object.keys(pick.probabilities).length !== expectedKeys.length) return held('mismatched anchor distribution');
-  for (const key of expectedKeys) {
-    const value = pick.probabilities[key];
-    if (!probability(value)) return held('invalid anchor distribution');
-    distribution[key] = value;
-  }
-  let chosen;
-  try { chosen = readChoice({ type: 'choice', choice: pick.choice, confidence: pick.confidence, probabilities: distribution }, STAKES_BANDS.high.confidence); }
-  catch { return held('invalid anchor distribution'); }
   const index = input.anchors.findIndex(anchor => anchor.id === chosen.choice);
-  const fit = selected?.[`fits_${index}`];
-  if (chosen.outcome !== 'act' || index < 0 || !object(fit) || fit.type !== 'noul' || !probability(fit.noul)) return held('unsettled or absent offending anchor');
-  const fitting = readYesNo({ type: 'noul', noul: fit.noul }, STAKES_BANDS.high.yesNo);
+  const fit = selected.fits[index];
+  if (chosen.outcome !== 'act' || index < 0 || fit === undefined) return held('unsettled or absent offending anchor');
+  const fitting = readYesNo({ type: 'noul', noul: fit }, STAKES_BANDS.high.yesNo);
   if (fitting.verdict !== 'yes' || fitting.outcome !== 'act') return held('unsettled offending-anchor fit');
   return { kind: 'violation', anchor: input.anchors[index]! };
 }

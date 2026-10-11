@@ -22,6 +22,7 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { cleanupResearchScreeningFixtures, exactSensitiveSpans, researchScreeningFixture } from '../helpers/research-screening.ts';
 
 const legacyId = 'draft-20261011000001-deadbeef';
+const fetchOwner: { fetch: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch> } = globalThis;
 const args = { mode: 'channel_draft_send', draftId: legacyId };
 let previous: ReturnType<typeof installJudgmentPort>, log: SqliteDecisionLog;
 let readings: ReturnType<typeof fakePort>;
@@ -93,17 +94,21 @@ test('actual registered harness delivers an exact legacy native reference withou
   const result = await f.run();
   expect(result.success).toBe(true);
   const body = JSON.parse(result.output!);
+  const publicId: unknown = body.draftId;
+  if (typeof publicId !== 'string') throw new Error('Missing native draft public reference');
   expect(body).toMatchObject({ status: 'sent', draftId: expect.stringMatching(/^draft-reference-[a-p]{32}$/), draft: { id: body.draftId, status: 'sent' } });
   expect(f.delivery).toHaveLength(1);
-  expect(f.delivery[0]?.message).toBe('Send the completed review to the owned fixture channel.');
+  expect(f.delivery[0]?.body).toBe('Send the completed review to the owned fixture channel.');
   expect(getDraft(f.paths, legacyId)?.status).toBe('sent');
   expect(JSON.stringify(readings.requests)).not.toContain(legacyId);
   expect(JSON.stringify(f.screening.calls)).not.toContain(legacyId);
   expect(result.output).not.toContain(legacyId);
   expect(JSON.stringify(readings.requests)).toContain('Send the completed review to the owned fixture channel.');
-  const retry = await f.run({ mode: 'channel_draft_send', draftId: body.draftId });
-  expect(retry.output).toContain(body.draftId);
-  expect(retry.output).not.toContain(legacyId);
+  const retry = await f.run({ mode: 'channel_draft_send', draftId: publicId });
+  expect(retry.success).toBe(false);
+  expect(retry.error).toContain('already sent');
+  expect(retry.error).toContain(publicId);
+  expect(JSON.stringify(retry)).not.toContain(legacyId);
   expect(f.delivery).toHaveLength(1);
   expect(getDraft(f.paths, legacyId)?.status).toBe('sent');
 });
@@ -128,7 +133,7 @@ test.each(['complete', 'private-field'] as const)('connected send preserves the 
   const connectedEnv = process.env.GOODVIBES_CONNECTED_HOST_TOKEN, daemonEnv = process.env.GOODVIBES_DAEMON_TOKEN;
   delete process.env.GOODVIBES_CONNECTED_HOST_TOKEN; delete process.env.GOODVIBES_DAEMON_TOKEN;
   const requests: { input: Record<string, unknown>; headers: Headers }[] = [];
-  const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+  const fetchSpy = spyOn(fetchOwner, 'fetch').mockImplementation(async (_url, init) => {
     requests.push({ input: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
     return Response.json({ saved: true });
   });

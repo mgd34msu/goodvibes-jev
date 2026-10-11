@@ -11,7 +11,7 @@
  */
 
 import type { ConfigSetting } from './schema-types.js';
-import { validateManualModelPrices } from '../providers/model-pricing.js';
+import { validateManualModelPrices } from './manual-model-prices.js';
 
 export const pricingConfigDefaults = {
   pricing: {

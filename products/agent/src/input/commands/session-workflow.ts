@@ -1,5 +1,7 @@
 import { captureTranscriptSource, readTranscriptIndex, transcriptReadingCanceled, TRANSCRIPT_UNAVAILABLE } from './transcript-reading.ts';
 import { randomBytes } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { CommandContext } from '../command-registry.ts';
 import { type SessionMeta } from '@goodvibes-jev/engine/sdk/platform/sessions';
@@ -8,7 +10,10 @@ import type { SessionReturnContextSummary } from '@/runtime/index.ts';
 import type { ConversationMessageSnapshot } from '../../core/conversation.ts';
 import { formatReturnContextForDisplay, getReturnContextMode, maybeAssistReturnContextSummary } from '@/runtime/index.ts';
 import { requireProviderApi, requireSessionManager } from './runtime-services.ts';
-import { redactSensitiveData, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { redactSensitiveDataAsync, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { captureOwnedJson, retainOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { TranscriptSourceChangedError } from '@goodvibes-jev/engine/sdk/platform/core';
+import { captureJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { requireYesFlag, stripYesFlag } from './confirmation.ts';
 import { readConversationMessageSnapshots } from '../../core/conversation-message-snapshot.ts';
 
@@ -90,13 +95,71 @@ async function buildTranscriptReviewLines(
   ];
 }
 
-function printSessionExport(
-  ctx: { print: (text: string) => void },
+async function printSessionExport(
+  ctx: CommandContext,
   sessionId: string,
   title: string,
   messages: readonly ConversationMessageSnapshot[],
   format: string,
-): void {
+  args: readonly string[],
+  filePath?: string,
+): Promise<void> {
+  const session = ctx.session;
+  const readingOptions = ctx.judgmentReadingOptions;
+  const signal = readingOptions?.signal, ownerCurrent = readingOptions?.assertCurrent;
+  const source = captureTranscriptSource(ctx, signal);
+  const manager = requireSessionManager(ctx);
+  const input = retainOwnedJson({ sessionId, title, messages, format, args });
+  const fileBytes = filePath === undefined ? undefined : readFileSync(filePath);
+  const fileStat = filePath === undefined ? undefined : statSync(filePath, { bigint: true });
+  const methods: { readonly key: 'print' | 'load'; readonly owner: object; readonly prototype: object | null; readonly descriptor?: PropertyDescriptor }[] = [];
+  for (const [target, key] of [[ctx, 'print'], [manager, 'load']] as const) {
+    for (let owner: object | null = target; owner !== null; owner = Object.getPrototypeOf(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (descriptor !== undefined && !('value' in descriptor)) throw new TranscriptSourceChangedError();
+      methods.push({ key, owner, prototype: Object.getPrototypeOf(owner), ...(descriptor === undefined ? {} : { descriptor }) });
+      if (descriptor !== undefined) break;
+    }
+  }
+  const print = ctx.print, load = manager.load;
+  const saved = filePath === undefined ? captureOwnedJson(load.call(manager, sessionId)) : undefined;
+  const assertSource = () => {
+    source.assertPublishable();
+    try {
+      input.assertCurrent();
+      if (ctx.session !== session || ctx.judgmentReadingOptions !== readingOptions
+        || readingOptions?.signal !== signal || readingOptions?.assertCurrent !== ownerCurrent) throw new TranscriptSourceChangedError();
+      for (const entry of methods) {
+        if (Object.getPrototypeOf(entry.owner) !== entry.prototype
+          || !isDeepStrictEqual(Object.getOwnPropertyDescriptor(entry.owner, entry.key), entry.descriptor)) throw new TranscriptSourceChangedError();
+      }
+      if (filePath !== undefined && fileBytes !== undefined && fileStat !== undefined) {
+        const current = statSync(filePath, { bigint: true });
+        if (current.dev !== fileStat.dev || current.ino !== fileStat.ino || current.size !== fileStat.size
+          || current.mtimeNs !== fileStat.mtimeNs || current.ctimeNs !== fileStat.ctimeNs
+          || !readFileSync(filePath).equals(fileBytes)) throw new TranscriptSourceChangedError();
+      } else if (!isDeepStrictEqual(captureOwnedJson(load.call(manager, sessionId)), saved)) {
+        throw new TranscriptSourceChangedError();
+      }
+    } catch {
+      throw new TranscriptSourceChangedError();
+    }
+  };
+  let readingOwner: ReturnType<typeof captureJudgmentPort> | undefined;
+  const assertCurrent = () => {
+    assertSource();
+    let result: unknown;
+    try { result = ownerCurrent?.(); } catch { throw new TranscriptSourceChangedError(); }
+    if (result !== undefined) {
+      void Promise.resolve(result).catch(() => {});
+      throw new TranscriptSourceChangedError();
+    }
+    readingOwner?.assertCurrent();
+    assertSource();
+  };
+  assertCurrent();
+  try { readingOwner = captureJudgmentPort('agent.session-export', { signal, assertCurrent: assertSource }); }
+  catch (error) { if (!(error instanceof JudgmentPortMissingError)) throw error; }
   const lines: string[] = [];
   if (format === 'markdown') {
     lines.push(`# Session: ${title || sessionId}`);
@@ -135,13 +198,14 @@ function printSessionExport(
     }
   }
   // A transcript is the one place a value the model was handed becomes a
-  // durable document. redactSensitiveData carries the platform's credential
+  // durable document. The canonical redactor carries the platform's credential
   // patterns AND, in a process that has loaded the owner profile, that
   // profile's closed-tier values, his address, his contact details, the People
   // section, so an exported session cannot become the copy of the dossier that
   // the file itself is careful not to be (docs/owner-profile.md §10, §11.3).
-  // Where no profile is loaded this behaves exactly as it did before.
-  ctx.print(redactSensitiveData(lines.join('\n')));
+  const redacted = await redactSensitiveDataAsync(lines.join('\n'), { signal, assertCurrent, purpose: 'export' });
+  assertCurrent();
+  print.call(ctx, redacted);
 }
 
 function conversationMessageContentText(message: ConversationMessageSnapshot): string {
@@ -414,8 +478,9 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     if (!found && target !== '.') {
       try {
         const { meta, messages } = sm.load(sessionId);
-        printSessionExport(ctx, sessionId, meta.title, readConversationMessageSnapshots(messages), format);
-      } catch {
+        await printSessionExport(ctx, sessionId, meta.title, readConversationMessageSnapshots(messages), format, args);
+      } catch (error) {
+        if (transcriptReadingCanceled(error) || ctx.judgmentReadingOptions?.signal?.aborted) return true;
         ctx.print(`Session not found ${sessionId}`);
       }
       return true;
@@ -423,8 +488,9 @@ export async function handleSessionWorkflowCommand(args: string[], ctx: CommandC
     const loadName = found ? found.name : sessionId;
     try {
       const { meta, messages } = sm.load(loadName);
-      printSessionExport(ctx, loadName, meta.title, readConversationMessageSnapshots(messages), format);
+      await printSessionExport(ctx, loadName, meta.title, readConversationMessageSnapshots(messages), format, args, found?.filePath);
     } catch (e) {
+      if (transcriptReadingCanceled(e) || ctx.judgmentReadingOptions?.signal?.aborted) return true;
       ctx.print(formatSessionFailure('export session', e));
     }
     return true;

@@ -4,9 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
-import { KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
+import { assertKnowledgeRecordAdmissions, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
 import { createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
+import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
+import { bindJudgmentPortAuthority, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { prepareKnowledgeScopeSelection, KnowledgeScopeSelectionHeldError } from '../sdk/src/platform/knowledge/scope-selection.js';
 
 const roots: string[] = [], stores: KnowledgeStore[] = [], databases: SQLiteStore[] = [];
 afterEach(async () => {
@@ -62,6 +66,117 @@ async function database() {
   return { sqlite, filename };
 }
 const read = (sqlite: SQLiteStore) => sqlite.readPersistedRow('knowledge_sources', 'id', 'pending direct change');
+
+async function observeProbePlans() {
+  const SQL = await loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare;
+  const active = new Set<ReturnType<typeof prepare>>();
+  let allocated = 0, freed = 0, stepped = 0;
+  const observing = spyOn(SQL.Database.prototype, 'prepare').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql) {
+    const statement = prepare.call(this, sql), free = statement.free, step = statement.step;
+    allocated++; active.add(statement);
+    statement.free = () => {
+      expect(active.delete(statement)).toBe(true);
+      freed++; return free.call(statement);
+    };
+    statement.step = () => { stepped++; return step.call(statement); };
+    return statement;
+  });
+  return { restore: () => observing.mockRestore(), current: () => ({ allocated, freed, stepped, active: active.size }) };
+}
+
+test.each(['success', 'assertion', 'run', 'exec', 'export', 'close'] as const)('private PRAGMA plans are refreshed and freed on frame %s', async operation => {
+  const { sqlite } = await database(); let retained: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    retained = db; db.run("INSERT INTO knowledge_sources VALUES ('original')");
+    return { changed: true, value: undefined };
+  }, () => {});
+  if (!retained) throw new Error('Writer handle was not captured');
+  const handle = retained, plans = await observeProbePlans();
+  try {
+    const assertion = () => sqlite.assertPersistedReadFrame(() => {
+      read(sqlite);
+      const first = plans.current();
+      expect(first.active).toBe(4);
+      expect(Object.keys(handle).sort()).toEqual(['close', 'exec', 'export', 'run']);
+      read(sqlite);
+      expect(plans.current().stepped).toBeGreaterThan(first.stepped);
+      expect(plans.current().allocated).toBe(first.allocated);
+      if (operation === 'assertion') throw new Error('original assertion failure');
+      if (operation === 'run') handle.run('SELECT 1');
+      if (operation === 'exec') handle.exec('SELECT 1');
+      if (operation === 'export') handle.export();
+      if (operation === 'close') sqlite.close();
+      if (operation !== 'success') expect(plans.current().active).toBe(0);
+    });
+    if (operation === 'success') expect(assertion).not.toThrow(); else expect(assertion).toThrow();
+    expect(plans.current().active).toBe(0);
+    expect(plans.current().freed).toBe(plans.current().allocated);
+    if (operation !== 'close') {
+      sqlite.assertPersistedReadFrame(() => { read(sqlite); });
+      expect(plans.current().allocated).toBe(8);
+      expect(plans.current().freed).toBe(8);
+    }
+  } finally { plans.restore(); }
+});
+
+test.each(['prepare', 'reset'] as const)('private PRAGMA %s failure frees statements and uses fresh full probes', async failure => {
+  const { store, source, sqlite } = await fixture();
+  const SQL = await loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare;
+  let allocated = 0, freed = 0, resetFailed = false;
+  const observing = spyOn(SQL.Database.prototype, 'prepare').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql) {
+    if (failure === 'prepare' && sql === 'PRAGMA "main".schema_version') throw new Error('native plan unavailable');
+    const statement = prepare.call(this, sql), free = statement.free, reset = statement.reset;
+    allocated++;
+    statement.free = () => { freed++; return free.call(statement); };
+    if (failure === 'reset' && sql === 'PRAGMA "main".data_version') statement.reset = () => {
+      if (!resetFailed) { resetFailed = true; return false; }
+      return reset.call(statement);
+    };
+    return statement;
+  });
+  try {
+    store.assertRecordSnapshotFrame(() => {
+      const original = store.getSourceGeneration(source.id);
+      expect(store.getSourceGeneration(source.id)).toBe(original);
+      expect(freed).toBe(allocated);
+    });
+    expect(allocated).toBe(failure === 'prepare' ? 3 : 4);
+    expect(freed).toBe(allocated);
+    let consumed = false;
+    expect(() => store.assertRecordSnapshotFrame(() => {
+      store.getSourceGeneration(source.id);
+      sqlite.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+      store.getSourceGeneration(source.id); consumed = true;
+    })).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(consumed).toBe(false);
+    expect(freed).toBe(allocated);
+  } finally { observing.mockRestore(); }
+});
+
+test('reused PRAGMA plans retire an actual foreign native schema change before a cached row can return', async () => {
+  const { store, source, sqlite } = await fixture(); let retained: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    retained = db; db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const main = retained?.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database(), plans = await observeProbePlans();
+  let consumed = false;
+  try {
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    expect(() => store.assertRecordSnapshotFrame(() => {
+      const original = store.getSourceGeneration(source.id);
+      expect(store.getSourceGeneration(source.id)).toBe(original);
+      expect(plans.current().active).toBe(4);
+      alias.run('CREATE TABLE original.foreign_schema_change (id INTEGER)');
+      store.getSourceGeneration(source.id); consumed = true;
+    })).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(consumed).toBe(false);
+    expect(plans.current().active).toBe(0);
+    expect(plans.current().freed).toBe(plans.current().allocated);
+  } finally { plans.restore(); alias.close(); }
+});
 
 test('cached closed rows are detached on every read and cannot cross a synchronous frame', async () => {
   const { sqlite } = await database();
@@ -128,6 +243,67 @@ test('an admitted mutable record keeps its full descriptor fence after generatio
   store.assertRecordSnapshotFrame(() => { receipt.assertCurrent(); receipt.assertCurrent(); });
   Object.defineProperty(extraction.sections, 'extraMeaning', { value: 'new protected input', enumerable: true });
   expect(() => store.assertRecordSnapshotFrame(() => { receipt.assertCurrent(); })).toThrow(KnowledgeRecordAdmissionHeldError);
+});
+
+test('authentic grouped admission checks use one private image and retain complete mutable descriptors', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  const receipts = [prepareKnowledgeRecordAdmission(store, 'source', source), prepareKnowledgeRecordAdmission(store, 'extraction', extraction)];
+  const snapshots = instrument(sqlite);
+  assertKnowledgeRecordAdmissions(store, receipts);
+  expect(snapshots.privateImages()).toEqual({ opened: 1, closed: 1 });
+  let getters = 0;
+  Object.defineProperty(extraction, 'id', { get() { getters++; return 'newly borrowed extraction'; }, enumerable: true });
+  expect(() => assertKnowledgeRecordAdmissions(store, receipts)).toThrow(JudgmentInputError);
+  expect(getters).toBe(0);
+});
+
+test.each(['forged', 'foreign-store', 'index-accessor', 'named-array'] as const)('grouped admissions reject %s before raw access or borrowed callbacks', async mode => {
+  const { store, source, sqlite } = await fixture();
+  const receipt = prepareKnowledgeRecordAdmission(store, 'source', source);
+  let borrowedCalls = 0;
+  const receipts = [receipt, { assertCurrent() { borrowedCalls++; } }];
+  if (mode !== 'forged') receipts[1] = receipt;
+  if (mode === 'foreign-store') {
+    const other = await fixture();
+    receipts[1] = prepareKnowledgeRecordAdmission(other.store, 'source', other.source);
+  }
+  if (mode === 'index-accessor') Object.defineProperty(receipts, '1', { get() { borrowedCalls++; return receipt; }, enumerable: true });
+  if (mode === 'named-array') Object.defineProperty(receipts, 'meaning', { value: 'unselected extra', enumerable: true });
+  const snapshots = instrument(sqlite);
+  expect(() => assertKnowledgeRecordAdmissions(store, receipts)).toThrow(KnowledgeRecordAdmissionHeldError);
+  expect(borrowedCalls).toBe(0);
+  expect(snapshots()).toEqual({ opened: 0, closed: 0 });
+  expect(snapshots.privateImages()).toEqual({ opened: 0, closed: 0 });
+});
+
+test('grouped admission retains the native exit fence through actual cached-record access', async () => {
+  const { store, source, sqlite } = await fixture();
+  let writer: SqlDatabase | undefined;
+  await sqlite.transactPersisted(db => {
+    writer = db;
+    db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+    return { changed: true, value: undefined };
+  }, () => {});
+  const main = writer!.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+  const receipt = prepareKnowledgeRecordAdmission(store, 'source', source), read = store.getSource.bind(store);
+  let replaced = false, consumed = false;
+  alias.run('ATTACH DATABASE ? AS original', [main]);
+  const observing = spyOn(store, 'getSource').mockImplementation(id => {
+    const record = read(id);
+    if (!replaced && id === source.id) {
+      replaced = true;
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', ['during receipt identity replacement', source.id]);
+      alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+    }
+    return record;
+  });
+  try {
+    expect(() => { assertKnowledgeRecordAdmissions(store, [receipt]); consumed = true; }).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(replaced).toBe(true);
+    expect(consumed).toBe(false);
+  } finally { observing.mockRestore(); alias.close(); }
 });
 
 test('an actual native VFS alias replacement and restore retires the original raw generation', async () => {
@@ -316,6 +492,88 @@ test('real admission and nested semantic guard read every full row from one imag
   expect(() => guard.assertCurrent()).toThrow(KnowledgeSourceQualityHeldError);
   expect(snapshots()).toEqual({ opened: 3, closed: 3 });
 });
+
+test('each actual scope job captures all three owner checks in one fresh private image', async () => {
+  const { store, sqlite, source } = await fixture();
+  const second = await store.upsertSource({ id: 'second-source', connectorId: 'frame-test', sourceType: 'document',
+    title: 'Router backup operations', status: 'indexed', metadata: { knowledgeSpaceId: 'default' } });
+  const snapshots = instrument(sqlite), fake = fakePort(() => noulAnswer(0.99));
+  const observations: { readonly capture: number; readonly baseline: { opened: number; closed: number };
+    readonly callbacks: { opened: number; closed: number }[] }[] = [];
+  bindJudgmentPortAuthority(fake.port, () => {
+    const observation: (typeof observations)[number] = { capture: observations.length + 1,
+      baseline: snapshots.privateImages(), callbacks: [] };
+    observations.push(observation);
+    return { identity: fake.port, assertCurrent() { observation.callbacks.push(snapshots.privateImages()); } };
+  });
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] });
+    expect(selection.sources.map(record => record.id).sort()).toEqual([source.id, second.id].sort());
+    expect(fake.requests).toHaveLength(2);
+    expect(observations).toHaveLength(3);
+    for (const observation of observations.slice(1)) {
+      expect(observation.callbacks.length).toBeGreaterThanOrEqual(3);
+      expect(observation.callbacks.slice(0, 3).map(count => ({
+        opened: count.opened - observation.baseline.opened, closed: count.closed - observation.baseline.closed,
+      }))).toEqual([{ opened: 0, closed: 0 }, { opened: 1, closed: 0 }, { opened: 1, closed: 0 }]);
+    }
+    expect(snapshots.privateImages().opened).toBe(snapshots.privateImages().closed);
+    const before = snapshots.privateImages();
+    selection.assertCurrent();
+    expect(snapshots.privateImages()).toEqual({ opened: before.opened + 1, closed: before.closed + 1 });
+    await Promise.resolve();
+    selection.assertCurrent();
+    expect(snapshots.privateImages()).toEqual({ opened: before.opened + 2, closed: before.closed + 2 });
+  } finally { installJudgmentPort(previous); }
+});
+
+test.each(['native alias ABA', 'file ABA', 'row ABA', 'caller cancellation', 'port replacement', 'async owner'] as const)(
+  'an actual scope capture rejects %s during its second owner callback before dispatch', async mutation => {
+    const { store, sqlite, source } = await fixture();
+    let writer: SqlDatabase | undefined;
+    await sqlite.transactPersisted(db => {
+      writer = db;
+      db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+      return { changed: true, value: undefined };
+    }, () => {});
+    if (!writer) throw new Error('The actual native writer was not retained');
+    const main = writer.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+    if (typeof main !== 'string') throw new Error('No original VFS file');
+    const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    const controller = new AbortController(), fake = fakePort(() => noulAnswer(0.99));
+    let captures = 0, changed = false;
+    bindJudgmentPortAuthority(fake.port, () => {
+      const capture = ++captures; let checks = 0;
+      return { identity: fake.port, assertCurrent() {
+        if (capture !== 2 || ++checks !== 2) return;
+        changed = true;
+        if (mutation === 'native alias ABA') {
+          alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', ['native capture replacement', source.id]);
+          alias.run('UPDATE original.knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+        } else if (mutation === 'file ABA') {
+          copyFileSync(store.storagePath, `${store.storagePath}.replacement`);
+          renameSync(`${store.storagePath}.replacement`, store.storagePath);
+        } else if (mutation === 'row ABA') {
+          sqlite.run('UPDATE knowledge_sources SET summary = ? WHERE id = ?', ['capture replacement', source.id]);
+          sqlite.run('UPDATE knowledge_sources SET summary = ? WHERE id = ?', [source.summary ?? null, source.id]);
+        } else if (mutation === 'caller cancellation') controller.abort();
+        else if (mutation === 'port replacement') installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+        else return Promise.resolve();
+      } };
+    });
+    const previous = installJudgmentPort(fake.port), snapshots = instrument(sqlite);
+    try {
+      await expect(prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'], signal: controller.signal }))
+        .rejects.toBeInstanceOf(KnowledgeScopeSelectionHeldError);
+      expect(changed).toBe(true);
+      expect(fake.requests).toHaveLength(0);
+      expect(snapshots.privateImages().opened).toBe(snapshots.privateImages().closed);
+      expect(store.getSourceSnapshot({ id: source.id }).source?.summary).toBe(source.summary);
+    } finally { installJudgmentPort(previous); alias.close(); }
+  },
+);
 
 test('independent admission guard sees persisted extraction changes without adopting cached source identity', async () => {
   const { store, extraction, sqlite } = await fixture();
@@ -540,4 +798,39 @@ test('a supported validation callback cannot retain the private admission image'
   });
   expect(snapshots()).toEqual({ opened: 1, closed: 1 });
   expect(snapshots.privateImages()).toEqual({ opened: 1, closed: 1 });
+});
+
+test('exact native source restoration preserves original persisted clocks and retires the old observation', async () => {
+  const clock = spyOn(Date, 'now').mockReturnValue(4_222_222_222_222);
+  try {
+    const { store, source } = await fixture();
+    const original = store.getSourceSnapshot({ id: source.id });
+    const old = prepareKnowledgeRecordAdmission(store, 'source', source);
+    await store.replaceSourceRecord(source);
+    const restored = store.getSource(source.id)!;
+    const persisted = store.getSourceSnapshot({ id: source.id });
+    expect(restored).not.toBe(source);
+    expect(restored).toEqual(source);
+    expect(persisted.raw).toEqual(original.raw);
+    expect(typeof persisted.raw?.created_at).toBe('string');
+    expect(typeof persisted.raw?.updated_at).toBe('string');
+    expect(() => old.assertCurrent()).toThrow(KnowledgeRecordAdmissionHeldError);
+    expect(() => prepareKnowledgeRecordAdmission(store, 'source', restored)).not.toThrow();
+  } finally { clock.mockRestore(); }
+});
+
+test.each(['clone', 'changed-origin'] as const)('source restoration never supplies native clock proof to a %s', async kind => {
+  const epoch = 4_222_222_222_222;
+  const clock = spyOn(Date, 'now').mockReturnValue(epoch);
+  try {
+    const { store, source } = await fixture();
+    const candidate = kind === 'clone' ? structuredClone(source) : source;
+    if (kind === 'changed-origin') Object.defineProperty(candidate, 'summary', { value: 'Caller changed the retained record', enumerable: true, writable: true, configurable: true });
+    await store.replaceSourceRecord(candidate);
+    const restored = store.getSource(source.id)!;
+    const persisted = store.getSourceSnapshot({ id: source.id });
+    expect(persisted.raw?.created_at).toBe(epoch);
+    expect(persisted.raw?.updated_at).toBe(epoch);
+    expect(() => prepareKnowledgeRecordAdmission(store, 'source', restored)).toThrow(JudgmentInputError);
+  } finally { clock.mockRestore(); }
 });

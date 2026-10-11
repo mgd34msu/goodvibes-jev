@@ -1,4 +1,4 @@
-import { isAcceptableReasoningEffortSetting } from '../providers/reasoning-effort.js';
+import { isAcceptableReasoningEffortSetting } from './reasoning-effort-setting.js';
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 export interface ConfigSettingDefinition {

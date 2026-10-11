@@ -83,13 +83,28 @@ describe('executePhase: exec timeout_ms honored', () => {
       phaseTimeouts: { executing: 50 },
     });
 
-    const result = await executor.execute(
-      { id: 'call-other', name: 'some_other_tool', arguments: { timeout_ms: 2000 } },
-      sleepingTool('some_other_tool', 300),
-      runtimeContext(),
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/timed out/);
+    let started = 0; let finished = false; let settle!: () => void;
+    const settled = new Promise<void>(resolve => { settle = resolve; });
+    const tool = sleepingTool('some_other_tool', 300); const execute = tool.execute;
+    tool.execute = async (args, options) => {
+      started++;
+      try { const result = await execute(args, options); finished = true; return result; }
+      finally { settle(); }
+    };
+    try {
+      const result = await executor.execute(
+        { id: 'call-other', name: 'some_other_tool', arguments: { timeout_ms: 2000 } }, tool, runtimeContext(),
+      );
+      expect(result.success).toBe(false); expect(result.error).toBe('[REDACTED]'); expect(result.output).toBeUndefined();
+      expect(started).toBe(1); expect(finished).toBe(false);
+      const record = executor.getRecord('call-other');
+      if (!record) throw new Error('Timed-out call must retain its execution record');
+      expect(record.currentPhase).toBe('failed'); expect(record.result).toBeUndefined();
+      expect(record.phases.filter(phase => phase.phase === 'executing')).toEqual([
+        expect.objectContaining({ phase: 'executing', success: false, abort: true, error: '[REDACTED]' }),
+      ]);
+      await settled;
+      expect(finished).toBe(true); expect(record.currentPhase).toBe('failed'); expect(record.result).toBeUndefined();
+    } finally { if (started > 0) await settled; }
   });
 });

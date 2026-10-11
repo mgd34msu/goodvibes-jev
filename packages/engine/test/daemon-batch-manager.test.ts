@@ -173,9 +173,9 @@ describe('provider batch failures: whether another attempt could succeed', () =>
     const after = await manager.getJob(job.id);
     expect(after?.status).toBe('queued');
     expect(after?.attempts).toBe(1);
-    expect(after?.error?.message).toContain('503');
+    expect(after?.error?.message).toBe('[REDACTED]');
     expect(tick.failedJobs).toBe(0);
-    expect(readings.requests).toHaveLength(0);
+    expect(readings.requests.filter(request => typeof request.state === 'string')).toHaveLength(0);
   });
 
   test('a submission rejected with a status no retry clears is dead-lettered', async () => {
@@ -191,7 +191,9 @@ describe('provider batch failures: whether another attempt could succeed', () =>
     }));
     await manager.tick({ forceSubmit: true });
     expect((await manager.getJob(job.id))?.status).toBe('dead_lettered');
-    expect(readings.requests).toHaveLength(1);
+    const failureRequests = readings.requests.filter(request => typeof request.state === 'string');
+    expect(failureRequests).toHaveLength(1);
+    expect(failureRequests[0]?.state).toBe('HTTP status: 429\nError code: SDK_HTTP_STATUS_ERROR\nError type: HttpStatusError\nMessage: HTTP 429: You exceeded your current quota, please check your plan');
   });
 
   test('wording with no status is read: a dropped connection is retried, an unsupported request is not', async () => {

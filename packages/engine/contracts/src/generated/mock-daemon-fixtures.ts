@@ -1086,6 +1086,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "status": 200,
     "body": {
       "id": "sample",
+      "mutationRevision": "sample",
       "name": "sample",
       "description": "sample",
       "labels": [
@@ -1256,6 +1257,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "jobs": [
         {
           "id": "sample",
+          "mutationRevision": "sample",
           "name": "sample",
           "description": "sample",
           "labels": [
@@ -1408,6 +1410,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "status": 200,
     "body": {
       "id": "sample",
+      "mutationRevision": "sample",
       "name": "sample",
       "description": "sample",
       "labels": [
@@ -2237,6 +2240,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
     "status": 200,
     "body": {
       "id": "sample",
+      "mutationRevision": "sample",
       "name": "sample",
       "description": "sample",
       "labels": [
@@ -2407,6 +2411,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "jobs": [
         {
           "id": "sample",
+          "mutationRevision": "sample",
           "name": "sample",
           "description": "sample",
           "labels": [

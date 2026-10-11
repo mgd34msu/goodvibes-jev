@@ -65,8 +65,8 @@ export type BuiltinCompatDefinition =
   | BuiltinOpenAICompatDefinition
   | BuiltinAnthropicCompatDefinition;
 
-export { BUILTIN_PROVIDER_ENV_KEYS, getBuiltinProviderEnvVars } from './credential-catalog.js';
-import { getBuiltinProviderEnvVars } from './credential-catalog.js';
+export { BUILTIN_PROVIDER_ENV_KEYS, getBuiltinProviderEnvVars } from '../config/provider-credential-catalog.js';
+import { getBuiltinProviderEnvVars } from '../config/provider-credential-catalog.js';
 
 /**
  * Reasoning-format audit, 2026-07-25: every entry below without an explicit

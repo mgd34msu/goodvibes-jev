@@ -29,6 +29,7 @@ import { createRuntimeStore, createDomainDispatch } from '../../runtime/store/in
 import { CommandRegistry } from '../../input/command-registry.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { registerOperatorRuntimeCommands } from '../../input/commands/operator-runtime.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 const SESSION_ID = 'ops-proof-session';
 
@@ -123,8 +124,23 @@ describe('/ops task interventions: real task manager, real control plane', () =>
 
   test('a missing task id surfaces an honest [Ops] error', async () => {
     const env = makeEnv();
-    await env.run('ops task pause task-that-never-existed');
+    expect(() => env.opsApi.tasks.pause('task-that-never-existed')).toThrow('[OpsControlPlane] task not found: task-that-never-existed');
+    await withPublicErrorText(['[OpsControlPlane] task not found: task-that-never-existed'], () => env.run('ops task pause task-that-never-existed'), {
+      ordinaryFields: ['found'],
+      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [
+        { kind: 'text', text: '[OpsControlPlane] task not found: ' },
+        { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'found' },
+        { kind: 'text', text: '' },
+      ] }],
+      residualProjections: [{ parts: [
+        { kind: 'text', text: '[OpsControlPlane] task not found: ' },
+        { kind: 'withheld', reference: 'span-1' },
+        { kind: 'text', text: '' },
+      ] }],
+    });
+    expect(env.store.getState().tasks.tasks.size).toBe(0);
     expect(env.printed.some((line) => line.startsWith('[Ops] Error:') && line.includes('task-that-never-existed'))).toBe(true);
+    expect(env.printed.join('\n')).not.toContain('dispatched');
   });
 });
 
@@ -146,7 +162,22 @@ describe('/ops agent interventions', () => {
 
   test('a missing agent id surfaces an honest [Ops] error', async () => {
     const env = makeEnv();
-    await env.run('ops agent cancel agent-that-never-existed');
+    expect(() => env.opsApi.agents.cancel('agent-that-never-existed')).toThrow('[OpsControlPlane] agent not found: agent-that-never-existed');
+    await withPublicErrorText(['[OpsControlPlane] agent not found: agent-that-never-existed'], () => env.run('ops agent cancel agent-that-never-existed'), {
+      ordinaryFields: ['found'],
+      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [
+        { kind: 'text', text: '[OpsControlPlane] agent not found: ' },
+        { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'found' },
+        { kind: 'text', text: '' },
+      ] }],
+      residualProjections: [{ parts: [
+        { kind: 'text', text: '[OpsControlPlane] agent not found: ' },
+        { kind: 'withheld', reference: 'span-1' },
+        { kind: 'text', text: '' },
+      ] }],
+    });
+    expect(env.store.getState().agents.agents.size).toBe(0);
     expect(env.printed.some((line) => line.startsWith('[Ops] Error:') && line.includes('agent-that-never-existed'))).toBe(true);
+    expect(env.printed.join('\n')).not.toContain('dispatched');
   });
 });

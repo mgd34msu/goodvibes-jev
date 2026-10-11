@@ -1,5 +1,7 @@
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fieldKind, redactionCredential, residualCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { authoredPrivacyAnswer, errorText } from '../helpers/authored-diagnostic-readings.ts';
 /**
  * Agent context window awareness tests.
  *
@@ -91,7 +93,10 @@ async function withMockProvider<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const reg = getTestProviderRegistry();
+  const readDiagnostic = authoredPrivacyAnswer({ parts: [[errorText('401 Unauthorized')]] });
   const previousPort = installJudgmentPort(fakePort((name, question, state) => {
+    const diagnostic = readDiagnostic(name, question, state);
+    if (diagnostic !== undefined) return diagnostic;
     const error = String(state);
     if (name === 'category') return choiceAnswer(question, error.includes('401') ? 'authentication' : 'bad_request', 0.99);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
@@ -280,4 +285,20 @@ describe('AgentOrchestrator context-window awareness', () => {
     // flag disabled → error re-thrown immediately, no retry
     expect((provider.chat as ReturnType<typeof mock>).mock.calls.length).toBe(1);
   });
+});
+
+
+test('authored diagnostics reject changed complete sources, residuals, fields and question schemas', () => {
+  const readDiagnostic = authoredPrivacyAnswer({ parts: [[errorText('401 Unauthorized')]] });
+  const source = { phase: 'source', parts: [errorText('401 Unauthorized')], target: 'whole-line' };
+  const question = redactionCredential.items.lineHasCredential.question;
+  expect(readDiagnostic('lineHasCredential', question, source)).toEqual(noulAnswer(0.01));
+  expect(() => readDiagnostic('lineHasCredential', question, { ...source,
+    parts: [errorText('401 Unauthorized; recovery phrase is private')] })).toThrow('Unspecified authored error source projection');
+  expect(() => readDiagnostic('credentialRemains', residualCredential.items.credentialRemains.question,
+    { parts: [errorText('A different private diagnostic')] })).toThrow('Unspecified authored error residual projection');
+  expect(() => readDiagnostic('kind', fieldKind.items.kind.question, { field: 'unlockPassphrase' }))
+    .toThrow('Unspecified authored error field role');
+  expect(() => readDiagnostic('lineHasCredential', { ...question, instructions: 'A different question' }, source))
+    .toThrow('Unexpected authored diagnostic question schema');
 });

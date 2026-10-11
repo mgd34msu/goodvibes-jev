@@ -1,4 +1,5 @@
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { AgentManager, OwnedAgentExecutionUnavailableError, type AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 import { run } from '../sdk/src/platform/hooks/runners/agent.js';
 import { HookActivityTracker } from '../sdk/src/platform/hooks/activity.js';
@@ -6,6 +7,10 @@ import { HookDispatcher } from '../sdk/src/platform/hooks/dispatcher.js';
 import { TurnHookOwner } from '../sdk/src/platform/hooks/turn-ownership.js';
 import { run as runHook } from '../sdk/src/platform/hooks/runner.js';
 import type { HookDefinition, HookEvent } from '../sdk/src/platform/hooks/types.js';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 function deferred() {
   let resolve!: () => void;
@@ -39,7 +44,7 @@ for (const status of ['completed', 'running'] as const) {
     expect(m.list()).toHaveLength(0);
     const result = await run(hook, event, m, {});
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('owned execution settlement');
+    expect(result.error).toBe('agent hook failed: [REDACTED]');
     expect(result.code).toBe('OWNED_AGENT_EXECUTION_UNSUPPORTED');
     expect(starts).toBe(0);
     expect(m.list()).toHaveLength(0);

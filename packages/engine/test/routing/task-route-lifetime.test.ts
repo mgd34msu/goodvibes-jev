@@ -163,6 +163,35 @@ test('retained publication authority survives source cleanup and rejects subsequ
   installJudgmentPort(readyPort().port); expect(() => retained?.()).toThrow();
 });
 
+test('a parent may invoke all retained route guards without reentering its own assertion', async () => {
+  const protectedSource = source(), fixture = readyPort(); installJudgmentPort(fixture.port);
+  const args = { query: 'check daemon health' }, ids = [{ id: 'saved-provider', names: ['Saved provider'] }];
+  const retained: Array<() => void> = [];
+  let checking = false, checks = 0;
+  const assertCurrent = () => {
+    if (checking) throw new Error('Retained route guard reentered parent');
+    checking = true; checks++;
+    try { for (const guard of retained) guard(); } finally { checking = false; }
+  };
+  expect((await planTaskRoute(args, { namedIds: { modelProvider: () => ids } }, { sourceOwner: protectedSource.owner,
+    assertCurrent, retainCurrent: guard => retained.push(guard),
+  })).status).toBe('ready');
+  expect(checks).toBeGreaterThan(0); expect(retained).toHaveLength(1); expect(assertCurrent).not.toThrow();
+  ids[0]!.names.push('Late named alias'); expect(assertCurrent).toThrow(); ids[0]!.names.pop();
+  expect(assertCurrent).not.toThrow(); args.query = 'Changed actual request'; expect(assertCurrent).toThrow();
+});
+
+test('active caller ownership is checked after final source cleanup', async () => {
+  const protectedSource = source(), fixture = readyPort(); installJudgmentPort(fixture.port);
+  let current = true;
+  const owner = { ...protectedSource.owner, async release(handle: Parameters<typeof protectedSource.owner.release>[0]) {
+    await protectedSource.owner.release(handle); current = false;
+  } };
+  await expect(planTaskRoute({ query: 'check daemon health' }, {}, { sourceOwner: owner,
+    assertCurrent() { if (!current) throw new Error('Caller retired during cleanup'); },
+  })).rejects.toThrow('Caller retired during cleanup');
+});
+
 test('standalone slot reader guards even an initially empty named-source listing', async () => {
   const fixture = gatedPort(), namedIds = { modelProvider: () => [] };
   const pending = readSlots(fixture.port, 'check daemon health', { site: 'synthetic.route.slots', namedIds }); await fixture.entered.promise;

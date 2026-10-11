@@ -223,11 +223,28 @@ describe('wireSpokenTurnRuntime integration seam', () => {
   });
 });
 
-function semanticFailurePort(category: string, billing = false) {
-  return fakePort((name, question) => {
+function semanticFailurePort(category: string, billing = false, errorText?: string) {
+  return fakePort((name, question, state) => {
     if (name === 'category') return choiceAnswer(question, category, 0.99);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
-    return noulAnswer(name === 'billing' && billing ? 0.99 : 0.01);
+    if (question.type !== 'noul') throw new Error(`Unexpected spoken failure question: ${name}`);
+    switch (name) {
+      case 'billing': return noulAnswer(billing ? 0.99 : 0.01);
+      case 'rate_limited':
+      case 'context_exceeded':
+      case 'transient_network':
+      case 'provider_unusable':
+      case 'before_response': return noulAnswer(0.01);
+      case 'lineHasCredential':
+      case 'spanIsCredential': {
+        if (errorText === undefined || !state || typeof state !== 'object' || Array.isArray(state)
+          || state.phase !== 'source' || state.target !== 'whole-line' || !Array.isArray(state.parts) || state.parts.length !== 1) throw new Error('Unexpected spoken diagnostic projection');
+        const part = state.parts[0];
+        if (!part || typeof part !== 'object' || Array.isArray(part) || part.kind !== 'text' || part.text !== errorText) throw new Error('Spoken diagnostic lost its complete authored error');
+        return noulAnswer(0.01);
+      }
+      default: throw new Error(`Unexpected spoken failure question: ${name}`);
+    }
   });
 }
 
@@ -258,21 +275,21 @@ function failingRuntime(error: unknown) {
 
 describe('actual spoken wiring canonical retry semantics', () => {
   test.each([
-    ['status', Object.assign(new Error('credentials'), { status: 503 }), 'authentication', false, true, 0],
-    ['errno', Object.assign(new Error('credentials'), { code: 'ECONNRESET' }), 'authentication', false, true, 0],
-    ['billing 429', Object.assign(new Error('rate limit concurrent 429'), { status: 429 }), 'billing', true, false, 1],
-    ['rate limit 429', Object.assign(new Error('account details'), { status: 429 }), 'rate_limit', false, true, 1],
-    ['contrary terminal wording', new Error('network timeout socket 429 concurrent'), 'authentication', false, false, 1],
-    ['contrary retryable wording', new Error('The blue lantern is resting.'), 'service', false, true, 1],
-  ] as const)('%s follows the shared controller through actual wiring', async (_label, error, category, billing, retry, readings) => {
-    const fake = semanticFailurePort(category, billing);
+    ['status', Object.assign(new Error('credentials'), { status: 503 }), 'authentication', false, true, []],
+    ['errno', Object.assign(new Error('credentials'), { code: 'ECONNRESET' }), 'authentication', false, true, []],
+    ['billing 429', Object.assign(new Error('rate limit concurrent 429'), { status: 429 }), 'billing', true, false, ['engine.failure-reading', 'engine.redaction.credential']],
+    ['rate limit 429', Object.assign(new Error('account details'), { status: 429 }), 'rate_limit', false, true, ['engine.failure-reading']],
+    ['contrary terminal wording', new Error('network timeout socket 429 concurrent'), 'authentication', false, false, ['engine.failure-reading', 'engine.redaction.credential']],
+    ['contrary retryable wording', new Error('The blue lantern is resting.'), 'service', false, true, ['engine.failure-reading']],
+  ] as const)('%s follows the shared controller through actual wiring', async (_label, error, category, billing, retry, batteries) => {
+    const fake = semanticFailurePort(category, billing, error.message);
     const previous = installJudgmentPort(fake.port);
     const h = failingRuntime(error);
     try {
       h.speak(); await drain();
       if (retry) await new Promise((resolve) => setTimeout(resolve, 1100));
       await drain();
-      expect(fake.requests).toHaveLength(readings);
+      expect(fake.requests.map(request => request.context?.battery)).toEqual([...batteries]);
       expect(h.requests).toHaveLength(retry ? 2 : 1);
       expect(h.played).toEqual(retry ? ['old answer.'] : []);
       expect(h.messages.filter((message) => message.includes('Skipping'))).toHaveLength(retry ? 0 : 1);

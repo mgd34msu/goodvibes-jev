@@ -5,6 +5,7 @@ import { prepareKnowledgeScopeSelection, KnowledgeScopeSelectionHeldError, type 
 import { isActiveKnowledgeEdge } from './projection-utils.js';
 import { getKnowledgeSpaceId, type KnowledgeSpaceScopeInput } from './spaces.js';
 import { knowledgeSourceJudgmentUris } from './source-structural-references.js';
+import { knowledgeRecordVersion } from './store-record-representation.js';
 import { KnowledgeSourceQualityHeldError } from './source-quality.js';
 import type { KnowledgeStore } from './store.js';
 import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
@@ -161,10 +162,13 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
     const callerSignal = requestSignal(input);
     const optionSignal = options.signal, callerCurrent = options.assertCurrent, shouldStop = options.shouldStop;
     const externalSignal = callerSignal && optionSignal ? AbortSignal.any([callerSignal, optionSignal]) : callerSignal ?? optionSignal;
-    const checkCaller = () => {
+    const checkCallerIdentity = () => {
       if (externalSignal?.aborted || shouldStop?.()) throw new Held('aborted');
       if (requestSignal(input) !== callerSignal || options.signal !== optionSignal || options.assertCurrent !== callerCurrent
         || options.shouldStop !== shouldStop) throw new Held('stale');
+    };
+    const checkCaller = () => {
+      checkCallerIdentity();
       try {
         const current: unknown = callerCurrent?.();
         if (current !== undefined) {
@@ -173,6 +177,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
         }
       }
       catch (error) { if (error instanceof JudgmentInputError || error instanceof Held) throw error; throw new Held('stale'); }
+      checkCallerIdentity();
     };
     if (request.mode === 'search' && !request.query.trim()) {
       // An absent lookup question is an explicit input rule, not a no-match
@@ -180,7 +185,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
       const guard = capturedGuard(store);
       guard.watch('empty-public-search-request', () => requestData(input), request);
       const assertCurrent = () => {
-        try { guard.assertCurrent(); checkCaller(); }
+        try { guard.assertCurrent(); checkCaller(); guard.assertCurrent(); }
         catch (error) { if (error instanceof JudgmentInputError || error instanceof Held) throw error; throw new Held('stale'); }
       };
       assertCurrent();
@@ -189,13 +194,16 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
     return await withAnswerVerificationBudget(async (signal, deadlineAt) => {
       const baseGuard = capturedGuard(store);
       baseGuard.watch('public-retrieval-request', () => requestData(input), request);
-      const operationGuard = capturedGuard(store);
-      operationGuard.watch('public-retrieval-request', () => requestData(input), request);
+      const operationRequestVersion = knowledgeRecordVersion(request);
+      const assertRequestCurrent = () => {
+        if (knowledgeRecordVersion(requestData(input)) !== operationRequestVersion) throw new Held('stale');
+      };
       const checkPorts = captureAnswerReadingPorts(['engine.knowledge.answer-evidence-relevance',
         ...(request.mode === 'packet' ? ['engine.knowledge.answer-excerpt-selection'] : [])]);
       const checkInitialization = () => {
         if (signal.aborted) throw new Held('aborted');
         baseGuard.assertCurrent(); checkPorts(); checkCaller();
+        baseGuard.assertCurrent(); checkPorts();
       };
       // A cold store is initialized only after capturing the original request.
       // Even an already-ready async init yields and cannot rebind that request.
@@ -233,8 +241,12 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
           publicNodeMeaning(store, node, structuralNodesById);
         }
       });
-      const assertBaseCurrent = () => { baseGuard.assertCurrent(); checkPorts(); checkCaller(); };
-      const assertOperationCurrent = () => { operationGuard.assertCurrent(); checkPorts(); checkCaller(); };
+      const assertBaseCurrent = () => {
+        baseGuard.assertCurrent(); checkPorts(); checkCaller(); baseGuard.assertCurrent(); checkPorts();
+      };
+      const assertOperationCurrent = () => {
+        assertRequestCurrent(); checkPorts(); checkCaller(); assertRequestCurrent(); checkPorts();
+      };
       // The budget owns pending preparation only. On successful preparation,
       // retained scope remains attached to external cancellation, not the
       // completed budget's intentionally aborted controller.

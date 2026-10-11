@@ -229,7 +229,7 @@ export async function planTaskRoute(
   const handle = capture.call(owner, parts);
   let receipt: SourceScreeningReceipt | undefined;
   let projection: readonly string[] | undefined;
-  let publicationCurrent = assertOriginal;
+  let publicationCurrent = sourceCurrent;
   const assertSource = () => {
     assertOriginal();
     if (receipt && !isDeepStrictEqual(project.call(owner, receipt), projection)) throw new ToolInputProjectionError('held');
@@ -288,8 +288,8 @@ export async function planTaskRoute(
       selection.recordAction('uncertain: no route published');
       slotRun.recordAction('uncertain: no route published');
       const restriction = authority.consumeObservation();
-      publicationCurrent = () => { assertOriginal(); restriction.assertCurrent(); assertOriginal(); };
-      retainCurrent?.(publicationCurrent, TASK_ROUTE_SITE); publicationCurrent();
+      publicationCurrent = () => { sourceCurrent(); restriction.assertCurrent(); sourceCurrent(); };
+      retainCurrent?.(publicationCurrent, TASK_ROUTE_SITE); assertOriginal(); publicationCurrent();
       return {
         status: 'uncertain', request: previewText(protectedRequest, includeParameters ? 220 : 120), judgment,
         nextAction: 'Resolve the outstanding Jev readings against current context before choosing a route.',
@@ -324,12 +324,12 @@ export async function planTaskRoute(
     };
     authority.assertCurrent();
     const restriction = authority.consumeObservation();
-    publicationCurrent = () => { assertOriginal(); restriction.assertCurrent(); assertOriginal(); };
-    retainCurrent?.(publicationCurrent, TASK_ROUTE_SITE); publicationCurrent();
+    publicationCurrent = () => { sourceCurrent(); restriction.assertCurrent(); sourceCurrent(); };
+    retainCurrent?.(publicationCurrent, TASK_ROUTE_SITE); assertOriginal(); publicationCurrent();
     return plan;
   } finally {
     signal?.removeEventListener('abort', abort);
     await release.call(owner, handle);
-    publicationCurrent();
+    assertOriginal(); publicationCurrent();
   }
 }

@@ -13,13 +13,25 @@ import {
 import { readErrorResponseBody } from '@goodvibes-jev/engine/daemon-sdk';
 import { ProviderError, isBillingOrCreditError, isRateLimitOrQuotaError } from '../sdk/src/platform/types/errors.ts';
 import { readNormalizedError } from '../sdk/src/platform/utils/error-display.ts';
+import { authoredPrivacyAnswer, errorSpan, errorText } from './_helpers/authored-error-readings.ts';
 
 /** A port that answers as if the message were a spent-account 400, and counts requests. */
 function billingPort(category = 'billing', confidence = 0.95) {
-  return fakePort((name: string, question: Question) => {
+  const privacy = authoredPrivacyAnswer({ fields: { balance: 'other' },
+    parts: [[errorText('Your credit balance is '), errorSpan('balance'), errorText('')]] });
+  return fakePort((name: string, question: Question, state) => {
+    const protectedAnswer = privacy(name, question, state);
+    if (protectedAnswer !== undefined) return protectedAnswer;
+    if (typeof state !== 'string' || ![
+      'HTTP status: 400\nMessage: Your credit balance is too low to access the API.',
+      'HTTP status: 400\nError type: ProviderError\nMessage: Your credit balance is too low to access the API.',
+      'Message: something odd', 'Message: Same failure wording across different owners', 'Message: out of credits',
+    ].includes(state)) throw new Error('Unspecified authored billing failure state');
     if (name === 'category') return choiceAnswer(question, category, confidence);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', confidence);
-    return noulAnswer(name === 'billing' || name === 'provider_unusable' ? 0.95 : 0.05);
+    if (['billing', 'provider_unusable', 'rate_limited', 'context_exceeded', 'transient_network', 'before_response'].includes(name))
+      return noulAnswer(name === 'billing' || name === 'provider_unusable' ? 0.95 : 0.05);
+    throw new Error('Unexpected authored billing question');
   });
 }
 
@@ -135,7 +147,9 @@ describe('call sites', () => {
     const normalized = await readNormalizedError(error, { site: 'test.display' });
     expect(normalized.category).toBe('billing');
     expect(normalized.hint).toContain('credits');
-    expect(requests).toHaveLength(1);
+    const semantic = requests.filter((request) => 'billing' in request.questions);
+    expect(semantic).toHaveLength(2);
+    expect(semantic[0]!.state).toBe(semantic[1]!.state);
   });
 
   test('the daemon body reads a bare message', async () => {

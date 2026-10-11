@@ -112,7 +112,7 @@ test('another job remains current between actual owned rename and durability con
     return await original.call(this, data, { ...options, afterPublish: () => {
       options.afterPublish?.(); selected.assertCurrent(); publications++;
       const disk: unknown = JSON.parse(readFileSync(f.path, 'utf-8'));
-      expect(disk).toMatchObject({ jobs: expect.arrayContaining([{ ...b, name: 'B published', mutationRevision: expect.any(String) }]) });
+      expect(disk).toMatchObject({ jobs: expect.arrayContaining([a, expect.objectContaining({ id: b.id, name: 'B published', mutationRevision: expect.any(String) })]) });
       expect(f.manager.getJob(b.id)).toEqual(b);
     } });
   });
@@ -134,8 +134,9 @@ test('queued old whole-map save preserves another job conditional commit', async
   expect(persisted.find(job => job.id === a.id)?.mutationRevision).not.toBe('synthetic-input-revision');
 });
 
-test.each(['identical', 'unrelated', 'deletion'] as const)('real failed rename retains %s retry deltas', async kind => {
+test.each(['identical', 'unrelated', 'deletion'] as const)('real failed private publication retains %s retry deltas', async kind => {
   const f = fixture(), a = await f.create('A'), b = await f.create('B');
+  const before = readFileSync(f.path);
   const next = kind === 'deletion' ? [b] : [{ ...a, name: 'After' }, b];
   const original = PersistentStore.prototype.persist;
   const failure = spyOn(PersistentStore.prototype, 'persist').mockImplementationOnce(async function(this: PersistentStore<Record<string, unknown>>, data, options = {}) {
@@ -146,7 +147,8 @@ test.each(['identical', 'unrelated', 'deletion'] as const)('real failed rename r
       rmSync(join(f.directory, stage));
     } });
   });
-  try { await expect(f.store.save(next)).rejects.toThrow('ENOENT'); } finally { failure.mockRestore(); }
+  try { await expect(f.store.save(next)).rejects.toThrow('Prepared publication is unavailable.'); } finally { failure.mockRestore(); }
+  expect(readFileSync(f.path)).toEqual(before);
   await f.store.save(kind === 'unrelated' ? [{ ...a, name: 'After' }, { ...b, name: 'B changed' }] : next);
   const jobs = (await new AutomationJobStore(f.path).load()).jobs;
   if (kind === 'deletion') expect(jobs.find(job => job.id === a.id)).toBeUndefined();

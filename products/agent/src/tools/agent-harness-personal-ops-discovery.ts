@@ -1,5 +1,6 @@
 import { assertPersonalOpsDataCurrent, capturePersonalOpsData } from './agent-harness-personal-ops-source.ts';
-import { modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
+import { types as nodeTypes } from 'node:util';
 import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { personalOpsLaneMembers, readPersonalOpsSampleField, readPersonalOpsTool, type DiscoveryLane, type PersonalOpsToolContract } from './agent-harness-personal-ops-readings.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -36,19 +37,102 @@ export function partitionInvokableMethods(methods: readonly OperatorContractMeth
 export async function contractMethodsForLane(lane: DiscoveryLane, options: CatalogRankingOptions): Promise<{
   readonly available: readonly string[]; readonly unavailable: readonly string[];
 }> {
-  const original = operatorContractMethods();
-  const captured = captureCatalogData(original);
-  const sourceSnapshot = capturePersonalOpsData(captured);
-  const assertSource = () => {
-    options.signal?.throwIfAborted();
-    assertPersonalOpsDataCurrent(operatorContractMethods(), sourceSnapshot);
+  const result = (await readContractMethodLanes([lane], options))[0];
+  if (!result) throw new ToolInputProjectionError('held');
+  return result;
+}
+
+export async function contractMethodsForLanes(options: CatalogRankingOptions): Promise<{
+  readonly inbox: ReturnType<typeof partitionInvokableMethods>;
+  readonly calendar: ReturnType<typeof partitionInvokableMethods>;
+  readonly tasks: ReturnType<typeof partitionInvokableMethods>;
+  readonly reminders: ReturnType<typeof partitionInvokableMethods>;
+}> {
+  const [inbox, calendar, tasks, reminders] = await readContractMethodLanes(['inbox', 'calendar', 'tasks', 'reminders'], options);
+  if (!inbox || !calendar || !tasks || !reminders) throw new ToolInputProjectionError('held');
+  return { inbox, calendar, tasks, reminders };
+}
+
+export async function contractMethodsForAutonomy(options: CatalogRankingOptions): Promise<{
+  readonly approvals: ReturnType<typeof partitionInvokableMethods>;
+  readonly automation: ReturnType<typeof partitionInvokableMethods>;
+  readonly schedules: ReturnType<typeof partitionInvokableMethods>;
+  readonly tasks: ReturnType<typeof partitionInvokableMethods>;
+}> {
+  const [approvals, automation, schedules, tasks] = await readContractMethodLanes(['approvals', 'automation', 'schedules', 'tasks'], options);
+  if (!approvals || !automation || !schedules || !tasks) throw new ToolInputProjectionError('held');
+  return { approvals, automation, schedules, tasks };
+}
+
+async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options: CatalogRankingOptions): Promise<readonly ReturnType<typeof partitionInvokableMethods>[]> {
+  const optionsCurrent = captureCatalogMethods(options, ['signal', 'assertCurrent', 'retainCurrent', 'sourceOwner']);
+  const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
+  const manifest = getOperatorContract();
+  const manifestCurrent = captureCatalogMethods(manifest, ['operator']);
+  const operator = manifest.operator;
+  const operatorCurrent = captureCatalogMethods(operator, ['methods']);
+  const original = operator.methods;
+  if (!Array.isArray(original) || nodeTypes.isProxy(original) || Object.getPrototypeOf(original) !== Array.prototype)
+    throw new ToolInputProjectionError('invalid');
+  const descriptors = Object.getOwnPropertyDescriptors(original);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== original.length + 1 || keys.some(key => typeof key !== 'string' || (key !== 'length'
+    && (!Number.isSafeInteger(Number(key)) || String(Number(key)) !== key || Number(key) < 0 || Number(key) >= original.length
+      || !Object.hasOwn(descriptors[key]!, 'value'))))) throw new ToolInputProjectionError('invalid');
+  const arrayCurrent = captureCatalogMethods(original, Object.getOwnPropertyNames(original));
+  const arrayIdentityCurrent = captureCatalogMethods(original, ['length']);
+  const assertRoot = () => {
+    optionsCurrent(); signal?.throwIfAborted(); manifestCurrent(); operatorCurrent(); arrayIdentityCurrent();
+    if (getOperatorContract() !== manifest) throw new ToolInputProjectionError('held');
   };
-  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
-  const methods = await personalOpsLaneMembers(original, lane, method => ({
-    id: method.id, description: method.description ?? method.title ?? '', evidence: method,
-  }), { ...options, assertCurrent });
-  assertCurrent(); options.retainCurrent?.(assertSource, `personal-ops-contract:${lane}`);
-  return partitionInvokableMethods(methods);
+  // The native manifest exceeds a single reading's budget. Each complete method
+  // owns its capture; batches change scheduling, never the candidate population.
+  const captured = original.map((method, index) => {
+    const value = captureModelReadingInput(method);
+    const assertSnapshot = captureModelReadingSnapshotGuard(value);
+    return { value, index, assertCurrent: () => assertSnapshot(method) };
+  });
+  const assertSource = () => {
+    assertRoot(); arrayCurrent();
+    if (Reflect.ownKeys(original).length !== keys.length) throw new ToolInputProjectionError('held');
+    for (const method of captured) method.assertCurrent();
+  };
+  const assertCurrent = () => { callerCurrent?.(); assertSource(); };
+  assertCurrent();
+  const batches: (typeof captured)[] = [];
+  let characters = 0, batch: typeof captured = [];
+  for (const method of captured) {
+    if (!method.value.id) continue;
+    const size = JSON.stringify([method.value.id, method.value.description ?? method.value.title ?? '', method.value]).length;
+    if (batch.length && (characters + size + 16 > 250_000 || batch.length >= 16)) {
+      batches.push(batch); batch = []; characters = 0;
+    }
+    batch.push(method); characters += size;
+  }
+  if (batch.length) batches.push(batch);
+  const retained = new Map<string | (() => void), () => void>();
+  const results: ReturnType<typeof partitionInvokableMethods>[] = [];
+  for (const lane of lanes) {
+    const selected: OperatorContractMethod[] = [];
+    for (const batch of batches) {
+      assertCurrent();
+      const assertIndices = captureCatalogMethods(original, batch.map(method => String(method.index)));
+      const assertBatch = () => {
+        callerCurrent?.(); assertRoot(); assertIndices();
+        for (const method of batch) method.assertCurrent();
+        for (const guard of retained.values()) guard();
+      };
+      const matches = await personalOpsLaneMembers(batch.map(method => method.value), lane, method => ({
+        id: method.id, description: method.description ?? method.title ?? '', evidence: method,
+      }), { ...options, assertCurrent: assertBatch, retainCurrent(guard, key) { if (!retained.has(key ?? guard)) retained.set(key ?? guard, guard); } });
+      assertCurrent(); selected.push(...matches);
+    }
+    results.push(partitionInvokableMethods(selected));
+  }
+  for (const [key, guard] of retained) retainCurrent?.(guard, typeof key === 'string' ? key : undefined);
+  retainCurrent?.(assertSource, 'personal-ops-contract-source');
+  assertCurrent();
+  return results;
 }
 
 /**

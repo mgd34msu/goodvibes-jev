@@ -7,9 +7,13 @@
  * not a power-loss durable journal or a guarantee against unrelated writers.
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import { compareSemanticVersions, parseSemanticVersion } from './semantic-version.js';
+import { assertDaemonNativePayloadBytes, createDaemonNativeRenameGuard, inspectDaemonNativeInstallation, parseDaemonCiArtifact, resolveDaemonNativeTargets, retainDaemonNativeFiles, type DaemonNativeTarget, type DaemonNativeRenameGuard } from './daemon-native-cohort.js';
+export { DAEMON_NATIVE_TARGETS, DAEMON_INSTALLATION_RECEIPT, assertDaemonNativePayloadBytes, inspectDaemonNativeInstallation,
+  parseDaemonCiArtifact, parseDaemonInstallationReceipt, resolveDaemonNativePayloads, resolveDaemonNativeTargets, retainDaemonNativeFiles,
+  type DaemonNativeTarget, type DaemonNativePayload, type DaemonArtifactSource, type DaemonCiArtifact, type DaemonInstallationReceipt } from './daemon-native-cohort.js';
 
 /**
  * The cadence half of the same mechanism, re-exported here so every consumer
@@ -253,6 +257,10 @@ export interface UpdateFileIo {
   writeExclusive?(path: string, data: Buffer): void;
   /** Remove an owned file; a missing file is a successful no-op. */
   remove?(path: string): void;
+  /** Native cohorts require exact bytes and physical file/parent observations. */
+  readFile?(path: string): Buffer;
+  /** Null means absent. Reject symlinks and non-regular payloads. */
+  observe?(path: string): { readonly identity: string; readonly ownerIdentity: string; readonly mode: number } | null;
 }
 
 export const realUpdateFileIo: UpdateFileIo = {
@@ -269,6 +277,24 @@ export const realUpdateFileIo: UpdateFileIo = {
   remove: (path) => {
     try { unlinkSync(path); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  },
+  readFile: (path) => readFileSync(path),
+  observe: (path) => {
+    const parents: string[] = [];
+    for (let current = dirname(path);;) {
+      try {
+        const stat = lstatSync(current, { bigint: true });
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Native update directory is not a retained regular directory');
+        parents.push(`${current}:${realpathSync(current)}:${stat.dev}:${stat.ino}`);
+      } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
+      const parent = dirname(current); if (parent === current) break; current = parent;
+    }
+    try {
+      const stat = lstatSync(path, { bigint: true });
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Native update payload is not a regular file');
+      return { identity: `${parents.join('|')}:${stat.dev}:${stat.ino}:${stat.ctimeNs}:${stat.mtimeNs}`,
+        ownerIdentity: `${stat.dev}:${stat.ino}`, mode: Number(stat.mode & 0o777n) };
+    } catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null; throw error; }
   },
 };
 
@@ -310,6 +336,13 @@ interface TransactionPaths {
   readonly exchange: string;
   readonly claim: string;
 }
+function assertSynchronousCurrent(current: (() => void) | undefined): void {
+  const result = current?.();
+  if (result !== undefined) {
+    void Promise.resolve(result).catch(() => {});
+    throw new Error('update current restriction must complete synchronously without returning a value');
+  }
+}
 
 /** Capture adapter methods before asynchronous caller preparation can replace them. */
 export function captureUpdateFileIo(io: UpdateFileIo): UpdateFileIo {
@@ -318,6 +351,8 @@ export function captureUpdateFileIo(io: UpdateFileIo): UpdateFileIo {
     exists: io.exists.bind(io), mkdir: io.mkdir.bind(io),
     ...(io.writeExclusive ? { writeExclusive: io.writeExclusive.bind(io) } : {}),
     ...(io.remove ? { remove: io.remove.bind(io) } : {}),
+    ...(io.readFile ? { readFile: io.readFile.bind(io) } : {}),
+    ...(io.observe ? { observe: io.observe.bind(io) } : {}),
   };
 }
 
@@ -356,6 +391,7 @@ function transact(
   stage: (track: (path: string) => void) => void,
   beforeCommit: (() => void) | undefined,
   commit: (rename: (from: string, to: string) => void) => void,
+  restrictions: { readonly current?: () => void; readonly prepareNativeGuard?: () => DaemonNativeRenameGuard } = {},
 ): void {
   if (paths.length === 0) return;
   if (!io.writeExclusive || !io.remove) throw new Error('update I/O adapter must support writeExclusive and remove; refusing mutation');
@@ -365,15 +401,21 @@ function transact(
   let phase: UpdateTransactionReceipt['phase'] = 'claim';
   let committed = false;
   let blockedClaim = false;
+  let nativeGuard: DaemonNativeRenameGuard | undefined;
   const claimData = Buffer.from(JSON.stringify({ operation, targets: paths, instruction: 'Interrupted transaction: inspect retained files before removing any fence. Do not blindly retry.' }));
   const rename = (from: string, to: string) => {
+    assertSynchronousCurrent(restrictions.current);
+    nativeGuard?.beforeRename(from, to, false);
     if (io.exists(to)) throw new Error(`transaction destination is occupied: ${to}`);
     io.rename(from, to);
     journal.push({ from, to });
+    nativeGuard?.afterRename(from, to, false);
   };
   try {
     for (const path of [...paths].sort((a, b) => a.target.localeCompare(b.target))) {
+      assertSynchronousCurrent(restrictions.current);
       io.mkdir(dirname(path.target));
+      assertSynchronousCurrent(restrictions.current);
       try { io.writeExclusive(path.claim, claimData); }
       catch (error) {
         // An exclusive write can fail after creating partial evidence. If even
@@ -393,6 +435,7 @@ function transact(
     phase = 'stage';
     stage((path) => staged.push(path));
     phase = 'admission';
+    nativeGuard = restrictions.prepareNativeGuard?.();
     const admission = beforeCommit?.();
     if (admission !== undefined) {
       void Promise.resolve(admission).catch(() => {});
@@ -417,7 +460,9 @@ function transact(
       for (const { from, to } of [...journal].reverse()) {
         attempt(() => {
           if (io.exists(from)) throw new Error(`undo destination occupied: ${from}`);
+          nativeGuard?.beforeRename(to, from, true);
           io.rename(to, from);
+          nativeGuard?.afterRename(to, from, true);
         });
       }
     }
@@ -454,6 +499,7 @@ interface StagedUpdate {
 
 function installVerifiedBuffers(
   verified: readonly StagedUpdate[], io: UpdateFileIo, platform: NodeJS.Platform, beforeCommit?: () => void,
+  restrictions: { readonly current?: () => void; readonly prepareNativeGuard?: () => DaemonNativeRenameGuard } = {},
 ): void {
   const paths = validateTargets(verified.map(({ target }) => target));
   transact('update', paths, io, (track) => {
@@ -461,7 +507,9 @@ function installVerifiedBuffers(
       const { target, buffer } = verified[index]!;
       const path = paths[index]!;
       track(path.stage); // A failing write may leave partial bytes; cleanup owns it.
+      assertSynchronousCurrent(restrictions.current);
       io.writeFile(path.stage, buffer);
+      assertSynchronousCurrent(restrictions.current);
       if (platform !== 'win32') io.chmod(path.stage, target.executable ? 0o755 : 0o644);
     }
   }, beforeCommit, (rename) => {
@@ -472,7 +520,7 @@ function installVerifiedBuffers(
       }
       rename(path.stage, path.target);
     }
-  });
+  }, restrictions);
 }
 
 /**
@@ -496,6 +544,12 @@ export interface ApplyVerifiedUpdateOptions extends UpdateRequestOptions {
   readonly platform?: NodeJS.Platform;
   /** Final synchronous admission/cancellation check AFTER all staging, BEFORE live renames. This is not a work-admission lease. */
   readonly beforeCommit?: () => void;
+  /** Native daemon publication requires its complete payload and source-receipt cohort. */
+  readonly daemonNative?: { readonly execPath: string; readonly platform: string; readonly arch: string; readonly version: string; readonly allowLegacyBinary?: boolean };
+  /** Preserve physical ownership for an already admitted complete native cohort. */
+  readonly native?: boolean;
+  /** Construction-owned effect lifetime, checked before each forward native filesystem mutation. */
+  readonly assertCurrent?: () => void;
 }
 
 /** Download and verify the entire cohort before staging; stage it all before commit. */
@@ -503,8 +557,21 @@ export async function applyVerifiedUpdate(options: ApplyVerifiedUpdateOptions): 
   // TypeScript readonly is not runtime ownership. Capture every effect-bearing
   // value before the first await, including adapter methods and each member.
   options = { ...options, io: captureUpdateFileIo(options.io ?? realUpdateFileIo),
-    targets: options.targets.map((target) => ({ ...target })) };
+    targets: options.targets.map((target) => ({ ...target })), ...(options.daemonNative ? { daemonNative: { ...options.daemonNative } } : {}) };
   validateTargets(options.targets);
+  const native = options.daemonNative;
+  let assertNativeCurrent: (() => void) | undefined;
+  if (native) {
+    const expected = resolveDaemonNativeTargets(native.execPath, native.platform, native.arch);
+    if (!expected || JSON.stringify(options.targets) !== JSON.stringify(expected) || !parseSemanticVersion(normalizeVersion(native.version))) throw new Error('Native daemon update target identity is invalid');
+    const io = options.io ?? realUpdateFileIo;
+    if (native.allowLegacyBinary) {
+      if (!io.observe || !io.readFile || !io.observe(native.execPath)) throw new Error('Legacy daemon binary is not retained');
+      // An existing receipt is already a native installation and must be complete.
+      if (io.exists(expected[expected.length - 1]!.path)) inspectDaemonNativeInstallation(native.execPath, native.platform, native.arch, '', io);
+    } else if (!inspectDaemonNativeInstallation(native.execPath, native.platform, native.arch, '', io)) throw new Error('No complete owned native daemon installation is available');
+    assertNativeCurrent = retainDaemonNativeFiles(expected, io);
+  }
   for (const target of options.targets) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(target.assetName)) throw new Error(`invalid update asset filename: ${target.assetName}`);
   }
@@ -527,25 +594,45 @@ export async function applyVerifiedUpdate(options: ApplyVerifiedUpdateOptions): 
       verifyChecksum(target.assetName, sha256(buffer), checksums.get(target.assetName));
       verified.push({ target, buffer });
     }
+    if (native) {
+      const descriptor = verified[verified.length - 1];
+      if (!descriptor) throw new Error('Native daemon source manifest is missing');
+      const target: DaemonNativeTarget = native.arch === 'x64' ? 'linux-x64' : 'linux-arm64';
+      const artifact = parseDaemonCiArtifact(JSON.parse(descriptor.buffer.toString('utf8')), target);
+      assertDaemonNativePayloadBytes(artifact, verified.slice(0, -1).map(member => member.buffer));
+      verified[verified.length - 1] = { target: descriptor.target, buffer: Buffer.from(JSON.stringify({ schema: 1,
+        packageName: '@goodvibes-jev/daemon', version: normalizeVersion(native.version), artifact }, null, 2) + '\n') };
+    }
     signal.throwIfAborted();
     return verified;
   });
   const assertCurrent = () => {
     options.signal?.throwIfAborted();
     if (performance.now() >= deadline) throw new Error('update timed out before commit');
+    assertSynchronousCurrent(options.assertCurrent);
   };
   assertCurrent();
   // The race above owns only read-only asynchronous preparation. A cancellation
   // during synchronous staging must never mask a transaction recovery receipt.
   installVerifiedBuffers(verified, options.io ?? realUpdateFileIo, options.platform ?? process.platform, () => {
     assertCurrent();
+    assertNativeCurrent?.();
     const result = options.beforeCommit?.();
     if (result !== undefined) {
       void Promise.resolve(result).catch(() => {});
       throw new Error('beforeCommit must complete synchronously without returning a value');
     }
     assertCurrent();
-  });
+    assertNativeCurrent?.();
+  }, { current: assertCurrent, ...(native || options.native ? { prepareNativeGuard: () => {
+    const io = options.io ?? realUpdateFileIo;
+    if (!io.readFile || !io.observe) throw new Error('Native daemon staged owner is unavailable');
+    for (const member of verified) {
+      const path = member.target.path + '.update-download', stat = io.observe(path);
+      if (!stat || stat.mode !== (member.target.executable ? 0o755 : 0o644) || sha256(io.readFile(path)) !== sha256(member.buffer)) throw new Error('Native daemon staging differs from its verified payload');
+    }
+    return createDaemonNativeRenameGuard(options.targets, io);
+  } } : {}) });
 }
 
 export interface RollbackTarget {
@@ -562,13 +649,21 @@ export interface RollbackResult {
 export function rollbackKeptPrevious(
   targets: readonly RollbackTarget[], io: UpdateFileIo = realUpdateFileIo,
   beforeCommit?: () => void,
+  options: { readonly requireComplete?: boolean; readonly assertCurrent?: () => void; readonly native?: boolean } = {},
 ): RollbackResult {
   targets = targets.map(target => ({ ...target }));
   io = captureUpdateFileIo(io);
   const paths = validateTargets(targets);
   const restored: RollbackTarget[] = [];
   const skipped: RollbackTarget[] = [];
-  transact('rollback', paths, io, () => {}, beforeCommit, (rename) => {
+  transact('rollback', paths, io, () => {}, () => {
+    if (options.requireComplete && paths.some(path => !io.exists(path.previous))) throw new Error('Previous native cohort is incomplete; refusing partial rollback');
+    const result = beforeCommit?.();
+    if (result !== undefined) {
+      void Promise.resolve(result).catch(() => {});
+      throw new Error('beforeCommit must complete synchronously without returning a value');
+    }
+  }, (rename) => {
     for (let index = 0; index < paths.length; index += 1) {
       const path = paths[index]!;
       const target = targets[index]!;
@@ -582,6 +677,8 @@ export function rollbackKeptPrevious(
       }
       restored.push(target);
     }
-  });
+  }, { ...(options.assertCurrent ? { current: options.assertCurrent } : {}), ...(options.native ? {
+    prepareNativeGuard: () => createDaemonNativeRenameGuard(targets.map(target => ({ ...target, executable: false, assetName: '' })), io),
+  } : {}) });
   return { restored, skipped };
 }

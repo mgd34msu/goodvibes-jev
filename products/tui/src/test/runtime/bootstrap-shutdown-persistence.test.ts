@@ -55,6 +55,7 @@ function fixture(options: { fail?: string; failures?: Map<string, Error>; hold?:
     providerRegistry: { stopWatching: step('provider stop') },
     sessionOrchestration: { dispose: step('orchestration dispose') },
     persistenceOptions: { workingDirectory: home, homeDirectory: home, sessionManager: manager },
+    closeRuntimeGraph: async () => { await step('runtime graph close')(); },
   };
   const shutdown = createBootstrapShutdown(deps);
   const durableFile = join(surface.sessionsDir, `${runtime.sessionId}.jsonl`);
@@ -70,9 +71,9 @@ function fixture(options: { fail?: string; failures?: Map<string, Error>; hold?:
 
 function exitComposition(h: ReturnType<typeof fixture>, hardTimeout = 1_000) {
   const output: string[] = [];
-  const diagnostics: string[] = [];
-  const logSpy = spyOn(logger, 'debug').mockImplementation((_message, fields) => {
-    if (fields && typeof fields === 'object' && 'error' in fields) diagnostics.push(String(fields.error));
+  const diagnostics: Array<{ phase: string; error: string }> = [];
+  const logSpy = spyOn(logger, 'debug').mockImplementation((message, fields) => {
+    if (fields && typeof fields === 'object' && 'error' in fields) diagnostics.push({ phase: message, error: String(fields.error) });
   });
   restores.push(() => logSpy.mockRestore());
   const exitSpy = spyOn(process, 'exit').mockImplementation(() => undefined as never);
@@ -95,7 +96,7 @@ function exitComposition(h: ReturnType<typeof fixture>, hardTimeout = 1_000) {
     stdout: { write: (text: string) => { output.push(text); return true; }, removeListener: () => {} },
     noAltScreen: false,
     ansi: { CLEAR_SCREEN: '', ALT_SCREEN_EXIT: 'restore-terminal', PASTE_DISABLE: '', KEYBOARD_EXT_DISABLE: '', MOUSE_DISABLE: '', CURSOR_SHOW: '', FOCUS_DISABLE: '' },
-    getInput: () => { throw new Error('unused'); },
+    getInput: () => ({}),
     render: () => {},
     getTerminalOutputGuard: () => ({ dispose: () => {} }),
     getPromptContentWidth: () => 80,
@@ -111,7 +112,7 @@ function exitComposition(h: ReturnType<typeof fixture>, hardTimeout = 1_000) {
   return { handlers, exitSpy, diagnostics, output, recoveryFile, assertRecoveryKept };
 }
 
-const ownedPhases = ['bootstrap first', 'bootstrap second', 'runtime first', 'runtime second', 'forensics', 'spine close', 'spine dispose', 'inbound dispose', 'union dispose', 'hosted detach', 'startup drain', 'external settlement', 'external stop', 'title'];
+const ownedPhases = ['bootstrap first', 'bootstrap second', 'runtime first', 'runtime second', 'forensics', 'spine close', 'spine dispose', 'inbound dispose', 'union dispose', 'hosted detach', 'startup drain', 'external settlement', 'external stop', 'title', 'runtime graph close'];
 
 describe('bootstrap shutdown preserves durable persistence after owner failures', () => {
   for (const fail of ownedPhases) {
@@ -123,6 +124,7 @@ describe('bootstrap shutdown preserves durable persistence after owner failures'
       expect(h.order).toContain('runtime second');
       expect(h.order).toContain('external stop');
       expect(h.order).toContain('orchestration dispose');
+      expect(h.order).toContain('runtime graph close');
       expect(h.deps.bootstrapUnsubs).toHaveLength(0);
       expect(h.deps.runtimeUnsubs).toHaveLength(0);
       expect(h.deps.agentStatusIntervalRef.value).toBe(null);
@@ -152,7 +154,14 @@ describe('bootstrap shutdown preserves durable persistence after owner failures'
     h.assertSaved();
     exit.assertRecoveryKept();
     expect(exit.exitSpy).toHaveBeenCalledTimes(1);
-    for (const failure of failures.values()) expect(exit.diagnostics).toContain(failure.message);
+    const originalFailure = await h.shutdown(data).catch((error: unknown) => error);
+    expect(originalFailure).toBeInstanceOf(AggregateError);
+    expect((originalFailure as AggregateError).errors).toEqual([...failures.values()]);
+    for (const [index, failure] of [...failures.values()].entries()) expect((originalFailure as AggregateError).errors[index]).toBe(failure);
+    expect(exit.diagnostics).toEqual(ownedPhases.map(() => ({
+      phase: 'ctx.shutdown error during process cleanup (non-fatal)',
+      error: '[REDACTED]',
+    })));
   });
 
   test('filesystem persistence failure remains visible, retains real recovery, and still releases SDK owners', async () => {
@@ -166,7 +175,10 @@ describe('bootstrap shutdown preserves durable persistence after owner failures'
     exit.assertRecoveryKept();
     expect(h.order).toContain('provider stop');
     expect(h.order).toContain('orchestration dispose');
-    expect(exit.diagnostics.some((line) => line.includes('failed to persist session'))).toBe(true);
+    expect(exit.diagnostics).toEqual([{
+      phase: 'ctx.shutdown error during process cleanup (non-fatal)',
+      error: '[REDACTED]',
+    }]);
     expect(exit.exitSpy).toHaveBeenCalledTimes(1);
   });
 

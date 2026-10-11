@@ -1,5 +1,6 @@
 /** Root-owned, least-capability mail and explicit tagging constructors. */
 import { EmailService } from '@goodvibes-jev/engine/sdk/platform/email';
+import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { OwnedInboxTagging } from '@goodvibes-jev/engine/sdk/platform/intake';
 import { composeMailDeps } from './mail-composition.js';
 import { createDaemonTriageTaggingFactory, type DaemonTriagePermissionHost, type DaemonTriageTaggingRequest } from './tagged-inbox-composition.js';
@@ -9,6 +10,7 @@ import type { HandlerContext, OwnedHandlerSurface } from '../daemon/handlers/con
 import type { RoutingRegistration } from '../daemon/handlers/index.js';
 
 type MailInput = Omit<Parameters<typeof composeMailDeps>[0], 'registerDispose'> & {
+  readonly configManager: Partial<Pick<ConfigManager, 'subscribe'>>;
   readonly secretsManager: Parameters<typeof composeMailDeps>[0]['secretsManager'] & Partial<Pick<SecretsManager, 'resolveLocalCredentialSnapshot'>>;
 };
 
@@ -43,6 +45,7 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
         return close;
       } catch (error) { close(); throw error; }
     } : undefined;
+  const subscribeConfig = mailInput.configManager.subscribe?.bind(mailInput.configManager);
   const closeMail = (): void => {
     if (retired) return;
     retired = true;
@@ -69,6 +72,9 @@ export async function registerOwnedMailInbox(factory: DaemonInboxFactory, contex
     }) : undefined;
     const registration = await factory(context, routing, { ...controls,
       ...(onAccountInvalidation ? { onAccountInvalidation } : {}),
+      ...(subscribeConfig ? { onConfigurationChange: (key, listener) => {
+        assertCurrent(); return subscribeConfig(key, listener);
+      } } satisfies Pick<DaemonInboxControls, 'onConfigurationChange'> : {}),
       ...(createTagging ? { createTriageTagging(request: DaemonTriageTaggingRequest) {
         assertCurrent(); const owner = createTagging(request); taggingOwners.push(owner); return owner;
       } } : {}),

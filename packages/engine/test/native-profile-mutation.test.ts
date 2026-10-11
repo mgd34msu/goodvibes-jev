@@ -80,7 +80,7 @@ test('native sweep records a separate complete send decision before guarded actu
   const sink = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     received = await request.json(); sends++; return Response.json({ responseId: 'synthetic-landed' });
   } }); cleanup.push(() => sink.stop(true));
-  const router = new ChannelDeliveryRouter({ strategies: [{ id: 'synthetic-native-nudge', supportsGuardedDelivery: true,
+  const router = new ChannelDeliveryRouter({ strategies: [{ id: 'synthetic-native-nudge', supportsGuardedDelivery: true, supportsPublication: true,
     canHandle: () => true, async deliver(request) {
       await Promise.resolve();
       return runDeliveryPublication(request, async current => {
@@ -107,7 +107,7 @@ test('native sweep records a separate complete send decision before guarded actu
 
 test('accepted native delivery followed by source retirement returns only an exact partial fact', async () => {
   let sends = 0, retire: (() => void) | undefined;
-  const router = new ChannelDeliveryRouter({ strategies: [{ id: 'synthetic-native-nudge', supportsGuardedDelivery: true,
+  const router = new ChannelDeliveryRouter({ strategies: [{ id: 'synthetic-native-nudge', supportsGuardedDelivery: true, supportsPublication: true,
     canHandle: () => true, async deliver(request) {
       return runDeliveryPublication(request, current => { current(); sends++; retire?.(); return { responseId: 'synthetic-already-landed' }; });
     } }] });

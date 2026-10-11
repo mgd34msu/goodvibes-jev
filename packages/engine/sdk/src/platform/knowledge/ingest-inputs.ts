@@ -13,7 +13,8 @@ import {
   emitKnowledgeIngestFailed,
   emitKnowledgeIngestStarted,
 } from '../runtime/emitters/index.js';
-import { summarizeError } from '../utils/error-display.js';
+import { readNormalizedError, summarizeError } from '../utils/error-display.js';
+import { createSemanticWriteGuard } from './semantic/primary-source-plan.js';
 import { finalizeKnowledgeIngestedSource } from './ingest-compile.js';
 import type { KnowledgeIngestContext, KnowledgeIngestOwnership } from './ingest-context.js';
 import {
@@ -130,6 +131,15 @@ export async function ingestKnowledgeUrl(
   } catch (error) {
     if (ownership.assertCurrent || ownership.onCommitted || ownership.signal) throw error;
     if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
+    const store = context.store, artifactStore = context.artifactStore;
+    const sourceGuard = createSemanticWriteGuard(store);
+    sourceGuard.source(pending.id);
+    const assertDiagnosticCurrent = () => {
+      assertCurrent(); sourceGuard.assertCurrent();
+      if (context.store !== store || context.artifactStore !== artifactStore) throw new KnowledgeEntityAliasHoldError();
+    };
+    const diagnostic = await readNormalizedError(error, { site: 'engine.knowledge.ingest-failure', signal, assertCurrent: assertDiagnosticCurrent });
+    assertDiagnosticCurrent();
     const failed = await context.store.upsertSource({
       id: pending.id,
       connectorId: pending.connectorId,
@@ -140,7 +150,7 @@ export async function ingestKnowledgeUrl(
       tags: pending.tags,
       folderPath: pending.folderPath,
       status: 'failed',
-      crawlError: summarizeError(error),
+      crawlError: diagnostic.summary,
       sessionId: pending.sessionId,
       metadata: pending.metadata,
     });
@@ -271,6 +281,15 @@ export async function ingestKnowledgeArtifact(
     // failed-source write, or overwrite a committed receipt after bookkeeping fails.
     if (ownership.assertCurrent || ownership.onCommitted || ownership.signal) throw error;
     if (error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeExtractionJudgmentHoldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError) throw error;
+    const store = context.store, artifactStore = context.artifactStore;
+    const sourceGuard = createSemanticWriteGuard(store);
+    sourceGuard.source(pending.id);
+    const assertDiagnosticCurrent = () => {
+      assertCurrent(); sourceGuard.assertCurrent();
+      if (context.store !== store || context.artifactStore !== artifactStore) throw new KnowledgeEntityAliasHoldError();
+    };
+    const diagnostic = await readNormalizedError(error, { site: 'engine.knowledge.ingest-failure', signal, assertCurrent: assertDiagnosticCurrent });
+    assertDiagnosticCurrent();
     const failed = await context.store.upsertSource({
       id: pending.id,
       connectorId: pending.connectorId,
@@ -281,7 +300,7 @@ export async function ingestKnowledgeArtifact(
       tags: pending.tags,
       folderPath: pending.folderPath,
       status: 'failed',
-      crawlError: summarizeError(error),
+      crawlError: diagnostic.summary,
       sessionId: pending.sessionId,
       metadata: pending.metadata,
     });

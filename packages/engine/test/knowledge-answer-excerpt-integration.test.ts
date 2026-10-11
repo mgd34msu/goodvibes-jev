@@ -11,7 +11,8 @@ import { collectAnswerEvidence, includeOfficialLinkedEvidence, answerExcerptProv
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
 import { answerKnowledgeQuery } from '../sdk/src/platform/knowledge/semantic/answer.js';
 import { rankAnswerSources, readAnswerSourceRanking, sourceRankingContent } from '../sdk/src/platform/knowledge/semantic/answer-source-ranking.js';
-import type { KnowledgeSourceRecord } from '../sdk/src/platform/knowledge/types.js';
+import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../sdk/src/platform/knowledge/types.js';
+import { nodeServingWithoutReview } from '../sdk/src/platform/knowledge/activation/battery.js';
 const spaceId = 'wiki:excerpts';
 const roots: string[] = [];
 let previous: JudgmentPort | undefined;
@@ -40,7 +41,27 @@ async function fixture(text = recovery) {
   return { store, source, extraction };
 }
 async function link(store: KnowledgeStore, source: KnowledgeSourceRecord) {
-  const node = await store.upsertNode({ id: 'private-subject-key', kind: 'knowledge_entity', slug: 'router', title: 'AC-7', status: 'active', metadata: { knowledgeSpaceId: spaceId } });
+  // Subject identity has its own actual extraction, independent of the answer span under test.
+  const identity = 'AC-7 is a router.';
+  const identitySource = await store.upsertSource({ id: 'private-identity-source', connectorId: 'synthetic', sourceType: 'manual', title: 'AC-7 identity',
+    status: 'pending', metadata: { knowledgeSpaceId: spaceId } });
+  await store.upsertExtraction({ id: 'private-identity-extraction', sourceId: identitySource.id, extractorId: 'synthetic', format: 'text',
+    excerpt: identity, metadata: { knowledgeSpaceId: spaceId } });
+  const seed = fakePort((name, question, state) => {
+    if (name !== 'serve' || question.type !== 'noul' || question.instructions !== nodeServingWithoutReview.items.serve.question.instructions)
+      throw new Error('Unknown excerpt subject activation contract');
+    expect(state).toEqual({ candidate: { kind: 'knowledge_entity', title: 'AC-7', summary: identity, aliases: [], content: {},
+      producerConfidence: { value: 0, units: '0-100 descriptive producer score, never activation authority' }, claimedTrust: {}, trust: 'untrusted synthesized reference material' },
+      evidence: [{ reference: 'source-1', primaryReference: true, sourceType: 'manual', title: 'AC-7 identity', claimedTrust: {},
+        trust: 'untrusted source reference; only actual extraction supplies evidence', extraction: { excerpt: identity, sections: [], texts: {} } }], subjects: [] });
+    return noulAnswer(0.99);
+  });
+  const prior = installJudgmentPort(seed.port);
+  let node: KnowledgeNodeRecord;
+  try { node = await store.upsertNode({ id: 'private-subject-key', kind: 'knowledge_entity', slug: 'router', title: 'AC-7', summary: identity,
+    sourceId: identitySource.id, status: 'active', metadata: { knowledgeSpaceId: spaceId } }); }
+  finally { installJudgmentPort(prior); }
+  expect(node.status).toBe('active');
   const edge = await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: node.id, relation: 'source_for', metadata: { knowledgeSpaceId: spaceId } });
   return { node, edge };
 }
@@ -183,6 +204,7 @@ describe('answer excerpts on real initial and linked ranking paths', () => {
     const late = await store.upsertSource({ id: 'late-source', connectorId: 'synthetic', sourceType: 'manual', status: 'indexed', title: 'Late source',
       metadata: { knowledgeSpaceId: spaceId, sourceDiscovery: { linkedObjectIds: [node.id] } } });
     await store.upsertExtraction({ sourceId: late.id, extractorId: 'synthetic', format: 'text', excerpt: 'Authorization: Bearer synthetic', metadata: { knowledgeSpaceId: spaceId } });
+    await store.upsertEdge({ fromKind: 'source', fromId: late.id, toKind: 'node', toId: node.id, relation: 'source_for', metadata: { knowledgeSpaceId: spaceId } });
     const fake = port(); await expect(includeOfficialLinkedEvidence(store, spaceId, query, [], [node], 10)).rejects.toBeInstanceOf(JudgmentInputError);
     expect(fake.requests).toHaveLength(0);
   });

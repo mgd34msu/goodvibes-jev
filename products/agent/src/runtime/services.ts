@@ -7,7 +7,7 @@ import { shell as runtimeShell, operations as runtimeOperations } from '@goodvib
 // reimplemented here, so "which pollers exist" has exactly one answer across
 // both compositions: RuntimePollerOwners is all-required, and a poller added to
 // this fork's graph later cannot compile without being named for teardown.
-import { createDisposalScope, registerRuntimePollers } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
+import { createAsyncDisposalScope, registerRuntimePollers } from '@goodvibes-jev/engine/sdk/platform/runtime/disposal';
 import type { shell as RuntimeShell, bootstrap as RuntimeBootstrap } from '@goodvibes-jev/engine/sdk/platform/runtime';
 import { applyRawSecretLiteralHandling, type SecretsManager } from '../config/secrets.ts';
 import { readCheckpointGuardSettings, readCheckpointRegistrationSetting } from '../config/checkpoint-settings.ts';
@@ -733,6 +733,8 @@ export interface RuntimeServices extends Omit<SdkRuntimeServices, 'sessionBroker
    * and idempotent, an owner that throws is logged and the rest still come down.
    */
   dispose(): void;
+  /** Wait for owned background work and storage to finish shutting down. */
+  close(): Promise<void>;
   readonly integrationHelpers: IntegrationHelperService;
   /**
    * Re-root workspace-bound stores to a new working directory.
@@ -760,7 +762,9 @@ export function describeMemoryConsolidationReceipt(receipt: MemoryConsolidationR
 }
 
 export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeServices {
-  const disposalScope = createDisposalScope('RuntimeServices'); // see @goodvibes-jev/engine/sdk/platform/runtime/disposal
+  const disposalScope = createAsyncDisposalScope('RuntimeServices');
+  let homeGraphClosing: Promise<void> | undefined;
+  let conversationRewindClosing: Promise<void> | undefined;
   const workingDirectory = options.workingDir;
   const homeDirectory = options.homeDirectory;
   const surface = createSessionSurface({
@@ -974,7 +978,13 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // Everything the floor started comes down with this graph. Idempotent, and it
   // overlaps deliberately with the poller registration further below: whichever
   // runs first does the work.
-  disposalScope.registry.add('client runtime floor', () => clientFloor.dispose());
+  disposalScope.registry.add('client runtime floor', () => clientFloor.close());
+  disposalScope.registry.add('agent knowledge store', () => agentKnowledgeStore.close());
+  disposalScope.registry.add('home graph knowledge store', () => homeGraphKnowledgeStore.close());
+  // Cancellation starts at each leaf's original position. These older entries
+  // drain its retained promise before storage or the client floor can close.
+  disposalScope.registry.add('conversation rewind drain', () => conversationRewindClosing);
+  disposalScope.registry.add('home graph drain', () => homeGraphClosing);
 
   const daemonConfigClient: DaemonConfigClient = createDaemonConfigClient(daemonVerbs);
   const daemonCredentialsClient: DaemonCredentialsClient = createDaemonCredentialsClient(daemonVerbs);
@@ -2151,7 +2161,11 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     // is all-required precisely so a poller cannot be forgotten, and this fork
     // had been registering the home-graph service by hand where the contract
     // could not see it.
-    homeGraphService, agentOrchestrator,
+    homeGraphService: { dispose: () => {
+      homeGraphClosing = homeGraphService.dispose();
+      // The scope observes the same rejection when its drain entry runs.
+      void homeGraphClosing.catch(() => {});
+    } }, agentOrchestrator,
     // By dispose() time the registries and bus these runs report through are
     // already down, so a run still described as "running" is orphaned rather
     // than preserved, and this is the only shutdown-reachable way to abort its
@@ -2164,11 +2178,12 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // and registering here is what covers the CLI paths that have no such path.
   disposalScope.registry.add('session spine client', () => sessionSpineClient.dispose());
   disposalScope.registry.add('session write ledger', disposeSessionWriteLedgerOnce);
-  // The client seams that started something. Each is idempotent; the rewind
-  // host's release is fire-and-forget here because a dispose() is synchronous
-  // and a daemon that never hears the release simply lets the lease lapse.
+  // The client seams stop immediately; the rewind release is drained below.
   disposalScope.registry.add('inbound session dispatch', () => sessionDispatch.stop());
-  disposalScope.registry.add('conversation rewind host', () => { void conversationRewindHost.stop(); });
+  disposalScope.registry.add('conversation rewind host', () => {
+    conversationRewindClosing = conversationRewindHost.stop();
+    void conversationRewindClosing.catch(() => {});
+  });
   disposalScope.registry.add('hosted session registry', () => hostedSessions.dispose());
   // The two installed routing clients go down with the graph that installed
   // them. They are process-wide by design (five settings writers reach them
@@ -2348,6 +2363,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     // is a no-op.
     disposeSessionWriteLedger: disposeSessionWriteLedgerOnce,
     dispose: (): void => disposalScope.dispose(),
+    close: (): Promise<void> => disposalScope.close(),
     integrationHelpers,
     async rerootStores(newWorkingDir: string): Promise<void> {
       await projectIndex.reroot(newWorkingDir);

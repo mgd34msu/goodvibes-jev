@@ -73,8 +73,8 @@ test('conflicting later owner edit retains both owner and contract result withou
   await waitFor(() => terminal(h, contract.id), 'conflicting dirty input hold', 15_000);
   const done = h.store.get(contract.id)!;
   expect(done.commit?.status).toBe('failed');
-  expect(done.commit?.note).toContain('not applied:');
-  expect(done.commit?.note).toContain('owner changed');
+  expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+  expect(done.commit?.hash).toBeUndefined();
   expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('owner later replacement\n');
   expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('contract replacement\n');
   expect(readFileSync(join(h.root, '.git/index'))).toEqual(index);
@@ -85,6 +85,7 @@ test('conflicting later owner edit retains both owner and contract result withou
 for (const boundary of ['restricted', 'cancelled'] as const) {
   test(`dirty apply checks ${boundary} original authority before changing owner files`, async () => {
     let armed = false;
+    let originalTargetChecks = 0;
     let contractId = '';
     const h = (harness = makeHarness({
       plan: oneUnitPlan(1),
@@ -97,6 +98,7 @@ for (const boundary of ['restricted', 'cancelled'] as const) {
       },
       readAccessFilter: async (path) => {
         if (armed && path === join(h.root, 'src/csv.ts')) {
+          originalTargetChecks++;
           if (boundary === 'cancelled') h.runner.cancel(contractId, 'owned apply cancellation');
           await Promise.resolve();
           return boundary !== 'restricted';
@@ -110,12 +112,18 @@ for (const boundary of ['restricted', 'cancelled'] as const) {
     contractId = startContract(h).contract.id;
     await waitFor(() => terminal(h, contractId), 'authority hold', 15_000);
     await h.runner.join(contractId);
+    expect(originalTargetChecks).toBeGreaterThan(0);
     expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
     expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe('owner dirty context\n');
     expect(readFileSync(join(h.root, '.git/index'))).toEqual(index);
     expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
     const done = h.store.get(contractId)!;
-    if (boundary === 'restricted') expect(done.commit?.note).toContain('access-restricted');
+    if (boundary === 'restricted') {
+      expect(done.commit?.status).toBe('failed');
+      expect(done.commit?.note).toBe(`not applied: [REDACTED]; the work stays on branch ${done.branch}`);
+      expect(done.commit?.hash).toBeUndefined();
+      expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('contract output\n');
+    }
     else expect(done.status).toBe('cancelled');
   }, 20_000);
 }

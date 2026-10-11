@@ -1,10 +1,10 @@
 /** The actual channel ingress path, with explicit Jev answers and a real broker/log. */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { actionOf, readingsOf } from '@goodvibes-jev/judgment';
+import { actionOf, readingsOf, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { ApprovalBroker } from '../sdk/src/platform/control-plane/approval-broker.ts';
 import { ChannelPolicyManager } from '../sdk/src/platform/channels/policy-manager.ts';
 import { DaemonSurfaceActionHelper } from '../sdk/src/platform/daemon/surface-actions.ts';
@@ -15,6 +15,15 @@ import type { ChannelPolicyDecision } from '../sdk/src/platform/channels/index.t
 import { REPLY_BATTERY, TARGET_BATTERY, useApprovalReadings } from './helpers/approval-readings.ts';
 
 const readings = useApprovalReadings();
+let allRequests: JudgmentRequest<Questions>[] = [];
+beforeEach(() => {
+  allRequests = [];
+  const active = installJudgmentPort(undefined);
+  if (!active) throw new Error('Approval fixture port is missing');
+  // The helper owns restoration. Observe its actual security requests as well
+  // as approval questions, without supplying another answer or recorder.
+  installJudgmentPort({ ...active, ask(request) { allRequests.push(request); return active.ask(request); } });
+});
 const OWNER = 'U-OWNER';
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -386,6 +395,22 @@ describe('authorization and failures are fail closed', () => {
 describe('approval judgment never receives protected input', () => {
   const SECRET = 'SYNTHETIC_APPROVAL_SECRET_DO_NOT_TRANSMIT';
 
+  function assertNoProtectedJudgment() {
+    expect(readings.requests).toHaveLength(0);
+    expect(readings.log.query({ battery: REPLY_BATTERY })).toHaveLength(0);
+    expect(readings.log.query({ battery: TARGET_BATTERY })).toHaveLength(0);
+    // Refusal diagnostics may ask only value-free field-role questions.
+    for (const request of allRequests) {
+      expect(request.context?.battery).toBe('engine.redaction.field-kind');
+      expect(request.state).toEqual({ field: expect.any(String) });
+      expect(Object.keys(request.questions)).toEqual(['kind']);
+    }
+    expect(JSON.stringify(allRequests)).not.toContain(SECRET);
+    expect(JSON.stringify(allRequests)).not.toContain('4111111111111111');
+    expect(JSON.stringify(readings.log.query())).not.toContain(SECRET);
+    expect(JSON.stringify(readings.log.query())).not.toContain('4111111111111111');
+  }
+
   test.each([
     ['credential in pending arguments', 'deploy', 'Deploy production', { apiKey: SECRET }],
     ['credential in pending summary', 'deploy', `Deploy with password=${SECRET}`, {}],
@@ -396,8 +421,7 @@ describe('approval judgment never receives protected input', () => {
     readings.set({ reply: 'approve' });
     await expect(h.send('yes')).rejects.toThrow('Refused before judgment');
     expect(h.broker.getApproval(ask.approval.id)?.status).toBe('pending');
-    expect(readings.requests).toHaveLength(0);
-    expect(readings.log.query()).toHaveLength(0);
+    assertNoProtectedJudgment();
   });
 
   test('one protected candidate prevents a selector request containing any candidate', async () => {
@@ -407,8 +431,7 @@ describe('approval judgment never receives protected input', () => {
     readings.set({ target: safe.approval.id, reply: 'approve' });
     await expect(h.send('approve the deployment')).rejects.toThrow('Refused before judgment');
     expect(h.broker.listApprovals().every((record) => record.status === 'pending')).toBe(true);
-    expect(readings.requests).toHaveLength(0);
-    expect(readings.log.query()).toHaveLength(0);
+    assertNoProtectedJudgment();
   });
 
   test('a protected owner reply is rejected before selecting or reading an ask', async () => {
@@ -427,11 +450,10 @@ describe('approval judgment never receives protected input', () => {
     expect(h.notices[0]).not.toContain(SECRET);
     expect(h.submitted).toEqual([]);
     expect(h.broker.listApprovals().every((record) => record.status === 'pending')).toBe(true);
-    expect(readings.requests).toHaveLength(0);
-    expect(readings.log.query()).toHaveLength(0);
+    assertNoProtectedJudgment();
   });
 
-  test('PAN with expiry and credentials keeps the existing card notice without any model request', async () => {
+  test('PAN with expiry and credentials keeps the existing card notice without any protected judgment', async () => {
     const h = await harness();
     const ask = await h.ask();
     const beforeAudit = h.policy.listAudit();
@@ -445,8 +467,7 @@ describe('approval judgment never receives protected input', () => {
     expect(h.notices[0]).not.toContain('4111');
     expect(h.policy.listAudit()).toEqual(beforeAudit);
     expect(h.broker.getApproval(ask.approval.id)?.status).toBe('pending');
-    expect(readings.requests).toHaveLength(0);
-    expect(readings.log.query()).toHaveLength(0);
+    assertNoProtectedJudgment();
   });
 
   test('protected input is refused even without a judgment port installed', async () => {

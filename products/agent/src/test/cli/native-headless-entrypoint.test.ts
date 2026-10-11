@@ -41,6 +41,10 @@ for (const product of ['agent', 'tui'] as const) describe(`${product} real nativ
     }
     expect(f.captures()).toHaveLength(3);
     expect(new Set(f.captures().map(capture => capture.inputId)).size).toBe(3);
+    // Startup diagnostic reads cannot carry the original source or credential.
+    expect(f.home.judgments.allRequests).toHaveLength(f.home.judgments.acceptedDiagnostics.length + f.home.judgments.rejected.length);
+    expect(JSON.stringify(f.home.judgments.allRequests)).not.toContain(JSON.stringify(literal).slice(1, -1));
+    expect(JSON.stringify(f.home.judgments.allRequests)).not.toContain(f.pairedToken);
   }, 30000);
 
   test('all recovery-looking tokens after literal -- remain source text', async () => {

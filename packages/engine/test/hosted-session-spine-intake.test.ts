@@ -187,7 +187,7 @@ describe('a delivery that failed is not a delivery that happened', () => {
     expect(spine.log.consumed).toEqual([]);
     expect(spine.log.failed).toHaveLength(1);
     expect(spine.log.failed[0]?.inputId).toBe('input-1');
-    expect(spine.log.failed[0]?.error).toContain('this session is terminated');
+    expect(spine.log.failed[0]?.error).toBe('[REDACTED]');
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toContain('hosted-1');
     expect(alerts[0]).toContain('could not be delivered');
@@ -368,7 +368,7 @@ describe('A-F1540 hosted delivery transience uses the actual failure', () => {
   }
   test('terminal wording fails at the first delivery even with attempts remaining', async () => {
     const f = fixture(); await f.intake.tick(); await f.intake.drainDeliveries();
-    expect(f.spine.log.failed).toEqual([{ inputId: 'input-1', error: 'same wording' }]);
+    expect(f.spine.log.failed).toEqual([{ inputId: 'input-1', error: '[REDACTED]' }]);
     await f.intake.tick(); await f.intake.drainDeliveries(); expect(f.deliveries).toHaveLength(1);
     expect(f.spine.log.consumed).toEqual([]); expect(f.alerts).toHaveLength(1);
   });
@@ -417,7 +417,9 @@ test('A-F1540 retained error cannot mutate between failed reading attempts', asy
   });
   await intake.tick(); await intake.drainDeliveries(); failure.message = 'new transient failure';
   await intake.tick(); await intake.drainDeliveries();
-  expect(deliveries).toBe(1); expect(spine.log.failed).toEqual([{ inputId: 'one', error: 'original authorization failure' }]);
+  expect(deliveries).toBe(1); expect(spine.log.failed).toEqual([{ inputId: 'one', error: '[REDACTED]' }]);
+  expect(base.requests).toHaveLength(1);
+  expect(base.requests[0]?.state).toBe('Message: original authorization failure');
   expect(JSON.stringify(base.requests)).not.toContain('new transient failure');
 });
 test('A-F1540 executable/protected failure evidence never reaches a reader or a redelivery', async () => {

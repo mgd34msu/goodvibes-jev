@@ -243,7 +243,7 @@ test('registered native reference lookup protects a complete payload without tra
     },
     async project(request) { return { status: 'projected', args: request.args, executionContext: request.nativeReferenceContext }; },
   });
-  f.child.definition.parameters = { type: 'object', properties: { draftId: { type: 'string' }, nativeReferenceSubjects: { type: 'object' } }, additionalProperties: false };
+  f.child.definition.parameters = { type: 'object', properties: { draftId: { type: 'string' } }, required: ['draftId'], maxProperties: 1, additionalProperties: false };
   f.parent.execute = (_args, options) => f.registry.executeNested('native-ref', CHILD, { draftId: nativeId }, options);
   f.child.execute = async (args, options) => {
     expect(options?.inputProjectionContext).toBe(context); expect(args.draftId).toBe('native-draft:one');
@@ -253,6 +253,27 @@ test('registered native reference lookup protects a complete payload without tra
   };
   expect(await f.run()).toMatchObject({ success: true }); expect(released).toBe(1);
   expect(JSON.stringify(states)).not.toContain(nativeId); expect(JSON.stringify(states)).toContain('Exact synthetic draft text');
+  expect(f.registry.getToolDefinitions().find(definition => definition.name === CHILD)?.parameters).toEqual({
+    type: 'object', properties: { draftId: { type: 'string' } }, required: ['draftId'], maxProperties: 1, additionalProperties: false,
+  });
+});
+
+test.each(['caller-subject', 'extra-action', 'invalid-action'] as const)('native private schema seam refuses %s before admission', async kind => {
+  const nativeId = 'draft-20261011123456'; let released = 0;
+  const f = fixture(undefined, {
+    captureNativeReferences(request) { return { fields: ['draftId'], args: { ...request.args, draftId: 'native-draft:one', nativeReferenceSubjects: { body: 'Complete selected native payload' } },
+      assertCurrent() {}, async release() { released++; } }; },
+    async project(request) { return { status: 'projected', args: request.args }; },
+  });
+  f.child.definition.parameters = { type: 'object', properties: { draftId: { type: 'string' }, mode: { type: 'string', enum: ['send'] } },
+    required: ['draftId', 'mode'], maxProperties: 2, additionalProperties: false };
+  f.parent.execute = (_args, options) => f.registry.executeNested('invalid-native-action', CHILD, {
+    draftId: nativeId, mode: kind === 'invalid-action' ? 'invalid-mode' : 'send',
+    ...(kind === 'caller-subject' ? { nativeReferenceSubjects: { fabricated: true } } : {}),
+    ...(kind === 'extra-action' ? { fabricated: true } : {}),
+  }, options);
+  await expect(f.run()).rejects.toThrow(); expect(f.effects).toBe(0); expect(released).toBe(1);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
 });
 
 test.each(['unknown', 'unlisted', 'payload'] as const)('native reference %s privacy failure reaches no child reading or effect', async kind => {

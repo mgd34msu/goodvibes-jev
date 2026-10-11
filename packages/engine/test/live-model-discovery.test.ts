@@ -185,8 +185,8 @@ describe('runLiveModelRefresh: honest failure reporting', () => {
       });
       expect(result.source).toBe('cache');
       expect(result.models).toEqual(['model-a', 'model-b']);
-      expect(result.error).toContain('connection reset');
-      expect(formatModelDiscoveryReport('test-provider', result)).toContain('connection reset');
+      expect(result.error).toBe('[REDACTED]');
+        expect(formatModelDiscoveryReport('test-provider', result)).toBe('test-provider: live model refresh failed ([REDACTED]), using last known list');
     }));
 
   test('a live fetch failure with no prior cache falls back to the dated-static list and reports the real error', async () => {
@@ -199,7 +199,7 @@ describe('runLiveModelRefresh: honest failure reporting', () => {
     });
     expect(result.source).toBe('dated-static');
     expect(result.models).toEqual(['model-a', 'model-b']);
-    expect(result.error).toContain('401 unauthorized');
+    expect(result.error).toBe('[REDACTED]');
     expect(result.asOf).toBe('2026-07-12');
   });
 

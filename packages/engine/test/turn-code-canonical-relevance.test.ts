@@ -108,7 +108,7 @@ test('real live vector source requires current policy before code enters canonic
   try {
     await expect(run(live.store)).rejects.toThrow('current read authority');
     await expect(run(live.store, { codeAuthority: { readAccessFilter: async path => path !== live.path } })).rejects.toThrow('access-restricted');
-    expect(fake.requests).toHaveLength(0);
+    assertReadingPartition(fake.requests, [], ['langId']);
     const result = await run(live.store, { codeAuthority: { readAccessFilter: live.readAccessFilter } });
     expect(result.record.injectedSources).toEqual(['code-index']);
     live.deny();
@@ -133,3 +133,13 @@ test('live retained authority rechecks exact intermediate-directory policy, inde
     await expect(result.assertCodeCurrent!()).rejects.toThrow('access-restricted');
   } finally { live.dispose(); }
 });
+
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
+  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
+  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
+  expect(requests).toHaveLength(batteries.length + fields.length);
+  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
+  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
+  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
+  return feature;
+}

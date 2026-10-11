@@ -55,7 +55,7 @@
  */
 
 import { daemonSecretKeyFor, listDaemonOwnedSecretKeys } from './daemon-secret-keys.js';
-import { BUILTIN_PROVIDER_ENV_KEYS } from '../providers/builtin-catalog.js';
+import { BUILTIN_PROVIDER_ENV_KEYS } from './provider-credential-catalog.js';
 
 /** Whether the daemon is ever the process that uses this credential. */
 export type CredentialScopeClass =
@@ -249,25 +249,43 @@ function allDeclarations(): readonly CredentialScopeDeclaration[] {
   return [...CREDENTIAL_SCOPE_DECLARATIONS, ...providerCredentialDeclarations()];
 }
 
-interface CompiledDeclaration extends CredentialScopeDeclaration {
-  readonly test: (key: string) => boolean;
+interface CompiledDeclaration {
+  readonly declaration: CredentialScopeDeclaration;
+  readonly ordinal: number;
 }
 
-let compiled: readonly CompiledDeclaration[] | null = null;
+interface CompiledRegistry {
+  readonly exact: ReadonlyMap<string, CompiledDeclaration>;
+  readonly prefixes: readonly CompiledDeclaration[];
+}
 
-function compile(): readonly CompiledDeclaration[] {
-  compiled ??= allDeclarations().map((declaration) => ({
-    ...declaration,
-    test: declaration.match === 'exact'
-      ? (key: string) => key === declaration.key
-      : (key: string) => key.startsWith(declaration.key) && key.length > declaration.key.length,
-  }));
+let compiled: CompiledRegistry | null = null;
+
+function compile(): CompiledRegistry {
+  if (compiled) return compiled;
+  const exact = new Map<string, CompiledDeclaration>();
+  const prefixes: CompiledDeclaration[] = [];
+  for (const [ordinal, declaration] of allDeclarations().entries()) {
+    const entry = { declaration: { ...declaration }, ordinal };
+    if (declaration.match === 'exact') {
+      if (!exact.has(declaration.key)) exact.set(declaration.key, entry);
+    } else prefixes.push(entry);
+  }
+  compiled = { exact, prefixes };
   return compiled;
 }
 
 /** The declaration covering `key`, or null when nothing declares it. */
 export function findCredentialScopeDeclaration(key: string): CredentialScopeDeclaration | null {
-  return compile().find((declaration) => declaration.test(key)) ?? null;
+  const registry = compile();
+  const exact = registry.exact.get(key);
+  for (const prefix of registry.prefixes) {
+    if (exact && prefix.ordinal >= exact.ordinal) break;
+    if (key.length > prefix.declaration.key.length && key.startsWith(prefix.declaration.key)) {
+      return prefix.declaration;
+    }
+  }
+  return exact?.declaration ?? null;
 }
 
 /**

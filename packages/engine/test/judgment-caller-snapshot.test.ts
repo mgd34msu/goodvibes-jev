@@ -65,13 +65,14 @@ describe('answer generation uses the inspected evidence snapshot', () => {
 
 describe('planner materializes inputs before privacy preflight', () => {
   const readings = useCoreReadings({ strategy: 'single' });
+  const strategyRequests = () => readings.requests.filter(request => 'strategy' in request.questions);
   const base = (): PlannerInputs => ({ riskScore: 0.2, latencyBudgetMs: Infinity, isMultiStep: false, remoteAvailable: false, backgroundEligible: false });
   test('a changing task getter is read once and cannot substitute text after validation', async () => {
     let gets = 0;
     const input = { ...base(), get taskDescription() { return ++gets === 1 ? 'Ordinary task' : marker; } };
     const decision = await new AdaptivePlanner().select(input);
     expect(gets).toBe(1); expect(decision.inputs.taskDescription).toBe('Ordinary task');
-    expect(readings.requests).toHaveLength(1);
+    expect(strategyRequests()).toHaveLength(1);
     expect(JSON.stringify(readings.requests)).not.toContain(marker);
     expect(JSON.stringify(readings.requests)).toContain('Ordinary task');
   });
@@ -95,6 +96,6 @@ describe('planner materializes inputs before privacy preflight', () => {
     expect(unbounded.inputs.latencyBudgetMs).toBe(Infinity); expect(unbounded.inputs.riskScore).toBe(0);
     const clamped = await planner.select({ ...base(), riskScore: 9, latencyBudgetMs: -1 });
     expect(clamped.inputs.riskScore).toBe(1); expect(clamped.inputs.latencyBudgetMs).toBe(0);
-    expect(readings.requests).toHaveLength(2);
+    expect(strategyRequests()).toHaveLength(2);
   });
 });

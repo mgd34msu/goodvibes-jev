@@ -10,10 +10,11 @@ const source = `
 import { mock } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import { CONFIG_SCHEMA, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { parseGoodVibesCli } from '@goodvibes-jev/engine/terminal-shell';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { publicErrorTextAnswer } from './src/test/helpers/user-error-reading.ts';
 const home = process.env.HOME;
 const facts = {
   gateway: { auth: { mode: 'anonymous', configured: true }, setup: { description: 'Operator-managed gateway with independently billed upstreams.' } },
@@ -29,14 +30,38 @@ const providerRegistry = {
   resolveModelPricing: () => ({ status: 'unpriced' }), getContextWindowForModel: () => 2048, getKnownContextWindowForModel: () => 2048,
   initModelLimits() {}, initCatalog() {}, ready: async () => {}, stopWatching() { stopped++; },
 };
-mock.module('./src/runtime/services.ts', () => ({ createRuntimeServices: () => ({ providerRegistry, benchmarkStore: { initBenchmarks() {} }, dispose() { disposed++; } }) }));
+mock.module('./src/runtime/services.ts', () => ({ createRuntimeServices: () => ({ providerRegistry, benchmarkStore: { initBenchmarks() {} }, async close() { disposed++; } }) }));
 const posture = await import('./src/cli/service-posture.ts');
 mock.module('./src/cli/service-posture.ts', () => ({ ...posture, buildCliServicePosture: async () => ({ issues: [] }) }));
 const { handleGoodVibesCliCommand } = await import('./src/cli/management.ts');
 const { handleBundleCommand } = await import('./src/cli/bundle-command.ts');
 const configManager = new ConfigManager({ workingDir: home, homeDir: home, surfaceRoot: 'tui' });
 const runtime = args => ({ cli: parseGoodVibesCli(args, 'goodvibes'), configManager, workingDirectory: home, homeDirectory: home });
-const answer = fakePort((name, _q, state) => noulAnswer((name === 'self_hosted' && String(state).includes('Operator-managed gateway')) || (name === 'cloud_account' && String(state).includes('Cloud account resource')) ? 0.99 : 0.01));
+const configContainers = new Set(CONFIG_SCHEMA.flatMap(setting => {
+  const parts = setting.key.split('.');
+  return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('.'));
+}));
+const configOrdinaryPaths = new Set(['service.logPath', 'sandbox.egressAllowlist', 'sandbox.workspaceWritable', 'notifications.webhookUrls', 'cluster.peers', 'contract.gates',
+  ...Array.from({length:3}, (_,i) => ['', '.name', '.command', '.enabled'].map(suffix => 'contract.gates.'+i+suffix)).flat(),
+  'worktree', 'worktree.setup', 'worktree.setup.commands', 'worktree.setup.carryOverGlobs', 'conversationGate.gatedSurfaces',
+  ...Array.from({length:14}, (_,i) => 'conversationGate.gatedSurfaces.'+i)]);
+const setupNames = new Set(['api_key', 'cloud_account', 'local_runtime', 'no_key_free', 'self_hosted', 'subscription']);
+const answer = fakePort((name, question, state) => {
+  const publicText = publicErrorTextAnswer(['self-hosted', 'cloud-account', 'unknown'], name, question, state);
+  if (publicText !== undefined) return publicText;
+  if (name === 'kind' && state && typeof state === 'object' && !Array.isArray(state) && Object.keys(state).length === 1
+    && ['diagnostics', 'providers', 'setup', 'setupClass'].includes(state.field)) return choiceAnswer(question, 'other', .99);
+  if (name === 'credential' && state && typeof state === 'object' && !Array.isArray(state)
+    && typeof state.key === 'string' && (configContainers.has(state.key) || configOrdinaryPaths.has(state.key))) return noulAnswer(.01);
+  if (name === 'family' && state && typeof state === 'object' && !Array.isArray(state)
+    && ['one','two'].includes(state.id) && Object.hasOwn(facts,state.provider) && state.displayName === state.id) return choiceAnswer(question,'Other',.99);
+  if (setupNames.has(name) && question.type === 'noul' && typeof state === 'string') {
+    const provider = JSON.parse(state).provider;
+    if (!provider || !Object.hasOwn(facts,provider.id)) throw new Error('Unexpected setup fixture source');
+    return noulAnswer(name === 'self_hosted' && provider.id === 'gateway' || name === 'cloud_account' && provider.id === 'cloud' ? .99 : .01);
+  }
+  throw new Error('Unexpected provider caller fixture question: '+name);
+});
 let release; let wait = new Promise(r => { release = r; });
 installJudgmentPort({ ...answer.port, async ask(request) { await wait; return answer.port.ask(request); } });
 const printed = [], outputs = {}; const originalLog = console.log;
@@ -58,9 +83,14 @@ for (const [key, args] of [['inspect', ['providers', 'inspect', 'cloud', '--json
   }
 }
 const bundlePath = join(home, 'bundle.json');
+answer.requests.length = 0;
 const exported = await handleBundleCommand(runtime(['support-bundle', 'export', bundlePath, '--json']));
 if (exported.exitCode !== 0) throw new Error(exported.output);
 outputs.bundle = JSON.parse(readFileSync(bundlePath, 'utf8')).diagnostics.providers;
+outputs.bundleCredentialKeys = answer.requests.filter(request => request.context?.battery === 'config.credential-key').map(request => {
+  if (!request.state || typeof request.state !== 'object' || Array.isArray(request.state) || typeof request.state.key !== 'string') throw new Error('Unexpected bundle credential source');
+  return request.state.key;
+});
 installJudgmentPort({ ...answer.port, async ask() { throw new Error('reading unavailable'); } });
 await handleGoodVibesCliCommand(runtime(['providers', 'inspect', 'cloud', '--json']));
 outputs.unavailable = JSON.parse(printed.pop());
@@ -84,6 +114,8 @@ test('actual providers, models and support-bundle callers await shared setup fac
     expect(output.models.map((row: { setupClass: string }) => row.setupClass)).toEqual(['self-hosted', 'self-hosted', 'cloud-account', 'cloud-account', 'unknown', 'unknown']);
     expect(output.modelReads.sort()).toEqual(['cloud', 'gateway', 'missing']);
     expect(output.bundle.map((row: { setup: { setupClass: string } }) => row.setup.setupClass)).toEqual(['self-hosted', 'cloud-account', 'unknown']);
+    expect(output.bundleCredentialKeys.length).toBeGreaterThan(0);
+    expect(new Set(output.bundleCredentialKeys).size).toBe(output.bundleCredentialKeys.length);
     expect(output.unavailable.setup.setupClass).toBe('unknown');
     expect(output.disposed).toBe(6); expect(output.stopped).toBe(6);
   } finally { rmSync(home, { recursive: true, force: true }); }

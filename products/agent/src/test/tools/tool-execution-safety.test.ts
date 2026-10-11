@@ -1,7 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { installToolExecutionSafetyGuard } from '../../tools/tool-execution-safety.ts';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previousPort); });
 
 function throwingTool(name: string): Tool {
   return {
@@ -28,7 +33,7 @@ function okTool(name: string): Tool {
 }
 
 describe('tool execution safety guard', () => {
-  test('converts registered tool exceptions into failed tool results', async () => {
+  test('converts registered tool exceptions into failed results while privacy is unavailable', async () => {
     const registry = new ToolRegistry();
     registry.register(throwingTool('broken'));
     installToolExecutionSafetyGuard(registry);
@@ -37,7 +42,7 @@ describe('tool execution safety guard', () => {
     expect(result).toMatchObject({
       callId: 'call-broken',
       success: false,
-      error: 'broken exploded',
+      error: '[REDACTED]',
     });
   });
 
@@ -48,7 +53,7 @@ describe('tool execution safety guard', () => {
 
     const result = await registry.execute('call-late', 'late_broken', {});
     expect(result.success).toBe(false);
-    expect(result.error).toContain('late_broken exploded');
+    expect(result.error).toBe('[REDACTED]');
   });
 
   test('leaves successful tool results unchanged', async () => {

@@ -470,6 +470,16 @@ async function handleSweep(deps: AgentOccasionsToolDeps): Promise<ToolOutcome> {
   if (!result.ok) return fail(['Could not run a pass.', `  ${result.error ?? 'no reason given'}`]);
   const response = narrowOccasionsSweep(result.data);
   if (!response) return fail([OCCASIONS_RESPONSE_UNREADABLE]);
+  if ('complete' in response) {
+    return fail([
+      'The pass stopped before completion.',
+      `  Accepted deliveries before stopping: ${response.acceptedDeliveries}.`,
+      response.stopped === 'request-retired-after-delivery'
+        ? '  The request became inactive after delivery; remaining work was held.'
+        : '  Delivery processing stopped after an accepted delivery.',
+      'Do not retry automatically; the accepted deliveries have already happened.',
+    ]);
+  }
   const lines = [`Ran one pass (today is ${response.today}).`];
   if (response.hold === 'disabled') {
     lines.push('  Occasions are turned off, so nothing was raised. Housekeeping still ran.');

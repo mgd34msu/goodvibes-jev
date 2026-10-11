@@ -15,7 +15,7 @@ import { flushActivityLogSync, logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { PlatformServiceManager } from './service-manager.js';
-import { DaemonAutoUpdater, resolveDaemonInstalledFiles, type AutoUpdateServiceActions } from './auto-updater.js';
+import { DaemonAutoUpdater, type AutoUpdateServiceActions } from './auto-updater.js';
 import { DaemonReceiptStore, formatReceiptTime } from './receipts.js';
 import { writeFatalLine } from './fatal-boot-report.js';
 import { FeatureAnnouncementStore, collectStartupAnnouncements, featureAnnouncementsPath } from '../runtime/feature-announcements.js';
@@ -28,7 +28,7 @@ import {
   type LifecycleMarkerIo,
 } from './lifecycle-marker.js';
 import { crashLoopRollbackReceipt, decideCrashLoopRollback } from './boot-rollback.js';
-import { rollbackKeptPrevious, realUpdateFileIo, UpdateTransactionError, type UpdateFileIo, type UpdateTransactionReceipt } from '../runtime/self-update.js';
+import { rollbackKeptPrevious, realUpdateFileIo, captureUpdateFileIo, inspectDaemonNativeInstallation, retainDaemonNativeFiles, resolveDaemonNativeTargets, UpdateTransactionError, type UpdateFileIo, type UpdateTransactionReceipt } from '../runtime/self-update.js';
 import { currentProcessSignals, isCompiledBinaryInvocation } from './daemon-exec-invocation.js';
 import { deliverOwnerAlert } from './owner-alert.js';
 import type { DaemonUpdateStatus } from './update-status.js';
@@ -364,16 +364,23 @@ export class DaemonLifecycleRuntime {
    * a rollback that did not happen must never be reported as one.
    */
   private rollBackToKeptPrevious(execPath: string, failedStarts: number): boolean {
-    const targets = resolveDaemonInstalledFiles({
-      execPath,
-      platform: process.platform,
-      arch: process.arch,
-      ...(this.options.rollbackIo ? { io: this.options.rollbackIo } : {}),
-    }).map(({ label, path }) => ({ label, path }));
-
+    const io = captureUpdateFileIo(this.options.rollbackIo ?? realUpdateFileIo);
+    const nativeTargets = resolveDaemonNativeTargets(execPath, process.platform, process.arch);
+    if (!nativeTargets) return false;
+    const targets = nativeTargets.map(({ label, path }) => ({ label, path }));
     let result: ReturnType<typeof rollbackKeptPrevious>;
     try {
-      result = rollbackKeptPrevious(targets, this.options.rollbackIo ?? realUpdateFileIo);
+      const installed = inspectDaemonNativeInstallation(execPath, process.platform, process.arch, '', io, { integrity: false });
+      if (!installed || installed.version !== this.options.updateArtifact?.version) throw new Error('The running daemon does not own the current native installation version');
+      if (!inspectDaemonNativeInstallation(execPath, process.platform, process.arch, '.previous', io)) throw new Error('No complete verified previous native daemon installation is available');
+      const current = retainDaemonNativeFiles(nativeTargets, io);
+      result = rollbackKeptPrevious(targets, io, () => {
+        if (this.stopping || this.rollbackRecovery || this.rollbackApplied) throw new Error('Native rollback no longer belongs to the current lifecycle');
+        current();
+        inspectDaemonNativeInstallation(execPath, process.platform, process.arch, '.previous', io);
+      }, { requireComplete: true, native: true, assertCurrent: () => {
+        if (this.stopping || this.rollbackRecovery || this.rollbackApplied) throw new Error('Native rollback no longer belongs to the current lifecycle');
+      } });
     } catch (error) {
       if (error instanceof UpdateTransactionError && (error.receipt.committed || error.receipt.recoveryRequired)) {
         this.rollbackRecovery = {
@@ -400,6 +407,7 @@ export class DaemonLifecycleRuntime {
         failedStarts,
         error: summarizeError(error),
       });
+      this.announceOnStderr(`goodvibes daemon: ${failedStarts} starts in a row did not finish, but no kept previous version is on disk as a complete verified native cohort; continuing this build without a rollback`);
       return false;
     }
     if (result.restored.length === 0) {

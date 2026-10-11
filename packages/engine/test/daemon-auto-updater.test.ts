@@ -26,50 +26,75 @@ import {
 } from '../sdk/src/platform/runtime/self-update.js';
 
 import { createSystemOnePort, PINNED_MODEL, SqliteDecisionLog, withDecisionLog, type Questions } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync } from '../sdk/src/platform/utils/redaction.ts';
 import { installJudgmentPort, forgetFailureReadings } from '@goodvibes-jev/engine/errors';
 import { failureReadingsPort } from './_helpers/failure-readings.ts';
+import { nativeCohortFixture, nativeMemoryIo } from './_helpers/daemon-native-cohort.ts';
 let previousFailurePort: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => {
+beforeEach(async () => {
   forgetFailureReadings();
-  previousFailurePort = installJudgmentPort(failureReadingsPort([['getaddrinfo ENOTFOUND github.com', { transientNetwork: true }], ['repository access revoked', { category: 'authorization' }]]).port);
+  redactionRequests.length = 0;
+  previousFailurePort = await installUpdaterPort(failureReadingsPort([['getaddrinfo ENOTFOUND github.com', { transientNetwork: true }], ['repository access revoked', { category: 'authorization' }]]).port);
 });
 afterEach(() => { installJudgmentPort(previousFailurePort); forgetFailureReadings(); });
+
+const redactionRequests: unknown[] = [];
+const PUBLIC_DIAGNOSTICS = [
+  'getaddrinfo ENOTFOUND github.com', 'repository access revoked', 'update timed out',
+  'timed out before commit', 'deadline exceeded', 'update check deadline exceeded',
+  'service exploded', 'async service exploded', 'undefined', 'late manager rejection',
+  'ordinary diagnostic '.repeat(30) + 'repository access revoked',
+];
+
+/** Privacy projection asks are distinct from the failure classification under test. */
+async function installUpdaterPort(port: Parameters<typeof installJudgmentPort>[0]) {
+  if (port === undefined) return installJudgmentPort(undefined);
+  const privacy = fakePort((name, question, state) => {
+    if (name === 'kind') {
+      const field = typeof state === 'object' && state !== null && 'field' in state ? state.field : undefined;
+      return choiceAnswer(question, field === 'Authorization' ? 'secret'
+        : field === 'error' || field === 'message' || field === 'detail' ? 'content' : 'other', 0.99);
+    }
+    if (name === 'lineHasCredential' || name === 'spanIsCredential') {
+      return noulAnswer(JSON.stringify(state).includes('Authorization') ? 0.99 : 0.01);
+    }
+    if (name === 'credentialRemains' || name === 'identifying') return noulAnswer(0.01);
+    throw new Error(`Unexpected privacy fixture question: ${name}`);
+  });
+  const privacySites = new Set(['engine.redaction.field-kind', 'engine.redaction.credential',
+    'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive']);
+  const previous = installJudgmentPort({ model: port.model, ask(request) {
+    if (privacySites.has(request.context?.battery ?? '')) {
+      redactionRequests.push(request);
+      return privacy.port.ask(request);
+    }
+    return port.ask(request);
+  } });
+  // Display boundaries are synchronous; settle genuine canonical proofs for
+  // these public fixture diagnostics before testing their display receipts.
+  await Promise.all(PUBLIC_DIAGNOSTICS.map(text => redactSensitiveDataAsync(text)));
+  return previous;
+}
 
 const LATEST_URL = 'https://example.test/releases/latest';
 const NEW_TAG = 'v2.0.0';
 const DAEMON_ASSET = 'goodvibes-daemon-linux-x64';
 const NEW_DAEMON = Buffer.from('daemon-v2');
 
-function memoryIo(initial: Record<string, Buffer>) {
-  const files = new Map<string, Buffer>(Object.entries(initial));
-  const mutations: string[] = [];
-  const io: UpdateFileIo = {
-    writeExclusive: (path, data) => {
-      mutations.push(`claim:${path}`);
-      if (files.has(path)) throw new Error(`file already exists: ${path}`);
-      files.set(path, data);
-    },
-    remove: (path) => { mutations.push(`remove:${path}`); files.delete(path); },
-    writeFile: (path, data) => { mutations.push(`write:${path}`); files.set(path, data); },
-    rename: (from, to) => {
-      mutations.push(`rename:${from}:${to}`);
-      const data = files.get(from);
-      if (data === undefined) throw new Error(`rename source missing: ${from}`);
-      files.delete(from);
-      files.set(to, data);
-    },
-    chmod: (path) => { mutations.push(`chmod:${path}`); },
-    exists: (path) => files.has(path),
-    mkdir: (path) => { mutations.push(`mkdir:${path}`); },
-  };
-  return { files, io, mutations };
-}
+const EXEC_PATH = '/opt/gv/goodvibes-daemon';
+const currentCohort = (version = '1.0.0') => nativeCohortFixture({ version, daemonBytes: 'daemon-v1' });
+const originalFiles = () => currentCohort().installation(EXEC_PATH);
+const originalPaths = () => Object.keys(originalFiles()).sort();
+const memoryIo = nativeMemoryIo;
 
 function releaseFetch(overrides: { latestTag?: string; assetName?: string } = {}): { fetchImpl: UpdateFetchLike; requests: string[] } {
   const tag = overrides.latestTag ?? NEW_TAG;
   const assetName = overrides.assetName ?? DAEMON_ASSET;
   const base = defaultDownloadBaseUrl(LATEST_URL, tag);
-  const manifest = `${sha256(NEW_DAEMON)}  ${assetName}\n`;
+  const cohort = nativeCohortFixture({ version: tag.replace(/^v/, ''), daemonBytes: NEW_DAEMON.toString() });
+  const assets = { ...cohort.assets, [assetName]: NEW_DAEMON };
+  const manifest = Object.entries(assets).map(([name, bytes]) => `${sha256(bytes)}  ${name}\n`).join('');
   const requests: string[] = [];
   const fetchImpl: UpdateFetchLike = async (url) => {
     requests.push(url);
@@ -82,9 +107,7 @@ function releaseFetch(overrides: { latestTag?: string; assetName?: string } = {}
     }
     const body = url === `${base}/SHA256SUMS.txt`
       ? Buffer.from(manifest)
-      : url === `${base}/${assetName}`
-        ? NEW_DAEMON
-        : null;
+      : url.startsWith(`${base}/`) ? assets[url.slice(base.length + 1)] ?? null : null;
     if (!body) {
       return { ok: false, status: 404, url, headers: { get: () => null }, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) };
     }
@@ -135,7 +158,7 @@ function makeHarness(options: {
   stopGracefully?: () => void | Promise<void>;
 } ): Harness {
   const scratch = mkdtempSync(join(tmpdir(), 'auto-updater-'));
-  const { files, io, mutations } = memoryIo({ '/opt/gv/goodvibes-daemon': Buffer.from('daemon-v1') });
+  const { files, io, mutations } = memoryIo(currentCohort(options.currentVersion ?? '1.0.0').installation(EXEC_PATH));
   const { fetchImpl, requests } = releaseFetch({ assetName: options.platform === 'darwin' ? 'goodvibes-daemon-macos-x64' : DAEMON_ASSET, ...(options.latestTag ? { latestTag: options.latestTag } : {}) });
   const receipts = new DaemonReceiptStore(join(scratch, 'receipts.json'), { now: () => new Date(2026, 6, 12, 14, 30).getTime() });
   const actions = { supervised: options.supervised ?? true, adopted: 0, restarted: 0 };
@@ -224,13 +247,20 @@ describe('DaemonAutoUpdater', () => {
       await h.updater.tick();
       expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
       expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
+      const installed = nativeCohortFixture({ version: '2.0.0', daemonBytes: 'daemon-v2' }).installation(EXEC_PATH);
+      for (const [path, bytes] of Object.entries(installed)) {
+        if (path.endsWith('daemon-installation.json')) expect(JSON.parse(h.files.get(path)?.toString() ?? 'null')).toEqual(JSON.parse(bytes.toString()));
+        else expect(h.files.get(path)).toEqual(bytes);
+        expect(h.files.get(path + PREVIOUS_FILE_SUFFIX)).toEqual(originalFiles()[path]);
+      }
+      expect(h.requests).toHaveLength(8);
       expect(h.actions.restarted).toBe(1);
       expect(h.actions.adopted).toBe(0);
       expect(h.exits).toEqual([]);
       const receipts = h.receipts.list();
       expect(receipts).toHaveLength(1);
-      // One update, one receipt, and it names the client restart, because a
-      // swap replaces the daemon binary only: every client already attached
+      // One update, one receipt, and it names the client restart, because the
+      // swap replaces the native daemon installation: every client already attached
       // keeps its old build until it is restarted.
       expect(receipts[0]!.text).toStartWith('updated from 1.0.0 to 2.0.0 at 14:30');
       expect(receipts[0]!.text).toContain('keep their old build until restarted');
@@ -545,13 +575,13 @@ describe('update failure reading lifecycle', () => {
     const transient = failureReadingsPort([['repository access revoked', { transientNetwork: true }]]);
     const persistent = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]);
     try {
-      installJudgmentPort(transient.port); await h.updater.tick(); expect(h.alerts).toEqual([]);
-      installJudgmentPort(persistent.port); await h.updater.tick(); expect(h.alerts).toHaveLength(1);
+      await installUpdaterPort(transient.port); await h.updater.tick(); expect(h.alerts).toEqual([]);
+      await installUpdaterPort(persistent.port); await h.updater.tick(); expect(h.alerts).toHaveLength(1);
       expect(transient.requests).toHaveLength(1); expect(persistent.requests).toHaveLength(1);
     } finally { rmSync(h.scratch, { recursive: true, force: true }); }
   });
   test('actual structured status is retained and does not require a hosted reading', async () => {
-    installJudgmentPort(undefined);
+    await installUpdaterPort(undefined);
     const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw Object.assign(new Error('synthetic structured failure'), { status: 403 }); } });
     try { await h.updater.tick(); expect(h.alerts).toHaveLength(1); expect(h.updater.failedCheckCount).toBe(1); }
     finally { rmSync(h.scratch, { recursive: true, force: true }); }
@@ -559,7 +589,7 @@ describe('update failure reading lifecycle', () => {
   test('semantic errors never fall back to a failure-count alert', async () => {
     let calls = 0;
     const fake = failureReadingsPort([]).port;
-    installJudgmentPort({ model: fake.model, ask: async () => { calls++; throw new Error('synthetic terminal reading error'); } });
+    await installUpdaterPort({ model: fake.model, ask: async () => { calls++; throw new Error('synthetic terminal reading error'); } });
     const h = makeHarness({ idle: () => true, fetchOverride: persistentFetch, alertAfterFailedChecks: 1 });
     try {
       await h.updater.tick(); expect(calls).toBe(1); expect(h.alerts).toEqual([]); expect(h.updater.failedCheckCount).toBe(1);
@@ -567,15 +597,15 @@ describe('update failure reading lifecycle', () => {
     } finally { rmSync(h.scratch, { recursive: true, force: true }); }
   });
   test('protected error wording and plain-object causes never reach judgment or owner notices', async () => {
-    const fake = failureReadingsPort([]); installJudgmentPort(fake.port);
+    const fake = failureReadingsPort([]); await installUpdaterPort(fake.port);
     for (const error of ['x'.repeat(300) + ' Authorization: Bearer synthetic-secret', new Error('Authorization: Bearer synthetic-secret'), new Error('lookup failed', { cause: { message: 'Authorization: Bearer synthetic-secret' } })]) {
       const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw error; } });
-      try { await h.updater.tick(); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); expect(h.updater.lastCheckFailure).toBeNull(); }
+      try { await h.updater.tick(); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); expect(h.updater.lastCheckFailure).toBeNull(); expect(JSON.stringify(redactionRequests)).not.toContain('synthetic-secret'); }
       finally { rmSync(h.scratch, { recursive: true, force: true }); }
     }
   });
   test('failure capture refuses accessors and proxies without invoking them', async () => {
-    const fake = failureReadingsPort([]); installJudgmentPort(fake.port); let accessed = 0;
+    const fake = failureReadingsPort([]); await installUpdaterPort(fake.port); let accessed = 0;
     const accessor = new Error('placeholder'); Object.defineProperty(accessor, 'message', { get() { accessed++; return 'repository access revoked'; } });
     const proxy = new Proxy(new Error('placeholder'), { get() { accessed++; return 'repository access revoked'; }, getPrototypeOf() { accessed++; return Error.prototype; } });
     for (const error of [accessor, proxy]) {
@@ -585,16 +615,16 @@ describe('update failure reading lifecycle', () => {
     }
   });
   test('full primitive and serialized plain-object wording is screened before display truncation', async () => {
-    const fake = failureReadingsPort([]); installJudgmentPort(fake.port);
+    const fake = failureReadingsPort([]); await installUpdaterPort(fake.port);
     for (const error of [Symbol('x'.repeat(300) + ' Authorization: Bearer synthetic-secret'), { explanation: 'x'.repeat(300) + ' Authorization: Bearer synthetic-secret' }]) {
       const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw error; } });
-      try { await h.updater.tick(); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); expect(h.updater.lastCheckFailure).toBeNull(); }
+      try { await h.updater.tick(); expect(fake.requests).toEqual([]); expect(h.alerts).toEqual([]); expect(h.updater.lastCheckFailure).toBeNull(); expect(JSON.stringify(redactionRequests)).not.toContain('synthetic-secret'); }
       finally { rmSync(h.scratch, { recursive: true, force: true }); }
     }
   });
   test('classification sees the complete admitted message rather than its bounded display summary', async () => {
     const wording = 'ordinary diagnostic '.repeat(30) + 'repository access revoked';
-    const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]); installJudgmentPort(fake.port);
+    const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]); await installUpdaterPort(fake.port);
     const h = makeHarness({ idle: () => true, fetchOverride: async () => { throw { message: wording }; } });
     try {
       await h.updater.tick(); expect(fake.requests).toHaveLength(1); expect(String(fake.requests[0]!.state)).toContain(wording);
@@ -604,7 +634,7 @@ describe('update failure reading lifecycle', () => {
   test('stop drains a noncooperative pending reading and no late result records or alerts', async () => {
     const started = deferred<void>(); const finish = deferred<void>(); const log = new SqliteDecisionLog(':memory:');
     const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]).port;
-    installJudgmentPort(withDecisionLog({ model: fake.model, async ask(request) {
+    await installUpdaterPort(withDecisionLog({ model: fake.model, async ask(request) {
       started.resolve(); await finish.promise; return fake.ask(request);
     } }, log));
     const h = makeHarness({ idle: () => true, fetchOverride: persistentFetch });
@@ -620,7 +650,7 @@ describe('update failure reading lifecycle', () => {
     let calls = 0; let reads = 0;
     const fake = failureReadingsPort([['repository access revoked', { category: 'authorization' }]]).port;
     const h = makeHarness({ idle: () => true, fetchOverride: async () => { reads++; return persistentFetch('ignored'); } });
-    installJudgmentPort(createSystemOnePort({
+    await installUpdaterPort(createSystemOnePort({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:1', apiKey: 'synthetic-key' }, model: PINNED_MODEL,
       timeoutMs: 100, retry: { backoffInitialMs: 1, backoffMaxMs: 1, backoffJitter: 0 },
       fetch: async (_url, init) => {
@@ -668,7 +698,7 @@ describe('post-swap service handover', () => {
       await tick;
       expect(requestSignal?.aborted).toBe(true);
       expect(release.requests).toEqual([]);
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
       expect(h.sequence).toEqual([]);
       expect(h.receipts.list()).toHaveLength(0);
       expect(h.updater.snapshot().appliedVersion).toBeNull();
@@ -676,7 +706,7 @@ describe('post-swap service handover', () => {
       lookupFinished.resolve();
       await new Promise(resolve => setTimeout(resolve, 0));
       expect(release.requests).toEqual([LATEST_URL]);
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
     } finally {
       lookupFinished.resolve();
       await tick;
@@ -716,7 +746,7 @@ describe('post-swap service handover', () => {
           await h.updater.drainHandover();
           await tick;
           expect(requestSignal?.aborted).toBe(true);
-          expect([...h.files.entries()].map(([path, data]) => [path, data.toString()])).toEqual([['/opt/gv/goodvibes-daemon', 'daemon-v1']]);
+          expect(h.files).toEqual(new Map(Object.entries(originalFiles())));
           expect(h.updater.snapshot().appliedVersion).toBeNull();
           expect(h.updater.snapshot().pendingVersion).toBeNull();
           expect(h.updater.failedCheckCount).toBe(0);
@@ -727,7 +757,7 @@ describe('post-swap service handover', () => {
           if (lateOutcome === 'reject') finish.reject(new Error('late synthetic download failure'));
           else finish.resolve();
           await new Promise(resolve => setTimeout(resolve, 0));
-          expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+          expect([...h.files.keys()].sort()).toEqual(originalPaths());
           expect(h.sequence).toEqual([]);
           expect(h.alerts).toEqual([]);
           expect(h.timers).toHaveLength(0);
@@ -758,7 +788,7 @@ describe('post-swap service handover', () => {
       h.updater.stop(); h.updater.start();
       await h.updater.drainHandover(); await tick;
       finish.resolve(); await new Promise(resolve => setTimeout(resolve, 0));
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
       expect(h.sequence).toEqual([]);
       hold = false;
       await h.updater.tick();
@@ -785,7 +815,7 @@ describe('post-swap service handover', () => {
     const tick = h.updater.tick();
     try {
       await started.promise; idle = false; finish.resolve(); await tick;
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
       expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
       expect(h.updater.snapshot().pendingVersion).toBe('2.0.0');
       expect(h.updater.snapshot().appliedVersion).toBeNull();
@@ -812,7 +842,7 @@ describe('post-swap service handover', () => {
     try {
       await h.updater.tick(); await h.updater.drainHandover();
       expect(renames).toBe(0);
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
       expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v1');
       expect(h.sequence).toEqual([]);
       expect(h.receipts.list()).toHaveLength(0);
@@ -825,7 +855,7 @@ describe('post-swap service handover', () => {
     const rename = h.io.rename;
     h.io.rename = (from, to) => {
       rename(from, to);
-      if (from.endsWith('.update-download')) h.updater.stop();
+      if (from.endsWith('.update-download') && to === '/opt/gv/daemon-installation.json') h.updater.stop();
     };
     try {
       await h.updater.tick(); await h.updater.drainHandover();
@@ -851,7 +881,7 @@ describe('post-swap service handover', () => {
     try {
       await h.updater.tick();
       expect(probes).toBe(2);
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
       expect(h.sequence).toEqual([]);
       expect(h.alerts).toEqual([]);
     } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
@@ -861,7 +891,7 @@ describe('post-swap service handover', () => {
     test(`deadline bounds noncooperative artifact ${body ? 'body' : 'headers'} and fences late bytes`, async () => {
       const started = deferred<void>(); const finish = deferred<void>();
       const fake = failureReadingsPort([['update timed out', { transientNetwork: true }]]);
-      installJudgmentPort(fake.port);
+      await installUpdaterPort(fake.port);
       const release = releaseFetch();
       let requestSignal: AbortSignal | undefined;
       const wait = async () => { started.resolve(); await finish.promise; };
@@ -879,12 +909,12 @@ describe('post-swap service handover', () => {
       try {
         await started.promise; await tick; await h.updater.drainHandover();
         expect(requestSignal?.aborted).toBe(true);
-        expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+        expect([...h.files.keys()].sort()).toEqual(originalPaths());
         expect(h.updater.failedCheckCount).toBe(1);
         expect(fake.requests).toHaveLength(1);
         expect(h.alerts).toEqual([]);
         finish.resolve(); await new Promise(resolve => setTimeout(resolve, 0));
-        expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+        expect([...h.files.keys()].sort()).toEqual(originalPaths());
         expect(h.sequence).toEqual([]);
         expect(h.timers.at(-1)?.ms).toBe(60 * 60 * 1_000);
       } finally { h.updater.stop(); finish.resolve(); await tick; rmSync(h.scratch, { recursive: true, force: true }); }
@@ -916,7 +946,8 @@ describe('post-swap service handover', () => {
   });
 
   test('the monotonic deadline is checked after synchronous staging before any live rename', async () => {
-    installJudgmentPort(failureReadingsPort([['timed out before commit', { transientNetwork: true }], ['deadline exceeded', { transientNetwork: true }]]).port);
+    const failureReading = failureReadingsPort([['timed out before commit', { transientNetwork: true }], ['deadline exceeded', { transientNetwork: true }]]);
+    await installUpdaterPort(failureReading.port);
     const h = makeHarness({ idle: () => true, updateTimeoutMs: 50 });
     let renames = 0;
     h.io.chmod = () => { const until = performance.now() + 55; while (performance.now() < until) { /* synthetic synchronous staging */ } };
@@ -924,10 +955,14 @@ describe('post-swap service handover', () => {
     try {
       await h.updater.tick();
       expect(renames).toBe(0);
-      expect([...h.files.keys()]).toEqual(['/opt/gv/goodvibes-daemon']);
+      expect([...h.files.keys()].sort()).toEqual(originalPaths());
       expect(h.sequence).toEqual([]);
       expect(h.updater.failedCheckCount).toBe(1);
-      expect(h.updater.lastCheckFailure).toMatch(/timed out before commit|deadline exceeded/);
+      expect(failureReading.requests).toHaveLength(1);
+      expect(JSON.stringify(failureReading.requests[0]?.state)).toMatch(/timed out before commit|deadline exceeded/);
+      // The complete transaction-prefixed wording was classified. Its separate
+      // synchronous display has no settled privacy proof and remains withheld.
+      expect(h.updater.lastCheckFailure).toBe('[REDACTED]');
       expect(h.updater.snapshot().recoveryRequired).toBe(false);
     } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
   });
@@ -1439,7 +1474,7 @@ describe('PeriodicUpdateLoop cadence', () => {
 
 for (const restartOnFailure of [false, true]) {
   for (const diskKeepAlive of [false, true]) {
-    test(`launchd update desired restart=${restartOnFailure}, disk KeepAlive=${diskKeepAlive} preserves completed disk evidence without exit`, async () => {
+    test(`unsupported macOS native update desired restart=${restartOnFailure}, disk KeepAlive=${diskKeepAlive} leaves the installation unchanged`, async () => {
       const serviceExits: number[] = [];
       let commands = 0;
       const lifecycle = new DaemonLifecycleRuntime({
@@ -1459,25 +1494,69 @@ for (const restartOnFailure of [false, true]) {
         expect(commands).toBe(0);
         expect(serviceExits).toEqual([]);
         expect(h.exits).toEqual([]);
-        expect(h.files.get('/opt/gv/goodvibes-daemon')?.toString()).toBe('daemon-v2');
-        expect(h.files.get(`/opt/gv/goodvibes-daemon${PREVIOUS_FILE_SUFFIX}`)?.toString()).toBe('daemon-v1');
-        expect(h.updater.snapshot().appliedVersion).toBe('2.0.0');
-        expect(h.updater.snapshot().handover?.status).toBe('unknown');
-        expect(h.receipts.list()[0]!.text).toContain('on disk');
-        expect(h.receipts.list()[1]!.text).toContain('handover is incomplete');
+        expect(h.files).toEqual(new Map(Object.entries(originalFiles())));
+        expect(h.files.has(`${EXEC_PATH}${PREVIOUS_FILE_SUFFIX}`)).toBe(false);
+        expect(h.updater.snapshot().appliedVersion).toBeNull();
+        expect(h.updater.snapshot().handover).toBeNull();
+        expect(h.receipts.list()).toEqual([]);
         await h.updater.tick();
-        expect(h.requests).toHaveLength(3);
+        expect(h.requests).toEqual([]);
+        expect(h.mutations).toEqual([]);
       } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
     });
   }
 }
 
 describe('updater-owned effect references', () => {
+  test('same-byte runtime replacement during release lookup refuses the stale physical installation', async () => {
+    let begin!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>(resolve => { begin = resolve; });
+    const paused = new Promise<void>(resolve => { finish = resolve; });
+    const release = releaseFetch();
+    const h = makeHarness({ idle: () => true, fetchOverride: async (url, init) => {
+      if (url === LATEST_URL) { begin(); await paused; }
+      return release.fetchImpl(url, init);
+    } });
+    const tick = h.updater.tick();
+    try {
+      await started;
+      const runtime = h.io.readFile?.(`${EXEC_PATH}.bun`);
+      if (!runtime || !h.io.writeExclusive) throw new Error('Native fixture I/O is incomplete');
+      h.io.writeExclusive('/fixture/replacement-runtime', runtime);
+      h.io.chmod('/fixture/replacement-runtime', 0o755);
+      h.io.rename('/fixture/replacement-runtime', `${EXEC_PATH}.bun`);
+      h.mutations.length = 0;
+      finish(); await tick;
+      expect(h.files).toEqual(new Map(Object.entries(originalFiles())));
+      expect(h.mutations).toEqual([]);
+      expect(h.sequence).toEqual([]);
+      expect(h.updater.snapshot().appliedVersion).toBeNull();
+      expect(h.receipts.list().some(receipt => receipt.text.startsWith('updated from'))).toBe(false);
+    } finally { finish(); h.updater.stop(); await tick; rmSync(h.scratch, { recursive: true, force: true }); }
+  });
+
+  for (const missing of ['.bun', '.bun.LICENSE.md', '.bun.json', '/lib/sqlite-vec-linux-x64/vec0.so', '/daemon-installation.json']) {
+    test(`incomplete installed native member ${missing} prevents release lookup and activation`, async () => {
+      const h = makeHarness({ idle: () => true });
+      const path = missing.startsWith('/') ? `/opt/gv${missing}` : EXEC_PATH + missing;
+      h.io.remove?.(path); h.mutations.length = 0;
+      try {
+        await h.updater.tick();
+        expect(h.requests).toEqual([]);
+        expect(h.mutations).toEqual([]);
+        expect(h.sequence).toEqual([]);
+        expect(h.updater.snapshot().appliedVersion).toBeNull();
+        expect(h.files.get(EXEC_PATH)?.toString()).toBe('daemon-v1');
+      } finally { h.updater.stop(); rmSync(h.scratch, { recursive: true, force: true }); }
+    });
+  }
+
   test('lookup cannot redirect retained constructor options or replace handover/receipt callbacks', async () => {
     const scratch = mkdtempSync(join(tmpdir(), 'update-options-'));
-    const authorized = '/fixture/authorized';
-    const redirected = '/fixture/redirected';
-    const original = memoryIo({ [authorized]: Buffer.from('daemon-v1'), [redirected]: Buffer.from('leave-alone') });
+    const authorized = '/fixture/authorized/goodvibes-daemon';
+    const redirected = '/fixture/redirected/goodvibes-daemon';
+    const original = memoryIo({ ...currentCohort().installation(authorized), [redirected]: Buffer.from('leave-alone') });
     const replacement = memoryIo({ [redirected]: Buffer.from('replacement-fs') });
     const receipts = new DaemonReceiptStore(join(scratch, 'receipts.json'));
     const release = releaseFetch();
@@ -1532,7 +1611,7 @@ describe('updater-owned effect references', () => {
       expect(updater.snapshot().currentVersion).toBe('1.0.0');
       expect(updater.snapshot().releasesUrl).toBe(LATEST_URL);
       expect(updater.snapshot().appliedVersion).toBe('2.0.0');
-      expect(release.requests).toHaveLength(3);
+      expect(release.requests).toHaveLength(8);
     } finally { finish(); updater.stop(); await tick; rmSync(scratch, { recursive: true, force: true }); }
   });
 

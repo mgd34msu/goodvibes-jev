@@ -6,6 +6,124 @@ import { e2eJudgmentAnswers, startE2EJudgments } from './judgment-fixture.ts';
 import timings from '../fixtures/e2e-judgments/cancelled-turn-timings.json';
 import pending from '../fixtures/e2e-judgments/cancelled-turn-pending.json';
 import privacyNegative from '../fixtures/e2e-judgments/privacy-negative.json';
+import diagnostics from '../fixtures/e2e-judgments/ci-diagnostics.json';
+import { checkAnswers, type Questions } from '@goodvibes-jev/judgment';
+import { fieldKind, redactionCredential, residualCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { noticeSeverity } from '@goodvibes-jev/engine/terminal-shell';
+
+const diagnosticQuestions: Readonly<Record<string, Questions>> = {
+  'diagnostic-field-kind': { kind: fieldKind.items.kind.question },
+  'diagnostic-residual': { credentialRemains: residualCredential.items.credentialRemains.question },
+  'diagnostic-credential': {
+    lineHasCredential: redactionCredential.items.lineHasCredential.question,
+    spanIsCredential: redactionCredential.items.spanIsCredential.question,
+  },
+  'diagnostic-severity': { severity: noticeSeverity.items.severity.question },
+};
+
+function diagnosticBody(contract: typeof diagnostics.contracts[number], state: unknown, ownedRoot: string): unknown {
+  return JSON.parse(JSON.stringify({ model: contract.model, questions: contract.questions, state })
+    .split('<owned-fixture-root>').join(ownedRoot));
+}
+
+test('135 exact safe CI and native diagnostics retain canonical questions and original answer distributions', async () => {
+  const ownedRoot = mkdtempSync(join(tmpdir(), 'agent-diagnostics-peer-'));
+  const server = startE2EJudgments({ ownedRoot });
+  try {
+    let count = 0;
+    for (const contract of diagnostics.contracts) {
+      const questions = diagnosticQuestions[contract.kind];
+      if (!questions) throw new Error(`Unregistered diagnostic fixture ${contract.kind}`);
+      expect<unknown>(contract.questions).toEqual(questions);
+      for (const reading of contract.readings) {
+        // Preserve every original answer field and probability through the
+        // strict public answer validator; the fixture never rounds uncertainty.
+        const answers = Object.fromEntries(Object.entries(reading.answers).map(([name, answer]) => {
+          if (answer.type === 'noul' && 'noul' in answer) return [name, { ...answer, type: 'noul' as const }];
+          if (answer.type === 'choice' && 'probabilities' in answer && 'choice' in answer && 'confidence' in answer) {
+            const probabilities = Object.fromEntries(Object.entries(answer.probabilities).map(([key, probability]) => {
+              if (typeof probability !== 'number') throw new Error('Invalid recorded probability');
+              return [key, probability];
+            }));
+            return [name, { ...answer, type: 'choice' as const, probabilities }];
+          }
+          throw new Error('Invalid recorded diagnostic answer');
+        }));
+        expect(() => checkAnswers(questions, answers)).not.toThrow();
+        const body = diagnosticBody(contract, reading.state, ownedRoot);
+        const response = await fetch(`${server.baseURL}/v1/systemone`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ model: contract.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
+        expect(server.acceptedDiagnostics[count]).toEqual({ kind: contract.kind, body });
+        expect(server.allRequests[count]).toEqual(body);
+        count++;
+      }
+    }
+    expect(count).toBe(135);
+    expect(server.acceptedDiagnostics).toHaveLength(135);
+    expect(server.allRequests).toHaveLength(135);
+    expect(server.accepted).toHaveLength(0);
+    expect(server.rejected).toHaveLength(0);
+    expect(server.unexpected).toHaveLength(0);
+    server.assertNoUnexpected();
+    const uncertainFields = ['refs', 'userMessages', 'assistantMessages', 'toolMessages', 'imageParts', 'reasoningSummary'];
+    let uncertainCount = 0;
+    for (const contract of diagnostics.contracts) for (const reading of contract.readings) {
+      if ('field' in reading.state && uncertainFields.includes(reading.state.field)) {
+        if (!('kind' in reading.answers) || !reading.answers.kind || !('confidence' in reading.answers.kind)) throw new Error('Missing uncertain field answer');
+        expect(reading.answers.kind.confidence).toBe(0.4);
+        uncertainCount++;
+      }
+    }
+    expect(uncertainCount).toBe(6);
+  } finally { server.stop(); rmSync(ownedRoot, { recursive: true, force: true }); }
+});
+
+test('unknown diagnostic models, complete schemas, subjects and path owners remain 422 failures', async () => {
+  const ownedRoot = mkdtempSync(join(tmpdir(), 'agent-diagnostics-negative-'));
+  const server = startE2EJudgments({ ownedRoot });
+  try {
+    const fields = diagnostics.contracts.find(contract => contract.kind === 'diagnostic-field-kind');
+    const residual = diagnostics.contracts.find(contract => contract.kind === 'diagnostic-residual');
+    const credential = diagnostics.contracts.find(contract => contract.kind === 'diagnostic-credential');
+    if (!fields || !residual || !credential) throw new Error('Missing recorded diagnostic contracts');
+    const pathReading = residual.readings.find(reading => JSON.stringify(reading.state).includes('<owned-fixture-root>'));
+    if (!pathReading) throw new Error('Missing captured diagnostic source path');
+    const fieldBody = { model: fields.model, questions: fields.questions, state: { field: 'exists' } };
+    const pathBody = { model: residual.model, questions: residual.questions, state: pathReading.state };
+    const credentialBody = { model: credential.model, questions: credential.questions, state: {
+      phase: 'source', target: 'whole-line', parts: [{ kind: 'text', text: 'The operation was aborted.' }],
+    } };
+    const unknown = [
+      { ...fieldBody, model: 'another-model' },
+      { ...fieldBody, extra: true },
+      { ...fieldBody, state: { field: 'exists', value: 'synthetic-private-value' } },
+      { ...fieldBody, state: { field: 'new source role' } },
+      { ...fieldBody, questions: { kind: { type: 'choice', instructions: 'Changed complete question', criteria: { other: 'Ordinary' } } } },
+      pathBody,
+      diagnosticBody(residual, pathReading.state, `${ownedRoot}-outside`),
+      { ...pathBody, state: { parts: [{ kind: 'text', text: 'new unrecorded credential-free diagnostic' }] } },
+      { ...pathBody, state: { parts: [{ kind: 'withheld', reference: 'forged-reference' }] } },
+      { ...credentialBody, state: { ...credentialBody.state, phase: 'residual' } },
+      { ...credentialBody, state: { ...credentialBody.state, target: 'span-1' } },
+      { ...credentialBody, state: { ...credentialBody.state, parts: [{ kind: 'text', text: 'The operation was aborted. synthetic-private-value' }] } },
+    ];
+    for (const body of unknown) {
+      const response = await fetch(`${server.baseURL}/v1/systemone`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(422);
+    }
+    expect(server.allRequests).toEqual(unknown);
+    expect(server.unexpected).toEqual(unknown);
+    expect(server.rejected).toEqual(unknown);
+    expect(server.accepted).toHaveLength(0);
+    expect(server.acceptedDiagnostics).toHaveLength(0);
+    expect(() => server.assertNoUnexpected()).toThrow('unknown judgment request');
+  } finally { server.stop(); rmSync(ownedRoot, { recursive: true, force: true }); }
+});
 
 describe('recorded cancellation diagnostic fixtures', () => {
   test('accepts only recorded phases and complete questions with bounded measured durations', () => {

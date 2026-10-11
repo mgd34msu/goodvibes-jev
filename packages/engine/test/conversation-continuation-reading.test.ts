@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { configureDaemonSessionContinuation } from '../sdk/src/platform/daemon/facade-composition.js';
 import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.js';
 import type { SharedSessionContinuationRunner, SharedSessionInputRecord } from '../sdk/src/platform/control-plane/session-intents.js';
@@ -8,10 +8,11 @@ import type { SharedSessionBroker } from '../sdk/src/platform/control-plane/sess
 import type { DaemonSurfaceActionHelper } from '../sdk/src/platform/daemon/surface-actions.js';
 import type { AutomationRouteBinding } from '../sdk/src/platform/automation/routes.js';
 let previous: ReturnType<typeof installJudgmentPort>; let pause: (() => Promise<void>) | undefined; let calls = 0;
+let requests: Array<Parameters<import('@goodvibes-jev/judgment').JudgmentPort['ask']>[0]> = [];
 beforeEach(() => {
-  pause = undefined; calls = 0;
-  const fake = fakePort((_name, question) => choiceAnswer(question, 'work', 0.99));
-  previous = installJudgmentPort({ model: fake.port.model, async ask(request) { request.beforeAttempt?.(); calls++; await pause?.(); request.beforeAttempt?.(); return fake.port.ask(request); } });
+  pause = undefined; calls = 0; requests = [];
+  const fake = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : name === 'credentialRemains' ? noulAnswer(0.03) : choiceAnswer(question, 'work', 0.99));
+  previous = installJudgmentPort({ model: fake.port.model, async ask(request) { request.beforeAttempt?.(); requests.push(request); if (request.context?.battery === 'engine.redaction.field-kind' || request.context?.battery === 'engine.redaction.residual-credential') return fake.port.ask(request); calls++; await pause?.(); request.beforeAttempt?.(); return fake.port.ask(request); } });
 });
 afterEach(() => installJudgmentPort(previous));
 function harness(delivery?: () => Promise<{ delivered: true } | { delivered: false; reason: 'delivery-failed' }>) {
@@ -42,14 +43,14 @@ test('channel-as-thread session key never changes actual proposal thread binding
   try {
     expect(await h.run()).toMatchObject({ disposition: 'transferred' });
     expect(h.store.listPending()).toHaveLength(1); expect(h.store.listPending()[0]?.threadId).toBeUndefined(); expect(h.delivered()).toBe(1);
-    await expect(h.run()).rejects.toThrow('no longer current'); expect(calls).toBe(1); expect(h.store.listPending()).toHaveLength(1);
+    await expect(h.run()).rejects.toThrow('no longer current'); assertContinuationReadings(); expect(calls).toBe(1); expect(h.store.listPending()).toHaveLength(1);
   } finally { h.store.dispose(); }
 });
 test('concurrent completion cannot launch two readings or proposals', async () => {
   const h = harness(); let release!: () => void; let started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; }); const waiting = new Promise<void>(resolve => { release = resolve; });
   pause = async () => { started(); await waiting; };
-  try { const first = h.run(); await ready; expect(await h.run()).toMatchObject({ disposition: 'held' }); release(); await first; expect(calls).toBe(1); expect(h.store.listPending()).toHaveLength(1); }
+  try { const first = h.run(); await ready; expect(await h.run()).toMatchObject({ disposition: 'held' }); release(); await first; assertContinuationReadings(); expect(calls).toBe(1); expect(h.store.listPending()).toHaveLength(1); }
   finally { h.store.dispose(); }
 });
 
@@ -115,3 +116,11 @@ for (const outcome of ['success', 'refused', 'claim-race', 'policy-race', 'confi
     expect(events.filter(event => event === 'session-input-completed')).toHaveLength(outcome === 'success' ? 1 : 0);
   } finally { proposalStore.dispose(); await broker.stop(); rmSync(directory, { recursive: true, force: true }); }
 });
+
+function assertContinuationReadings() {
+  expect(requests.map(request => request.context?.battery)).toEqual(['engine.daemon.inbound-intent', ...Array<string>(3).fill('engine.redaction.field-kind')]);
+  expect(requests[0]?.state).toEqual({ message: 'Fix login' });
+  expect(Object.keys(requests[0]!.questions)).toEqual(['reading']);
+  expect(requests.slice(1).map(request => request.state)).toEqual(['surface', 'proposalId', 'reason'].map(field => ({ field })));
+  for (const request of requests.slice(1)) expect(Object.keys(request.questions)).toEqual(['kind']);
+}

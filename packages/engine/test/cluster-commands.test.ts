@@ -298,15 +298,15 @@ describe('which group a typed answer names', () => {
   ];
 
   /** A port whose join-group reading picks `chosen` (or none) and says it fits. */
-  function selecting(chosen: string) {
+  function selecting(chosen: string, fitProbability = 0.95) {
     return fakePort((name: string, question: Question) => {
       if (name === 'pick') return choiceAnswer(question, chosen, 0.95);
-      return noulAnswer(chosen === 'none' ? 0.05 : 0.95);
+      return noulAnswer(chosen === 'none' ? 0.05 : fitProbability);
     });
   }
 
-  async function joinWith(answer: string, chosen: string) {
-    const fake = selecting(chosen);
+  async function joinWith(answer: string, chosen: string, fitProbability = 0.95) {
+    const fake = selecting(chosen, fitProbability);
     const previous = installJudgmentPort(fake.port);
     const posted: unknown[] = [];
     try {
@@ -340,6 +340,16 @@ describe('which group a typed answer names', () => {
     expect(asked).toBe(1);
     expect(posted).toEqual([{ groupId: 'gXYZ789', joinKey: 'gvj1-THEKEY' }]);
   });
+
+  for (const fitProbability of [0.58, 0.65]) {
+    test(`a confident choice cannot join while its independent fit is held at ${fitProbability}`, async () => {
+      const { result, posted, asked } = await joinWith('studo', 'gXYZ789', fitProbability);
+      expect(asked).toBe(1);
+      expect(posted).toEqual([]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.lines.join('\n')).toContain('cluster groups');
+    });
+  }
 
   test('a prefix shared by two ids goes to the reading, and none refuses with the fix', async () => {
     const { result, posted, asked } = await joinWith('g', 'none');

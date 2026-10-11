@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { loadSqlJsEngine, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
 import type { SQLitePublicationIO } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 import { criteriaSetIdForWork, durablePayloadRevision, freezeDurableRequest } from '../sdk/src/platform/contract/durable-admission.js';
@@ -218,7 +219,7 @@ test('schema5 migration preserves exact execution, intent and ledger JSON and cr
   });
   const migrated = await open(f.file); expect(migrated.storage.current(f.key)).toEqual(original);
   await inspectImage(f.file, db => {
-    expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]);
+    expect(db.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]);
     expect(db.exec('SELECT state_json FROM native_work_executions')[0]?.values).toEqual([[executionJson]]);
     expect(db.exec('SELECT state_json FROM native_work_execution_intents')[0]?.values).toEqual([[intentJson]]);
     expect(db.exec('SELECT state_json FROM work_ledgers')[0]?.values).toEqual([[ledgerJson]]);

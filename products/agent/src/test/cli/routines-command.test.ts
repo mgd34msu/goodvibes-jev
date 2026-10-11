@@ -1,5 +1,9 @@
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync, redactionCredential, residualCredential, fieldKind } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { isDeepStrictEqual } from 'node:util';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ConfigManager } from '../../config/index.ts';
@@ -10,6 +14,31 @@ import { handleRoutinesCommand } from '../../cli/routines-command.ts';
 import { parseGoodVibesCli } from '../../cli/parser.ts';
 import { createShellPathService } from '@/runtime/index.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+
+async function withPublicTransportError<T>(message: string, run: () => Promise<T>): Promise<T> {
+  const found = { phase: 'source', target: 'span-1', parts: [
+    { kind: 'text', text: 'Route not found: ' },
+    { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'found' },
+    { kind: 'text', text: '' },
+  ] };
+  const ordinary = { phase: 'source', target: 'whole-line', parts: [
+    { kind: 'text', text: 'Unauthorized auth 401 while fetching /api/automation/schedules (404)' },
+  ] };
+  const residual = { parts: [{ kind: 'text', text: 'Route not found: ' },
+    { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] };
+  const publicQuestions = Object.fromEntries(Object.entries(redactionCredential.items).map(([name, item]) => [name, item.question]));
+  const fake = fakePort((name, question, state) => {
+    if (name === 'kind' && isDeepStrictEqual(question, fieldKind.items.kind.question) && isDeepStrictEqual(state, { field: 'found' }))
+      return choiceAnswer(question, 'other', 0.99);
+    if ((name === 'lineHasCredential' || name === 'spanIsCredential') && isDeepStrictEqual(question, publicQuestions[name])
+      && (isDeepStrictEqual(state, found) || isDeepStrictEqual(state, ordinary))) return noulAnswer(0.01);
+    if (name === 'credentialRemains' && isDeepStrictEqual(question, residualCredential.items.credentialRemains.question) && isDeepStrictEqual(state, residual)) return noulAnswer(0.01);
+    throw new Error(`Unexpected routine diagnostic question: ${name}`);
+  });
+  const previous = installJudgmentPort(fake.port);
+  try { expect(await redactSensitiveDataAsync(message)).toBe(message); return await run(); }
+  finally { installJudgmentPort(previous); }
+}
 
 const roots: string[] = [];
 
@@ -54,6 +83,7 @@ function inputUrl(input: Parameters<typeof fetch>[0]): string {
 function scheduleResponse(): Response {
   return new Response(JSON.stringify({
     id: 'sched-cli-1',
+    mutationRevision: '33333333-3333-4333-8333-333333333333',
     name: 'Agent routine: Daily Operations Sweep',
     labels: [],
     createdAt: 1,
@@ -100,6 +130,7 @@ function schedulesListResponse(): Response {
     jobs: [
       {
         id: 'sched-cli-1',
+        mutationRevision: '33333333-3333-4333-8333-333333333333',
         name: 'Agent routine: Daily Operations Sweep',
         labels: [],
         createdAt: 1,
@@ -446,7 +477,9 @@ describe('routines CLI command', () => {
       expect(result.output).toContain('nextRoutes');
       expect(result.output).toContain('schedule action:"list" query:"sched-cli-1"');
       expect(result.output).toContain('autonomy action:"item" queueItemId:"connected-schedules" includeParameters:true');
-      expect(result.output).toContain('schedule action:"delete" scheduleId:"sched-cli-1" confirm:true explicitUserRequest:"..."');
+      expect(result.output).toContain('schedule action:"delete" scheduleId:"sched-cli-1"');
+      expect(result.output).not.toContain('explicitUserRequest');
+      expect(result.output).not.toContain('confirm:true');
       const receiptId = result.output.match(/receipt: (routine-schedule-[a-z0-9-]+)/)?.[1];
       expect(receiptId).toEqual(expect.stringMatching(/^routine-schedule-[a-z0-9-]+$/));
 
@@ -546,9 +579,10 @@ describe('routines CLI command', () => {
     });
 
     try {
-      const result = await handleRoutinesCommand(runtime([
+      const baseRuntime = runtime([
         'promote', 'daily-operations-sweep', '--cron', '0 8 * * *', '--yes', '--json',
-      ]));
+      ]);
+      const result = await withPublicTransportError(message, () => handleRoutinesCommand(baseRuntime));
       const payload = JSON.parse(result.output) as {
         readonly kind?: unknown;
         readonly receipt?: {

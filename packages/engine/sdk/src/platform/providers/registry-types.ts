@@ -102,6 +102,10 @@ export interface RuntimeProviderRegistration {
   readonly replace?: boolean | undefined;
 }
 
+export interface ProviderCatalogOptions {
+  readonly contextWindowEnrichment?: 'background' | 'none';
+}
+
 export interface ProviderRegistryOptions {
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>;
   readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>;

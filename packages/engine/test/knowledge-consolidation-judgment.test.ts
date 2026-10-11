@@ -16,6 +16,7 @@ import {
   type KnowledgeConsolidationContext,
 } from '../sdk/src/platform/knowledge/consolidation.js';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
+import { authoredPrivacyAnswer, type AuthoredPrivacy } from './_helpers/authored-error-readings.js';
 
 const roots: string[] = [];
 const memories: MemoryStore[] = [];
@@ -27,10 +28,12 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function readings(keep = 0.97, cls = 'architecture', confidence = 0.97) {
-  const fake = fakePort((name, question) => {
+function readings(keep = 0.97, cls = 'architecture', confidence = 0.97, privacy?: AuthoredPrivacy) {
+  const readPrivacy = authoredPrivacyAnswer(privacy ?? { parts: [] });
+  const fake = fakePort((name, question, state) => {
     if (name === 'keep') return noulAnswer(keep);
     if (name === 'memory_class') return choiceAnswer(question, cls, confidence);
+    if (name === 'kind') return readPrivacy(name, question, state);
     throw new Error(`Unexpected fixture question: ${name}`);
   });
   installJudgmentPort(fake.port);
@@ -186,7 +189,9 @@ describe('knowledge consolidation reading', () => {
   });
 
   test('auto promotion keeps source and session provenance, and reruns are idempotent', async () => {
-    const h = await harness(); const source = await h.source(); const fake = readings(0.97, 'runbook');
+    const h = await harness(); const source = await h.source();
+    const usage = h.store.listUsageRecords()[0]!;
+    const fake = readings(0.97, 'runbook', 0.97, { parts: [], fields: { ready: 'other', path: 'other', id: 'other', cls: 'other' } });
     await run(h.context, 'deep-consolidation', { autoPromote: true });
     const candidate = h.store.listConsolidationCandidates()[0]!;
     const memory = h.memory.retrieve()[0]!;
@@ -207,7 +212,16 @@ describe('knowledge consolidation reading', () => {
     await decide(h.context, candidate.id, 'accept', { decidedBy: 'later retry' });
     expect(h.memory.retrieve()).toHaveLength(1);
     expect(h.store.getConsolidationCandidate(candidate.id)).toEqual(candidate);
-    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]).toMatchObject({
+      state: { subject: { title: 'Outbox invariant', summary: source.summary, kind: 'url', status: 'indexed',
+        trust: 'untrusted-reference-material', reviewState: 'unreviewed' },
+        usage: { count: 1, usageKinds: ['search-hit'], sessionCount: 1, lastUsedAt: new Date(usage.createdAt).toISOString(), relationCount: 0 } },
+      context: { battery: 'engine.knowledge.consolidation' },
+    });
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['keep', 'memory_class']);
+    expect(fake.requests.slice(1).map(request => ({ state: request.state, questions: Object.keys(request.questions), battery: request.context?.battery }))).toEqual(
+      ['ready', 'path', 'id', 'cls'].map(field => ({ state: { field }, questions: ['kind'], battery: 'engine.redaction.field-kind' })),
+    );
   });
 
   test('terminal history cannot fill the result limit and starve a new open candidate', async () => {

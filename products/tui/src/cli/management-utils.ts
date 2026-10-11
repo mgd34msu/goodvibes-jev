@@ -23,6 +23,7 @@ import type { ConfigManager, GoodVibesConfig } from '@goodvibes-jev/engine/sdk/p
 import { createRuntimeServices } from '../runtime/services.ts';
 import { createRuntimeStore } from '../runtime/store/index.ts';
 import type { RuntimeServices } from '../runtime/services.ts';
+import type { ProviderCatalogOptions } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { RuntimeEventBus, createShellPathService, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom } from '@/runtime/index.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { resolveRuntimeEndpointBinding } from '@goodvibes-jev/engine/terminal-shell';
@@ -223,6 +224,7 @@ export async function probeTcp(host: string, port: number, timeoutMs = 750): Pro
 export async function withRuntimeServices<T>(
   runtime: CliCommandRuntime,
   fn: (services: RuntimeServices) => Promise<T> | T,
+  options: { readonly catalog?: ProviderCatalogOptions } = {},
 ): Promise<T> {
   // Point the bus listener cap at runtime.eventBus.maxListeners before the
   // first bus exists, so every bus this process builds later uses it.
@@ -238,7 +240,7 @@ export async function withRuntimeServices<T>(
   });
   services.providerRegistry.initModelLimits();
   services.benchmarkStore.initBenchmarks();
-  services.providerRegistry.initCatalog();
+  services.providerRegistry.initCatalog(options.catalog);
   try {
     await services.providerRegistry.ready();
     return await fn(services);
@@ -247,7 +249,7 @@ export async function withRuntimeServices<T>(
     // A one-shot command still composes the whole graph, and that graph starts
     // pollers. Disposing lets the command finish instead of relying on process
     // exit to reclaim them.
-    services.dispose();
+    await services.close();
   }
 }
 

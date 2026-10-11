@@ -66,7 +66,10 @@ for (const kind of ['judgment', 'provider-judgment', 'missing-port'] as const) {
         const which = spyOn(Bun, 'which').mockReturnValue(null);
         let judgments = 0;
         const previous = installJudgmentPort(kind === 'missing-port' ? undefined : {
-          model: 'fixture', ask: async () => { judgments++; throw terminal; },
+          model: 'fixture', ask: async (request) => {
+            if ('fixes_errors' in request.questions) { judgments++; throw terminal; }
+            throw new Error('Unscripted heal-failure diagnostic reading');
+          },
         });
         try {
           const files = priorWrite ? [first, { ...first, content: 'changed again' }, { path: 'created.txt', content: 'new' }, repair, later] : [repair, later];
@@ -148,9 +151,12 @@ for (const frozen of [false, true]) {
     const f = fixture(true, terminal);
     const which = spyOn(Bun, 'which').mockReturnValue(null);
     const actualRename = fs.renameSync;
+    let failedRollbacks = 0;
     const rename = spyOn(fs, 'renameSync').mockImplementation((source, target) => {
-      if (target === join(f.root, first.path) && fs.readFileSync(source).equals(original))
+      if (target === join(f.root, first.path) && fs.readFileSync(source).equals(original)) {
+        failedRollbacks++;
         throw new Error('synthetic rollback rename failure');
+      }
       actualRename(source, target);
     });
     try {
@@ -159,9 +165,9 @@ for (const frozen of [false, true]) {
       expect(terminal.kind).toBe('unavailable');
       if (frozen) expect(terminal.message).toBe('terminal heal judgment');
       else {
-        expect(terminal.message).toContain('Atomic rollback incomplete');
-        expect(terminal.message).toContain('synthetic rollback rename failure');
+        expect(terminal.message).toBe("terminal heal judgment. Atomic rollback incomplete: Failed to roll back 'first.txt': [REDACTED]");
       }
+      expect(failedRollbacks).toBe(1);
       expect(fs.readFileSync(join(f.root, first.path), 'utf8')).toBe(first.content);
       expect(fs.readFileSync(join(f.root, repair.path))).toEqual(original);
       expect(fs.readFileSync(join(f.root, later.path), 'utf8')).toBe('later original\n');

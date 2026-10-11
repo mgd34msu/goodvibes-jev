@@ -68,14 +68,25 @@ export function createRepairSourceAuthorityReader(options: RepairSourceAuthority
   let requests = 0, bytes = 0, queue: Promise<unknown> = Promise.resolve();
   const failure = (error: unknown): Error => error instanceof Held || error instanceof JudgmentInputError ? error
     : new Held(error instanceof JudgmentPortMissingError ? 'unconfigured' : error instanceof JudgmentAuthorityRetiredError ? 'stale' : 'unavailable');
+  const assertOriginalIdentity = () => {
+    if (signal?.aborted) throw new Held('aborted');
+    if (options.signal !== signal || options.assertCurrent !== ownerCurrent || options.timeoutMs !== configuredTimeout) throw new Held('stale');
+  };
+  const assertOwnerCurrent = () => {
+    assertOriginalIdentity();
+    const result: unknown = ownerCurrent?.();
+    if (result !== undefined) {
+      try { void Promise.resolve(result).catch(() => {}); } catch { /* A callback result cannot authorize a reading. */ }
+      throw new Held('stale');
+    }
+    assertOriginalIdentity();
+  };
   const assertCurrent = () => {
     if (failed) throw failed;
     try {
       if (signal?.aborted) throw new Held('aborted');
-      if (options.signal !== signal || options.assertCurrent !== ownerCurrent || options.timeoutMs !== configuredTimeout) throw new Held('stale');
-      ownerCurrent?.();
+      if (authority) authority.assertCurrent(); else assertOwnerCurrent();
       if (configured) {
-        try { authority!.assertCurrent(); } catch { throw new Held('stale'); }
         let current: JudgmentPort; try { current = judgmentPort(SITE); } catch { throw new Held('stale'); }
         if (current !== configured || current.model !== configuredModel) throw new Held('stale');
       }
@@ -155,7 +166,7 @@ export function createRepairSourceAuthorityReader(options: RepairSourceAuthority
         snapshots = snapshotInputs(inputs); assertCurrent();
         if (snapshots.length && !configured) {
           configured = judgmentPort(SITE); configuredModel = configured.model;
-          authority = captureJudgmentPort(SITE, { signal, assertCurrent: ownerCurrent });
+          authority = captureJudgmentPort(SITE, { signal, assertCurrent: assertOwnerCurrent });
           if (typeof configuredModel !== 'string' || !configuredModel.trim()) throw new Held('malformed');
         }
       } catch (error) { failed ??= failure(error); throw failed; }

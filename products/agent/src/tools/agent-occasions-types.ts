@@ -240,6 +240,12 @@ export function narrowOccasionsState(value: unknown): OccasionsStateResponse | n
 
 export function narrowOccasionsSweep(value: unknown): OccasionsSweepResponse | null {
   if (!isRecord(value)) return null;
+  if ('complete' in value) {
+    if (value.complete !== false || typeof value.acceptedDeliveries !== 'number'
+      || !Number.isSafeInteger(value.acceptedDeliveries) || value.acceptedDeliveries < 1
+      || (value.stopped !== 'request-retired-after-delivery' && value.stopped !== 'delivery-processing-stopped')) return null;
+    return { complete: false, acceptedDeliveries: value.acceptedDeliveries, stopped: value.stopped };
+  }
   if (typeof value.today !== 'string' || typeof value.delivered !== 'boolean') return null;
   if (!Array.isArray(value.conflictMessages)) return null;
   // `deliveries` is the per-destination outcome list. Checked here rather than

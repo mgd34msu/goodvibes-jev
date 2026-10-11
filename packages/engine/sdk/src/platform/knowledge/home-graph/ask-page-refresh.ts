@@ -73,6 +73,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
       installationId: input.installationId,
       error: error instanceof Error ? error.message : String(error),
     });
+    recovery.assertCurrent();
   }
   let refreshed = 0;
   for (const device of devices) {
@@ -102,9 +103,10 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
         deviceId,
         error: error instanceof Error ? error.message : String(error),
       });
+      recovery.assertCurrent();
     }
   }
-  selectedDevices.assertCurrent();
+  recovery.assertCurrent();
   return { requested: devices.length > 0, refreshed };
 }
 

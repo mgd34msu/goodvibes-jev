@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,6 +52,17 @@ async function promptly<T>(promise: Promise<T>): Promise<T | symbol> {
 }
 
 describe('canonical knowledge scope lifecycle', () => {
+  test('an initially changed cached source or extraction receives full privacy admission before stale rejection', async () => {
+    for (const changed of ['source', 'extraction'] as const) {
+      const { store, source } = await fixture();
+      const extraction = await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: 'Application design guide.', metadata: {} });
+      Object.assign((changed === 'source' ? source : extraction).metadata, { protectedValue: 'Authorization: Bearer never-send-this' });
+      const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+      const before = snapshot(store);
+      await expect(prepareKnowledgeScopeSelection(store)).rejects.toBeInstanceOf(JudgmentInputError);
+      expect(fake.requests).toHaveLength(0); expect(snapshot(store)).toBe(before);
+    }
+  });
   test('complete authored readings override titles and retain namespace authority', async () => {
     const { store, source } = await fixture();
     const rejected = await store.upsertSource({ id: 'rejected', connectorId: 'synthetic', sourceType: 'document',
@@ -154,6 +165,24 @@ describe('canonical knowledge scope lifecycle', () => {
     await expect(prepareKnowledgeScopeSelection(store)).rejects.toMatchObject({ reason: 'stale' });
   });
 
+  test.each(['source', 'extraction'] as const)('a separate writer %s mismatch retains genuine original clocks before retiring at a colliding epoch', async kind => {
+    const clock = spyOn(Date, 'now').mockReturnValue(4_222_222_222_222);
+    let store: KnowledgeStore | undefined, writer: KnowledgeStore | undefined;
+    try {
+      const item = await fixture(); store = item.store;
+      const extraction = await store.upsertExtraction({ sourceId: item.source.id, extractorId: 'synthetic', format: 'text',
+        excerpt: 'An authored application guide explains navigation.', metadata: { knowledgeSpaceId: 'default' } });
+      const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+      await prepareKnowledgeScopeSelection(store);
+      writer = new KnowledgeStore({ dbPath: item.dbPath }); await writer.init();
+      if (kind === 'source') await writer.upsertSource({ ...item.source, title: 'Externally replaced original content' });
+      else await writer.upsertExtraction({ ...extraction, excerpt: 'Externally replaced original explanation.' });
+      const requests = fake.requests.length;
+      await expect(prepareKnowledgeScopeSelection(store)).rejects.toMatchObject({ reason: 'stale' });
+      expect(fake.requests).toHaveLength(requests);
+    } finally { await writer?.close(); await store?.close(); clock.mockRestore(); }
+  });
+
   test('new foreign associations cannot override retained explicit namespace membership', async () => {
     const { store, source } = await fixture();
     const input = { id: 'scope-topic', kind: 'topic' as const, slug: 'scope-topic', title: 'Queue design', sourceId: source.id, status: 'active' as const };
@@ -190,6 +219,25 @@ describe('canonical knowledge scope lifecycle', () => {
     await expect(prepareKnowledgeScopeSelection(store, {}, { assertCurrent: () => authority.promise })).rejects.toMatchObject({ reason: 'stale' });
     authority.reject(new Error('Synthetic asynchronous authority revoked'));
     expect(fake.requests).toHaveLength(0);
+  });
+
+  test.each(['scope', 'bounds', 'caller'] as const)('a caller that mutates its own retained %s cannot authorize consumption', async change => {
+    const { store, source } = await fixture();
+    const fake = fakePort(() => noulAnswer(0.99)); installJudgmentPort(fake.port);
+    const scope = { knowledgeSpaceId: 'default' }, sourceIds = [source.id];
+    let mutate = false;
+    const options = { sourceIds, assertCurrent() {
+      if (!mutate) return;
+      if (change === 'scope') scope.knowledgeSpaceId = 'homeassistant:changed';
+      else if (change === 'bounds') sourceIds.push('newly borrowed source');
+      else options.assertCurrent = () => {};
+    } };
+    const selection = await prepareKnowledgeScopeSelection(store, scope, options);
+    const requests = fake.requests.length, before = snapshot(store);
+    mutate = true;
+    expect(() => selection.source(source)).toThrow('Knowledge scope selection held: stale');
+    expect(fake.requests).toHaveLength(requests);
+    expect(snapshot(store)).toBe(before);
   });
 
   test('prepared input authority runs once and rejects an asynchronous grant before dispatch', async () => {

@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { ToolError } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { Tool, ToolDefinition } from '@goodvibes-jev/engine/sdk/platform/types';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 function makeTool(name: string, output = 'ok'): Tool {
   return {
@@ -100,15 +101,22 @@ describe('ToolRegistry', () => {
       await expect(registry.execute('call-2', 'broken_tool', {})).rejects.toBeInstanceOf(ToolError);
     });
 
-    test('ToolError wraps original message', async () => {
-      expect.assertions(2);
-      registry.register(makeFailingTool('broken_tool', 'original message'));
+    test('ToolError masks unread display text and retains the exact private cause', async () => {
+      expect.assertions(5);
+      const original = new Error('original message');
+      const tool = makeTool('broken_tool'); tool.execute = async () => { throw original; };
+      registry.register(tool);
+      const previous = installJudgmentPort(undefined);
       try {
         await registry.execute('call-3', 'broken_tool', {});
       } catch (err) {
         expect(err).toBeInstanceOf(ToolError);
-        expect((err as Error).message).toContain('original message');
-      }
+        if (!(err instanceof ToolError)) throw err;
+        expect(err.message).toBe('[REDACTED]');
+        expect(err.code).toBe('TOOL_ERROR');
+        expect(err.toolName).toBe('broken_tool');
+        expect(err.cause).toBe(original);
+      } finally { installJudgmentPort(previous); }
     });
   });
 

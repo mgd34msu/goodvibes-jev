@@ -17,6 +17,8 @@ export interface BootstrapShutdownDeps {
   /** Wait for the admitted start and publish its handle before stopping it. */
   readonly settleExternalServices: Cleanup;
   readonly stopExternalServices: Cleanup;
+  /** Final graph drain after logical shutdown has persisted the session. */
+  readonly closeRuntimeGraph: () => Promise<void>;
   readonly agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null };
   readonly scheduleManager: Parameters<typeof shutdownRuntime>[5];
   readonly hookDispatcher: Parameters<typeof shutdownRuntime>[6];
@@ -77,6 +79,7 @@ export function createBootstrapShutdown(deps: BootstrapShutdownDeps): (sessionDa
       title, deps.scheduleManager, deps.hookDispatcher,
       deps.providerRegistry, deps.sessionOrchestration, deps.persistenceOptions,
     ));
+    await attempt(deps.closeRuntimeGraph);
     const errors = failures.sort((a, b) => a.order - b.order).map(({ error }) => error);
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, 'TUI shutdown failed to release one or more owned resources');

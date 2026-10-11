@@ -3,6 +3,7 @@ import { createContractOperatorService, type OperatorContractRunner, type Contra
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerWorkstreamRuntimeCommands } from '../../input/commands/workstream-runtime.ts';
 import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 function fixture(records: ContractView[], overrides: Partial<OperatorContractRunner> = {}) {
   const actions: unknown[][] = [];
@@ -140,9 +141,12 @@ describe('workstream commands use the public contract operator', () => {
   });
 
   test('runner failures are reported rather than claiming success', async () => {
-    const f = fixture([contractFixture({ id: 'contract-a', status: 'running' })], { cancel: () => { throw new Error('Synthetic runner failed'); } });
-    await f.run(['cancel', 'contract-a']);
+    let cancellations = 0;
+    const f = fixture([contractFixture({ id: 'contract-a', status: 'running' })], { cancel: () => { cancellations++; throw new Error('Synthetic runner failed'); } });
+    await withPublicErrorText(['Synthetic runner failed'], () => f.run(['cancel', 'contract-a']));
     expect(f.actions).toEqual([]);
+    expect(cancellations).toBe(1);
+    expect(f.output.join('\n')).not.toContain('Stopped workstream');
     expect(f.output.join('\n')).toContain('Workstream action failed: Synthetic runner failed');
   });
 

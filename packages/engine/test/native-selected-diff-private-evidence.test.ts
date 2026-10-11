@@ -208,7 +208,12 @@ test('provider post-backoff fence rejects selected-diff-only mutation before a s
     } };
     const record = agentRecord();
     await runAgentTask({ ...runContext(dir, provider), autonomousSource: () => ({ goal: text, criteria: [text], selectedDiffContext: selected }) }, record);
-    expect(sends).toBe(1); expect(record.status).toBe('failed'); expect(record.error).toContain('Native provider source changed before retry');
+    expect(sends).toBe(1); expect(record.status).toBe('failed');
+    const error = record.error;
+    if (error === undefined) throw new Error('Failed provider retry must retain a safe diagnostic');
+    expect(['[REDACTED]', 'Native provider source changed before retry']).toContain(error);
+    expect(JSON.stringify(record)).not.toContain(privateLine);
+    expect(savedFiles(dir)).not.toContain(privateLine);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -98,6 +98,14 @@ test('missing source ownership makes zero theme requests', async () => {
   expect(fake.requests).toHaveLength(0);
 });
 
+test('card-shaped numeric artifact metadata remains held before thematic dispatch', async () => {
+  const f = fixture(), fake = fakePort(() => noulAnswer(0.999)); installJudgmentPort(fake.port);
+  // Synthetic epoch-shaped data that also satisfies the canonical card-number screen.
+  Object.defineProperty(f.records['judgment-a']!, 'createdAt', { value: 1791691300001, enumerable: true });
+  expect(await readComparisonReasonThemes(f.judgment, f.store, f.report, { sourceOwner: ordinaryResearchOwner() })).toEqual({ status: 'held' });
+  expect(fake.requests).toHaveLength(0);
+});
+
 test('artifact method descriptor admission does not execute an accessor', async () => {
   const f = fixture(), fake = fakePort(() => noulAnswer(0.999)); let accessorCalls = 0;
   installJudgmentPort(fake.port);

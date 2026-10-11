@@ -5,6 +5,7 @@ import type {
   KnowledgeNodeRecord,
 } from '../types.js';
 import type { KnowledgeStore } from '../store.js';
+import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
 import { isActiveKnowledgeEdge } from '../projection-utils.js';
 import { normalizeKnowledgeSpaceId, getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace } from '../spaces.js';
 import type {
@@ -93,7 +94,18 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const objects = input.includeLinkedObjects === false ? undefined
     : prepareAnswerLinkedObjects(context.store, spaceId, input, objectProfiles, signal);
   let evidenceReadSet: readonly EvidenceItem[] = [];
-  const checkReadSet = () => { check(); checkPorts(); gapUniverse.assertCurrent(); objects?.assertCurrent(); assertAnswerEvidenceCurrent(evidenceReadSet); };
+  const checkReadSet = () => {
+    try {
+      context.store.assertRecordSnapshotFrame(() => {
+        check(); checkPorts(); gapUniverse.assertCurrent(); objects?.assertCurrent(); assertAnswerEvidenceCurrent(evidenceReadSet);
+      });
+    } catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') {
+        throw new KnowledgeAnswerQualityHeldError('stale');
+      }
+      throw error;
+    }
+  };
   const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, checkReadSet, gapUniverse, objects);
   check();
   if (evidenceResolution.kind === 'no-match') return evidenceResolution.result;
@@ -134,7 +146,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const prepared = prepareAnswerEvidence({ store: context.store, spaceId, query: input.query, sources: rankedSources.slice(0, limit), facts: rawFacts, subjects: claimSubjects, signal });
   const gapPlan = gapUniverse.prepare({ spaceId: gapSpaceId, sources: rankedSources.slice(0, limit), linkedObjects,
     assertCurrent: () => { checkReadSet(); prepared.assertCurrent(); } });
-  const checkGap = () => { checkReadSet(); prepared.assertCurrent(); gapPlan.assertCurrent(); };
+  const checkGap = () => { gapPlan.assertCurrent(); };
   for (const fact of facts) {
     // Returned associations must resolve locally; an unknown/foreign/stale
     // reference cannot disappear from the claim while remaining in metadata.

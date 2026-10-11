@@ -7,6 +7,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { AgentExecutionLedger, forgetLedgerArgRoles } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { emitToolReceived, emitToolPermissioned, emitToolSucceeded, emitToolCancelled } from '@goodvibes-jev/engine/sdk/platform/runtime/emitters';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { nativeMemoryWorkPrivacy } from '../helpers/native-memory-work-readings.ts';
 import { getTestRuntimeServices, resetTestRuntimeServices } from '../helpers/runtime-services.ts';
 import { AgentExecutionLedger as CompatibilityLedger } from '../../runtime/execution-ledger.ts';
 import type { RuntimeServices } from '../../runtime/services.ts';
@@ -42,7 +43,7 @@ function compose() {
     throw new Error(`Unexpected fixture question: ${name}`);
   });
   judgmentLog = new SqliteDecisionLog(':memory:');
-  previous = installJudgmentPort(withDecisionLog(fixture.port, judgmentLog));
+  previous = installJudgmentPort(withDecisionLog(nativeMemoryWorkPrivacy(fixture.port).port, judgmentLog));
   return { runtime: services, requests: fixture.requests };
 }
 afterEach(async () => {
@@ -68,7 +69,8 @@ test('real Agent services construct the shared ledger and actual history consume
   expect(JSON.stringify(summary)).toContain('public-fixture');
   expect(JSON.stringify([requests, record, summary])).not.toContain('SYNTHETIC_AGENT_CREDENTIAL');
   expect(requests[0]?.context?.battery).toBe('engine.gate.ledger-arg');
-  expect(requests.at(-1)?.context?.battery).toBe('engine.gate.side-effect');
+  expect(requests.filter(request => request.context?.battery === 'engine.gate.side-effect')).toHaveLength(1);
+  expect(Object.keys(requests.find(request => request.context?.battery === 'engine.gate.side-effect')!.questions)).toContain('kind');
 });
 
 test('real Agent composition withholds declared credential input before model calls and preserves cancellation', async () => {

@@ -6,6 +6,7 @@ import type { VoiceProvider, VoiceSynthesisStreamResult } from '../voice/index.j
 import type { MediaProvider } from '../media/index.js';
 import type { WebSearchProvider } from '../web-search/index.js';
 import type { Tool } from '../types/tools.js';
+import { captureMutationDescriptors } from '../utils/file-mutation.js';
 
 type Modes<T> = { [K in keyof T]-?: NonNullable<T[K]> extends (...args: never[]) => unknown ? 'sync' | 'async' | 'either' : 'value' };
 type Track = <T>(call: () => T) => T;
@@ -21,7 +22,7 @@ const channelMethods = {
   authorizeActorAction: 'async', getActionAvailabilityState: 'async', listCapabilities: 'either', listTools: 'either', runTool: 'async', listOperatorActions: 'either', runOperatorAction: 'async',
   lookupDirectory: 'async', queryDirectory: 'async', listGroupMembers: 'async', parseExplicitTarget: 'either', inferTargetConversationKind: 'either', resolveTarget: 'async', resolveSessionTarget: 'either', resolveParentConversationCandidates: 'async', listAgentTools: 'sync',
 } satisfies Modes<ChannelPlugin>;
-const deliveryMethods = { id: 'value', supportsGuardedDelivery: 'value', canHandle: 'sync', deliver: 'async' } satisfies Modes<ChannelDeliveryStrategy>;
+const deliveryMethods = { id: 'value', supportsGuardedDelivery: 'value', supportsPublication: 'value', canHandle: 'sync', deliver: 'async' } satisfies Modes<ChannelDeliveryStrategy>;
 const memoryMethods = { capturedInputAdmission: 'value', id: 'value', label: 'value', dimensions: 'value', deterministic: 'value', local: 'value', embedSync: 'sync', embed: 'async', status: 'either' } satisfies Modes<MemoryEmbeddingProvider>;
 const voiceMethods = { id: 'value', label: 'value', capabilities: 'value', billing: 'value', status: 'either', listVoices: 'either', synthesize: 'async', synthesizeStream: 'either', transcribe: 'async', openRealtimeSession: 'async', resetEngineFailureState: 'sync' } satisfies Modes<VoiceProvider>;
 const mediaMethods = { id: 'value', label: 'value', capabilities: 'value', status: 'either', analyze: 'async', transform: 'async', generate: 'async' } satisfies Modes<MediaProvider>;
@@ -62,10 +63,12 @@ function facade<T extends object>(source: T, modes: Modes<T>, track: Track, opti
   readonly replacements?: Readonly<Record<string, unknown>>;
   readonly streams?: Readonly<Record<string, (call: () => unknown, args: readonly unknown[]) => unknown>>;
   readonly values?: Readonly<Record<string, (value: unknown) => unknown>>;
+  readonly guards?: Readonly<Record<string, () => void>>;
 } = {}): T {
   const methods = new Map<PropertyKey, { original: unknown; wrapped: (...args: unknown[]) => unknown }>();
   const get = (key: PropertyKey): unknown => {
     if (typeof key === 'string' && options.replacements && Object.hasOwn(options.replacements, key)) return options.replacements[key];
+    declared(options.guards, key)?.();
     const value: unknown = Reflect.get(source, key, source);
     const valueTransform = declared(options.values, key);
     if (valueTransform) return valueTransform(value);
@@ -75,6 +78,7 @@ function facade<T extends object>(source: T, modes: Modes<T>, track: Track, opti
     if (cached?.original === value) return cached.wrapped;
     const wrapped = (...args: unknown[]): unknown => {
       try {
+        declared(options.guards, key)?.();
         const call = () => Reflect.apply(value, source, args) as unknown;
         const stream = declared(options.streams, key);
         return stream ? stream(call, args) : track(() => mapResult(call(), declared(options.results, key)));
@@ -92,7 +96,7 @@ function facade<T extends object>(source: T, modes: Modes<T>, track: Track, opti
     ownKeys: () => [...new Set([...Reflect.ownKeys(source), ...Object.keys(modes).filter((key) => Reflect.has(source, key))])],
     getOwnPropertyDescriptor: (_target, key) => {
       // Captured guarded-delivery support is host-owned data, not a live getter.
-      if (key === 'supportsGuardedDelivery' && options.replacements && Object.hasOwn(options.replacements, key)) {
+      if ((key === 'supportsGuardedDelivery' || key === 'supportsPublication') && options.replacements && Object.hasOwn(options.replacements, key)) {
         return { configurable: true, enumerable: true, writable: false, value: options.replacements[key] };
       }
       const descriptor = Reflect.getOwnPropertyDescriptor(source, key);
@@ -311,7 +315,12 @@ export function createOwnedPluginCapabilities(track: Track) {
       // metadata. Do not execute an accessor merely to grant this capability.
       const descriptor = Object.getOwnPropertyDescriptor(source, 'supportsGuardedDelivery');
       const supportsGuardedDelivery = descriptor !== undefined && 'value' in descriptor && descriptor.value === true;
-      return facade(source, deliveryMethods, track, { replacements: { supportsGuardedDelivery } });
+      const publication = Object.getOwnPropertyDescriptor(source, 'supportsPublication');
+      const supportsPublication = publication !== undefined && 'value' in publication && publication.value === true;
+      const deliverCurrent = supportsPublication ? captureMutationDescriptors(source, ['deliver', 'supportsPublication']) : undefined;
+      return facade(source, deliveryMethods, track, { replacements: { supportsGuardedDelivery, supportsPublication },
+        ...(deliverCurrent ? { guards: { deliver: deliverCurrent } } : {}),
+      });
     },
     memory: (source: MemoryEmbeddingProvider): MemoryEmbeddingProvider => facade(source, memoryMethods, track),
     voice: (source: VoiceProvider): VoiceProvider => facade(source, voiceMethods, track, { streams: {

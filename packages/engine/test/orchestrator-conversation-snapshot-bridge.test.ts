@@ -278,8 +278,9 @@ test('native context owner failure prevents the first provider transmission', as
     let calls = 0;
     const provider: LLMProvider = { name: 'test-provider', models: ['test-model'], async chat() { calls++; return { content: 'Unexpected', toolCalls: [], usage: { inputTokens: 0, outputTokens: 0 }, stopReason: 'completed' }; } };
     const record = makeAgentRecord({ id: 'ag-context-denied', task: 'Do that.' });
-    await runAgentTask({ ...makeMinimalRunContext({ workingDirectory: dir, provider }), autonomousSource() { throw new Error('Native context owner revoked'); } }, record);
-    expect(calls).toBe(0); expect(record.status).toBe('failed'); expect(record.error).toContain('Native context owner revoked');
+    await runAgentTask({ ...makeMinimalRunContext({ workingDirectory: dir, provider }), autonomousSource() { throw new Error('Native context owner revoked password=SYNTHETIC_PRIVATE_CONTEXT'); } }, record);
+    expect(calls).toBe(0); expect(record.status).toBe('failed'); expect(record.error).toContain('[REDACTED]');
+    expect(record.error).not.toContain('SYNTHETIC_PRIVATE_CONTEXT');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -313,9 +314,10 @@ test('native private context is revalidated at the provider post-backoff fence w
     } };
     const record = makeAgentRecord({ id: 'ag-context-retry', task: 'Do that.' });
     await runAgentTask({ ...makeMinimalRunContext({ workingDirectory: dir, provider }), autonomousSource() {
-      fences++; if (!valid) throw new Error('Native context owner revoked');
+      fences++; if (!valid) throw new Error('Native context owner revoked password=SYNTHETIC_PRIVATE_CONTEXT');
       return { goal: 'Do that.', criteria: ['Do that.'], conversationContext: [{ role: 'assistant', content: 'Private reference.' }] };
     } }, record);
     expect(sends).toBe(1); expect(fences).toBeGreaterThanOrEqual(3); expect(record.status).toBe('failed');
+    expect(record.error).toContain('[REDACTED]'); expect(record.error).not.toContain('SYNTHETIC_PRIVATE_CONTEXT');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

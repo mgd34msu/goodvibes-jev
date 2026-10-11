@@ -293,9 +293,12 @@ describe('agent_knowledge_ingest tool', () => {
       ]);
       for (const request of requests) {
         expect(request.url).not.toContain('/api/knowledge');
-        const payload = JSON.parse(request.body ?? '{}') as IngestPayload;
+        const payload: unknown = JSON.parse(request.body ?? '{}');
+        if (payload === null || typeof payload !== 'object' || !('path' in payload) || typeof payload.path !== 'string') {
+          throw new Error('Expected the original native file-ingest path.');
+        }
         expect([urlsPath, bookmarksPath]).toContain(payload.path);
-        expect(payload.metadata?.originSurface).toBe('goodvibes-agent');
+        expect(payload).toMatchObject({ metadata: { originSurface: 'goodvibes-agent' } });
       }
     } finally {
       globalThis.fetch = originalFetch;

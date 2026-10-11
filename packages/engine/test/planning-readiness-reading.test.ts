@@ -5,15 +5,25 @@ import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.ts';
 import { KnowledgeStore, ProjectPlanningService, evaluateProjectPlanningReadiness, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { JudgmentInputError, snapshotJudgmentInput } from '../sdk/src/platform/gate/judgment-input.js';
 import { loadSqlJsEngine, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
-import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { createSchema, KNOWLEDGE_SCHEMA_VERSION } from '../sdk/src/platform/knowledge/store-schema.js';
 import { listStoreSnapshots } from '../sdk/src/platform/state/store-snapshots.js';
 import { StoreMigrationError, StoreSchemaDowngradeError } from '../sdk/src/platform/state/store-versioning.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 
 let previous: JudgmentPort | undefined;
+// Logger role readings carry only field names; count the actual content readers.
+function contentRequests(fake: Pick<ReturnType<typeof fakePort>, 'requests'>) {
+  return fake.requests.filter(request => {
+    if (request.context?.battery !== fieldKind.name) return true;
+    expect(request.state).toEqual({ field: expect.any(String) });
+    return false;
+  });
+}
+
 const roots: string[] = [];
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -51,7 +61,7 @@ test('actual service accepts a concrete old keyword, preserves approval and publ
   const result = await f.service.upsertState(input());
   expect(result.state?.readiness).toBe('executable');
   expect((await f.service.getWorkPlanSnapshot(input())).tasks[0]?.title).toBe('Cap retry delay');
-  const request = JSON.stringify(fake.requests);
+  const request = JSON.stringify(contentRequests(fake));
   expect(request).toContain('Improve retry handling');
   expect(request).not.toContain('private-project-identifier');
   expect(request).not.toContain('private-task-identifier');
@@ -66,8 +76,8 @@ test('unrelated answers and decisions cannot clear an ambiguous goal without key
     decisions: [{ id: 'editor', title: 'Editor choice', decision: 'Use vim', status: 'accepted' }],
   }));
   expect(result.gaps.map(gap => gap.kind)).toEqual(['ambiguous-language']);
-  expect(JSON.stringify(fake.requests)).toContain('The platform team.');
-  expect(JSON.stringify(fake.requests)).toContain('Use vim');
+  expect(JSON.stringify(contentRequests(fake))).toContain('The platform team.');
+  expect(JSON.stringify(contentRequests(fake))).toContain('Use vim');
   expect((await f.service.status(input())).counts.states).toBe(0);
 });
 
@@ -85,13 +95,13 @@ test('complete caller and stored-source privacy admission precedes any semantic 
   const f = await fixture(); const fake = install();
   const before = fileSnapshot(f.path);
   await expect(f.service.upsertState(input({ metadata: { password: 'SYNTHETIC_NOT_A_REAL_SECRET' } }))).rejects.toBeInstanceOf(JudgmentInputError);
-  expect(fake.requests).toHaveLength(0); expect(fileSnapshot(f.path)).toEqual(before);
+  expect(contentRequests(fake)).toHaveLength(0); expect(fileSnapshot(f.path)).toEqual(before);
   const seeded = await f.service.upsertState(input());
   await f.store.upsertSource({ ...seeded.source!, metadata: { ...seeded.source!.metadata, apiKey: 'SYNTHETIC_NOT_A_REAL_SECRET' } });
-  const requests = fake.requests.length, bytes = fileSnapshot(f.path);
+  const requests = contentRequests(fake).length, bytes = fileSnapshot(f.path);
   await expect(f.service.evaluate({ projectId: input().projectId })).rejects.toBeInstanceOf(JudgmentInputError);
   await expect(f.service.upsertState(input())).rejects.toBeInstanceOf(JudgmentInputError);
-  expect(fake.requests).toHaveLength(requests); expect(fileSnapshot(f.path)).toEqual(bytes);
+  expect(contentRequests(fake)).toHaveLength(requests); expect(fileSnapshot(f.path)).toEqual(bytes);
 });
 
 for (const target of ['state', 'work-plan'] as const) {
@@ -141,7 +151,7 @@ test('retirement during the store initialization await after reading prevents th
   f.store.init = async () => { if (++calls === 2) { entered.resolve(); await gate.promise; } await original(); };
   const bytes = fileSnapshot(f.path), pending = f.service.upsertState(input());
   await entered.promise;
-  expect(fake.requests).toHaveLength(1);
+  expect(contentRequests(fake)).toHaveLength(1);
   installJudgmentPort(undefined); installJudgmentPort(fake.port);
   gate.resolve();
   await expect(pending).rejects.toThrow(); expect(fileSnapshot(f.path)).toEqual(bytes);
@@ -198,7 +208,7 @@ test('an actual clarifying answer can make an approved plan executable without r
   const result = await f.service.answerQuestion({ projectId: input().projectId, questionId: 'clarify', answer });
   expect(result).toMatchObject({ answered: true, evaluation: { readiness: 'executable' } });
   expect(result.state?.answeredQuestions[0]?.answer).toBe(answer);
-  expect(JSON.stringify(fake.requests)).toContain(answer);
+  expect(JSON.stringify(contentRequests(fake))).toContain(answer);
   const retained = (await f.service.getWorkPlanSnapshot(input())).tasks[0]!;
   expect(retained.taskId).toBe(originalTask.taskId);
   expect(retained.createdAt).toBe(originalTask.createdAt);
@@ -237,7 +247,7 @@ for (const mode of ['upsert', 'action'] as const) {
     const f = await fixture(); const fake = install();
     await f.service.upsertState(input());
     const source = await f.service.getState({ projectId: input().projectId });
-    const bytes = readFileSync(f.path), requests = fake.requests.length;
+    const bytes = readFileSync(f.path), requests = contentRequests(fake).length;
     const original = f.store.getSourceSnapshot.bind(f.store); let replaced = false;
     f.store.getSourceSnapshot = (selector) => {
       const snapshot = original(selector);
@@ -254,7 +264,7 @@ for (const mode of ['upsert', 'action'] as const) {
     else expect(await f.service.applyStateAction({ projectId: input().projectId,
       expected: { kind: 'revision', revision: source.revision! }, action: { kind: 'approve' },
     })).toMatchObject({ applied: false, reason: 'state-changed' });
-    expect(replaced).toBe(true); expect(fake.requests).toHaveLength(requests);
+    expect(replaced).toBe(true); expect(contentRequests(fake)).toHaveLength(requests);
     expect(readFileSync(f.path)).toEqual(bytes);
   });
 }
@@ -281,11 +291,11 @@ test('generated Luhn-collision clocks survive the actual planning publication li
     expect(original.raw?.created_at).toBe(new Date(collision).toISOString());
     expect((original.source!.metadata.value as Record<string, unknown>).createdAt).toBe(new Date(collision).toISOString());
     // Numeric API compatibility is not an input-admission exemption.
-    const bytes = fileSnapshot(f.path), requests = fake.requests.length;
+    const bytes = fileSnapshot(f.path), requests = contentRequests(fake).length;
     await expect(evaluateProjectPlanningReadiness(seeded.state!)).rejects.toMatchObject({ problem: 'card-material' });
     await expect(f.service.upsertState({ projectId: request.projectId, state: seeded.state! }))
       .rejects.toMatchObject({ problem: 'card-material' });
-    expect(fake.requests).toHaveLength(requests);
+    expect(contentRequests(fake)).toHaveLength(requests);
     expect(fileSnapshot(f.path)).toEqual(bytes);
     const answer = await f.service.answerQuestion({ projectId: request.projectId,
       questionId: 'cap', answer: 'Use a 30 second cap.' });
@@ -301,7 +311,7 @@ test('generated Luhn-collision clocks survive the actual planning publication li
     const result = await reopened.applyStateAction({ projectId: request.projectId,
       expected: { kind: 'current' }, action: { kind: 'approve' } });
     expect(result.applied).toBe(true);
-    expect(JSON.stringify(fake.requests)).not.toContain(String(collision));
+    expect(JSON.stringify(contentRequests(fake))).not.toContain(String(collision));
   } finally { clock.mockRestore(); }
 });
 
@@ -312,12 +322,12 @@ test('typed task-update cannot persist a caller-forged completion clock', async 
     const f = await fixture(); const fake = install();
     const created = await f.service.createWorkPlanTask({ projectId: input().projectId,
       task: { taskId: 'typed-clock-task', title: 'Ordinary local task' } });
-    const bytes = fileSnapshot(f.path), requests = fake.requests.length;
+    const bytes = fileSnapshot(f.path), requests = contentRequests(fake).length;
     await expect(f.service.updateWorkPlanTask({ projectId: input().projectId,
       taskId: created.task!.taskId, patch: { status: 'done', completedAt: 4111111111111111 },
     })).rejects.toMatchObject({ problem: 'card-material' });
     expect(fileSnapshot(f.path)).toEqual(bytes);
-    expect(fake.requests).toHaveLength(requests);
+    expect(contentRequests(fake)).toHaveLength(requests);
   } finally { clock.mockRestore(); }
 });
 
@@ -344,7 +354,7 @@ for (const target of ['createdAt', 'updatedAt', 'answeredAt', 'approvedAt', 'com
           metadata: { approvedFrom: 'plan-command', approvedAt: forged } };
       } else changed = { ...value, [target]: forged };
       await f.store.upsertSource({ ...source, metadata: { ...source.metadata, value: changed } });
-      const bytes = fileSnapshot(f.path), requests = fake.requests.length;
+      const bytes = fileSnapshot(f.path), requests = contentRequests(fake).length;
       const events: unknown[] = [];
       f.bus.on('WORK_PLAN_TASK_CREATED', event => { events.push(event); });
       f.bus.on('WORK_PLAN_TASK_UPDATED', event => { events.push(event); });
@@ -355,7 +365,7 @@ for (const target of ['createdAt', 'updatedAt', 'answeredAt', 'approvedAt', 'com
       if (kind === 'state') {
         await expect(reopened.evaluate({ projectId: input().projectId })).rejects.toMatchObject({ problem: 'card-material' });
       }
-      expect(fake.requests).toHaveLength(requests);
+      expect(contentRequests(fake)).toHaveLength(requests);
       expect(fileSnapshot(f.path)).toEqual(bytes);
     } finally { clock.mockRestore(); }
   });
@@ -369,7 +379,7 @@ for (const target of ['createdAt', 'lastCrawledAt'] as const) {
       const f = await fixture(); const fake = install();
       const seeded = await f.service.upsertState(input());
       await f.store.replaceSourceRecord({ ...seeded.source!, [target]: 4111111111111111 });
-      const bytes = fileSnapshot(f.path), requests = fake.requests.length;
+      const bytes = fileSnapshot(f.path), requests = contentRequests(fake).length;
       const events: unknown[] = [];
       f.bus.on('WORK_PLAN_TASK_CREATED', event => { events.push(event); });
       f.bus.on('WORK_PLAN_TASK_UPDATED', event => { events.push(event); });
@@ -377,7 +387,7 @@ for (const target of ['createdAt', 'lastCrawledAt'] as const) {
       const reopened = new ProjectPlanningService(new KnowledgeStore({ dbPath: f.path }), { runtimeBus: f.bus });
       await expect(reopened.upsertState(input())).rejects.toMatchObject({ problem: 'card-material' });
       expect(events).toEqual([]); // No full task/previousTask reaches event/telemetry subscribers.
-      expect(fake.requests).toHaveLength(requests);
+      expect(contentRequests(fake)).toHaveLength(requests);
       expect(fileSnapshot(f.path)).toEqual(bytes);
     } finally { clock.mockRestore(); }
   });
@@ -385,21 +395,29 @@ for (const target of ['createdAt', 'lastCrawledAt'] as const) {
 
 test('numeric compatibility source rewrite changes raw generation and retires an active publication', async () => {
   const clock = spyOn(Date, 'now').mockReturnValue(1000);
+  let held: ReturnType<typeof delayed> | undefined;
+  let pending: Promise<unknown> | undefined;
   try {
     const f = await fixture(); install();
     const seeded = await f.service.upsertState(input());
     const other = new KnowledgeStore({ dbPath: f.path }); await other.init();
     const source = other.getSource(seeded.source!.id)!;
     const generation = other.getSourceGeneration(source.id);
-    const held = delayed(); const pending = f.service.upsertState(input({ goal: 'Add bounded jitter.' }));
+    held = delayed(); pending = f.service.upsertState(input({ goal: 'Add bounded jitter.' }));
+    void pending.catch(() => {});
     await held.entered.promise;
-    // Deliberately use the public numeric view: this is NOT a same-byte rewrite.
-    await other.replaceSourceRecord(source);
+    // The native public writer retains original representation. Inject a real
+    // legacy numeric row through the durable SQLite owner instead.
+    const sqlite = (other as unknown as { sqlite: SQLiteStore }).sqlite;
+    sqlite.run('UPDATE knowledge_sources SET created_at = ?, updated_at = ? WHERE id = ?',
+      [source.createdAt, source.updatedAt, source.id]);
+    await sqlite.save();
+    expect(other.getSourceSnapshot({ id: source.id }).raw?.created_at).toBe(source.createdAt);
     expect(other.getSourceGeneration(source.id)).not.toBe(generation);
     const bytes = fileSnapshot(f.path); held.gate.resolve();
     await expect(pending).rejects.toThrow();
     expect(fileSnapshot(f.path)).toEqual(bytes);
-  } finally { clock.mockRestore(); }
+  } finally { held?.gate.resolve(); await pending?.catch(() => {}); clock.mockRestore(); }
 });
 
 test('legacy numeric collision source remains refused without migration on reopen', async () => {
@@ -408,11 +426,11 @@ test('legacy numeric collision source remains refused without migration on reope
     const f = await fixture(); const fake = install();
     const seeded = await f.service.upsertState(input());
     await f.store.replaceSourceRecord({ ...seeded.source!, createdAt: 1700000000004 });
-    const bytes = fileSnapshot(f.path), requests = fake.requests.length;
+    const bytes = fileSnapshot(f.path), requests = contentRequests(fake).length;
     const reopenedStore = new KnowledgeStore({ dbPath: f.path });
     const reopened = new ProjectPlanningService(reopenedStore);
     await expect(reopened.upsertState(input())).rejects.toMatchObject({ problem: 'card-material' });
-    expect(fake.requests).toHaveLength(requests);
+    expect(contentRequests(fake)).toHaveLength(requests);
     expect(fileSnapshot(f.path)).toEqual(bytes);
     expect(reopenedStore.getSourceSnapshot({ id: seeded.source!.id }).raw?.created_at).toBe(1700000000004);
   } finally { clock.mockRestore(); }
@@ -444,7 +462,7 @@ test('constructor admits the exact default project before credential-erasing nor
   expect(() => new ProjectPlanningService(f.store, {
     defaultProjectId: 'password=SYNTHETIC_NOT_A_REAL_SECRET', runtimeBus: f.bus,
   })).toThrow(JudgmentInputError);
-  expect(fake.requests).toHaveLength(0);
+  expect(contentRequests(fake)).toHaveLength(0);
   expect(fileSnapshot(f.path)).toEqual(bytes);
   const service = new ProjectPlanningService(f.store, { runtimeBus: f.bus });
   expect((await service.evaluate({ state: input().state })).state.projectId).toBe('default');
@@ -459,7 +477,7 @@ for (const target of ['createdAt', 'updatedAt'] as const) for (const malformed o
       const f = await fixture(); const fake = install();
       const seeded = await f.service.upsertState(input());
       await f.store.replaceSourceRecord({ ...seeded.source!, [target]: malformed } as unknown as NonNullable<typeof seeded.source>);
-      const bytes = fileSnapshot(f.path), requests = fake.requests.length;
+      const bytes = fileSnapshot(f.path), requests = contentRequests(fake).length;
       const reopenedStore = new KnowledgeStore({ dbPath: f.path });
       const reopened = new ProjectPlanningService(reopenedStore);
       await expect(reopened.evaluate({ projectId: input().projectId })).rejects.toMatchObject({ problem: 'unsupported-input' });
@@ -468,7 +486,7 @@ for (const target of ['createdAt', 'updatedAt'] as const) for (const malformed o
       // the service's original-row admission.
       await expect(reopenedStore.upsertCanonicalSource({ ...seeded.source! }))
         .rejects.toMatchObject({ problem: 'unsupported-input' });
-      expect(fake.requests).toHaveLength(requests);
+      expect(contentRequests(fake)).toHaveLength(requests);
       expect(fileSnapshot(f.path)).toEqual(bytes);
     } finally { clock.mockRestore(); }
   });
@@ -496,15 +514,15 @@ test('knowledge v8 upgrade snapshots original bytes and stamps v9 without rewrit
   try {
     await upgraded.init();
     const sqlite = (upgraded as unknown as { sqlite: SQLiteStore }).sqlite;
-    expect(sqlite.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]);
+    expect(sqlite.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]);
     expect(sqlite.exec('SELECT * FROM knowledge_sources ORDER BY id')).toEqual(originalRows);
     const snapshots = listStoreSnapshots(path);
     expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]?.reason).toBe('pre-migration-v8-to-v9');
+    expect(snapshots[0]?.reason).toBe(`pre-migration-v8-to-v${KNOWLEDGE_SCHEMA_VERSION}`);
     expect(readFileSync(snapshots[0]!.path)).toEqual(before);
     const SQL = await loadSqlJsEngine();
     const saved = new SQL.Database(readFileSync(path));
-    try { expect(saved.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); }
+    try { expect(saved.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]); }
     finally { saved.close(); }
   } finally { await upgraded.close(); }
 });
@@ -516,7 +534,7 @@ test('first canonical planning publication is v9 and an old-target v8 open refus
   expect(typeof f.store.getSourceSnapshot({ id: seeded.source!.id }).raw?.created_at).toBe('string');
   const SQL = await loadSqlJsEngine();
   const persisted = new SQL.Database(readFileSync(f.path));
-  try { expect(persisted.exec('PRAGMA user_version')[0]?.values).toEqual([[9]]); }
+  try { expect(persisted.exec('PRAGMA user_version')[0]?.values).toEqual([[KNOWLEDGE_SCHEMA_VERSION]]); }
   finally { persisted.close(); }
   const before = readFileSync(f.path), snapshots = listStoreSnapshots(f.path);
   const oldTarget = new SQLiteStore(f.path, { coordinated: true });
@@ -544,7 +562,7 @@ test('historical v8 missing a durable table refuses v9 upgrade without silent re
   expect(readFileSync(path)).toEqual(before);
   const snapshots = listStoreSnapshots(path);
   expect(snapshots).toHaveLength(1);
-  expect(snapshots[0]?.reason).toBe('pre-migration-v8-to-v9');
+  expect(snapshots[0]?.reason).toBe(`pre-migration-v8-to-v${KNOWLEDGE_SCHEMA_VERSION}`);
   expect(readFileSync(snapshots[0]!.path)).toEqual(before);
   const SQL = await loadSqlJsEngine();
   const persisted = new SQL.Database(readFileSync(path));

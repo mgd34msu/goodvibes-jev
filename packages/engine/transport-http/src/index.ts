@@ -11,6 +11,7 @@ export {
 } from './contract-client.js';
 export type { JsonSchemaValidationFailure, MethodArgs, RequiredKeys, WithoutKeys } from './client-plumbing.js';
 export { clientInputRecord, firstJsonSchemaFailure, firstJsonSchemaFailureAsync, mergeClientInput, splitClientArgs } from './client-plumbing.js';
+export { retainJsonSchemaSource } from './retained-schema-source.js';
 export type {
   HttpJsonRequestOptions,
   HttpTransport,

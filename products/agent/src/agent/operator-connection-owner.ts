@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ShellPathService } from '@/runtime/index.ts';
 import { connectedHostBaseUrl } from '../config/connected-host-dial.ts';
-import { retainCliConfig } from '../cli/config-owner.ts';
+import { retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { readConnectedHostOperatorToken } from '../runtime/connected-host-auth.ts';
 import { agentHostPairingStorePath, canonicalizePairingHost } from '../runtime/connected-host-pairing-store.ts';
 import type { AgentConnectedHostConfigReader } from './routine-schedule-promotion.ts';

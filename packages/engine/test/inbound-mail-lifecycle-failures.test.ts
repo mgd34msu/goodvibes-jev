@@ -420,9 +420,14 @@ describe('a run loop that dies is observed, never swallowed', () => {
 
     await waitFor(() => rig.supervisor.status.running === false, 'status to stop claiming running');
     expect(rig.supervisor.status.mode).toBe('inactive');
-    expect(rig.supervisor.status.reason).toContain('ENOSPC');
-    expect(rig.supervisor.terminalFailure).not.toBeNull();
+    const terminal = rig.supervisor.terminalFailure;
+    expect(terminal).not.toBeNull();
+    if (terminal === null) throw new Error('Expected the original mail run-loop terminal failure');
+    expect(rig.supervisor.status.reason).toBe(`[REDACTED] ${terminal.fix}`);
+    expect(rig.supervisor.status.reason).not.toContain('ENOSPC');
+    expect(terminal).toMatchObject({ reason: 'watcher-stopped-unexpectedly', detail: '[REDACTED]' });
     expect(observer.terminals.length).toBe(1);
+    expect(observer.terminals[0]).toEqual(terminal);
     expect(rig.supervisor.health().state).toBe('degraded');
 
     await rig.supervisor.stop();

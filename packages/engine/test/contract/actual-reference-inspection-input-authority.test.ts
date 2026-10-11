@@ -277,6 +277,7 @@ for (const workflow of ['references', 'inspection', 'analysis', 'edit', 'write-r
         if (scenario === 'denied') {
           expect(subjectSettlementObserved).toBe(true);
           expect(settledTargetIdentity).toBe(subjectTargetIdentity);
+          expect(fixtureIdentity(join(root, target))).toBe(originalTargetIdentity);
           if (workflow === 'analysis') {
             // The existing preview envelope carries a structured read refusal.
             // Its transport success flag is not successful analysis evidence.
@@ -285,7 +286,10 @@ for (const workflow of ['references', 'inspection', 'analysis', 'edit', 'write-r
             expect(refusal.diff).toBeUndefined();
           } else {
             expect(subject?.output).toBeUndefined();
-            expect(subject?.error).toMatch(/captured input (?:path is access-restricted|tool held:)/i);
+            if (workflow === 'references') expect(subject?.error).toBe('[REDACTED]');
+            else if (workflow === 'inspection') expect(subject?.error).toBe('inspect (components): [REDACTED]');
+            else if (workflow === 'edit') expect(subject?.error).toBe('Unexpected error: [REDACTED]');
+            else expect(subject?.error).toMatch(/captured input (?:path is access-restricted|tool held:)/i);
           }
           expect(opened).not.toContain(join(memberRoot, target));
         } else {

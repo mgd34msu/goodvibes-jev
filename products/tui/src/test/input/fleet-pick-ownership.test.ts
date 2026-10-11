@@ -8,6 +8,7 @@ import { FleetActs, type FleetDiffSurface } from '../../views/fleet-acts.ts';
 import { createFleetReadModel } from '../../views/fleet-read-model.ts';
 import type { FleetGateway, FleetHeldMergeGroup, FleetPickResult } from '../../views/fleet-gateway.ts';
 import { contractFixture, contractUnit } from '../helpers/contract-work-tree-fixtures.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
@@ -145,9 +146,13 @@ describe('contract attempt picker ownership through real Agents modal input', ()
       if (!input.confirm && ++previews === 1) throw new Error('Synthetic preview failure');
       return receipt(input.confirm);
     } });
-    f.host.handleToken(key('enter')); await flush(); f.host.handleToken(key('enter')); await flush();
+    await withPublicErrorText(['Synthetic preview failure'], async () => {
+      f.host.handleToken(key('enter')); await flush(); f.host.handleToken(key('enter')); await flush();
+    });
     expect(f.notes.join(' ')).toContain('Synthetic preview failure'); expect(f.acts.pickModeActive()).toBe(true);
+    expect(previews).toBe(1); expect(f.confirms).toEqual([]); expect(f.shown).toEqual([]);
     f.host.handleToken(key('enter')); await flush(); expect(f.confirms).toHaveLength(1);
+    expect(previews).toBe(2);
     f.host.escape(); await flush(); expect(f.acts.pickModeActive()).toBe(false);
     expect(f.notes.join(' ')).toContain('nothing merged');
   });

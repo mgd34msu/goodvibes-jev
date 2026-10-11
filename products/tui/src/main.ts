@@ -250,10 +250,6 @@ async function main() {
   const powerChipSource = createPowerChipSource({ powerManager: ctx.services.powerManager, render: () => render(), isExternalDaemon,
     onPowerEvent: (cb) => uiServices.events.ops.on('OPS_POWER_STATE_CHANGED', cb as never), fetchDaemonPowerState: () => fetchDaemonPowerState({ configManager, homeDirectory, isExternalDaemon }) });
   unsubs.push(powerChipSource.stop, installKeepAwakeRemoteForward({ configManager, homeDirectory, isExternalDaemon }));
-  // The interactive process composes a full runtime graph too, and that graph
-  // starts pollers. Drained with the rest of the teardown registry on exit.
-  unsubs.push(() => { ctx.services.dispose(); });
-
   const lifecycle = installProcessLifecycle({
     stdin,
     stdout,

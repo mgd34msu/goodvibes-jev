@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +7,7 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
-import type { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
 import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 import { reviewKnowledgeIssue } from '../sdk/src/platform/knowledge/review.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
@@ -259,18 +259,30 @@ describe('prepared answer-gap universe and write guards', () => {
   test('a late issue SQL failure rolls back the new gap, edges and revisions together', async () => {
     const item = await fixture(), before = snapshot(item.store), bytes = readFileSync(item.store.storagePath);
     readings(0.01); const prepared = await prepare(item).read();
-    const database = (item.store as unknown as { sqlite: SQLiteStore }).sqlite;
-    const originalRun = database.run.bind(database); let reachedIssue = false;
-    database.run = (sql, params) => {
-      if (sql.includes('INSERT OR REPLACE INTO knowledge_issues')) {
-        reachedIssue = true; throw new Error('Synthetic late answer-gap SQL failure');
-      }
-      originalRun(sql, params);
-    };
+    const publish = SQLiteStore.prototype.publishPrepared;
+    const owners: SQLiteStore[] = [];
+    let reachedIssue = false;
+    const publication = spyOn(SQLiteStore.prototype, 'publishPrepared').mockImplementation(function(this: SQLiteStore, operation, assertCurrent, onCommit) {
+      owners.push(this);
+      return publish.call(this, (database) => {
+        operation({
+          ...database,
+          run(sql, params) {
+            if (sql.includes('INSERT OR REPLACE INTO knowledge_issues')) {
+              reachedIssue = true; throw new Error('Synthetic late answer-gap SQL failure');
+            }
+            database.run(sql, params);
+          },
+        });
+      }, assertCurrent, onCommit);
+    });
     try { await expect(prepared.persist(reason)).rejects.toThrow('Synthetic late answer-gap SQL failure'); }
-    finally { database.run = originalRun; }
+    finally { publication.mockRestore(); }
     expect(reachedIssue).toBe(true); expect(snapshot(item.store)).toEqual(before);
     expect(readFileSync(item.store.storagePath)).toEqual(bytes);
+    expect(owners).toHaveLength(1);
+    const database = owners[0];
+    if (!database) throw new Error('The staged publication never reached its SQLite owner.');
     await database.save(); await unchanged(item.store, before);
   });
 
@@ -301,6 +313,33 @@ describe('prepared answer-gap universe and write guards', () => {
         await expect(prepared.persist(reason)).rejects.toMatchObject({ reason: 'stale' });
       }
       expect(revision).toBeGreaterThan(0); await unchanged(item.store, before);
+    });
+
+    test(`caller mutation during ${stage} retires the universe before any later gap effect`, async () => {
+      const item = await fixture(), fake = readings(), bytes = readFileSync(item.store.storagePath);
+      let armed = stage === 'reading';
+      let afterMutation: ReturnType<typeof snapshot> | undefined;
+      const plan = prepare(item, {}, () => {
+        if (!armed || afterMutation) return;
+        Object.defineProperty(item.source, 'summary', { value: 'Changed by the retained caller callback.', enumerable: true });
+        afterMutation = snapshot(item.store);
+      });
+      if (stage === 'reading') {
+        expect(() => plan.assertCurrent()).toThrow(/stale/);
+        await expect(plan.read()).rejects.toMatchObject({ reason: 'stale' });
+        expect(fake.requests).toHaveLength(0);
+      } else {
+        const prepared = await plan.read();
+        const requests = fake.requests.length;
+        armed = true;
+        expect(() => prepared.assertCurrent()).toThrow(/stale/);
+        await expect(prepared.persist(reason)).rejects.toMatchObject({ reason: 'stale' });
+        expect(fake.requests).toHaveLength(requests);
+      }
+      expect(afterMutation).toBeDefined();
+      if (!afterMutation) throw new Error('The retained caller did not perform its mutation.');
+      expect(snapshot(item.store)).toEqual(afterMutation);
+      expect(readFileSync(item.store.storagePath).equals(bytes)).toBe(true);
     });
   }
 

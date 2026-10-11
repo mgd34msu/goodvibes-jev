@@ -16,6 +16,7 @@ import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '@g
 import { createLocalMemoryAccess, type MemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
 import { buildVibeProjectionPrompt, importVibeFilesIntoMemoryOnce } from '../../agent/vibe-file.ts';
 import { createShellPathService } from '@/runtime/index.ts';
+import { nativeMemoryWorkPrivacy } from '../helpers/native-memory-work-readings.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 function tempShellPaths() {
@@ -57,7 +58,7 @@ describe('VIBE.md persona migration', () => {
       return noulAnswer(0.03);
     });
     lineRequests = readings.requests;
-    previousPort = installJudgmentPort(readings.port);
+    previousPort = installJudgmentPort(nativeMemoryWorkPrivacy(readings.port).port);
   });
 
   afterEach(() => {
@@ -78,8 +79,8 @@ describe('VIBE.md persona migration', () => {
     expect(firstRun).toBe(2);
     expect(registry.getAll().filter((r) => r.cls === 'constraint')).toHaveLength(2);
 
-    expect(lineRequests).toHaveLength(1);
-    expect(Object.keys(lineRequests[0]!.questions)).toEqual(['instruction']);
+    expect(lineRequests.filter(request => Object.hasOwn(request.questions, 'instruction'))).toHaveLength(1);
+    expect(Object.keys(lineRequests.find(request => Object.hasOwn(request.questions, 'instruction'))!.questions)).toEqual(['instruction']);
     const markerPath = shellPaths.resolveUserPath('agent', 'vibe-import.migrated.json');
     const marker = JSON.parse(readFileSync(markerPath, 'utf8')) as { migrated: Record<string, string> };
     const vibePath = join(shellPaths.workingDirectory, 'VIBE.md');
@@ -88,8 +89,9 @@ describe('VIBE.md persona migration', () => {
     // Second run is a no-op, the persisted marker also prevents new readings.
     const secondRun = await importVibeFilesIntoMemoryOnce(memorySpine, shellPaths);
     expect(secondRun).toBe(0);
-    expect(lineRequests).toHaveLength(1);
+    expect(lineRequests.filter(request => Object.hasOwn(request.questions, 'instruction'))).toHaveLength(1);
     expect(registry.getAll().filter((r) => r.cls === 'constraint')).toHaveLength(2);
+    expect(lineRequests).toHaveLength(1);
   });
 
   test('the VIBE projection renders from persona records with the precedence caveat', async () => {

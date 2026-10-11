@@ -165,6 +165,23 @@ export function preparedNodeWrite(store: KnowledgeStore, token: KnowledgePrepare
   const draft = pass.nodes[index]!;
   return { ...draft, existing: pass.committed.get(draft.record.id) ?? draft.existing };
 }
+/** Collect the exact private pass without repeating its complete guard for each slot. */
+export function preparedNodeWrites(store: KnowledgeStore, token: KnowledgePreparedNodeWrites, scope: object): readonly PreparedNode[] {
+  const pass = prepared.get(token);
+  if (!pass || pass.store !== store || pass.scope !== scope) throw new Held('malformed');
+  assertPreparedNodeWrites(store, token, scope);
+  const nodes: PreparedNode[] = [];
+  for (let index = 0; index < pass.nodes.length; index++) {
+    const draft = pass.nodes[index];
+    if (!Number.isInteger(index) || !draft || pass.written.has(index)) throw new Held('stale');
+    nodes.push({ ...draft, existing: pass.committed.get(draft.record.id) ?? draft.existing });
+  }
+  assertPreparedNodeWrites(store, token, scope);
+  for (let index = 0; index < pass.nodes.length; index++) {
+    if (!Number.isInteger(index) || !pass.nodes[index] || pass.written.has(index)) throw new Held('stale');
+  }
+  return nodes;
+}
 export function markPreparedNodeWritten(token: KnowledgePreparedNodeWrites, index: number): void {
   const pass = prepared.get(token)!, draft = pass.nodes[index]!;
   pass.written.add(index); pass.committed.set(draft.record.id, draft.record);

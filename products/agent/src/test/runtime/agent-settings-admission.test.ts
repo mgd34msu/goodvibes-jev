@@ -56,7 +56,7 @@ beforeEach(() => {
 afterEach(async () => {
   try {
     for (const runtime of runtimes.splice(0).reverse()) {
-      try { await runtime.processManager.close(); } finally { runtime.dispose(); }
+      try { await runtime.processManager.close(); } finally { await runtime.close(); }
     }
   } finally {
     restoreRead?.(); restoreRead = undefined;
@@ -158,11 +158,22 @@ async function remoteOwner(root: string, home: string, mode: 'normal' | 'lost-re
 const read = (path: string) => ({ files: [{ path }] });
 const setting = (value = 'nord') => ({ mode: 'set', key: 'display.theme', value, confirm: true });
 
+function expectNoSettingsAdmission(previousGrants: number, ...withheld: string[]) {
+  expect(requests.filter(request => 'disposition' in request.questions || 'hazard' in request.questions)).toHaveLength(0);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(previousGrants);
+  for (const value of withheld) expect(JSON.stringify(requests)).not.toContain(value);
+}
+
 test('recorded settings act is not vetoed by missing caller-authored request prose', async () => {
   const f = await fixture();
   f.source.goal = 'Revoke unattended read capability by setting permissions.tools.read to deny in the scratch config';
   const result = await f.run('goodvibes_settings', { mode: 'set', key: 'permissions.tools.read', value: 'deny', confirm: true });
-  expect(result.autonomousDecision?.outcome).toBe('act'); expect(result.success).toBe(true);
+  expect(result.autonomousDecision?.outcome).toBe('act');
+  expect(result.success).toBe(false);
+  expect(result.error).toBe('Settings invocation retired after its recorded effects; no remaining work was dispatched.');
+  expect(JSON.parse(result.output!)).toMatchObject({ status: 'committed',
+    completedPaths: [f.runtime.configManager.getConfigPath()] });
+  expect(JSON.parse(readFileSync(f.runtime.configManager.getConfigPath(), 'utf8'))).toMatchObject({ permissions: { tools: { read: 'deny' } } });
   expect(f.runtime.configManager.get('permissions.tools.read')).toBe('deny'); expect(f.prompts()).toBe(0);
   expect(requests.filter(request => 'hazard' in request.questions)).toHaveLength(1);
 });
@@ -309,7 +320,7 @@ test('protected previous value under an ordinary key is held before any judgment
   const synthetic = 'https://fixture:synthetic-private@example.invalid/model';
   f.runtime.configManager.set('provider.model', synthetic);
   await expect(f.run('goodvibes_settings', { mode: 'set', key: 'provider.model', value: 'ordinary-model', confirm: true })).rejects.toThrow('Tool input projection unavailable');
-  expect(requests).toHaveLength(0);
+  expectNoSettingsAdmission(0, synthetic, 'synthetic-private');
   expect(f.runtime.configManager.get('provider.model')).toBe(synthetic);
 });
 
@@ -342,9 +353,11 @@ test('known credential old material stays posture-only and raw intended values n
   expect(safe.success).toBe(true);
   expect(JSON.stringify(requests)).not.toContain(synthetic);
   expect(safe.output).not.toContain(synthetic);
+  const previousGrants = log.query({ site: 'engine.gate.autonomous-tool' }).length;
+  expect(previousGrants).toBe(1);
   requests.length = 0;
   await expect(f.run('goodvibes_settings', { mode: 'set', key, value: 'synthetic-new-inline-credential', confirm: true })).rejects.toThrow();
-  expect(requests).toHaveLength(0);
+  expectNoSettingsAdmission(previousGrants, 'synthetic-new-inline-credential');
   expect(f.runtime.configManager.get(key)).toBe('goodvibes://secrets/mail-fixture/password');
 });
 
@@ -399,7 +412,7 @@ test.each(['revoked', 'lost-response'] as const)('actual Agent remote %s is unkn
 test('actual Agent read-only config owner cannot prepare a settings effect even for scripted act', async () => {
   const f = await fixture(undefined, true); const before = f.runtime.configManager.get('display.theme');
   await expect(f.run('goodvibes_settings', setting())).rejects.toThrow();
-  expect(requests).toHaveLength(0); expect(f.runtime.configManager.get('display.theme')).toBe(before);
+  expectNoSettingsAdmission(0); expect(f.runtime.configManager.get('display.theme')).toBe(before);
 });
 
 test.each(['copied', 'different-manager'] as const)('settings proof rejects %s admission before beginning mutation', async kind => {

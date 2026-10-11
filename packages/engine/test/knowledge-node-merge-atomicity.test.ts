@@ -64,8 +64,8 @@ describe('knowledge merge authority and atomicity', () => {
       } finally { writes.mockRestore(); saves.mockRestore(); }
       expect(snapshot(store)).toEqual(before);
       expect(readFileSync(dbPath)).toEqual(bytes);
-      expect(snapshot(await open())).toEqual(before);
       expect(readings.requests).toHaveLength(0);
+      expect(snapshot(await open())).toEqual(before);
     });
   }
 
@@ -130,13 +130,15 @@ describe('knowledge merge authority and atomicity', () => {
     expect(store.getNode('loser')!.metadata.review).toBeUndefined();
     expect(store.getNode('loser')!.metadata.reviewProvenance).toMatchObject({ state: 'explicit' });
     expect(store.listNodeRevisions('loser').map((revision) => revision.status)).toEqual(['draft', 'stale']);
+    expect(readings.requests).toHaveLength(0);
     expect(snapshot(await open())).toEqual(snapshot(store));
+    const beforeReplayRequests = readings.requests.length;
     const merged = snapshot(store);
     const mergedBytes = readFileSync(dbPath);
     expect(await store.mergeNodes('loser', 'winner')).toEqual({ merged: true, repointedEdges: 0 });
     expect(snapshot(store)).toEqual(merged);
     expect(readFileSync(dbPath)).toEqual(mergedBytes);
-    expect(readings.requests).toHaveLength(0);
+    expect(readings.requests).toHaveLength(beforeReplayRequests);
   });
 
   test('partial field review survives a permitted structural merge without becoming full approval', async () => {

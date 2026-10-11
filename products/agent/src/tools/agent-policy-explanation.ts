@@ -235,25 +235,34 @@ function predictPermission(context: CommandContext, toolName: string): Permissio
   };
 }
 
-function harnessModeRequiresConfirmation(toolName: string, toolArgs: Record<string, unknown>): boolean {
+function harnessModeRequiresRecordedAdmission(toolName: string, toolArgs: Record<string, unknown>): boolean {
   if (toolName !== 'agent_harness') return false;
   const mode = readString(toolArgs.mode);
   if (!mode) return false;
-  return HARNESS_MODE_DESCRIPTORS.some((descriptor) => descriptor.id === mode && descriptor.requiresConfirmation === true);
+  return HARNESS_MODE_DESCRIPTORS.some((descriptor) => descriptor.id === mode && descriptor.kind === 'effect');
 }
 
 function confirmationState(toolName: string, toolArgs: Record<string, unknown>, definition: ToolDefinition | undefined, category: PermissionCategory): {
   readonly required: boolean;
   readonly confirmed: boolean;
+  readonly recordedAdmissionRequired: boolean;
   readonly reason: string;
 } {
+  if (harnessModeRequiresRecordedAdmission(toolName, toolArgs)) {
+    return {
+      required: false,
+      confirmed: false,
+      recordedAdmissionRequired: true,
+      reason: 'This effect route requires current recorded Jev act admission for the exact invocation and current source and boundary checks. Caller confirmation fields do not establish that authority.',
+    };
+  }
   const schemaRequestsConfirmation = hasSchemaProperty(definition, 'confirm') && hasSchemaProperty(definition, 'explicitUserRequest');
-  const required = harnessModeRequiresConfirmation(toolName, toolArgs)
-    || (schemaRequestsConfirmation && category !== 'read');
+  const required = schemaRequestsConfirmation && category !== 'read';
   if (!required) {
     return {
       required: false,
       confirmed: true,
+      recordedAdmissionRequired: false,
       reason: 'The tool contract does not declare typed confirmation for this route.',
     };
   }
@@ -261,6 +270,7 @@ function confirmationState(toolName: string, toolArgs: Record<string, unknown>, 
   return {
     required,
     confirmed,
+    recordedAdmissionRequired: false,
     reason: confirmed
       ? 'Typed confirmation is present: confirm:true and explicitUserRequest are set.'
       : 'Typed confirmation is required: pass confirm:true and explicitUserRequest.',
@@ -318,6 +328,8 @@ export async function explainAgentPolicyDecision(
   const status = statusFor(guard, confirmation);
   const requiredActions = [
     ...(status !== 'denied' ? ['The live permission gate must evaluate this exact call before execution.'] : []),
+    ...(status !== 'denied' && confirmation.recordedAdmissionRequired
+      ? ['Execute this exact route only with current recorded Jev act admission and current source and boundary checks.'] : []),
     ...(confirmation.required && !confirmation.confirmed ? ['Call the route with confirm:true and explicitUserRequest.'] : []),
   ];
   // The overall approval posture, computed by the SAME shared helper that
@@ -361,8 +373,9 @@ export async function explainAgentPolicyDecision(
           ...(permission.configuredAction ? { configuredAction: permission.configuredAction } : {}),
         },
         {
-          layer: 'Tool confirmation',
-          outcome: confirmation.required ? (confirmation.confirmed ? 'confirmed' : 'required') : 'not_required',
+          layer: confirmation.recordedAdmissionRequired ? 'Recorded effect admission' : 'Tool confirmation',
+          outcome: confirmation.recordedAdmissionRequired ? 'not_evaluated'
+            : confirmation.required ? (confirmation.confirmed ? 'confirmed' : 'required') : 'not_required',
           reason: confirmation.reason,
         },
       ],
@@ -374,6 +387,8 @@ export async function explainAgentPolicyDecision(
         permissionOutcome: permission.outcome,
         toolConfirmationRequired: confirmation.required,
         toolConfirmationSatisfied: confirmation.confirmed,
+        recordedAdmissionRequired: confirmation.recordedAdmissionRequired,
+        recordedAdmissionEvaluated: false,
       },
       toolArgs: redactArgs(toolArgs),
       routes: {

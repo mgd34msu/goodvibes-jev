@@ -42,8 +42,12 @@ beforeEach(() => {
   mkdirSync(join(root, 'src'));
   const fake = fakePort((name, _question, state) => {
     if (name !== 'match') throw new Error(`unexpected question ${name}`);
-    const entry = (state as { candidate: { name: string } }).candidate.name;
-    return noulAnswer(ANSWERS[entry] ?? 0.03);
+    if (state === null || typeof state !== 'object' || Array.isArray(state) || state.query !== WATCHED_CONFIG_QUERY) throw new Error('Unexpected watched configuration query');
+    const candidate = state.candidate;
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate) || typeof candidate.name !== 'string') throw new Error('Unexpected watched configuration candidate');
+    const probability = ANSWERS[candidate.name];
+    if (probability === undefined) throw new Error('Unrecorded watched configuration candidate');
+    return noulAnswer(probability);
   });
   requests = fake.requests;
   previous = installJudgmentPort(fake.port);
@@ -62,11 +66,10 @@ describe('FileWatcher root configuration reading', () => {
     const watched = [...watcher.getWatchedPaths()].sort();
     expect(watched).toEqual([join(root, '.env.staging'), join(root, '.goodvibes'), join(root, 'package.json')].sort());
     // One request per regular file (the src directory is not read), names only.
-    const states = requests.map((request) => request.state as { query: string; candidate: { name: string } });
-    expect(states.every((state) => state.query === WATCHED_CONFIG_QUERY)).toBe(true);
-    expect(states.map((state) => state.candidate).sort((a, b) => a.name.localeCompare(b.name))).toEqual(
-      ['.env.staging', 'package.json', 'pyproject.toml', 'README.md'].sort((a, b) => a.localeCompare(b)).map((name) => ({ name })),
-    );
+    const states = requests.filter(request => request.context?.battery === 'engine.state.watched-config')
+      .map((request) => request.state);
+    expect(states).toHaveLength(4);
+    expect(states).toEqual(Object.keys(ANSWERS).sort().map(name => ({ query: WATCHED_CONFIG_QUERY, candidate: { name } })));
   });
 
   test('a stop while the root is being read leaves nothing watched', async () => {

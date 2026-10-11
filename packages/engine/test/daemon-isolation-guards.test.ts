@@ -335,12 +335,13 @@ describe('the compiled daemon says why it will not start', () => {
     expect(run.stderr.length).toBeGreaterThan(0);
     expect(run.stderr).toContain(settingsPath);
     expect(run.stderr).toContain('could not be read as JSON');
-    expect(run.stderr).toContain('JSON Parse error');
-    expect(run.stderr).toContain('at ');
+    expect(run.stderr).toContain('goodvibes daemon host failed: [REDACTED]');
+    expect(run.stderr).not.toContain('JSON Parse error');
     const logDir = join(home, 'work', '.goodvibes', 'logs');
     const logged = readdirSync(logDir).map(name => readFileSync(join(logDir, name), 'utf8')).join('\n');
     expect(logged).toContain('goodvibes daemon host failed');
-    expect(logged).toContain(settingsPath);
+    expect(logged).toContain('"file": "[REDACTED]"');
+    expect(logged).not.toContain(settingsPath);
   });
 
   test('a safety-gate refusal names the key and the reason on stderr', () => {

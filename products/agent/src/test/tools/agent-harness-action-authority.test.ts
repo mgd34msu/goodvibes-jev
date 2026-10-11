@@ -106,8 +106,9 @@ test('trusted facade translation and nested same-object forwarding retain the or
   const middle: Tool = { ...inner, execute: (args, options) => forwardHarnessCatalogCall(inner, args, args, options) };
   const tools = fixture((original, options) => forwardHarnessCatalogCall(middle, original, { mode: 'set_keybinding' }, options));
   expect(await tools.run({ action: 'set_keybinding' })).toMatchObject({ success: true });
-  if (!retainedArgs) throw new Error('Synthetic forwarded body did not run');
-  expect(() => requireConfirmedAction(retainedArgs, retainedOptions, 'Expired translated action')).toThrow(ToolInputProjectionError);
+  const capturedArgs = retainedArgs;
+  if (!capturedArgs) throw new Error('Synthetic forwarded body did not run');
+  expect(() => requireConfirmedAction(capturedArgs, retainedOptions, 'Expired translated action')).toThrow(ToolInputProjectionError);
 });
 
 test('raw facade forwarding cannot mint proof from confirmation fields', async () => {

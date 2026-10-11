@@ -141,7 +141,7 @@ describe('OpenAIProvider.refreshModels', () => {
           expect(provider.models).not.toContain('text-embedding-3-small');
           expect(provider.models).not.toContain('whisper-1');
           expect(provider.models).not.toContain('dall-e-3');
-          expect(chat.requests).toHaveLength(5);
+          expect(chat.requests.filter((request) => 'chat' in request.questions)).toHaveLength(5);
         },
       );
     });

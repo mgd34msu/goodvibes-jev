@@ -1,4 +1,4 @@
-import { assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
+import { assertKnowledgeRecordAdmissions, assertKnowledgeRecordContainers, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../store-record-snapshot.js';
 import { captureOwnedJson } from '../../gate/judgment-input.js';
 import { KnowledgeRepairSourceAuthorityHeldError } from './repair-source-authority/types.js';
 import { createKnowledgeFactQualityReader } from './fact-quality.js';
@@ -419,6 +419,7 @@ export async function prepareSourceLinkedRepairProfileFacts(
       void Promise.resolve(result).catch(() => {});
       throw new KnowledgeRepairSourceAuthorityHeldError('stale');
     }
+    assertOriginalOptions();
   };
   assertCallerCurrent();
   const store = inputs[0]?.store;
@@ -600,10 +601,7 @@ function admitEmptyRepairCount(store: KnowledgeStore, spaceId: string, gap: Know
   }
   return () => {
     try { store.assertRecordSnapshotFrame(() => {
-      for (const admission of admissions) {
-        try { admission.assertCurrent(); }
-        catch (error) { if (error instanceof KnowledgeRecordAdmissionHeldError) throw new KnowledgeRepairSourceAuthorityHeldError(error.reason); throw error; }
-      }
+      assertKnowledgeRecordAdmissions(store, admissions);
       for (const { id, source, extraction } of evidence) {
         if (store.getSource(id) !== source || store.getExtractionBySourceId(id) !== extraction) throw new KnowledgeRepairSourceAuthorityHeldError('stale');
       }

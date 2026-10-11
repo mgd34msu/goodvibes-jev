@@ -14,6 +14,7 @@ import { prepareKnowledgeExtraction } from '../sdk/src/platform/knowledge/prepar
 import { KnowledgeExtractionJudgmentHoldError } from '../sdk/src/platform/knowledge/extraction-policy.js';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { createCompressedPdfBuffer } from './_helpers/homegraph-service-fixtures.js';
+import { knowledgeIngestErrorReadings } from './_helpers/knowledge-ingest-error-readings.js';
 
 let previous: JudgmentPort | undefined;
 let root: string;
@@ -119,6 +120,7 @@ test('a prepared result is bound to source, artifact and immutable artifact byte
 
 test('ordinary parse failures retain the failed-record path', async () => {
   const ctx = context();
+  installJudgmentPort(knowledgeIngestErrorReadings().port);
   const artifact = await ctx.artifactStore.createFromStream({ kind: 'document', filename: 'empty.pdf', mimeType: 'application/pdf', stream: [createCompressedPdfBuffer('')] });
   const result = await ingestKnowledgeArtifact(ctx, { artifactId: artifact.id, title: 'Empty PDF', sourceType: 'document' });
   expect(result.source.status).toBe('failed');

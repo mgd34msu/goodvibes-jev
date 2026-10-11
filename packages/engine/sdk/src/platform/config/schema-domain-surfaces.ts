@@ -19,6 +19,8 @@ export const surfaceConfigDefaults = {
     publicKey: '',
     botToken: '',
     applicationId: '',
+    inboxBotUserId: '',
+    inboxChannelIds: '',
     defaultChannelId: '',
     guildId: '',
     setupVersion: 0,
@@ -212,6 +214,18 @@ export const surfaceConfigSettings: ConfigSettingDefinition[] = [
     type: 'string',
     default: '',
     description: 'Discord application ID used for interaction responses',
+  },
+  {
+    key: 'surfaces.discord.inboxBotUserId',
+    type: 'string',
+    default: '',
+    description: 'Expected Discord bot user ID for protected inbox reads; the token must prove this identity before any message history is requested',
+  },
+  {
+    key: 'surfaces.discord.inboxChannelIds',
+    type: 'string',
+    default: '',
+    description: 'Comma-separated explicit bot-readable one-to-one DM channel IDs for protected inbox reads (1–200 unique IDs); group DMs and inferred historical discovery are unsupported',
   },
   {
     key: 'surfaces.discord.defaultChannelId',

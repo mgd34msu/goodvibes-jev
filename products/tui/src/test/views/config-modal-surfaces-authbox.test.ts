@@ -85,11 +85,12 @@ describe('local-auth modal surface', () => {
     expect(rowsText(view)).toContain('alice');
   });
 
-  test('degrades honestly when inspect() throws', () => {
+  test('degrades honestly and withholds unqualified private detail when inspect() throws', () => {
     const broken = { inspect: () => { throw new Error('boom'); } } as unknown as LocalAuthInspectionQuery;
     const surface = createLocalAuthModalSurface(broken);
     const view = surface.buildView();
-    expect(view.degraded).toContain('boom');
+    expect(view.degraded).toBe('Local auth inspection failed: [REDACTED]');
+    expect(view.degraded).not.toContain('boom');
     expect(view.tabs[0]!.rows).toHaveLength(0);
   });
 

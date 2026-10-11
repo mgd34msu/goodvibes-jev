@@ -11,6 +11,11 @@ import { executionPostureSummary, describeHarnessExecutionRoute } from '../../to
 import { executionHistorySummary, describeExecutionHistoryItem } from '../../tools/agent-harness-execution-history.ts';
 import { delegationPostureSummary, describeHarnessDelegationRoute } from '../../tools/agent-harness-delegation-posture.ts';
 import { documentOpsSummary, describeDocumentOpsLane } from '../../tools/agent-harness-document-ops.ts';
+import type { CatalogRankingOptions } from '../../tools/agent-harness-catalog-ranking.ts';
+import { createStaticUiReadModel, createStoreBackedUiReadModel } from '../helpers/ui-read-models.ts';
+import { createRuntimeStore, createDomainDispatch } from '../../runtime/store/index.ts';
+import type { UiReadModel } from '../../runtime/ui-read-models.ts';
+import type { RuntimeTask } from '@/runtime/index.ts';
 import { cleanupResearchScreeningFixtures, ordinaryResearchOwner, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
 
 function record(id: string, command: string, status: AgentExecutionRecord['status'] = 'succeeded'): AgentExecutionRecord {
@@ -57,8 +62,148 @@ const cases = [
     detail: (f: ReturnType<typeof fixture>, args: Record<string, unknown>, opts = {}) => describeExecutionHistoryItem(f.context, args, opts) },
 ] as const;
 
+const nativeSeams = [
+  { kind: 'interactive', chosen: 'browser-or-desktop-control',
+    mount(f: ReturnType<typeof fixture>, model: UiReadModel<unknown>) { Object.assign(f.context.platform, { readModels: { execution: { interactiveRuntime: model } } }); },
+    run(f: ReturnType<typeof fixture>, opts = {}) { return executionPostureSummary(f.context, f.registry, { query: 'native evidence' }, opts); } },
+  { kind: 'remote', chosen: 'opaque-worker',
+    mount(f: ReturnType<typeof fixture>, model: UiReadModel<unknown>) { Object.assign(f.context.platform, { readModels: { remoteRuntime: { captureOutcomes: model } } }); },
+    run(f: ReturnType<typeof fixture>, opts = {}) { return agentOrchestrationSummary(f.context, f.registry, { query: 'native evidence' }, opts); } },
+] as const;
+
+function nativeRecord(summary: string) {
+  return { id: 'native-original', runnerId: 'opaque-worker', kind: 'process-output', status: 'completed', summary };
+}
+
 describe('owned canonical route and record selectors', () => {
+  for (const seam of nativeSeams) {
+    test(`${seam.kind} ranks complete private native evidence before presentation clips`, async () => {
+      const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), tail = `${seam.kind}-complete-original-tail`;
+      const original = nativeRecord(`${'ordinary '.repeat(100)}${tail}`);
+      seam.mount(f, createStaticUiReadModel({ records: [original] })); installJudgmentPort(fake.port);
+      const result = await seam.run(f, options());
+      expect(fake.requests.filter(request => request.context?.battery === 'engine.tools.registry-rank').length).toBeGreaterThan(0);
+      expect(JSON.stringify(fake.requests)).toContain(tail);
+      expect(JSON.stringify(result)).not.toContain(tail);
+      expect(JSON.stringify(result)).not.toContain('originalSources');
+    });
+    test(`${seam.kind} holds a private native tail before hosted reading`, async () => {
+      const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), secret = `${seam.kind}-synthetic-private-native-tail`;
+      seam.mount(f, createStaticUiReadModel({ records: [nativeRecord(`${'ordinary '.repeat(100)}${secret}`)] }));
+      const screening = researchScreeningFixture({ spans: exactSensitiveSpans([secret]) }); installJudgmentPort(fake.port);
+      await expect(seam.run(f, { sourceOwner: screening.owner })).rejects.toBeInstanceOf(ToolInputProjectionError);
+      expect(fake.requests).toHaveLength(0);
+    });
+    test(`${seam.kind} refuses a hidden original accessor before projection or hosted reading`, async () => {
+      const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), original = nativeRecord('Complete native original'); let getters = 0;
+      Object.defineProperty(original, 'privateEvidence', { get() { getters++; throw new Error('Original accessor must not run'); } });
+      seam.mount(f, createStaticUiReadModel({ records: [original] })); installJudgmentPort(fake.port);
+      await expect(seam.run(f, options())).rejects.toBeInstanceOf(ToolInputProjectionError);
+      expect(getters).toBe(0); expect(fake.requests).toHaveLength(0);
+    });
+    test(`${seam.kind} rejects an undisplayed native tail edit before logging or publishing`, async () => {
+      const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), original = nativeRecord(`${'ordinary '.repeat(100)}original-tail`);
+      seam.mount(f, createStaticUiReadModel({ records: [original] }));
+      let start!: () => void, finish!: () => void;
+      const started = new Promise<void>(resolve => { start = resolve; }), gate = new Promise<void>(resolve => { finish = resolve; });
+      using log = new SqliteDecisionLog(':memory:');
+      installJudgmentPort(withDecisionLog({ ...fake.port, ask: async request => { start(); await gate; return fake.port.ask(request); } }, log));
+      const pending = seam.run(f, options()); await started;
+      original.summary = `${'ordinary '.repeat(100)}changed-tail`;
+      finish(); await expect(pending).rejects.toThrow(ToolInputProjectionError); expect(log.query({})).toHaveLength(0);
+    });
+    test(`${seam.kind} keeps large originals structured and complete within the existing source budget`, async () => {
+      const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), tail = `${seam.kind}-large-complete-tail`;
+      const source = { records: [{ ...nativeRecord('Complete native original'), evidence: Array.from({ length: 100 }, (_, index) => ({ detail: `${'ordinary '.repeat(80)}fragment-${index}${index === 99 ? tail : ''}` })) }] };
+      expect(JSON.stringify(source).length).toBeGreaterThan(40_000);
+      seam.mount(f, createStaticUiReadModel(source)); installJudgmentPort(fake.port);
+      const result = await seam.run(f, options());
+      expect(JSON.stringify(fake.requests)).toContain(tail);
+      expect(JSON.stringify(result)).not.toContain(tail);
+      expect(JSON.stringify(result)).not.toContain('originalSources');
+    });
+    test(`${seam.kind} retains native notification epochs through ABA without retiring unrelated changes`, async () => {
+      const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), store = createRuntimeStore(), dispatch = createDomainDispatch(store);
+      const original: RuntimeTask = { id: 'native-task', kind: 'exec', title: 'Complete native original', status: 'queued', owner: 'native-test', cancellable: true, childTaskIds: [], queuedAt: 4001 };
+      dispatch.syncRuntimeTask(original);
+      const model = createStoreBackedUiReadModel(store, () => ({ records: [...store.getState().tasks.tasks.values()].map(task => ({ ...nativeRecord(task.title), nativeTask: task })) }));
+      seam.mount(f, model); installJudgmentPort(fake.port); const guards: Array<() => void> = [];
+      await seam.run(f, { ...options(), retainCurrent: (guard: () => void) => guards.push(guard) });
+      dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'unrelated-native-domain', task: 'Unrelated domain' });
+      expect(() => guards.forEach(guard => guard())).not.toThrow();
+      dispatch.syncRuntimeTask({ ...original, title: 'Changed native original' }); dispatch.syncRuntimeTask(original);
+      expect(() => guards.forEach(guard => guard())).toThrow(ToolInputProjectionError);
+    });
+  }
+  test('native service holders are guarded separately from consumed remote snapshot DTOs', async () => {
+    const f = fixture();
+    const source = { records: [{ id: 'native-record', runnerId: 'opaque-worker', status: 'completed', summary: 'Complete native remote evidence' }] };
+    const readModel = createStaticUiReadModel(source);
+    Object.assign(f.context.platform, { readModels: { remote: createStaticUiReadModel({ acp: {} }), remoteRuntime: { captureOutcomes: readModel } } });
+    const guards: Array<() => void> = [];
+    expect((await agentOrchestrationSummary(f.context, f.registry, {}, { retainCurrent: guard => guards.push(guard) })).total).toBeGreaterThan(0);
+    guards.forEach(guard => guard()); const record = source.records[0]; if (!record) throw new Error('Missing actual source record'); record.summary = 'Changed actual hidden native snapshot';
+    expect(() => guards.forEach(guard => guard())).toThrow(ToolInputProjectionError);
+  });
+  test('native workspace maps retain complete private keys and record tails before presentation', async () => {
+    const f = fixture(), fake = readings({ 'opaque-worker': 0.999 }), tail = 'complete-native-map-tail';
+    const original = { id: 'workspace-original', runnerId: 'opaque-worker', status: 'ready', workspaceId: 'workspace-native', isolationKind: 'worktree', label: `${'ordinary '.repeat(100)}${tail}` };
+    Object.assign(f.context.platform, { readModels: { remoteRuntime: { workspaceIsolation: new Map([['native-map-key', original]]) } } });
+    installJudgmentPort(fake.port);
+    const result = await agentOrchestrationSummary(f.context, f.registry, { query: 'native evidence' }, options());
+    expect(JSON.stringify(fake.requests)).toContain(tail); expect(JSON.stringify(fake.requests)).toContain('native-map-key');
+    expect(JSON.stringify(result)).not.toContain(tail); expect(JSON.stringify(result)).not.toContain('originalSources');
+  });
+  test('native workspace map hidden accessors remain uninvoked before any reading', async () => {
+    const f = fixture(), fake = readings({ 'opaque-worker': 0.999 }); let getters = 0;
+    const original = { id: 'workspace-original', runnerId: 'opaque-worker', status: 'ready', workspaceId: 'workspace-native' };
+    Object.defineProperty(original, 'privateEvidence', { get() { getters++; throw new Error('Original map accessor must not run'); } });
+    Object.assign(f.context.platform, { readModels: { remoteRuntime: { workspaceIsolation: new Map([['native-map-key', original]]) } } });
+    installJudgmentPort(fake.port);
+    await expect(agentOrchestrationSummary(f.context, f.registry, { query: 'native evidence' }, options())).rejects.toBeInstanceOf(ToolInputProjectionError);
+    expect(getters).toBe(0); expect(fake.requests).toHaveLength(0);
+  });
+  test('native workspace map replacement retires an awaited read before logging or publication', async () => {
+    const f = fixture(), fake = readings({ 'opaque-worker': 0.999 });
+    const original = { id: 'workspace-original', runnerId: 'opaque-worker', status: 'ready', workspaceId: 'workspace-native', label: `${'ordinary '.repeat(100)}original-tail` };
+    const records = new Map([['native-map-key', original]]);
+    Object.assign(f.context.platform, { readModels: { remoteRuntime: { workspaceIsolation: records } } });
+    let start!: () => void, finish!: () => void;
+    const started = new Promise<void>(resolve => { start = resolve; }), gate = new Promise<void>(resolve => { finish = resolve; });
+    using log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog({ ...fake.port, ask: async request => { start(); await gate; return fake.port.ask(request); } }, log));
+    const pending = agentOrchestrationSummary(f.context, f.registry, { query: 'native evidence' }, options()); await started;
+    records.set('native-map-key', { ...original, label: `${'ordinary '.repeat(100)}changed-tail` });
+    finish(); await expect(pending).rejects.toThrow(ToolInputProjectionError); expect(log.query({})).toHaveLength(0);
+  });
+  test('native browser service methods are not serialized as interactive record DTOs', async () => {
+    const f = fixture();
+    Object.assign(f.context.platform, { readModels: { browser: createStaticUiReadModel({ nativeStatus: 'ready' }) } });
+    expect((await executionPostureSummary(f.context, f.registry, {})).routes).toBeArray();
+  });
   for (const entry of cases) {
+    test(`${entry.kind} retains a pure source restriction inside its actual caller readset`, async () => {
+      const f = fixture(), fake = readings({ [entry.chosen]: 0.999 }), guards: Array<() => void> = [];
+      installJudgmentPort(fake.port);
+      const assertCurrent = () => { for (const guard of guards) guard(); };
+      const retained = { ...options(), assertCurrent, retainCurrent: (guard: () => void) => guards.push(guard) };
+      expect((await entry.summary(f, { query: 'mail' }, retained))[entry.field]).toMatchObject([{ [entry.id]: entry.chosen }]);
+      expect(() => assertCurrent()).not.toThrow();
+      f.context.session.runtime.sessionId = 'changed-original-session';
+      expect(() => assertCurrent()).toThrow(ToolInputProjectionError);
+    });
+    test(`${entry.kind} still checks the active caller after an awaited reading`, async () => {
+      const f = fixture(), fake = readings({ [entry.chosen]: 0.999 }), guards: Array<() => void> = [];
+      let retired = false, start!: () => void, finish!: () => void;
+      const started = new Promise<void>(resolve => { start = resolve; }), gate = new Promise<void>(resolve => { finish = resolve; });
+      using log = new SqliteDecisionLog(':memory:');
+      installJudgmentPort(withDecisionLog({ ...fake.port, ask: async request => { start(); await gate; return fake.port.ask(request); } }, log));
+      const assertCurrent = () => { if (retired) throw new ToolInputProjectionError('stale'); for (const guard of guards) guard(); };
+      const retainCurrent: NonNullable<CatalogRankingOptions['retainCurrent']> = guard => { guards.push(guard); };
+      const pending = entry.summary(f, { query: 'mail' }, { ...options(), assertCurrent, retainCurrent });
+      await started; retired = true; finish();
+      await expect(pending).rejects.toThrow(ToolInputProjectionError); expect(log.query({})).toHaveLength(0);
+    });
     test(`${entry.kind} ranks the complete candidate set before display limits`, async () => {
       const f = fixture(), fake = readings({ [entry.chosen]: 0.999 }); installJudgmentPort(fake.port);
       const all = await entry.summary(f, {});
@@ -106,6 +251,14 @@ describe('owned canonical route and record selectors', () => {
       installJudgmentPort(readings({ model_compare: probability }).port);
       expect(await describeDocumentOpsLane(f.context, { query: 'mail' }, options())).toMatchObject({ status: 'ambiguous', candidates: [{ laneId: 'model_compare', judgment: { reading: { outcome: 'confirm' } } }] });
     }
+  });
+  test('Document Ops retains a pure source restriction inside its actual caller readset', async () => {
+    const f = fixture(), guards: Array<() => void> = [];
+    const assertCurrent = () => { for (const guard of guards) guard(); };
+    expect((await describeDocumentOpsLane(f.context, { laneId: 'model_compare' }, { assertCurrent, retainCurrent: guard => guards.push(guard) })).status).toBe('found');
+    expect(() => assertCurrent()).not.toThrow();
+    Object.assign(f.context.platform, { config: { changedSource: true } });
+    expect(() => assertCurrent()).toThrow(ToolInputProjectionError);
   });
 
   test('a full orchestration candidate beyond the old preview is screened before any hosted reading', async () => {

@@ -219,6 +219,8 @@ describe('diagnostics panels: degraded collection metadata', () => {
 
     expect(result.passed).toBe(false);
     expect(result.summary).toContain('Diagnostic check failed while collecting evidence');
-    expect(result.summary).toContain('probe failed');
+    expect(result.summary).toBe('Diagnostic check failed while collecting evidence: [REDACTED]');
+    expect(result.summary).not.toContain('probe failed');
+    expect(result.severity).toBe('error');
   });
 });

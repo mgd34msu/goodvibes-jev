@@ -10,11 +10,14 @@ import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
 import { buildKnowledgePacket, buildKnowledgePromptPacket, prepareKnowledgePromptPacket, readPreparedKnowledgePromptPacket,
   searchKnowledge, type KnowledgePacketContext, type PreparedKnowledgePromptPacket } from '../sdk/src/platform/knowledge/packet.js';
 import { estimateTokens, renderKnowledgePacketItem } from '../sdk/src/platform/knowledge/shared.js';
+import { knowledgeScopeSelection } from '../sdk/src/platform/knowledge/batteries/scope-selection.js';
 
 const roots: string[] = [];
+// These authored ordinary documents have independent scope and query-relevance readings.
+const scopeFixtures: { view: 'ordinary'; candidate: { kind: 'source'; content: { title: string; summary: string; sourceType: 'document'; tags: string[]; meaning: Record<string, never> } }; related: []; associations: { outsideRequestedScope: false } }[] = [];
 let previous: JudgmentPort | undefined;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { scopeFixtures.length = 0; installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const task = 'How do I recover wireless settings?';
 const text = 'Hold the recessed switch for ten seconds. Only the European variant supports recovery; the North American variant must be serviced.';
 async function fixture() {
@@ -26,10 +29,15 @@ async function fixture() {
   return { store, context, usage, events: () => events };
 }
 async function source(store: KnowledgeStore, id: string, summary = text) {
+  scopeFixtures.push({ view: 'ordinary', candidate: { kind: 'source', content: { title: id, summary, sourceType: 'document', tags: [], meaning: {} } }, related: [], associations: { outsideRequestedScope: false } });
   return store.upsertSource({ id, connectorId: 'synthetic', sourceType: 'document', title: id, summary, status: 'indexed' });
 }
 function readings(accepted: readonly string[], excerpt = 0.99) {
-  const fake = fakePort((name, _question, state) => {
+  const fake = fakePort((name, question, state) => {
+    if (name === 'included' && question.type === 'noul' && question.instructions === knowledgeScopeSelection.items.included.question.instructions) {
+      if (!scopeFixtures.some(fixture => JSON.stringify(fixture) === JSON.stringify(state))) throw new Error('Unknown complete packet scope fixture');
+      return noulAnswer(0.99);
+    }
     if (name === 'excerptUseful') return noulAnswer(excerpt);
     if (name !== 'useful') throw new Error(`Unexpected packet reading ${name}`);
     return noulAnswer(accepted.includes((state as { candidate: { title: string } }).candidate.title) ? 0.99 : 0.01);
@@ -45,7 +53,10 @@ describe('public semantic packet assembly and synchronous prepared consumption',
     expect(pending).toBeInstanceOf(Promise);
     const results = await pending;
     expect(results).toHaveLength(1); expect(results[0]).toMatchObject({ id: useful.id, kind: 'source', source: useful, score: 0 });
-    expect(results[0]!.reason).toContain('not computed'); expect(fake.requests).toHaveLength(2);
+    expect(results[0]!.reason).toContain('not computed');
+    expect(fake.requests.filter(request => 'included' in request.questions)).toHaveLength(2);
+    expect(fake.requests.filter(request => 'useful' in request.questions)).toHaveLength(2);
+    expect(fake.requests.every(request => 'included' in request.questions || 'useful' in request.questions)).toBe(true);
     expect(f.usage).toHaveLength(1); expect(f.events()).toBe(0);
   });
   test('compact layout retains exact late qualifications instead of the former prefix clip', async () => {

@@ -2035,6 +2035,18 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
     "description": "Discord application ID used for interaction responses"
   },
   {
+    "key": "surfaces.discord.inboxBotUserId",
+    "type": "string",
+    "default": "",
+    "description": "Expected Discord bot user ID for protected inbox reads; the token must prove this identity before any message history is requested"
+  },
+  {
+    "key": "surfaces.discord.inboxChannelIds",
+    "type": "string",
+    "default": "",
+    "description": "Comma-separated explicit bot-readable one-to-one DM channel IDs for protected inbox reads (1–200 unique IDs); group DMs and inferred historical discovery are unsupported"
+  },
+  {
     "key": "surfaces.discord.defaultChannelId",
     "type": "string",
     "default": "",
@@ -3452,8 +3464,8 @@ export const CONFIG_SCHEMA_ENTRIES: readonly ConfigSchemaEntry[] = [
   {
     "key": "update.releasesUrl",
     "type": "string",
-    "default": "https://github.com/mgd34msu/goodvibes-daemon/releases/latest",
-    "description": "GitHub releases/latest URL the daemon resolves its own update tags and artifacts from. The daemon is its own product with its own repository and its own release line; the terminal app updates itself from the goodvibes-tui repository and is never touched by a daemon update. A value written into settings.json overrides this default and is never re-derived"
+    "default": "https://github.com/mgd34msu/goodvibes-jev/releases/latest",
+    "description": "GitHub releases/latest URL for the daemon complete native cohort and source manifest. Exact historical default feeds migrate to goodvibes-jev; explicit custom feeds remain unchanged. A daemon update does not replace sibling product executables"
   },
   {
     "key": "update.rollbackAfterFailedStarts",

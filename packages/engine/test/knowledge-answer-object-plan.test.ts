@@ -15,6 +15,7 @@ import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { prepareAnswerLinkedObjects } from '../sdk/src/platform/knowledge/semantic/answer-object-alignment/prepare.js';
 import { answerKnowledgeQuery } from '../sdk/src/platform/knowledge/semantic/answer.js';
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
+import { knowledgeScopeSelection } from '../sdk/src/platform/knowledge/batteries/scope-selection.js';
 const spaceId = 'homeassistant:object-fixture';
 const profiles = [{ id: 'fixture', subjectKinds: ['ha_device', 'ha_integration'] }] as const;
 const roots: string[] = []; let previous: JudgmentPort | undefined;
@@ -29,7 +30,14 @@ async function object(store: KnowledgeStore, id = 'local-object', title = 'Kitch
     summary: 'Wireless audio equipment in the kitchen.', ...extra, metadata: { knowledgeSpaceId: spaceId, ...extra.metadata } });
 }
 function port(options: { aligned?: number; integrationIntent?: number; initial?: number } = {}) {
-  const fake = fakePort((name, question) => {
+  const fake = fakePort((name, question, state) => {
+    if (name === 'included' && question.type === 'noul' && question.instructions === knowledgeScopeSelection.items.included.question.instructions) {
+      // The standalone installation object is held outside ordinary curated knowledge.
+      expect(state).toEqual({ view: 'ordinary', candidate: { kind: 'node', content: { title: 'Kitchen speaker',
+        summary: 'Wireless audio equipment in the kitchen.', kind: 'ha_device', aliases: [], meaning: {} } }, related: [],
+        associations: { outsideRequestedScope: false } });
+      return noulAnswer(0.01);
+    }
     if (name === 'integrationIntent') return noulAnswer(options.integrationIntent ?? 0.01);
     if (name === 'integrationObject') return noulAnswer(0.01);
     if (name === 'concreteObject') return noulAnswer(0.99);

@@ -139,7 +139,7 @@ describe('knowledgeCommand', () => {
     test(`node listing awaits its actual public API before output (history retired=${retire})`, async () => {
       const knowledgeStore = new KnowledgeStore({ configManager: { getControlPlaneConfigDir: () => root } });
       const artifactStore = new ArtifactStore({ configManager: { getControlPlaneConfigDir: () => root } });
-      const service = new KnowledgeService(knowledgeStore, artifactStore, undefined, {});
+      const service = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
       const context = makeKnowledgeCommandContext(root, printed, service, memoryRegistry);
       const api = context.clients?.knowledgeApi;
       if (!api) throw new Error('Knowledge fixture API missing');

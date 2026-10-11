@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { bindJudgmentPortAuthority, installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
+import type { EntryType, JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { TtsTextChunker } from '../sdk/src/platform/voice/spoken-turn/text-chunker.js';
 import { SpokenTurnController } from '../sdk/src/platform/voice/spoken-turn/controller.js';
@@ -13,6 +13,7 @@ afterEach(() => { installJudgmentPort(previous); });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 function reader(yes: (text: string, end: number) => boolean, probability?: number) {
   const fake = fakePort((name, _question, raw) => {
+    if (!name.startsWith('seam_')) throw new Error(`Unexpected speech seam question: ${name}`);
     const state = raw as { paragraph: string; candidates: number[] };
     return noulAnswer(probability ?? (yes(state.paragraph, state.candidates[Number(name.slice(5))]!) ? 0.99 : 0.01));
   });
@@ -225,7 +226,13 @@ test.each(['latency', 'cap'] as const)('%s demand survives an intervening queued
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   const fake = reader(() => true); const ask = fake.port.ask;
   let calls = 0;
-  fake.port.ask = async request => { calls++; entered.resolve(); await release.promise; return ask(request); };
+  const states: EntryType[] = [];
+  fake.port.ask = async request => {
+    if (request.context?.battery === 'webui.voice.speech-seams') {
+      calls++; states.push(request.state); entered.resolve(); await release.promise;
+    }
+    return ask(request);
+  };
   let now = 0;
   const chunker = new TtsTextChunker({ minBoundaryChars: 3, maxChunkChars: 24, maxLatencyMs: 100, now: () => now });
   const first = chunker.push('First fragment');
@@ -236,7 +243,11 @@ test.each(['latency', 'cap'] as const)('%s demand survives an intervening queued
   // currently visible buffer crosses it, so pending-input accounting matters.
   const demand = mode === 'latency' ? chunker.flushDue() : chunker.push(' extra');
   const output = [...await first, ...await intermediate, ...await demand];
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
+  expect(states).toEqual([
+    { paragraph: 'First fragment', candidates: [5, 14], boundary: { offset: 5, precedingToken: 'First', followingToken: 'fragment' } },
+    { paragraph: 'First fragment', candidates: [5, 14], boundary: { offset: 14, precedingToken: 'fragment', followingToken: '' } },
+  ]);
   output.push(...await chunker.flushAll());
   expect(output.join(' ')).toBe(mode === 'latency' ? 'First fragment plus' : 'First fragment plus extra');
   release.resolve(); await tick();

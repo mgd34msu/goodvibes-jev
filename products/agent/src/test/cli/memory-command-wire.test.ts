@@ -25,8 +25,26 @@ import { createRuntimeStore } from '../../runtime/store/index.ts';
 import { ConfigManager } from '../../config/index.ts';
 import { handleGoodVibesCliCommand, parseGoodVibesCli } from '../../cli/index.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { authoredPrivacyAnswer, errorText, errorSpan } from '../helpers/authored-diagnostic-readings.ts';
 
 const TEST_TOKEN = 'memory-cli-wire-token-321';
+function privacyReadings(modelTierPath: string) { return authoredPrivacyAnswer({
+  fields: { cls: 'other', class: 'other', summary: 'content', detail: 'content', tags: 'other', query: 'content',
+    kind: 'other', data: 'other', id: 'other', scope: 'other', confidence: 'other', path: 'other', records: 'other',
+    record: 'other', links: 'other', fromId: 'other', toId: 'other', relation: 'other', reviewState: 'other',
+    importedRecords: 'other', skippedRecords: 'other', importedLinks: 'other', recordCount: 'other', linkCount: 'other',
+    schemaVersion: 'other', exportedAt: 'other', createdAt: 'other', updatedAt: 'other', provenance: 'other',
+    reason: 'content', report: 'content', announcement: 'content', ENOENT: 'content', projectRoot: 'other', movedTo: 'other',
+    ready: 'other', moved: 'other', discarded: 'other', ledger: 'other', mode: 'other', allowInsecureLocalhost: 'other',
+    customCaEntryCount: 'other', effectiveCaStrategy: 'other', errors: 'other', host: 'other', port: 'other',
+    tlsMode: 'other', scheme: 'other', trustProxy: 'other', gitDir: 'other' },
+  parts: [
+    ...['a distinctive wire-searchable phrase about ostriches', 'distinctive wire-searchable phrase about ostriches',
+      'CLI wire-added fact', 'reviewable wire fact', 'wire decision', 'wire constraint', 'promotable wire fact',
+      'bundled wire fact'].map(text => [errorText(text)]),
+    [errorText('ENOENT: '), errorSpan('ENOENT'), errorText(`, open '${modelTierPath}'`)],
+  ],
+}); }
 
 async function reservePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -103,11 +121,17 @@ describe('memory CLI: daemon up routes over the wire', () => {
     });
     // Composition installs its own port. Replace it only after the graph exists,
     // with the explicit reading for this file's one semantic-search fixture.
-    const readings = fakePort((name, _question, state) => {
-      if (name !== 'match') throw new Error(`Unexpected memory-wire question: ${name}`);
-      expect(state).toMatchObject({
+    const privacyAnswer = privacyReadings(join(daemonHomeDir, '.goodvibes', 'tui', 'model-tiers.json'));
+    const readings = fakePort((name, question, state) => {
+      if (name !== 'match') {
+        const answer = privacyAnswer(name, question, state);
+        if (answer === undefined) throw new Error(`Unexpected memory-wire question: ${name}`);
+        return answer;
+      }
+      expect(question.type).toBe('noul');
+      expect(state).toEqual({
         query: 'distinctive wire-searchable phrase about ostriches',
-        candidate: { summary: 'a distinctive wire-searchable phrase about ostriches' },
+        candidate: { class: 'fact', summary: 'a distinctive wire-searchable phrase about ostriches', tags: [] },
       });
       return noulAnswer(0.97);
     });
@@ -135,7 +159,7 @@ describe('memory CLI: daemon up routes over the wire', () => {
       await daemon?.stop();
     } finally {
       installJudgmentPort(previousPort);
-      daemonServices?.dispose();
+      await daemonServices?.close();
     }
     rmSync(root, { recursive: true, force: true });
   });
@@ -209,11 +233,16 @@ describe('memory CLI: daemon up routes over the wire', () => {
 
     const searched = await runCli(['memory', 'search', 'distinctive wire-searchable phrase about ostriches', '--semantic', '--json'], workingDir, homeDir);
     expect(searched.exitCode).toBe(0);
-    const parsed = JSON.parse(searched.output) as { readonly data: { readonly path: string; readonly records: readonly { readonly id: string }[] } };
+    const parsed: { readonly data: { readonly path: string; readonly records: readonly { readonly id: string }[];
+      readonly semanticResults: readonly { readonly record: { readonly id: string }; readonly score: number }[] } } = JSON.parse(searched.output);
     expect(parsed.data.path).toBe('wire:connected-daemon');
     expect(parsed.data.records.some((record) => record.id === id)).toBe(true);
-    expect(searchRequests).toHaveLength(1);
-    expect(Object.keys(searchRequests[0]!.questions)).toEqual(['match']);
+    const matches = searchRequests.filter(request => request.context?.battery === 'engine.state.memory-search');
+    expect(matches).toHaveLength(1);
+    expect(Object.keys(matches[0]!.questions)).toEqual(['match']);
+    expect(parsed.data.semanticResults.find(result => result.record.id === id)?.score).toBe(97);
+    expect(searchRequests.some(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(true);
+    expect(JSON.stringify(searchRequests)).not.toContain(TEST_TOKEN);
   });
 
   test('memory export/import round-trip a bundle over the wire against the daemon store', async () => {

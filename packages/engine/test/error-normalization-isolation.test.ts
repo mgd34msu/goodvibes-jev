@@ -1,4 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previous = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previous); });
 
 /**
  * Error normalization isolation, verifies that normalizeError and summarizeError
@@ -9,7 +14,9 @@ describe('error normalization isolation', () => {
     const { normalizeError } = await import('../sdk/src/platform/utils/error-display.js');
     const result = normalizeError('raw string error');
     expect(result.name).toBe('Error');
-    expect(result.message).toBe('raw string error');
+    expect(result.message).toBe('[REDACTED]');
+    expect(result.category).toBe('unknown');
+    expect(result.recoverable).toBe(false);
   });
 
   test('normalizeError handles null throwable', async () => {

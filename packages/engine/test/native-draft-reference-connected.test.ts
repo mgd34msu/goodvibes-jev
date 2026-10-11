@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { SecretsManager } from '../sdk/src/platform/config/secrets.js';
@@ -49,7 +49,7 @@ afterEach(async () => {
   installJudgmentPort(previous); log[Symbol.dispose](); forgetGateReadings();
 });
 
-async function fixture(message = ORIGINAL_BODY) {
+async function fixture(message = ORIGINAL_BODY, webhook?: string) {
   const directory = mkdtempSync(join(tmpdir(), 'gv-native-reference-'));
   cleanup.push(() => rmSync(directory, { recursive: true, force: true }));
   const config = new ConfigManager({ workingDir: directory, homeDir: directory, surfaceRoot: 'test-native-reference' });
@@ -69,7 +69,8 @@ async function fixture(message = ORIGINAL_BODY) {
   cleanup.push(() => drafts.close());
   await drafts.init();
   const seed = { id: LEGACY_ID, message, status: 'draft' as const, version: 1, title: 'Original title',
-    channel: 'slack', route: 'synthetic-native-route', tags: ['private-source-owner'],
+    channel: 'slack:fixture', tags: ['private-source-owner'],
+    ...(webhook === undefined ? {} : { webhook }),
     createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' };
   await drafts.upsert(seed); await drafts.save();
   const surface = registerDraftMethods({ catalog, workingDirectory: directory, credentials, nativeMutationHost,
@@ -85,9 +86,12 @@ async function fixture(message = ORIGINAL_BODY) {
     invokeGatewayMethodCall: (input: Parameters<typeof helper.invokeGatewayMethodCall>[0]) => helper.invokeGatewayMethodCall(input),
   } as unknown as Parameters<typeof createDaemonControlRouteHandlers>[0]);
   const wire: string[] = [];
+  const responses: Array<{ method: string; status: number; nativeStatus: string | null }> = [];
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     wire.push(await request.clone().text());
-    return await dispatchGatewayRestRoutes(request, handlers) ?? Response.json({ error: 'Not found' }, { status: 404 });
+    const response = await dispatchGatewayRestRoutes(request, handlers) ?? Response.json({ error: 'Not found' }, { status: 404 });
+    responses.push({ method: request.method, status: response.status, nativeStatus: drafts.get(LEGACY_ID)?.status ?? null });
+    return response;
   } });
   cleanup.push(() => server.stop(true));
   const reference = channelDraftWireReference(LEGACY_ID);
@@ -100,7 +104,7 @@ async function fixture(message = ORIGINAL_BODY) {
     return { status: response.status, ok: response.ok, data, text };
   };
   const input = () => ({ ...seed, id: reference, message: 'Complete queued native draft body', status: 'queued', admission: 'autonomous' });
-  return { directory, config, secrets, credentials, cipher, drafts, pairing, paired, reference, seed, input, call, wire, lifetime, invalidations, port: server.port, humans: () => humans };
+  return { directory, config, secrets, credentials, cipher, drafts, pairing, paired, reference, seed, input, call, wire, responses, lifetime, invalidations, port: server.port, humans: () => humans };
 }
 
 function expectNoNativeAdmission(token: string, protectedValue?: string) {
@@ -138,89 +142,37 @@ test('real connected native legacy draft save/get/list/delete keeps private IDs 
 });
 
 test('actual registered Agent admission publishes its owned legacy draft through the real paired peer before delivery', async () => {
-  const synthetic = fakePort((name, question) => {
-    if (question.type === 'noul') return noulAnswer(0.001);
-    const label = name === 'disposition' ? 'act'
-      : name === 'kind' ? Object.hasOwn(question.criteria, 'read') ? 'read' : 'other'
-      : name === 'family' || name === 'capability' ? 'generic' : undefined;
-    if (!label) throw new Error(`Unexpected Agent-native fixture question ${name}`);
-    return choiceAnswer(question, label, 0.999);
-  });
-  port = withDecisionLog({ model: synthetic.port.model, async ask(request) {
-    request.signal?.throwIfAborted(); request.beforeAttempt?.(); requests.push(request);
-    return synthetic.port.ask(request);
-  } }, log);
-  installJudgmentPort(port);
   const f = await fixture();
-  const [{ DEFAULT_CONFIG }, { createShellPathService }, { ChannelDeliveryRouter }, { ToolRegistry },
-    { CommandRegistry }, { bindAgentResearchSourceOwner }, { channelDraftFilePath, getDraft },
-    { registerAgentHarnessTool }, { connectedHostOperatorTokenPath }, { researchScreeningFixture, cleanupResearchScreeningFixtures },
-    { resetSessionUntrustedContentLedgerForTests }] = await Promise.all([
-      import('../sdk/src/platform/config/schema.js'),
-      import('../sdk/src/platform/runtime/shell.js'),
-      import('../sdk/src/platform/channels/delivery-router.js'),
-      import('../sdk/src/platform/tools/registry.js'),
-      import('../../../products/agent/src/input/command-registry.ts'),
-      import('../../../products/agent/src/agent/protected-research-report.ts'),
-      import('../../../products/agent/src/agent/channel-draft.ts'),
-      import('../../../products/agent/src/tools/agent-harness-tool.ts'),
-      import('../../../products/agent/src/runtime/connected-host-auth.ts'),
-      import('../../../products/agent/src/test/helpers/research-screening.ts'),
-      import('../../../products/agent/src/trust/untrusted-content.ts'),
-    ]);
-  resetSessionUntrustedContentLedgerForTests(); cleanup.push(resetSessionUntrustedContentLedgerForTests);
   const clientRoot = mkdtempSync(join(tmpdir(), 'gv-agent-reference-peer-'));
   cleanup.push(() => rmSync(clientRoot, { recursive: true, force: true }));
-  const paths = createShellPathService({ homeDirectory: clientRoot, workingDirectory: clientRoot });
-  const path = channelDraftFilePath(paths);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ version: 1, drafts: [{ ...f.seed, message: ORIGINAL_BODY, channel: 'slack:fixture' }] }));
-  const tokenPath = connectedHostOperatorTokenPath(clientRoot);
-  mkdirSync(dirname(tokenPath), { recursive: true }); writeFileSync(tokenPath, JSON.stringify({ token: f.paired.token }));
-  const connectedEnv = process.env.GOODVIBES_CONNECTED_HOST_TOKEN, daemonEnv = process.env.GOODVIBES_DAEMON_TOKEN;
-  delete process.env.GOODVIBES_CONNECTED_HOST_TOKEN; delete process.env.GOODVIBES_DAEMON_TOKEN;
-  cleanup.push(() => {
-    if (connectedEnv === undefined) delete process.env.GOODVIBES_CONNECTED_HOST_TOKEN; else process.env.GOODVIBES_CONNECTED_HOST_TOKEN = connectedEnv;
-    if (daemonEnv === undefined) delete process.env.GOODVIBES_DAEMON_TOKEN; else process.env.GOODVIBES_DAEMON_TOKEN = daemonEnv;
+  const inputPath = join(clientRoot, 'native-client-input.json');
+  writeFileSync(inputPath, JSON.stringify({ root: clientRoot, port: f.port, seed: f.seed, token: f.paired.token }), { mode: 0o600 });
+  const agentRoot = new URL('../../../products/agent/', import.meta.url).pathname;
+  const helperPath = join(agentRoot, 'src/test/helpers/native-draft-peer-client.ts');
+  const env = { ...process.env };
+  delete env.GOODVIBES_CONNECTED_HOST_TOKEN; delete env.GOODVIBES_DAEMON_TOKEN;
+  const child = Bun.spawn([process.execPath, '--no-env-file', helperPath, inputPath], {
+    cwd: agentRoot, env, stdout: 'pipe', stderr: 'pipe', signal: AbortSignal.timeout(30_000),
   });
-  const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir: clientRoot, homeDir: clientRoot,
-    configDir: join(clientRoot, '.goodvibes', 'agent') });
-  configManager.set('controlPlane.host', '127.0.0.1'); configManager.set('controlPlane.port', f.port);
-  await configManager.flushConfigFileChanges();
-  const permissionReader = {
-    getAutonomousSnapshot: () => ({ permissions: { ...DEFAULT_CONFIG.permissions, mode: 'prompt' as const }, autoApprove: false, directory: clientRoot }),
-    getSnapshot: () => ({ permissions: { ...DEFAULT_CONFIG.permissions, mode: 'prompt' as const } }),
-    isAutoApproveEnabled: () => false, getWorkingDirectory: () => clientRoot,
-  };
-  const manager = new PermissionManager(undefined, permissionReader, new PolicyRuntimeState());
-  const registry = new ToolRegistry(manager), delivery: string[] = [];
-  const router = new ChannelDeliveryRouter({ strategies: [{ id: 'registered-native-peer-fixture', supportsGuardedDelivery: true,
-    canHandle: () => true, async deliver(request) {
-      request.signal?.throwIfAborted(); request.assertCurrent?.();
-      expect(f.drafts.get(LEGACY_ID)?.status).toBe('queued');
-      delivery.push(request.message); return { responseId: 'registered-native-peer-receipt' };
-    } }] });
-  const context = { workspace: { shellPaths: paths }, platform: { config: {}, channelDeliveryRouter: router, configManager },
-    session: { runtime: { sessionId: 'registered-native-peer' } }, clients: {}, extensions: { toolRegistry: registry }, ops: {} } as unknown as import('../../../products/agent/src/input/command-registry.ts').CommandContext;
-  const screening = researchScreeningFixture(); cleanup.push(cleanupResearchScreeningFixtures);
-  bindAgentResearchSourceOwner(registry, screening.owner); registerAgentHarnessTool(registry, new CommandRegistry(), context);
-  const call = await registry.prepareCall('registered-native-peer-call', 'agent_harness', { mode: 'channel_draft_send', draftId: LEGACY_ID });
-  const admission = await manager.admitAutonomous(call.callId, call.name, call.args, {
-    sourceOf: () => ({ goal: 'Deliver the exact native fixture draft.', criteria: ['Retain the original native draft and paired peer'] }),
-    preparedCall: { registry, call }, schemaRevision: call.schemaRevision,
-  });
-  expect(admission.result.autonomousDecision?.outcome).toBe('act');
-  const result = await registry.executePrepared(call, admission);
-  expect(result.success).toBe(true); expect(result.output).toBeDefined();
-  const receipt: unknown = JSON.parse(result.output!);
-  expect(receipt).toMatchObject({ status: 'sent', draftId: f.reference, draft: { id: f.reference, status: 'sent' } });
-  expect(getDraft(paths, LEGACY_ID)?.status).toBe('sent'); expect(delivery).toEqual([ORIGINAL_BODY]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  expect(stderr).not.toContain(LEGACY_ID); expect(stderr).not.toContain(f.paired.token);
+  expect({ exitCode, stderr, stdout }).toMatchObject({ exitCode: 0 });
+  const receipt: unknown = JSON.parse(stdout);
+  expect(receipt).toMatchObject({ result: { success: true, output: expect.stringContaining(f.reference) },
+    localStatus: 'sent', delivery: [ORIGINAL_BODY], autonomousReadings: expect.any(Number) });
   expect(f.drafts.get(LEGACY_ID)?.status).toBe('queued'); expect(f.drafts.get(f.reference)).toBeNull();
+  expect(f.responses).toEqual([{ method: 'POST', status: 200, nativeStatus: 'queued' }]);
+  const persisted = new DraftSyncStore({ workingDirectory: f.directory, cipher: f.cipher });
+  try {
+    await persisted.init(); expect(persisted.get(LEGACY_ID)?.status).toBe('queued'); expect(persisted.get(f.reference)).toBeNull();
+  } finally { await persisted.close(); }
   expect(f.wire).toHaveLength(1); expect(JSON.parse(f.wire[0]!)).toMatchObject({ id: f.reference, admission: 'autonomous', message: ORIGINAL_BODY, status: 'queued' });
   expect(f.wire.join('')).not.toContain(LEGACY_ID); expect(JSON.stringify(requests)).not.toContain(LEGACY_ID);
-  expect(JSON.stringify(screening.calls)).not.toContain(LEGACY_ID); expect(result.output).not.toContain(LEGACY_ID);
-  expect(JSON.stringify(requests)).not.toContain(f.paired.token); expect(result.output).not.toContain(f.paired.token);
-  expect(log.query({ site: 'engine.gate.autonomous-tool' }).length).toBeGreaterThanOrEqual(2);
+  expect(stdout).not.toContain(LEGACY_ID); expect(stdout).not.toContain(f.paired.token);
+  expect(JSON.stringify(requests)).not.toContain(f.paired.token);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1);
   expect(f.humans()).toBe(0);
 });
 
@@ -241,6 +193,29 @@ test.each(['wire-body', 'selected-native-body'] as const)('native handle never e
   expect(result.ok).toBe(false); expect(result.text).not.toContain(card);
   expect(readFileSync(f.drafts.dbPath)).toEqual(before); expect(f.drafts.get(LEGACY_ID)?.status).toBe('draft');
   expectNoNativeAdmission(f.paired.token, card);
+});
+
+test.each(['save', 'delete'] as const)('selected native webhook raw secret is held before %s admission', async method => {
+  const webhook = 'https://native-webhook.invalid/private-fixture-token';
+  const f = await fixture(ORIGINAL_BODY, webhook), before = readFileSync(f.drafts.dbPath);
+  const result = method === 'save'
+    ? await f.call('POST', '/api/channels/drafts', { ...f.input(), webhook: '[redacted]' })
+    : await f.call('DELETE', `/api/channels/drafts/${f.reference}`, { admission: 'autonomous' });
+  expect(result.status).toBe(400); expect(result.text).not.toContain(webhook);
+  expect(f.wire.join('')).not.toContain(webhook); expectNoNativeAdmission(f.paired.token, webhook);
+  expect(readFileSync(f.drafts.dbPath)).toEqual(before); expect(f.drafts.get(LEGACY_ID)?.status).toBe('draft');
+  expect(f.humans()).toBe(0);
+});
+
+test('selected native webhook secret reference remains complete and admissible', async () => {
+  const webhook = 'goodvibes://secrets/fixture.native-webhook';
+  const f = await fixture(ORIGINAL_BODY, webhook);
+  const result = await f.call('POST', '/api/channels/drafts', { ...f.input(), webhook: '[redacted]' });
+  expect(result.status).toBe(200); expect(f.drafts.get(LEGACY_ID)?.status).toBe('queued');
+  expect(JSON.stringify(requests)).toContain(webhook);
+  expect(JSON.stringify(requests)).toContain(ORIGINAL_BODY);
+  expect(JSON.stringify(requests)).not.toContain(LEGACY_ID);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(1); expect(f.humans()).toBe(0);
 });
 
 test('raw dense caller ID retains the original card floor instead of acquiring native alias authority', async () => {

@@ -99,8 +99,9 @@ function renderOperatorContractTs(contract: unknown): string {
   const json = safeStringify(contract);
   return [
     `import type { OperatorContractManifest } from '../types.js';`,
+    `import { freezeGeneratedOperatorContract } from '../freeze-contract.js';`,
     ``,
-    `export const OPERATOR_CONTRACT: OperatorContractManifest = ${json} as const;`,
+    `export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperatorContract(${json} as const);`,
     ``,
   ].join('\n');
 }

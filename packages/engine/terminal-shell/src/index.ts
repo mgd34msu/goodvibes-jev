@@ -162,11 +162,15 @@ export {
   isSensitiveConfigPath,
   isRedactedValue,
   redactConfig,
+  prepareConfigRedaction,
   redactText,
   collectSensitiveConfigValues,
   redactSerializedSecrets,
   type RedactedConfigResult,
+  type PreparedConfigRedaction,
 } from './cli-redaction.js';
+
+export { retainCliConfig } from './cli-config-owner.js';
 
 export {
   RUNTIME_ENDPOINT_DEFAULT_PORTS,

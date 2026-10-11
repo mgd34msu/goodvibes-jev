@@ -4,6 +4,7 @@ import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/test
 import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { normalizeError, readNormalizedError, summarizeError } from '../sdk/src/platform/utils/error-display.js';
 import { registerAccountIdentityRedaction } from '../sdk/src/platform/utils/redaction.js';
+import { authoredPrivacyAnswer, errorSpan, errorText } from './_helpers/authored-error-readings.ts';
 
 /**
  * Redaction tokens vs. the payload reading: redaction rewrites the account's
@@ -28,16 +29,29 @@ afterEach(() => {
 
 /** Every bracketed part reads as payload; every failure question as nothing in particular. */
 function everythingIsPayload() {
-  return fakePort((name: string, question: Question, _state: EntryType) => {
+  const privacy = authoredPrivacyAnswer({ fields: { ENOENT: 'content', code: 'other' }, parts: [
+    [errorText('ENOENT: '), errorSpan('ENOENT'), errorText(", open '/home/[REDACTED]/hooks.json'")],
+    [errorText('provider rejected {"code":'), errorSpan('code'), errorText('} [request-id 123] reading /home/[REDACTED]/x.json, retry later')],
+  ] });
+  return fakePort((name: string, question: Question, state: EntryType) => {
+    const protectedAnswer = privacy(name, question, state);
+    if (protectedAnswer !== undefined) return protectedAnswer;
     if (name.startsWith('payload_')) return noulAnswer(0.97);
-    if (question.type === 'choice') return choiceAnswer(question, name === 'category' ? 'unknown' : 'none', 0.95);
-    return noulAnswer(0.03);
+    if (state !== "Message: ENOENT: [REDACTED_TEXT], open '/home/[REDACTED]/hooks.json'"
+      && state !== 'Message: provider rejected {"code":"bad_request"} [request-id 123] reading /home/[REDACTED]/x.json, retry later')
+      throw new Error('Unspecified authored redaction-token failure state');
+    if (name === 'category') return choiceAnswer(question, 'unknown', 0.95);
+    if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.95);
+    if (['billing', 'rate_limited', 'context_exceeded', 'transient_network', 'provider_unusable', 'before_response'].includes(name)) return noulAnswer(0.03);
+    throw new Error('Unexpected authored redaction-token question');
   });
 }
 
 describe('error-display redaction token preservation', () => {
-  test('summarizeError keeps [REDACTED] inside a redacted home path', () => {
+  test('summarizeError reuses qualified [REDACTED] inside a redacted home path', async () => {
+    installJudgmentPort(everythingIsPayload().port);
     const err = new Error("ENOENT: no such file or directory, open '/home/somebody/hooks.json'");
+    await readNormalizedError(err, { site: 'test.redaction-tokens' });
     const summary = summarizeError(err);
     expect(summary).toContain('/home/[REDACTED]/hooks.json');
     expect(summary).not.toContain('/home/ /');

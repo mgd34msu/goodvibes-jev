@@ -6,6 +6,7 @@ import { prepareKnowledgeScopeSelection, KnowledgeScopeSelectionHeldError } from
 import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
 import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
 import type { KnowledgeStore } from '../store.js';
+import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
 import type { KnowledgeNodeRecord } from '../types.js';
 import { factHasUsableSource, factSourceIds, initialEvidenceCandidate, initialNodeReferenceContext, listAnswerNodes } from '../semantic/answer-evidence.js';
 import { renderNodeEvidence } from '../semantic/answer-fact-selection.js';
@@ -163,19 +164,30 @@ export async function readHomeGraphSearchSelection(input: {
       // Complete source/node preflight precedes even the first object-intent read.
       const objects = prepareAnswerLinkedObjects(input.store, input.spaceId, { query: input.query.query },
         HOME_GRAPH_KNOWLEDGE_EXTENSION.objectProfiles ?? [], signal);
+      const checkObjects = () => {
+        try {
+          input.store.assertRecordSnapshotFrame(() => {
+            check();
+            objects.assertCurrent();
+          });
+        } catch (error) {
+          if (error instanceof KnowledgeRecordAdmissionHeldError && error.reason === 'stale') throw new Held('stale');
+          throw error;
+        }
+      };
       check();
       const { linkedObjects } = await objects.read([], []);
       for (const node of linkedObjects) renewalGuard.watch(`original-subject:${node.id}`, () => input.store.getNode(node.id), node);
       const assertRenewalAllowed = () => { renewalGuard.assertCurrent(); checkPorts(); };
-      check(); objects.assertCurrent();
+      checkObjects();
       const subjects = linkedObjects.map((node) => ({ title: node.title, kind: node.kind, summary: node.summary,
         aliases: node.aliases, identity: subjectIdentity(node.metadata) }));
       const relevance = await prepareAnswerEvidenceRelevanceBatches({ query: input.query.query, candidates, subjects },
         { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()), assertCurrent: () => {
-          try { check(); objects.assertCurrent(); }
+          try { checkObjects(); }
           catch { throw new KnowledgeEvidenceRelevanceHeldError(signal.aborted ? 'aborted' : 'stale'); }
         } });
-      check(); objects.assertCurrent();
+      checkObjects();
       const byReference = new Map(candidates.map((candidate, index) => [candidate.reference, items[index]!]));
       const selected = relevance.accepted.slice(0, Math.max(1, input.query.limit ?? 8)).map((reading) => byReference.get(reading.reference)!);
       // Keep the existing shared readability boundary for result-summary
@@ -186,14 +198,14 @@ export async function readHomeGraphSearchSelection(input: {
         const extraction = input.state.extractionBySourceId.get(item.id);
         for (const value of [extraction?.summary, item.source.summary]) {
           if (typeof value !== 'string' || !value.trim()) continue;
-          check(); objects.assertCurrent();
+          checkObjects();
           let usable: boolean;
           try { usable = await readKnowledgeExtractionTextUsability(value, signal); }
           catch (error) {
-            check(); objects.assertCurrent();
+            checkObjects();
             throw error;
           }
-          check(); objects.assertCurrent();
+          checkObjects();
           if (usable) { summaries.set(item.id, value.trim()); break; }
         }
       }
@@ -202,10 +214,10 @@ export async function readHomeGraphSearchSelection(input: {
       const excerpts = prepareAnswerSourceExcerptBatches(input.store, input.query.query,
         selected.flatMap((item) => item.source ? [{ source: item.source, context: JSON.stringify({ subjects }) }] : []), guard, signal);
       excerpts.start();
-      check(); objects.assertCurrent();
+      checkObjects();
       const spans = await excerpts.read(new Set(selected.flatMap((item) => item.source ? [item.id] : [])));
       const selectedText = new Map([...spans].map(([id, selection]) => [id, selection.map((span) => span.text).join('\n\n')]));
-      check(); objects.assertCurrent();
+      checkObjects();
       const results = selected.map((item) => ({ ...item, summary: item.source ? summaries.get(item.id) : item.node?.summary,
         // A settled empty excerpt is explicit. The literal renderer must not
         // revive an unselected summary or description with its fallback chain.

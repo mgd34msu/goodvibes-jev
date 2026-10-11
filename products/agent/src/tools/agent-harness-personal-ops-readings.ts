@@ -6,7 +6,7 @@ import { rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-
 import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { personalOpsEntry, personalOpsJson } from './agent-harness-personal-ops-source.ts';
 
-export type DiscoveryLane = 'inbox' | 'calendar' | 'tasks' | 'reminders';
+export type DiscoveryLane = 'inbox' | 'calendar' | 'tasks' | 'reminders' | 'approvals' | 'automation' | 'schedules';
 
 export async function personalOpsLaneMembers<T>(entries: readonly T[], lane: DiscoveryLane, describe: (entry: T) => {
   readonly id: string; readonly description: string; readonly evidence: unknown;
@@ -14,6 +14,8 @@ export async function personalOpsLaneMembers<T>(entries: readonly T[], lane: Dis
   if (!entries.length) return [];
   const result = await rankHarnessCatalog(entries, lane, describe, `agent.personal-ops.lane-member:${lane}`,
     { ...options, requirePreservedSource: true }, 'agent.personal-ops.lane-member');
+  if (result.judgments.some(({ reading }) => reading.outcome !== 'act' || reading.verdict === 'uncertain'))
+    throw new ToolInputProjectionError('held');
   return result.matches.filter(({ judgment }) => judgment.reading.outcome === 'act' && judgment.reading.verdict === 'yes').map(({ entry }) => entry);
 }
 

@@ -1,3 +1,4 @@
+import { knowledgeSchemaColumns, conversationRequestColumns } from './store-schema-validation-data.js';
 /** Durable conversation capture in the same coordinated image as its native ledger publication. */
 import { isDeepStrictEqual } from 'node:util';
 import type { SQLiteStore, SqlDatabase } from '../state/sqlite-store.js';
@@ -14,14 +15,14 @@ export function createNativeConversationCaptureTable(db: Pick<SqlDatabase, 'run'
   db.run('CREATE TABLE IF NOT EXISTS native_conversation_captures (project_id TEXT NOT NULL, principal_id TEXT NOT NULL, input_id TEXT NOT NULL, request_id TEXT NOT NULL, format_version INTEGER NOT NULL, state_json TEXT NOT NULL, PRIMARY KEY(project_id, principal_id, input_id), UNIQUE(project_id, principal_id, request_id))');
 }
 export function validateNativeConversationCaptureTable(db: SqlReader): void {
-  const expected = [['project_id', 'TEXT', 1, 1], ['principal_id', 'TEXT', 1, 2], ['input_id', 'TEXT', 1, 3], ['request_id', 'TEXT', 1, 0], ['format_version', 'INTEGER', 1, 0], ['state_json', 'TEXT', 1, 0]];
+  const expected = knowledgeSchemaColumns.conversation;
   const rows = db.exec('PRAGMA table_info(native_conversation_captures)')[0]?.values;
   if (!rows || rows.length !== expected.length || expected.some(([name, type, required, primary]) => {
     const row = rows.find(value => value[1] === name); return !row || row[2] !== type || row[3] !== required || row[5] !== primary;
   })) throw new NativeConversationStorageError('invalid');
   const indexes = db.exec('PRAGMA index_list(native_conversation_captures)')[0]?.values ?? [];
   if (!indexes.some(index => index[2] === 1 && index[4] === 0
-    && isDeepStrictEqual(db.exec(`PRAGMA index_info('${String(index[1]).replaceAll("'", "''")}')`)[0]?.values.map(row => row[2]), ['project_id', 'principal_id', 'request_id']))) throw new NativeConversationStorageError('invalid');
+    && isDeepStrictEqual(db.exec(`PRAGMA index_info('${String(index[1]).replaceAll("'", "''")}')`)[0]?.values.map(row => row[2]), conversationRequestColumns))) throw new NativeConversationStorageError('invalid');
   for (const row of db.exec('SELECT project_id, principal_id, input_id, request_id, format_version, state_json FROM native_conversation_captures')[0]?.values ?? []) {
     const capture = parseRow(row); validateAssociation(db, capture);
   }

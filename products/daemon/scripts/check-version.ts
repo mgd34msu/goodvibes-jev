@@ -2,6 +2,24 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** The monorepo root owns the daemon's release identity and version. */
+export function readSharedReleaseVersion(root: string): string {
+  const manifest = JSON.parse(readFileSync(resolve(root, '../../package.json'), 'utf8')) as { name?: unknown; version?: unknown };
+  if (manifest.name !== 'goodvibes-jev' || typeof manifest.version !== 'string'
+    || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(manifest.version)) {
+    throw new Error('Daemon release preparation requires the goodvibes-jev root version owner');
+  }
+  return manifest.version;
+}
+
+export function checkSharedBinaryVersion(root: string): void {
+  checkBinaryVersion(root);
+  const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { version?: unknown };
+  if (manifest.version !== readSharedReleaseVersion(root)) {
+    throw new Error('Daemon version must match the goodvibes-jev root; run bun run sync:version from the repository root');
+  }
+}
+
 /** A local binary must carry the current product version even without its manifest. */
 export function checkBinaryVersion(root: string): void {
   const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { name?: unknown; version?: unknown };
@@ -16,6 +34,6 @@ export function checkBinaryVersion(root: string): void {
 }
 
 if (import.meta.main) {
-  try { checkBinaryVersion(resolve(dirname(fileURLToPath(import.meta.url)), '..')); }
+  try { checkSharedBinaryVersion(resolve(dirname(fileURLToPath(import.meta.url)), '..')); }
   catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
 }

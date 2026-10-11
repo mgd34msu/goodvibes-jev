@@ -14,13 +14,14 @@ import { createContextAccountingSource } from '../../runtime/context-accounting-
 import { SessionPickerModal } from '../../input/session-picker-modal.ts';
 import { UsageModal } from '../../input/usage-modal.ts';
 import { layerTextBlock } from '../helpers/surface-frame.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
-const cleanups: Array<() => void> = [];
-afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup(); });
+const cleanups: Array<() => void | Promise<void>> = [];
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 function fixture() {
   const services = getTestRuntimeServices();
-  cleanups.push(() => { services.dispose(); resetTestRuntimeServices(); });
+  cleanups.push(async () => { await services.close(); resetTestRuntimeServices(); });
   const runtimeBus = new RuntimeEventBus();
   const runtimeStore = createRuntimeStore();
   const conversation = new ConversationManager(() => 160);
@@ -76,7 +77,11 @@ describe('real bootstrap usage restoration', () => {
     expect(f.footer()).toContain('usage unavailable');
     expect(f.footer()).toContain('context unavailable');
     expect(f.footer()).not.toMatch(/9000|22000|PRIVATE-BILLING-VALUE|NaN/);
-    const unknown = await f.accountingTool.execute({}, {} as never);
+    const unknown = await withPublicErrorText(['Session usage unavailable: saved token usage is invalid.'], () => f.accountingTool.execute({}, {} as never), {
+      ordinaryFields: ['unavailable'],
+      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [{ kind: 'text', text: 'Session usage unavailable: ' }, { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'unavailable' }, { kind: 'text', text: '' }] }],
+      residualProjections: [{ parts: [{ kind: 'text', text: 'Session usage unavailable: ' }, { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] }],
+    });
     expect(unknown.success).toBe(false);
     expect('error' in unknown ? unknown.error : '').toContain('usage unavailable');
     expect(JSON.stringify(unknown)).not.toContain('PRIVATE-BILLING-VALUE');

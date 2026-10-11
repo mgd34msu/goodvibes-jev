@@ -77,6 +77,7 @@ export interface AgentConversationSender {
   readonly id: string;
   /** The sender must recheck after its own async preparation, immediately before landing the message. */
   readonly supportsGuardedDelivery?: boolean | undefined;
+  readonly supportsPublication?: boolean | undefined;
   send(message: AgentConversationMessage, lifetime?: DeliveryLifetime): Promise<string | undefined>;
 }
 
@@ -91,7 +92,7 @@ export interface AgentConversationSender {
  */
 export class AgentDeliveryRegistry {
   private sender: AgentConversationSender | null = null;
-  private registration: { readonly guarded: boolean } | undefined;
+  private registration: { readonly guarded: boolean; readonly publication: boolean } | undefined;
 
   /**
    * Register the sender, and hand back the undo.
@@ -112,7 +113,9 @@ export class AgentDeliveryRegistry {
       );
     }
     const descriptor = Object.getOwnPropertyDescriptor(sender, 'supportsGuardedDelivery');
-    const registration = Object.freeze({ guarded: descriptor !== undefined && 'value' in descriptor && descriptor.value === true });
+    const publication = Object.getOwnPropertyDescriptor(sender, 'supportsPublication');
+    const registration = Object.freeze({ guarded: descriptor !== undefined && 'value' in descriptor && descriptor.value === true,
+      publication: publication !== undefined && 'value' in publication && publication.value === true });
     this.sender = sender;
     this.registration = registration;
     return (): void => {
@@ -121,9 +124,10 @@ export class AgentDeliveryRegistry {
   }
 
   /** Capture one explicit sender registration; replacement or remove/re-add invalidates its final-send guard. */
-  guardFor(sender: AgentConversationSender): () => void {
+  guardFor(sender: AgentConversationSender, publication = false): () => void {
     const registration = this.registration;
     if (this.sender !== sender || registration?.guarded !== true) throw new Error('Agent conversation sender does not support guarded delivery');
+    if (publication && registration.publication !== true) throw new Error('Agent conversation sender does not support publication');
     return () => {
       if (this.sender !== sender || this.registration !== registration) throw new Error('Agent conversation sender registration is no longer current');
     };
@@ -153,6 +157,7 @@ export function createAgentDeliveryStrategy(
   return {
     id: AGENT_DELIVERY_STRATEGY_ID,
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request: ChannelDeliveryRequest): boolean {
       return resolveChannelDeliverySurfaceKind(request.target) === 'agent';
     },
@@ -178,7 +183,11 @@ export function createAgentDeliveryStrategy(
       );
       const guarded = request.signal !== undefined || request.assertCurrent !== undefined || request.withPublication !== undefined;
       if (guarded && !registry.guardFor) throw new Error('Agent conversation sender does not support guarded delivery');
-      const senderCurrent = guarded ? registry.guardFor!(sender) : undefined;
+      if (request.withPublication !== undefined) {
+        const publication = Object.getOwnPropertyDescriptor(sender, 'supportsPublication');
+        if (!publication || !('value' in publication) || publication.value !== true) throw new Error('Agent conversation sender does not support publication');
+      }
+      const senderCurrent = guarded ? registry.guardFor!(sender, request.withPublication !== undefined) : undefined;
       const lifetime = { signal: request.signal, withPublication: request.withPublication,
         assertCurrent: () => { assertDeliveryCurrent(request); senderCurrent?.(); } };
       const message: AgentConversationMessage = {

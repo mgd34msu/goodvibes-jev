@@ -404,7 +404,20 @@ describe('fresh authorization on every ledger entry point', () => {
   test('all operator methods requiring fresh authorization remain explicitly inventoried', () => {
     const host = fixture();
     expect(host.catalog.list().filter(method => method.metadata?.requiresFreshOperatorAuth === true).map(method => method.id).sort())
-      .toEqual(['email.inbox.read', 'inbound.telegram.cancel', 'inbound.telegram.configure', 'inbound.telegram.decide', 'inbound.telegram.list', 'inbound.telegram.read', 'inbound.telegram.revoke', 'inbound.telegram.status', 'workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status', 'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel', 'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume', 'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit', 'workLedger.turn.cancel', 'workLedger.turn.session', 'workLedger.turn.start', 'workLedger.turn.startAgent', 'workLedger.turn.status']);
+      .toEqual([
+        'channels.drafts.delete', 'channels.drafts.save', 'channels.routing.assign', 'channels.routing.delete',
+        'email.inbox.read',
+        'inbound.telegram.cancel', 'inbound.telegram.configure', 'inbound.telegram.decide', 'inbound.telegram.list',
+        'inbound.telegram.read', 'inbound.telegram.revoke', 'inbound.telegram.status',
+        'occasions.acknowledge', 'occasions.answer', 'occasions.confirm', 'occasions.conflict.resolve',
+        'occasions.interview.answer', 'occasions.interview.record', 'occasions.plans.confirm', 'occasions.remove', 'occasions.sweep',
+        'profile.append', 'profile.forget', 'profile.set', 'profile.undo',
+        'workLedger.execution.cancel', 'workLedger.execution.resume', 'workLedger.execution.start', 'workLedger.execution.status',
+        'workLedger.history', 'workLedger.importLegacy', 'workLedger.intake.admit', 'workLedger.intake.cancel',
+        'workLedger.intake.capture', 'workLedger.intake.get', 'workLedger.intake.resume',
+        'workLedger.prepareLegacyImport', 'workLedger.project', 'workLedger.snapshot', 'workLedger.submission.get', 'workLedger.submit',
+        'workLedger.turn.cancel', 'workLedger.turn.session', 'workLedger.turn.start', 'workLedger.turn.startAgent', 'workLedger.turn.status',
+      ]);
   });
 });
 

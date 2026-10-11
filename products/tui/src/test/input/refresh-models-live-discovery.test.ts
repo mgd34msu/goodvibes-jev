@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { registerLocalRuntimeCommands } from '../../input/commands/local-runtime.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 function makeCtx(providerApi: unknown): { ctx: CommandContext; printed: string[] } {
   const printed: string[] = [];
@@ -52,10 +53,13 @@ describe('/refresh-models live model discovery', () => {
     };
     const { ctx, printed } = makeCtx(providerApi);
 
-    await registry.execute('refresh-models', [], ctx);
+    await withPublicErrorText(['network down'], () => registry.execute('refresh-models', [], ctx));
 
     const text = printed.join('\n');
     expect(text).toContain('Live model discovery failed: network down');
+    expect(text).toContain('Model catalog refreshed: 1 models from 1 providers');
+    expect(text).toContain('Benchmarks refreshed.');
+    expect(text).toContain('Token limits refreshed: 0 models updated.');
     expect(text).toContain('Some refreshes failed');
   });
 });

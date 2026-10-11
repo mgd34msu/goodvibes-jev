@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import type { ProfilePersistIo } from '../sdk/src/platform/owner-profile/writer.ts';
@@ -29,6 +30,15 @@ import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-c
 import { registerOccasionsGatewayMethods } from '../sdk/src/platform/control-plane/routes/occasions.ts';
 import { composeOccasions } from '../sdk/src/platform/control-plane/routes/occasions-composition.ts';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.ts';
+
+// Logger role readings carry only field names; count the actual content readers.
+function contentRequests(fake: Pick<ReturnType<typeof fakePort>, 'requests'>) {
+  return fake.requests.filter(request => {
+    if (request.context?.battery !== fieldKind.name) return true;
+    expect(request.state).toEqual({ field: expect.any(String) });
+    return false;
+  });
+}
 
 const PROFILE = `# Owner profile
 ## Identity
@@ -105,7 +115,7 @@ const yes = { occasionId: 'annual reunion', answer: 'yes' as const };
   const reloaded = new OccasionStateStore(h.statePath);
   expect((await reloaded.interview(answer.interview!.interviewId))?.steps[0]?.opensFrom).toBe('Jo spends every Saturday at the pottery wheel.');
   expect((await reloaded.answerFor('annual reunion', '2026-03-14'))?.answer).toBe('yes');
-  const sent = JSON.stringify(fake.requests.map(request => request.state));
+  const sent = JSON.stringify(contentRequests(fake).map(request => request.state));
   expect(sent).toContain('childhood pastime'); expect(sent).toContain('pottery wheel');
   expect(sent).not.toContain('03-14'); expect(sent).not.toContain('2026-03-14');
 });
@@ -171,14 +181,14 @@ for (const where of ['late-line', 'provenance', 'occasion-extra', 'raw-config'] 
   if (where === 'provenance') h.source.person = async () => [{ lineIndex: 4, section: 'People', text: 'Jo spends Saturdays at a wheel.', provenance: { surface: 'hand-edit', date: '2026-01-01', said: secret } }];
   if (where === 'raw-config') h.config.set('occasions.interviewQuestions', secret);
   await expect(h.service.answer(yes)).rejects.toThrow();
-  expect(fake.requests).toHaveLength(0); expect(await h.state.acknowledgements()).toEqual([]);
+  expect(contentRequests(fake)).toHaveLength(0); expect(await h.state.acknowledgements()).toEqual([]);
  });
 }
  test('same cached profile source remains current and repeated answer resumes the stored interview', async () => {
   const fake = recorded(); install(fake.port); const h = harness();
-  const first = await h.service.answer(yes); const count = fake.requests.length;
+  const first = await h.service.answer(yes); const count = contentRequests(fake).length;
   const second = await h.service.answer(yes);
-  expect(second.interview).toEqual(first.interview); expect(fake.requests).toHaveLength(count);
+  expect(second.interview).toEqual(first.interview); expect(contentRequests(fake)).toHaveLength(count);
  });
 for (const point of ['queued', 'before-publish'] as const) {
  test(`lease retirement ${point} leaves disk and memory unchanged; a successor write still succeeds`, async () => {
@@ -238,7 +248,7 @@ for (const verdict of ['owner', 'other', 'unknown'] as const) {
   const result = await h.service.sweep();
   expect(result.nudge === null).toBe(verdict === 'owner');
   expect(h.deliveries.length).toBe(verdict === 'owner' ? 0 : 1);
-  expect(JSON.stringify(fake.requests.map(request => request.state))).not.toContain('03-14');
+  expect(JSON.stringify(contentRequests(fake).map(request => request.state))).not.toContain('03-14');
  });
 }
  test('selfDeclared remains mechanical even with unavailable reader', async () => {
@@ -407,7 +417,7 @@ test('real composition keeps generated clocks and stored gift metadata out of se
     const interview = await composition.state.activeInterview(yes.occasionId, '2026-10-18');
     expect(interview?.startedAt).toBe(COLLISION_CLOCK);
     expect(interview?.steps[1]?.opensFrom).toBe('A pottery class');
-    const modelStates = JSON.stringify(fake.requests.map(request => request.state));
+    const modelStates = JSON.stringify(contentRequests(fake).map(request => request.state));
     expect(modelStates).not.toContain(String(COLLISION_CLOCK));
     expect(modelStates).not.toContain('2025-10-18');
     expect(modelStates).not.toContain('2026-10-18');
@@ -421,7 +431,7 @@ for (const where of ['landedOn', 'notes', 'extra'] as const) {
   if (where !== 'extra') gift[where] = 'password=synthetic-secret';
   await h.state.recordGift(gift);
   await expect(h.service.answer(yes)).rejects.toMatchObject({ problem: 'credential-material' });
-  expect(fake.requests).toHaveLength(0); expect(await h.state.acknowledgements()).toEqual([]);
+  expect(contentRequests(fake)).toHaveLength(0); expect(await h.state.acknowledgements()).toEqual([]);
  });
 }
 
@@ -435,7 +445,7 @@ for (const where of ['clock', 'extra'] as const) {
   await expect(openInterview({ occasion, occurrence: '2026-03-14', now, personLines: h.profile.read().sections.find(section => section.heading === 'People')!.prose, history: [], maxQuestions: 3, ...extra })).rejects.toMatchObject({ problem });
   await expect(composeNudge({ id: 'synthetic', now, subjects: [], ...extra })).rejects.toMatchObject({ problem });
   await expect(composePending({ today: '2026-03-06', now, leadDays: 10, occasions: [occasion], conflicts: [], openItems: [], acknowledgements: [], agentIsPushed: false, ...extra })).rejects.toMatchObject({ problem });
-  expect(fake.requests).toHaveLength(0);
+  expect(contentRequests(fake)).toHaveLength(0);
  });
 }
 
@@ -528,7 +538,7 @@ test('reopened gift state screens duplicate raw extras without exposing them thr
   writeFileSync(h.statePath, JSON.stringify({ version: 1, gifts: [{ ...gift, extra: 'password=synthetic-secret' }, gift], acknowledgements: [], openItems: [], interviews: [], mirrors: [], lastSweep: null }));
   expect(JSON.stringify(await h.state.giftHistory(yes.occasionId))).not.toContain('synthetic-secret');
   await expect(h.service.answer(yes)).rejects.toMatchObject({ problem: 'credential-material' });
-  expect(fake.requests).toHaveLength(0); expect(await h.state.acknowledgements()).toEqual([]);
+  expect(contentRequests(fake)).toHaveLength(0); expect(await h.state.acknowledgements()).toEqual([]);
 });
 
 for (const category of ['openItems', 'acknowledgements'] as const) {
@@ -538,7 +548,7 @@ for (const category of ['openItems', 'acknowledgements'] as const) {
   const acknowledgement = { id: 'synthetic', occasionId: yes.occasionId, occurrence: '2026-03-14', answer: 'later', answeredAt: COLLISION_CLOCK };
   writeFileSync(h.statePath, JSON.stringify({ version: 1, gifts: [], openItems: [{ ...item, ...(category === 'openItems' ? { extra: 'password=synthetic-secret' } : {}) }], acknowledgements: [{ ...acknowledgement, ...(category === 'acknowledgements' ? { extra: 'password=synthetic-secret' } : {}) }], interviews: [], mirrors: [], lastSweep: null }));
   await expect(h.service.pending()).rejects.toMatchObject({ problem: 'credential-material' });
-  expect(fake.requests).toHaveLength(0);
+  expect(contentRequests(fake)).toHaveLength(0);
   expect(JSON.stringify(await h.state.openItems())).not.toContain('synthetic-secret');
   expect(JSON.stringify(await h.state.acknowledgements())).not.toContain('synthetic-secret');
  });
@@ -595,7 +605,7 @@ test('failed sanitation publication retains value-free raw refusal until an actu
   const other = { occasionId: 'someone else', occurrence: '2025-03-14', recordedAt: COLLISION_CLOCK, landedOn: 'A class' };
   await expect(h.state.recordGift(other)).rejects.toThrow(); spy.mockRestore();
   await expect(h.service.answer(yes)).rejects.toMatchObject({ problem: 'credential-material' });
-  expect(fake.requests).toHaveLength(0);
+  expect(contentRequests(fake)).toHaveLength(0);
   await h.state.recordGift(other);
   expect(readFileSync(h.statePath, 'utf8')).not.toContain('synthetic-secret');
   expect((await h.service.answer(yes)).ok).toBe(true);

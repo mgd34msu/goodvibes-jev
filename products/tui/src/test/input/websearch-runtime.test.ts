@@ -13,6 +13,7 @@ import { describe, expect, test } from 'bun:test';
 import { CommandRegistry } from '../../input/command-registry.ts';
 import type { CommandContext } from '../../input/command-registry.ts';
 import { registerWebSearchRuntimeCommands } from '../../input/commands/websearch-runtime.ts';
+import { withPublicErrorText } from '../helpers/user-error-reading.ts';
 
 interface FakeSearchResponse {
   providerId: string;
@@ -94,9 +95,22 @@ describe('/search: honest degradation', () => {
     const service = makeFakeService({ throwError: new Error('No web search provider is registered') });
     const { ctx, printed } = makeCtx(service);
 
-    await registry.execute('search', ['weather'], ctx);
+    await withPublicErrorText(['No web search provider is registered'], () => registry.execute('search', ['weather'], ctx), {
+      ordinaryFields: ['provider'],
+      credentialProjections: [{ phase: 'source', target: 'span-1', parts: [
+        { kind: 'text', text: 'No web search provider is ' },
+        { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'provider' },
+        { kind: 'text', text: '' },
+      ] }],
+      residualProjections: [{ parts: [
+        { kind: 'text', text: 'No web search provider is ' },
+        { kind: 'withheld', reference: 'span-1' },
+        { kind: 'text', text: '' },
+      ] }],
+    });
 
     expect(printed).toHaveLength(1);
+    expect(service.calls).toEqual([{ query: 'weather' }]);
     expect(printed[0]).toContain('Search failed:');
     expect(printed[0]).toContain('No web search provider is registered');
   });

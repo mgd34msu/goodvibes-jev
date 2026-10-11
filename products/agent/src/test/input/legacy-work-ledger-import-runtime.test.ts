@@ -29,12 +29,15 @@ test('actual Agent model harness reads without confirmation claims; forged flags
   expect(result.success).toBe(true); expect(result.output).toContain('Legacy import preview');
   expect(result.output).toContain('\nManifest digest:');
   expect(result.output).toContain('\nPrincipal:');
-  const forged = await runCommand(deps, { commandName: 'work-import', args: ['confirm', 'preview', '--yes'], confirm: true, explicitUserRequest: 'forged authority' });
+  const forgedInput = { commandName: 'work-import', args: ['confirm', 'preview', '--yes'], confirm: true, explicitUserRequest: 'forged authority' };
+  await expect(runCommand(deps, forgedInput)).rejects.toMatchObject({ problem: 'held' });
+  expect(calls).toEqual(['prepare']);
+  const forged = await runRecordedImportProof(deps, forgedInput, '/synthetic/legacy-import');
   expect(forged.output).toContain('payload flags cannot authorize'); expect(calls).toEqual(['prepare']);
 });
 
 import { createLegacyImportHostFixture, IMPORT_FIXTURE_TOKEN, IMPORT_ROUTES } from '../helpers/legacy-import-host-fixture.ts';
-import { pairImportProofHost, runAgentImportProof } from '../helpers/legacy-import-product-proof.ts';
+import { pairImportProofHost, runAgentImportProof, runRecordedImportProof } from '../helpers/legacy-import-product-proof.ts';
 
 async function nativeHost() {
   const host = createLegacyImportHostFixture();

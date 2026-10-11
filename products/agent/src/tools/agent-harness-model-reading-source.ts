@@ -83,30 +83,38 @@ export function captureModelReadingSnapshotGuard(captured: unknown): (value: unk
     return { kind: 'object', array: Array.isArray(value), slots };
   };
   const original = capture(captured, 0);
+  const immutableMatches = new WeakMap<object, Set<Snapshot>>();
   return value => {
     let nodes = 0;
     const ancestors = new Set<object>();
-    const compare = (current: unknown, snapshot: Snapshot, depth: number): void => {
+    const compare = (current: unknown, snapshot: Snapshot, depth: number): boolean => {
       if (++nodes > 20_000 || depth > 64) changed();
       if (snapshot.kind === 'value') {
         if (!Object.is(current, snapshot.value)) changed();
-        return;
+        return true;
       }
       if (current === null || typeof current !== 'object' || nodeTypes.isProxy(current) || ancestors.has(current)) return changed();
       if (Array.isArray(current) !== snapshot.array) changed();
       const prototype: unknown = Object.getPrototypeOf(current);
       if (snapshot.array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
-      const descriptors = Object.getOwnPropertyDescriptors(current);
-      if (Reflect.ownKeys(descriptors).length !== snapshot.slots.length) changed();
+      // A complete match of a recursively frozen native tree remains exact:
+      // neither its slots nor any descendant's prototype can subsequently change.
+      if (immutableMatches.get(current)?.has(snapshot)) return true;
+      if (Reflect.ownKeys(current).length !== snapshot.slots.length) changed();
       ancestors.add(current);
+      let immutable = Object.isFrozen(current);
       try {
         for (const slot of snapshot.slots) {
-          if (!Object.hasOwn(descriptors, slot.key)) changed();
-          const descriptor = descriptors[slot.key];
+          const descriptor = Object.getOwnPropertyDescriptor(current, slot.key);
           if (!descriptor || !('value' in descriptor)) return changed();
-          compare(descriptor.value, slot.snapshot, depth + 1);
+          immutable = compare(descriptor.value, slot.snapshot, depth + 1) && immutable;
         }
       } finally { ancestors.delete(current); }
+      if (immutable) {
+        const matches = immutableMatches.get(current) ?? new Set<Snapshot>();
+        matches.add(snapshot); immutableMatches.set(current, matches);
+      }
+      return immutable;
     };
     compare(value, original, 0);
   };

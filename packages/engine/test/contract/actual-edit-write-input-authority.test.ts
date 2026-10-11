@@ -360,9 +360,10 @@ for (const scenario of ['deliver', 'deny-original', 'deny-copy'] as const) {
           expect(existsSync(join(root, '.goodvibes', '.backups'))).toBe(false);
         } else {
           expect(memberCalls, JSON.stringify({ status: result.status, error: result.error, results: [...results] })).toBe(2);
-          expect(result.status).not.toBe('passed');
+          expect(result.status).toBe('failed');
           expect(checkedBeforeDelivery).toBe(false);
-          expect(result.error).toContain('captured input path is access-restricted');
+          expect(result.error).toBe('unit u1 failed with a failure that is not transient: [REDACTED]');
+          expect(result.commit).toBeUndefined();
           expect(checkedDeniedMutation).toBe(true);
           expect(requests.every((request) => !request.includes('NOTEBOOK_APPLIED'))).toBe(true);
           assertOwnerUnchanged();

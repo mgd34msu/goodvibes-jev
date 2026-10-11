@@ -17,6 +17,10 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { redactSensitiveDataAsync, redactionCredential } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { isDeepStrictEqual } from 'node:util';
 import { GatewayMethodCatalog } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import type { GatewayMethodInvocation } from '@goodvibes-jev/engine/sdk/platform/control-plane';
 import {
@@ -110,11 +114,23 @@ describe('occasions gateway route decision', () => {
       throw new Error('the store could not be written');
     });
     const invoke = createOccasionsGatewayInvoke({ gatewayMethods: catalog, configManager, homeDirectory: '/nowhere' });
-    const result = await invoke(OCCASIONS_METHOD_IDS.sweep, {});
-    expect(result.ok).toBe(false);
-    expect(result.data).toBeNull();
-    expect(result.error).toContain('the store could not be written');
-    expect(result.route).toBe('in-process');
+    const message = 'the store could not be written';
+    const publicQuestions = Object.fromEntries(Object.entries(redactionCredential.items).map(([name, item]) => [name, item.question]));
+    const fake = fakePort((name, question, state) => {
+      if ((name === 'lineHasCredential' || name === 'spanIsCredential') && isDeepStrictEqual(question, publicQuestions[name])
+        && isDeepStrictEqual(state, { phase: 'source', target: 'whole-line', parts: [{ kind: 'text', text: message }] }))
+        return noulAnswer(0.01);
+      throw new Error(`Unexpected Occasion diagnostic question: ${name}`);
+    });
+    const previous = installJudgmentPort(fake.port);
+    try {
+      expect(await redactSensitiveDataAsync(message)).toBe(message);
+      const result = await invoke(OCCASIONS_METHOD_IDS.sweep, {});
+      expect(result.ok).toBe(false);
+      expect(result.data).toBeNull();
+      expect(result.error).toContain(message);
+      expect(result.route).toBe('in-process');
+    } finally { installJudgmentPort(previous); }
   });
 
   test('every verb carries a route label, so a connected-host failure can name one', () => {
@@ -175,7 +191,7 @@ describe('occasions gateway body forwarding', () => {
     expect((seen.get(OCCASIONS_METHOD_IDS.confirm)?.body as Record<string, unknown>).authority).toBe('web-page');
   });
 
-  test('the invocation declares a user request, which is what the write verbs check', async () => {
+  test('the invocation identifies the Agent service without claiming a human request', async () => {
     const { catalog, seen } = stubCatalog([OCCASIONS_METHOD_IDS.remove]);
     const invoke = createOccasionsGatewayInvoke({ gatewayMethods: catalog, configManager, homeDirectory: '/nowhere' });
     await invoke(OCCASIONS_METHOD_IDS.remove, {
@@ -184,9 +200,8 @@ describe('occasions gateway body forwarding', () => {
       authority: 'owner-direct',
     });
     const context = seen.get(OCCASIONS_METHOD_IDS.remove)?.context as Record<string, unknown> | undefined;
-    // `refuseNonUserRequest` runs first on all three writes; a caller that
-    // declared the call was not a user request gets its own refusal.
-    expect(context?.principalKind).toBe('user');
+    expect(context?.principalKind).toBe('service');
+    expect(context?.explicitUserRequest).toBeUndefined();
     expect(context?.clientKind).toBe('goodvibes-agent');
   });
 

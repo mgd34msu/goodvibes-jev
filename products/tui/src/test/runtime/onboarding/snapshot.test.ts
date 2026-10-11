@@ -230,15 +230,15 @@ describe('collectOnboardingSnapshot', () => {
     expect(snapshot.collectionIssues).toEqual([
       {
         area: 'surfaces',
-        message: 'surface registry unavailable',
+        message: '[REDACTED]',
       },
       {
         area: 'provider-accounts',
-        message: 'provider account query offline',
+        message: '[REDACTED]',
       },
       {
         area: 'legacy-daemon',
-        message: 'legacy unit detection unavailable',
+        message: '[REDACTED]',
       },
     ]);
   });
@@ -343,15 +343,15 @@ describe('collectOnboardingSnapshot', () => {
     expect(snapshot.collectionIssues).toEqual([
       {
         area: 'services',
-        message: 'webhook: service inspection unavailable',
+        message: 'webhook: [REDACTED]',
       },
       {
         area: 'secrets-review',
-        message: 'secret review unavailable',
+        message: '[REDACTED]',
       },
       {
         area: 'secrets-records',
-        message: 'secret inventory unavailable',
+        message: '[REDACTED]',
       },
     ]);
   });
@@ -422,19 +422,19 @@ describe('collectOnboardingSnapshot', () => {
     expect(snapshot.collectionIssues).toEqual([
       {
         area: 'services',
-        message: 'service registry unavailable',
+        message: '[REDACTED]',
       },
       {
         area: 'subscriptions-active',
-        message: 'active subscriptions unavailable',
+        message: '[REDACTED]',
       },
       {
         area: 'subscriptions-pending',
-        message: 'pending subscriptions unavailable',
+        message: '[REDACTED]',
       },
       {
         area: 'auth',
-        message: 'auth inspection unavailable',
+        message: '[REDACTED]',
       },
     ]);
   });

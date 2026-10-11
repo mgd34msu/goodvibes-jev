@@ -4,7 +4,7 @@ import { readSettingsWriteEvidence } from '../gate/policy/settings-write-evidenc
 import { readAgentReadEvidence } from '../gate/policy/agent-read-evidence.js';
 import { hashState, JudgmentError, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { getProcessUntrustedContentLedger } from '../security/untrusted-content.js';
 import { autonomousSourceEvidence, autonomousRevision, assertAutonomousData, captureAutonomousChoices, captureAutonomousSource, decideAutonomousTool, type AutonomousToolChoices, type AutonomousToolRevision, type AutonomousToolSource } from './autonomous.js';
 import { AutonomousChoiceProjectionOwner, type AutonomousChoiceProjection } from './autonomous-input-projection.js';
@@ -487,7 +487,8 @@ export class PermissionManager {
     assertPermissionActive(signal);
   }
 
-  private autonomousAuthority(sourceId: string, sourceOf: () => AutonomousToolSource, choiceProjection?: AutonomousChoiceProjection) {
+  private autonomousAuthority(sourceId: string, sourceOf: () => AutonomousToolSource, choiceProjection?: AutonomousChoiceProjection,
+    purpose: 'admission' | 'currentness' = 'admission') {
     // Stage host callbacks first. The subsequent source/config/store copies are
     // owned data reads, not a sequence interleaving observers with sampled fields.
     const choices = this.gate.autonomousChoices?.(sourceId) ?? {};
@@ -508,7 +509,12 @@ export class PermissionManager {
     assertAutonomousData(choices);
     assertAutonomousData(frame);
     const capturedSource = captureAutonomousSource(source);
-    const ownedFrame = snapshotJudgmentInput({ ...frame, source: autonomousSourceEvidence(capturedSource) }) as Record<string, unknown>;
+    const normalizedFrame = { ...frame, source: autonomousSourceEvidence(capturedSource) };
+    // Currentness is called only inside an authentic admission. Its complete
+    // structural capture is compared with the already screened authority hash;
+    // changed bytes cannot grant authority or become a new reading.
+    const ownedFrame = (purpose === 'currentness' ? captureOwnedJson(normalizedFrame)
+      : snapshotJudgmentInput(normalizedFrame)) as Record<string, unknown>;
     const captured = Object.freeze({ ...ownedFrame, source: capturedSource, autonomousChoices: captureAutonomousChoices(choices) });
     return choiceProjection === undefined ? captured : Object.freeze({ ...captured,
       autonomousChoices: this.autonomousChoiceProjections.choices(choiceProjection, sourceId, captured) });
@@ -824,7 +830,7 @@ export class PermissionManager {
           }
           expected = facts.afterIncarnation;
         }
-        const current = this.autonomousAuthority(sourceId, sourceOf);
+        const current = this.autonomousAuthority(sourceId, sourceOf, undefined, 'currentness');
         assertOwnedLifetime();
         if ((current as Readonly<Record<string, unknown>>)['incarnation'] !== expected
           || hashState({ ...current, incarnation: acceptedIncarnation } as unknown as EntryType) !== acceptedRevision) {
@@ -862,7 +868,7 @@ export class PermissionManager {
           // Ancestors adopt this exact child's result before the child's private
           // source callback samples its retained parent guard.
           for (const parent of parents) parent.completeConfigTransition(actual, transition);
-          const current = this.autonomousAuthority(sourceId, sourceOf);
+          const current = this.autonomousAuthority(sourceId, sourceOf, undefined, 'currentness');
           assertOwnedLifetime(); actual.owner.assertCompletedMutation(mutation);
           if ((current as Readonly<Record<string, unknown>>)['incarnation'] !== facts.afterIncarnation
             || hashState({ ...current, incarnation: acceptedIncarnation } as unknown as EntryType) !== acceptedRevision) {

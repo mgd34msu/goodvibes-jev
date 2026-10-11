@@ -5,7 +5,7 @@ import { KnowledgeNodeActivationHeldError as Held, type KnowledgeNodeActivationO
 import { supportHash } from './semantic/verification/projection.js';
 import { findKnowledgeEdge, prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow } from './store-edge-writes.js';
 import { prepareKnowledgeExtractionRecord, prepareKnowledgeSourceRecord, writeKnowledgeExtractionRow, writeKnowledgeSourceRow } from './store-evidence-writes.js';
-import { assertPreparedNodeWrites, markPreparedNodeWritten, preparedNodeWrite, prepareNodeActivationPass, type NodeMutationDraft } from './store-node-activation.js';
+import { assertPreparedNodeWrites, markPreparedNodeWritten, preparedNodeWrites, prepareNodeActivationPass, type NodeMutationDraft } from './store-node-activation.js';
 import { recordKnowledgeNodeRevisions, writeKnowledgeNodeRow } from './store-node-history.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow } from './store-node-issue-writes.js';
 import { retainKnowledgeNodeObservation } from './store-node-observation.js';
@@ -118,7 +118,7 @@ export async function applyKnowledgeImport(store: KnowledgeStore, view: Knowledg
   const stage = { assertCurrent, invalidatesRetainedObservations, evidenceFor: (record: KnowledgeNodeRecord) => activationSourceIds(record).map((id) => ({ id,
     source: sources.get(id) ?? null, extraction: extractionFor(extractions, id) })) };
   const prepared = await prepareNodeActivationPass(store, drafts, options, floor, scope, stage);
-  const nodes = drafts.map((_, index) => preparedNodeWrite(store, prepared, index, scope));
+  const nodes = preparedNodeWrites(store, prepared, scope);
   const revisions = new Map<string, KnowledgeNodeRevisionRecord[]>();
   for (const { record } of nodes) revisions.set(record.id, [...(view.nodeRevisions.get(record.id) ?? [])]);
   await view.sqlite.publishPrepared((sqlite) => {

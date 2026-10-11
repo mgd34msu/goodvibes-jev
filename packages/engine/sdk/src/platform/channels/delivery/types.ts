@@ -73,6 +73,8 @@ export interface ChannelDeliveryStrategy {
   readonly id: string;
   /** Enforces lifetime restrictions, including publication, at the send boundary after preparation. */
   readonly supportsGuardedDelivery?: boolean | undefined;
+  /** Invokes withPublication only around the final dispatch, after preparation. */
+  readonly supportsPublication?: boolean | undefined;
   canHandle(request: ChannelDeliveryRequest): boolean;
   deliver(request: ChannelDeliveryRequest): Promise<ChannelDeliveryResult>;
 }

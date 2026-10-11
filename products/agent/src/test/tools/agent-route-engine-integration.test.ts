@@ -12,6 +12,7 @@ import { taskRoutePort } from '../helpers/task-route-readings.ts';
 import { createTestProviderRegistry } from '../helpers/test-managers.ts';
 import { listWorkspaceActions } from '../../tools/agent-harness-workspace-actions.ts';
 import { listHarnessModes } from '../../tools/agent-harness-mode-catalog.ts';
+import { AGENT_WORKSPACE_CATEGORIES } from '../../input/agent-workspace-categories.ts';
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
 
@@ -61,6 +62,21 @@ for (const kind of ['route', 'harness'] as const) describe(`${kind} engine task-
     expect(body.harnessModeMatches.every((record: { id: string }) => modeIds.has(record.id))).toBe(true);
     expect(fake.requests.some(request => Object.keys(request.questions).length === TASK_ROUTES.length + 1)).toBe(true);
     expect(fake.requests.some(request => request.context?.site === 'agent.task-route.catalog')).toBe(true);
+    const native = AGENT_WORKSPACE_CATEGORIES.flatMap(category => category.actions.map(action => ({ category, action })))
+      .find(({ action }) => action.id === 'personal-ops-google-connect');
+    expect(native).toBeDefined();
+    const read = fake.requests.find(request => request.context?.site === 'agent.task-route.catalog'
+      && request.state && typeof request.state === 'object' && !Array.isArray(request.state)
+      && request.state.candidate && typeof request.state.candidate === 'object' && !Array.isArray(request.state.candidate)
+      && request.state.candidate.name === native?.action.id);
+    expect(read).toBeDefined();
+    if (!read?.state || typeof read.state !== 'object' || Array.isArray(read.state)
+      || !read.state.candidate || typeof read.state.candidate !== 'object' || Array.isArray(read.state.candidate)
+      || typeof read.state.candidate.evidenceJson !== 'string') throw new Error('Missing complete workspace candidate');
+    const evidence = JSON.parse(read.state.candidate.evidenceJson);
+    expect(evidence.action).toEqual(native!.action);
+    expect(evidence.category.detail).toBe(native!.category.detail);
+    expect(evidence.action.detail.length).toBeGreaterThan(56);
   });
 
   test.each([0.5, 0.57])('catalog reading %s stays typed and never publishes a ready route', async probability => {

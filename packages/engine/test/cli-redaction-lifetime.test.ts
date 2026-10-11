@@ -3,7 +3,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { captureStructuredCredentialReferenceConfigValue, readCredentialKey } from '@goodvibes-jev/engine/sdk/platform/config';
-import { collectSensitiveConfigValues, isSensitiveConfigPath, redactConfig, redactSerializedSecrets, REDACTED_VALUE } from '@goodvibes-jev/engine/terminal-shell';
+import { collectSensitiveConfigValues, isSensitiveConfigPath, prepareConfigRedaction, redactConfig, redactSerializedSecrets, REDACTED_VALUE } from '@goodvibes-jev/engine/terminal-shell';
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -18,6 +18,73 @@ function pausedReader() {
   installJudgmentPort(port);
   return { entered: entered.promise, release: () => release.resolve(), recorded };
 }
+
+test('one retained operation classifies each path once for masked config and local secret values', async () => {
+  const recorded = fakePort((name, _question, state) => {
+    if (name !== 'credential' || state === null || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected config reading');
+    return noulAnswer(state.key === 'extensionSecret' ? 0.97 : 0.03);
+  });
+  installJudgmentPort(recorded.port);
+  const config = { extensionSecret: 'private-local-value', extensionLabel: 'ordinary-value', 'payments.currency': 'EUR' };
+  const prepared = await prepareConfigRedaction(config);
+  expect(prepared.value).toEqual({ extensionSecret: REDACTED_VALUE, extensionLabel: 'ordinary-value', 'payments.currency': 'EUR' });
+  expect(prepared.redactedPaths).toEqual(['extensionSecret']);
+  expect(prepared.sensitiveValues).toEqual(['private-local-value']);
+  expect(recorded.requests).toHaveLength(2);
+  expect(recorded.requests.map(request => request.state)).toEqual([
+    { key: 'extensionSecret', description: '' },
+    { key: 'extensionLabel', description: '' },
+  ]);
+  expect(JSON.stringify(recorded.requests)).not.toContain('private-local-value');
+  expect(JSON.stringify(recorded.requests)).not.toContain('ordinary-value');
+  prepared.assertCurrent();
+  config.extensionLabel = 'changed-value';
+  expect(prepared.assertCurrent).toThrow();
+});
+
+test('prepared uncertain paths protect both outputs and are read again in the next operation', async () => {
+  const recorded = fakePort(() => noulAnswer(0.5)); installJudgmentPort(recorded.port);
+  const config = { extensionSecret: 'private-local-value' };
+  const first = await prepareConfigRedaction(config);
+  const second = await prepareConfigRedaction(config);
+  expect(first.value).toEqual({ extensionSecret: REDACTED_VALUE });
+  expect(first.sensitiveValues).toEqual(['private-local-value']);
+  expect(second.value).toEqual(first.value); expect(second.sensitiveValues).toEqual(first.sensitiveValues);
+  expect(recorded.requests).toHaveLength(2);
+  expect(JSON.stringify(recorded.requests)).not.toContain('private-local-value');
+});
+
+test('prepared config refuses mutation while its shared classification is pending', async () => {
+  const reader = pausedReader();
+  const config = { extensionSecret: 'private-local-value' };
+  const work = prepareConfigRedaction(config); await reader.entered;
+  config.extensionSecret = 'changed-local-value'; reader.release();
+  await expect(work).rejects.toThrow();
+  expect(JSON.stringify(reader.recorded.requests)).not.toContain('private-local-value');
+  expect(JSON.stringify(reader.recorded.requests)).not.toContain('changed-local-value');
+});
+
+test('prepared config cancellation drains a non-cooperating late read without producing outputs', async () => {
+  const reader = pausedReader(), controller = new AbortController();
+  const work = prepareConfigRedaction({ extensionSecret: 'private-local-value' }, { signal: controller.signal });
+  await reader.entered; controller.abort(); await expect(work).rejects.toThrow();
+  reader.release(); await Promise.resolve();
+  expect(JSON.stringify(reader.recorded.requests)).not.toContain('private-local-value');
+});
+
+test('prepared config publication retains its original port after both outputs settle', async () => {
+  installJudgmentPort(fakePort(() => noulAnswer(0.03)).port);
+  const prepared = await prepareConfigRedaction({ extension: 'ordinary-value' });
+  prepared.assertCurrent();
+  installJudgmentPort(fakePort(() => noulAnswer(0.03)).port);
+  expect(prepared.assertCurrent).toThrow();
+});
+
+test('prepared config refuses asynchronous caller ownership before any path reaches the wire', async () => {
+  const recorded = fakePort(() => noulAnswer(0.03)); installJudgmentPort(recorded.port);
+  await expect(prepareConfigRedaction({ extension: 'private-local-value' }, { async assertCurrent() {} })).rejects.toThrow('synchronous');
+  expect(recorded.requests).toHaveLength(0);
+});
 
 test('a new port reads the same path again instead of reusing an old ordinary decision', async () => {
   const ordinary = fakePort(() => noulAnswer(0.03)), credential = fakePort(() => noulAnswer(0.97));

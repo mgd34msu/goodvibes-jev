@@ -147,6 +147,7 @@ describe('owner-profile composition registers the account identity for egress re
     } finally {
       composed.dispose();
     }
-    expect(redactSensitiveData(inHome)).toBe(inHome);
+    expect(redactSensitiveData(inHome)).not.toContain(homedir());
+    expect(redactSensitiveData(inHome)).toContain('[REDACTED]');
   });
 });

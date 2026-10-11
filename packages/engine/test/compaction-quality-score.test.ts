@@ -175,7 +175,7 @@ describe('the compaction manager', () => {
     expect(events.map((e) => e.type)).toContain('COMPACTION_STRATEGY_SWITCH');
     // Autocompact and collapse are each read by the rubric and the fidelity
     // check; collapse first reads which messages to keep, in one request.
-    expect(requests).toHaveLength(5);
+    assertReadingPartition(requests, ['engine.compaction.retention', 'engine.compaction.fidelity', 'engine.compaction.collapse-keep', 'engine.compaction.retention', 'engine.compaction.fidelity'], ['sessionId', 'fromStrategy', 'toStrategy', 'score', 'grade']);
   });
 
   test('a good score commits the first strategy', async () => {
@@ -197,3 +197,13 @@ describe('the compaction manager', () => {
     expect(events.map((e) => e.type)).toContain('COMPACTION_FAILED');
   });
 });
+
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
+  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
+  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
+  expect(requests).toHaveLength(batteries.length + fields.length);
+  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
+  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
+  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
+  return feature;
+}

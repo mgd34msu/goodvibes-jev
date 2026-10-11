@@ -3,7 +3,7 @@ import type { OwnedInboxSource, ProviderStatus } from '@goodvibes-jev/engine/sdk
 import { createMultiOwnerDaemonInboxFactory, type DaemonInboxSourceFactory } from './multiowner-inbox-composition.js';
 import { createSlackDaemonInboxSourceFactory, type SlackDaemonInboxOptions, type SlackDaemonInboxSourceFactories } from './slack-inbox-composition.js';
 import { createEmailDaemonInboxSourceFactory, type EmailDaemonInboxOptions, type EmailDaemonInboxSourceFactories } from './email-inbox-composition.js';
-import { createDiscordDaemonInboxSourceFactory, type DiscordDaemonInboxOptions, type DiscordDaemonInboxSourceFactories } from './discord-inbox-composition.js';
+import { createConfiguredDiscordDaemonInboxSourceFactory, createDiscordDaemonInboxSourceFactory, type DiscordDaemonInboxOptions, type DiscordDaemonInboxSourceFactories } from './discord-inbox-composition.js';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 
 /** Original254699bf inbox/index.ts registers precisely these three providers. */
@@ -105,10 +105,15 @@ function unconfiguredSource(provider: Provider): DaemonInboxSourceFactory {
 /** One canonical registration; no inferred grants, historical-DM discovery claims or missing-provider omission. */
 export function createProductionDaemonInboxFactory(options: ProductionDaemonInboxOptions = {},
   factories: { readonly slack?: SlackDaemonInboxSourceFactories; readonly email?: EmailDaemonInboxSourceFactories; readonly discord?: DiscordDaemonInboxSourceFactories } = {},
+  discordScreening?: DiscordDaemonInboxOptions['screening'],
 ): DaemonInboxFactory {
+  const configuredDiscord = discordScreening ? createConfiguredDiscordDaemonInboxSourceFactory(discordScreening, factories.discord) : undefined;
+  const absentDiscord = unconfiguredSource('discord');
   return createMultiOwnerDaemonInboxFactory([
     options.slack ? createSlackDaemonInboxSourceFactory(options.slack, factories.slack) : unconfiguredSource('slack'),
-    options.discord ? createDiscordDaemonInboxSourceFactory(options.discord, factories.discord) : unconfiguredSource('discord'),
+    options.discord ? createDiscordDaemonInboxSourceFactory(options.discord, factories.discord)
+      : (context, routing, controls) => (configuredDiscord && context.configManager.get('surfaces.discord.enabled') === true
+        ? configuredDiscord : absentDiscord)(context, routing, controls),
     options.email ? createEmailDaemonInboxSourceFactory(options.email, factories.email) : unconfiguredSource('email'),
   ]);
 }

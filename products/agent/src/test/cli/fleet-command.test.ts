@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { ConfigManager } from '../../config/index.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
 import { handleFleetCommand } from '../../cli/fleet-command.ts';
-import type { CliCommandRuntime } from '../../cli/management.ts';
+import { withRuntimeServices, type CliCommandRuntime } from '../../cli/management.ts';
 import { parseGoodVibesCli } from '../../cli/parser.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
@@ -83,9 +83,17 @@ describe('fleet CLI command', () => {
   });
 
   test('attempts pick surfaces an honest error for an unknown group', async () => {
-    const result = await handleFleetCommand(runtime(['attempts', 'pick', 'missing-contract:group-1', 'missing-contract:item-1', '--yes']));
+    const rt = runtime(['attempts', 'pick', 'missing-contract:group-1', 'missing-contract:item-1', '--yes']);
+    await withRuntimeServices(rt, async services => {
+      expect(services.contractRunner.list()).toEqual([]);
+      await expect(services.contractRunner.fleetControls().pickAttemptWinner('missing-contract:group-1', 'missing-contract:item-1'))
+        .rejects.toThrow('contract missing-contract is not running work');
+      expect(services.contractRunner.list()).toEqual([]);
+    }, { modelData: 'skip' });
+    const result = await handleFleetCommand(rt);
     expect(result.exitCode).toBe(1);
-    expect(result.output).toContain('contract missing-contract is not running work');
+    expect(result.output).toBe('[REDACTED]');
+    expect(result.output).not.toContain('Picked winner');
   }, 15000);
 
   test('attempts judge requires a groupId', async () => {
@@ -98,8 +106,16 @@ describe('fleet CLI command', () => {
   // (mirroring the SDK's runtime services), so "no judge is configured" can
   // no longer occur, the honest refusal for this call is the unknown group.
   test('attempts judge refuses an unknown group honestly', async () => {
-    const result = await handleFleetCommand(runtime(['attempts', 'judge', 'missing-contract:group-1']));
+    const rt = runtime(['attempts', 'judge', 'missing-contract:group-1']);
+    await withRuntimeServices(rt, async services => {
+      expect(services.contractRunner.list()).toEqual([]);
+      await expect(services.contractRunner.fleetControls().proposeAttemptWinner('missing-contract:group-1'))
+        .rejects.toThrow('contract missing-contract is not running work');
+      expect(services.contractRunner.list()).toEqual([]);
+    }, { modelData: 'skip' });
+    const result = await handleFleetCommand(rt);
     expect(result.exitCode).toBe(1);
-    expect(result.output).toContain('contract missing-contract is not running work');
+    expect(result.output).toBe('[REDACTED]');
+    expect(result.output).not.toContain('Judge proposal');
   }, 15000);
 });

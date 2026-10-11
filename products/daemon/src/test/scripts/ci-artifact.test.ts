@@ -2,8 +2,10 @@ import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { recordDaemonCiArtifact, verifyDaemonCiArtifact, type DaemonArtifactSource } from '../../../scripts/ci-artifact.ts';
+import { nativeRuntimeProvenance } from '../helpers/native-runtime-provenance.ts';
 
 const source: DaemonArtifactSource = { sourceCommit: 'a'.repeat(40), sourceTree: 'b'.repeat(40), headCommit: 'c'.repeat(40) };
 async function fixture(run: (root: string) => Promise<void>) {
@@ -12,7 +14,7 @@ async function fixture(run: (root: string) => Promise<void>) {
   writeFileSync(join(root, 'native/goodvibes-daemon-linux-x64'), 'synthetic executable\n', { mode: 0o755 });
   writeFileSync(join(root, 'native/goodvibes-daemon-linux-x64.bun'), 'synthetic ordinary runtime', { mode: 0o755 });
   writeFileSync(join(root, 'native/goodvibes-daemon-linux-x64.bun.LICENSE.md'), 'synthetic runtime notices', { mode: 0o644 });
-  writeFileSync(join(root, 'native/goodvibes-daemon-linux-x64.bun.json'), 'synthetic runtime provenance', { mode: 0o644 });
+  writeFileSync(join(root, 'native/goodvibes-daemon-linux-x64.bun.json'), nativeRuntimeProvenance('synthetic ordinary runtime'), { mode: 0o644 });
   writeFileSync(join(root, 'native/lib/sqlite-vec-linux-x64/vec0.so'), 'synthetic native library\n', { mode: 0o644 });
   try { await run(root); } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -70,7 +72,10 @@ test('the CLI refuses another checkout or modified tracked source before recordi
   mkdirSync(join(root, 'src/cli'), { recursive: true });
   writeFileSync(join(root, 'src/cli/native-artifact.ts'), readFileSync(resolve(import.meta.dir, '../../cli/native-artifact.ts')));
   writeFileSync(join(root, 'scripts/ci-artifact.ts'), readFileSync(resolve(import.meta.dir, '../../../scripts/ci-artifact.ts')));
-  writeFileSync(join(root, '.gitignore'), 'native/\n');
+  writeFileSync(join(root, '.gitignore'), 'native/\nnode_modules/\n');
+  const engine = dirname(createRequire(import.meta.url).resolve('@goodvibes-jev/engine/package.json'));
+  mkdirSync(join(root, 'node_modules/@goodvibes-jev'), { recursive: true });
+  symlinkSync(engine, join(root, 'node_modules/@goodvibes-jev/engine'), 'dir');
   writeFileSync(join(root, 'source.txt'), 'committed source\n');
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
   git('init', '--quiet');

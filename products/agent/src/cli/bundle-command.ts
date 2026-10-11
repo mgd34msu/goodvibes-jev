@@ -13,9 +13,8 @@ import type { CliCommandOutput } from './types.ts';
 import { getPackageVersion } from './help.ts';
 import { classifyProviderSetup } from './provider-classification.ts';
 import { buildCliServicePosture } from './service-posture.ts';
-import { REDACTED_VALUE, collectSensitiveConfigValues, isRedactedValue, redactConfig, redactSerializedSecrets } from '@goodvibes-jev/engine/terminal-shell';
+import { REDACTED_VALUE, isRedactedValue, prepareConfigRedaction, redactSerializedSecrets, retainCliConfig } from '@goodvibes-jev/engine/terminal-shell';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { retainCliConfig } from './config-owner.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 import { appendTemporalLabel } from './temporal-label.ts';
 
@@ -170,8 +169,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
       const reading = { ...options, signal: owner.signal, assertCurrent: owner.assertCurrent };
       const providerReadiness = await buildProviderReadiness(services);
       assertCurrent();
-      const sensitiveValues = await collectSensitiveConfigValues(rawConfig, reading);
-      const redactedConfig = await redactConfig(rawConfig, reading);
+      const redactedConfig = await prepareConfigRedaction(rawConfig, reading);
       const service = await buildCliServicePosture(runtime, { ...reading, logTailBytes: 8192 });
       const bundle = {
         version: 2,
@@ -202,7 +200,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
         },
       };
       const targetPath = shellPaths.resolveWorkspacePath(outputPath);
-      const serialized = await redactSerializedSecrets(JSON.stringify(bundle, null, 2), sensitiveValues, reading);
+      const serialized = await redactSerializedSecrets(JSON.stringify(bundle, null, 2), redactedConfig.sensitiveValues, reading);
       redactedConfig.assertCurrent();
       owner.assertCurrent();
       mkdirSync(dirname(targetPath), { recursive: true });
@@ -217,7 +215,7 @@ export async function handleBundleCommand(runtime: CliCommandRuntime, options: J
         }, `Bundle exported: ${targetPath}\n  redactedConfigKeys: ${redactedConfig.redactedPaths.length}\n  hostIntegrationIssues: ${service.issues.length}`),
         exitCode: 0,
       };
-    });
+    }, { catalog: { contextWindowEnrichment: 'none' } });
   }
 
   if (sub === 'import') {

@@ -70,6 +70,34 @@ CREATE TABLE IF NOT EXISTS knowledge_edges (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_edges_unique ON knowledge_edges(from_kind, from_id, to_kind, to_id, relation);
 
+CREATE TABLE IF NOT EXISTS knowledge_edge_changes (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    edge_id TEXT NOT NULL,
+    from_kind TEXT NOT NULL,
+    from_id TEXT NOT NULL,
+    to_kind TEXT NOT NULL,
+    to_id TEXT NOT NULL
+  );
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_edge_changes_endpoints ON knowledge_edge_changes(from_kind,from_id,to_kind,to_id,sequence);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_edge_change_insert AFTER INSERT ON knowledge_edges BEGIN
+    INSERT INTO knowledge_edge_changes(edge_id,from_kind,from_id,to_kind,to_id) VALUES(NEW.id,NEW.from_kind,NEW.from_id,NEW.to_kind,NEW.to_id);
+  END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_edge_change_delete AFTER DELETE ON knowledge_edges BEGIN
+    INSERT INTO knowledge_edge_changes(edge_id,from_kind,from_id,to_kind,to_id) VALUES(OLD.id,OLD.from_kind,OLD.from_id,OLD.to_kind,OLD.to_id);
+  END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_edge_change_update AFTER UPDATE ON knowledge_edges BEGIN
+    INSERT INTO knowledge_edge_changes(edge_id,from_kind,from_id,to_kind,to_id) VALUES(OLD.id,OLD.from_kind,OLD.from_id,OLD.to_kind,OLD.to_id);
+    INSERT INTO knowledge_edge_changes(edge_id,from_kind,from_id,to_kind,to_id) VALUES(NEW.id,NEW.from_kind,NEW.from_id,NEW.to_kind,NEW.to_id);
+  END;
+
+INSERT INTO knowledge_edge_changes(edge_id,from_kind,from_id,to_kind,to_id)
+    SELECT id,from_kind,from_id,to_kind,to_id FROM knowledge_edges
+    WHERE NOT EXISTS (SELECT 1 FROM knowledge_edge_changes);
+
 CREATE TABLE IF NOT EXISTS knowledge_issues (
       id TEXT PRIMARY KEY,
       severity TEXT NOT NULL,

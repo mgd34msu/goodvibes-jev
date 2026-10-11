@@ -11,6 +11,7 @@ import type { HttpTransport } from '@goodvibes-jev/engine/transport-http';
 import {
   invokeContractRoute,
   firstJsonSchemaFailureAsync,
+  retainJsonSchemaSource,
   openContractRouteStream,
   requireContractRoute,
   clientInputRecord,
@@ -246,11 +247,13 @@ export function createOperatorRemoteClient(
     const validateResponse = clientOptions.validateResponses !== false;
     const getRegexReading = clientOptions.getRegexReading, configuredReading = clientOptions.regexReading;
     const outputSchema = method.outputSchema;
-    const schemaIdentity = JSON.stringify(outputSchema);
+    const retainedSchema = retainJsonSchemaSource(outputSchema);
+    const signal = options.signal;
     const assertValidationCurrent = () => {
-      options.signal?.throwIfAborted();
-      if (requireMethod(contract, methodId) !== method || clientOptions.getRegexReading !== getRegexReading || clientOptions.regexReading !== configuredReading || method.id !== methodId || method.outputSchema !== outputSchema || JSON.stringify(outputSchema) !== schemaIdentity)
+      signal?.throwIfAborted();
+      if (options.signal !== signal || requireMethod(contract, methodId) !== method || clientOptions.getRegexReading !== getRegexReading || clientOptions.regexReading !== configuredReading || method.id !== methodId || method.outputSchema !== outputSchema)
         throw new ContractError('Response schema owner changed during the request.');
+      retainedSchema.assertCurrent();
     };
     const route = methodHttpRoute(method);
     return invokeContractRoute<T>(
@@ -268,7 +271,7 @@ export function createOperatorRemoteClient(
       if (!schema && validateResponse) {
         assertValidationCurrent();
         const reading = getRegexReading && outputSchema
-          ? getRegexReading({ kind: 'operator', methodId: methodId, outputSchema: structuredClone(outputSchema) as Record<string, unknown>, signal: options.signal, assertCurrent: assertValidationCurrent })
+          ? getRegexReading({ kind: 'operator', methodId: methodId, outputSchema: structuredClone(retainedSchema.snapshot) as Record<string, unknown>, signal, assertCurrent: assertValidationCurrent })
           : configuredReading;
         assertValidationCurrent();
         await validateJsonSchemaResponse(method, body, { signal: options.signal, reading, assertCurrent: assertValidationCurrent });

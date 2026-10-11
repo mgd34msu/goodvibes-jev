@@ -6,6 +6,7 @@ import { ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
 import type { Tool, ToolExecuteOptions } from '../sdk/src/platform/types/tools.ts';
 import { installAgentToolPolicyGuard } from '../sdk/src/platform/gate/policy/index.ts';
 import { forgetReadSecrets, readTouchesSecrets } from '../sdk/src/platform/permissions/credential-read-defaults.ts';
+import { ToolError } from '../sdk/src/platform/types/errors.ts';
 
 const readings = () => fakePort((name, question) => {
   if (name === 'hazard') return choiceAnswer(question, 'none', 0.99);
@@ -80,7 +81,10 @@ describe('composed Agent policy execution options', () => {
     const settled = result.then(() => null, (error: unknown) => error);
     await entered.promise;
     controller.abort(new Error('owner cancelled'));
-    expect(await within(settled)).toMatchObject({ message: 'owner cancelled' });
+    const error = await within(settled);
+    expect(error).toBeInstanceOf(ToolError);
+    expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: name, message: '[REDACTED]', cause: controller.signal.reason });
+    expect(String(error)).not.toContain('owner cancelled');
   });
 
   test('an already-aborted call never starts validation or the tool', async () => {
@@ -90,12 +94,15 @@ describe('composed Agent policy execution options', () => {
     const registry = registryWith([tool('read', async () => { calls++; return { success: true }; })]);
     const controller = new AbortController(); controller.abort(new Error('already cancelled'));
     // The registry now observes cancellation before argument repair begins;
-    // it exposes the typed judgment cancellation, never the caller's reason.
+    // Its masked display retains the typed cancellation as private cause.
     await expect(registry.execute('cancel', 'read', { files: [{ path: 'not-read.md' }] }, { signal: controller.signal })).rejects.toMatchObject({
-      message: 'the judgment call was cancelled', cause: { name: 'JudgmentError', kind: 'aborted' },
+      code: 'TOOL_ERROR', toolName: 'read', message: '[REDACTED]', cause: { name: 'JudgmentError', kind: 'aborted' },
     });
     expect(calls).toBe(0);
-    expect(fake.requests).toHaveLength(0);
+    expect(fake.requests.filter(request => 'hazard' in request.questions || 'secrets' in request.questions)).toHaveLength(0);
+    for (const request of fake.requests) expect(Object.keys(request.questions)).toEqual(['lineHasCredential', 'spanIsCredential']);
+    expect(JSON.stringify(fake.requests)).not.toContain('not-read.md');
+    expect(JSON.stringify(fake.requests)).not.toContain('already cancelled');
   });
 });
 
@@ -118,7 +125,10 @@ describe('pending policy judgment cancellation', () => {
     const settled = result.then(() => null, (error: unknown) => error);
     expect(await started.promise).toBe(controller.signal);
     controller.abort(new Error('cancelled during judgment'));
-    expect(await within(settled)).toMatchObject({ message: 'cancelled during judgment' });
+    const error = await within(settled);
+    expect(error).toBeInstanceOf(ToolError);
+    expect(error).toMatchObject({ code: 'TOOL_ERROR', toolName: name, message: '[REDACTED]', cause: controller.signal.reason });
+    expect(String(error)).not.toContain('cancelled during judgment');
     release.resolve();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(calls).toBe(0);

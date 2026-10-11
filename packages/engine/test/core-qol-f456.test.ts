@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { afterEach, beforeEach, describe, it, expect } from 'bun:test';
 import { ProviderError } from '@goodvibes-jev/engine/sdk/platform/types';
 import {
   buildErrorResponseBody,
@@ -9,13 +9,21 @@ import {
   summarizeError,
   toProviderError,
 } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { useFailureReadings } from './_helpers/failure-readings.ts';
+import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { authoredErrorReadingsPort, errorText } from './_helpers/authored-error-readings.ts';
 
 /** What Jev reads in a refused connection's wording. */
-const REFUSED = [['ECONNREFUSED', { category: 'network', connection: 'refused', transientNetwork: true, beforeResponse: true }]] as const;
+const REFUSED = 'connect ECONNREFUSED 127.0.0.1:11434';
+let previous: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetFailureReadings();
+  previous = installJudgmentPort(authoredErrorReadingsPort({ parts: [[errorText(REFUSED)]] },
+    ['Error', 'ProviderError'].map((errorName) => ({ message: REFUSED, errorName, retryWait: 'none',
+      reading: { category: 'network', connection: 'refused', transientNetwork: true, beforeResponse: true } }))).port);
+});
+afterEach(() => { installJudgmentPort(previous); forgetFailureReadings(); });
 
 describe('F6 - ProviderError semantics', () => {
-  useFailureReadings(REFUSED);
   it('keeps rate-limit retries recoverable and carries the explicit retry-after', () => {
     // A wait stated only in the message is read by Jev (readRetryWait,
     // provider-retry-wait.test.ts); the constructor keeps the explicit value.
@@ -69,7 +77,6 @@ describe('F6 - ProviderError semantics', () => {
 });
 
 describe('F6 - error normalization and display', () => {
-  useFailureReadings(REFUSED);
   it('formats provider errors with preserved metadata and broad hints', () => {
     const err = new ProviderError('inceptionlabs chat request failed 401: token rejected by upstream', {
       statusCode: 401,
@@ -81,16 +88,16 @@ describe('F6 - error normalization and display', () => {
     });
 
     const formatted = formatProviderError(err);
-    expect(formatted).toContain('token rejected by upstream');
+    expect(formatted).toContain('[REDACTED]');
     expect(formatted).toContain('request_id=req-review-1');
     expect(formatted).toContain('Hint:');
     expect(formatted).not.toContain('Check your API key for this provider.');
   });
 
-  it('extracts useful text from raw JSON errors', () => {
-    const summary = summarizeError('{"error":{"message":"model not found","code":"model_not_found"}}');
-    expect(summary).toContain('model not found');
-    expect(summary).toContain('model_not_found');
+  it('holds unqualified raw JSON diagnostic text', () => {
+    const raw = '{"error":{"message":"model not found","code":"model_not_found"}}';
+    expect(summarizeError(raw)).toBe('[REDACTED] [REDACTED]');
+    expect(raw).toContain('model_not_found');
   });
 
   it('normalizes network errors into a descriptive summary and category where the wording is read', async () => {
@@ -98,7 +105,7 @@ describe('F6 - error normalization and display', () => {
     const read = await readNormalizedError(error, { provider: 'ollama', site: 'test.f6' });
     expect(read.category).toBe('network');
     expect(read.summary).toContain('Cannot connect to ollama');
-    // The synchronous path reads nothing: it shows the error's own message.
+    // The synchronous path can reuse the still-current settled privacy proof.
     const shown = normalizeError(error, { provider: 'ollama' });
     expect(shown.category).toBe('unknown');
     expect(shown.summary).toBe('connect ECONNREFUSED 127.0.0.1:11434');
@@ -106,7 +113,7 @@ describe('F6 - error normalization and display', () => {
 
   it('formats generic errors through the same display path', () => {
     const formatted = formatError(new Error('invalid JSON response from upstream'));
-    expect(formatted).toContain('invalid JSON response from upstream');
+    expect(formatted).toBe('[REDACTED]');
   });
 
   it('builds structured HTTP error bodies without losing compatibility', () => {
@@ -118,7 +125,7 @@ describe('F6 - error normalization and display', () => {
       requestId: 'req-503',
     }));
     expect(body).toMatchObject({
-      error: 'request failed (request_id=req-503)',
+      error: '[REDACTED] (phase=request, request_id=req-503)',
       hint: 'The provider is temporarily unavailable. Retry shortly or switch providers if the issue persists.',
       code: 'PROVIDER_ERROR',
       category: 'service',
@@ -143,7 +150,8 @@ describe('F6 - error normalization and display', () => {
     // Nothing structural names the failure, so the rewrapped error leaves the
     // category for the wording to be read where it matters.
     expect(err.category).toBe('unknown');
-    expect(err.message).toBe('connect ECONNREFUSED 127.0.0.1:11434');
+    expect(err.message).toBe('[REDACTED]');
+    expect(err.rawMessage).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     expect(err.provider).toBe('ollama');
     expect(err.operation).toBe('chat');
     expect(err.phase).toBe('request');

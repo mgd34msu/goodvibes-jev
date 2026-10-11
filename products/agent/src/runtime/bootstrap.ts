@@ -110,7 +110,7 @@ export type BootstrapContext = RuntimeContext & {
   /** Persists and navigates input history across sessions. */
   inputHistory: InputHistory;
   /** Unsubscribe functions owned by bootstrap (cleared on shutdown). */
-  bootstrapUnsubs: Array<() => void>;
+  bootstrapUnsubs: Array<() => void | Promise<void>>;
   /** Ref holding the periodic agent-status interval (use ref, not local var, to keep shutdown in sync). */
   agentStatusIntervalRef: { value: ReturnType<typeof setInterval> | null };
   /** Mutable refs for viewport/scroll/render functions; main.ts patches these after constructing UI state. */
@@ -799,7 +799,7 @@ export async function bootstrapRuntime(
       forensicsCollector,
       executionLedger: services.executionLedger,
       disposeSessionWriteLedger: () => { services.disposeSessionWriteLedger(); },
-      disposeRuntimeGraph: () => { services.dispose(); },
+      disposeRuntimeGraph: () => services.close(),
       deferredStartup,
       agentExternalServices,
       agentStatusIntervalRef,

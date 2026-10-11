@@ -40,11 +40,11 @@ const liveObservations = new WeakMap<object, { readonly assertCurrent: () => voi
 const releaseLiveObservation = new FinalizationRegistry<() => void>(release => release());
 
 /** Native notifications retain ABA evidence without retaining producer text. */
-function observeLiveModel<T>(model: SnapshotReader<T>): () => void {
+export function captureNativeReadModelObservation(model: object): () => void {
   let observation = liveObservations.get(model);
   if (!observation) {
     const methods = captureCatalogMethods(model, ['getSnapshot', 'subscribe']);
-    const read = model.getSnapshot, subscribe = modelReadingServicePath(model, ['subscribe']);
+    const read = modelReadingServicePath(model, ['getSnapshot']), subscribe = modelReadingServicePath(model, ['subscribe']);
     if (typeof read !== 'function' || typeof subscribe !== 'function') throw new ToolInputProjectionError('unavailable');
     const reference = new WeakRef(model), state = { epoch: 0, valid: true };
     let digest: string | undefined;
@@ -59,10 +59,10 @@ function observeLiveModel<T>(model: SnapshotReader<T>): () => void {
         digest = next; state.valid = true;
       } catch { state.epoch++; state.valid = false; }
     };
-    methods(); changed();
+    methods();
     const unsubscribe: unknown = subscribe.call(model, changed);
     if (typeof unsubscribe !== 'function') throw new ToolInputProjectionError('unavailable');
-    try { methods(); if (!state.valid) throw new ToolInputProjectionError('held'); }
+    try { methods(); changed(); if (!state.valid) throw new ToolInputProjectionError('held'); }
     catch (error) { try { unsubscribe(); } finally { throw error; } }
     releaseLiveObservation.register(model, () => { unsubscribe(); });
     observation = { assertCurrent: methods, captureEpoch() {
@@ -97,7 +97,7 @@ function captureLiveSources(context: CommandContext, observe = false) {
   const readModel = <T>(model: SnapshotReader<T> | undefined): T | null => {
     if (!model) return null;
     const methods = captureCatalogMethods(model, ['getSnapshot']); guards.push(methods);
-    if (observe) guards.push(observeLiveModel(model));
+    if (observe) guards.push(captureNativeReadModelObservation(model));
     const read = model.getSnapshot;
     if (typeof read !== 'function') throw new ToolInputProjectionError('unavailable');
     const acquire = (): T => {
@@ -182,7 +182,7 @@ function projectProtectedLiveSource(original: ReturnType<typeof captureLiveSourc
     if (source === 'approvals' && collection === 'approvals') return field === 'request' && (nested === 'args' || nested === 'analysis' && path[5] === 'summary')
       || field === 'audit' && path[5] === 'note';
     if (source === 'automation' && collection === 'jobs') return field !== undefined && ['name', 'description', 'pausedReason'].includes(field);
-    if (source === 'automation' && collection === 'runs') return field !== undefined && ['result', 'error', 'cancelledReason', 'executionIntent'].includes(field)
+    if (source === 'automation' && collection === 'runs') return field !== undefined && ['result', 'error', 'cancelledReason'].includes(field)
       || field === 'route' && nested === 'title';
     return false;
   };

@@ -22,7 +22,7 @@ interface BuildMetafile {
   readonly inputs: Readonly<Record<string, { readonly imports: readonly { readonly path: string; readonly external?: boolean }[] }>>;
 }
 
-/** Retain the whole public wake surface and every repaired battery, without host shims. */
+/** Retain the whole public wake surface and every repaired battery with minimal browser intrinsics. */
 async function bundleConsumer(source: boolean): Promise<BrowserSurface> {
   const dir = mkdtempSync(join(tmpdir(), 'gv-wake-browser-'));
   try {
@@ -65,17 +65,18 @@ async function bundleConsumer(source: boolean): Promise<BrowserSurface> {
         `sdk/${tree}/platform/routing/batteries/provider.${extension}`,
         `judgment/${tree}/decisions.${extension}`,
       ]) expect(paths.some((path) => path.endsWith(suffix)), `missing ${suffix}`).toBe(true);
-      // Inspect actual bundle inputs and their edges. schema-shared has an
-      // unused edge to providers/reasoning-effort; none of that provider graph
-      // may survive into the bundle, and no edge may name a host API or store.
+      // Inspect actual bundle inputs and their edges. Provider runtime modules,
+      // host APIs and stores must stay outside the browser bundle.
       const edges = Object.values(graph.inputs).flatMap((input) => input.imports);
       const forbidden = /(?:^|\/)(?:node:|bun:)|sqlite|AsyncLocalStorage|judgment\/(?:src|dist)\/(?:index\.|log\/|port\/(?:client|transport|failover))|sdk\/(?:src|dist)\/platform\/logging\//;
       expect([...paths, ...edges.map((edge) => edge.path)].filter((path) => forbidden.test(path))).toEqual([]);
       expect(paths.filter((path) => /sdk\/(?:src|dist)\/platform\/providers\//.test(path))).toEqual([]);
       expect(edges.filter((edge) => edge.external)).toEqual([]);
-      // A plain realm has no process, Bun, require, fetch, database or storage
-      // globals. The real module initializers and exported functions run here.
-      return runInNewContext(`${readFileSync(output, 'utf8')}\nbrowserSurface;`, Object.create(null), {
+      // Browser cancellation APIs are real intrinsics. This realm has no process,
+      // Bun, require, fetch, database or storage globals. The real module
+      // initializers and exported functions run here.
+      const browserGlobals = Object.assign(Object.create(null), { AbortController, AbortSignal });
+      return runInNewContext(`${readFileSync(output, 'utf8')}\nbrowserSurface;`, browserGlobals, {
         timeout: 5_000,
       }) as BrowserSurface;
     } finally {
@@ -132,7 +133,7 @@ for (const source of [true, false]) {
       expect(detections).toEqual(['working']);
       expect(warnings).toEqual([{
         message: 'wake model inference failed',
-        meta: { modelId: 'broken', error: 'corrupt custom model' },
+        meta: { modelId: 'broken', error: '[REDACTED]' },
       }]);
     }, 40_000);
   });

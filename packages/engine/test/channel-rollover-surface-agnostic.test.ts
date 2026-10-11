@@ -208,10 +208,12 @@ describe('the incident alarm is fed for every webhook surface at one seam', () =
         .rejects.toThrow('the store rejected the write');
 
       // Keyed on the surface that failed, not on telegram.
-      expect(alarm.failure(surface as never)?.detail).toContain('the store rejected the write');
+      expect(alarm.failure(surface as never)?.detail).toBe('[REDACTED]');
       expect(alerts).toHaveLength(1);
       expect(alerts[0]?.surface).toBe(surface);
       expect(alerts[0]?.text).toContain(surface);
+      expect(alerts[0]?.text).toContain('could not be processed and was skipped');
+      expect(alerts[0]?.text).not.toContain('the store rejected the write');
     },
   );
 

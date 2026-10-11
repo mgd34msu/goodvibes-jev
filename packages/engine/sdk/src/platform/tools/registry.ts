@@ -15,7 +15,7 @@ import {
 } from './input-projection.js';
 import { captureNativeReferenceProjection } from './native-reference-projection.js';
 import { canonicalJson, type EntryType, type JudgmentPort } from '@goodvibes-jev/judgment';
-import { captureOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { captureOwnedJson, retainOwnedJson, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { autonomousRevision } from '../permissions/autonomous.js';
 import { assertAutonomousConfigTransition, completeAutonomousConfigTransition, bindAutonomousNestedAdmission, readAutonomousSettingsPresentation, readAutonomousWorkspaceConstraint, readAutonomousEffectConstraint, readAutonomousNestedOwner, consumeAutonomousAdmission, type AutonomousNestedOwner, type AutonomousPermissionAdmission, type PermissionManager } from '../permissions/manager.js';
 import type { AutonomousChoiceProjection } from '../permissions/autonomous-input-projection.js';
@@ -72,6 +72,8 @@ interface CapturedProjection {
   readonly tool: Tool;
   readonly executor: Tool['execute'];
   readonly definition: ToolDefinition;
+  readonly rawDefinition: unknown;
+  readonly assertDefinitionCurrent: () => void;
   readonly definitionRevision: string;
   readonly captureCurrent: (() => void) | undefined;
   readonly preparationGuards: { readonly callbacks: Set<() => void>; revision: number };
@@ -82,6 +84,7 @@ interface CapturedProjection {
   readonly signal: AbortSignal | undefined;
   readonly assertCurrent: (() => void) | undefined;
   readonly nativeCurrent?: (() => void) | undefined;
+  readonly nativeSchemaArgs?: ((args: Record<string, unknown>) => Record<string, unknown>) | undefined;
   readonly assertRepairedArgs: ((args: Record<string, unknown>) => void) | undefined;
   readonly release: (() => Promise<void>) | undefined;
   readonly executionContext: object | undefined;
@@ -267,7 +270,7 @@ function plainMetadata(value: unknown, name: string, seen = new Set<object>()): 
   }
 }
 
-function preparationData(tool: Tool, name: string, freshness = false): { executor: Tool['execute']; definition: ToolDefinition } {
+function preparationData(tool: Tool, name: string, freshness = false): { executor: Tool['execute']; definition: ToolDefinition; rawDefinition: unknown } {
   const definition = dataProperty(tool, 'definition', name);
   const execute = dataProperty(tool, 'execute', name);
   if (typeof execute !== 'function' || nodeTypes.isProxy(execute)) throw new ToolError('Autonomous executor must be a data-backed function', name);
@@ -276,7 +279,7 @@ function preparationData(tool: Tool, name: string, freshness = false): { executo
   // structural capture of its current canonical data, not another privacy decision on
   // the same bytes. The caller must compare it to that screened revision before
   // use; the complete descriptor walk above still rejects hidden accessors/proxies.
-  return { executor: execute as Tool['execute'], definition: (freshness
+  return { executor: execute as Tool['execute'], rawDefinition: definition, definition: (freshness
     ? captureOwnedJson(definition, nodeTypes.isProxy) : snapshotJudgmentInput(definition)) as unknown as ToolDefinition };
 }
 
@@ -407,13 +410,17 @@ export class ToolRegistry {
       return reused.call;
     }
     const registration = this.registrations.get(name);
-    if (!registration) throw new UnknownPreparedToolError(name);
+    if (!registration) {
+      captureProjectionArgs(args, name);
+      throw new UnknownPreparedToolError(name);
+    }
     if (registration.projector === null) throw new ToolInputProjectionError('unconfigured');
     const captured = registration.captureNativeReferences ? captureProjectionStructure(args) : captureProjectionArgs(args, name);
-    const { executor, definition } = preparationData(registration.tool, name);
+    const { executor, definition, rawDefinition } = preparationData(registration.tool, name);
+    const { assertCurrent: assertDefinitionCurrent } = retainOwnedJson(rawDefinition, nodeTypes.isProxy);
     const definitionRevision = autonomousRevision(definition);
     const combined = combineProjectionSignals(signal, registration.signal);
-    const skeleton = { registration, tool: registration.tool, executor, definition, definitionRevision, captureCurrent, preparationGuards: { callbacks: new Set<() => void>(), revision: 0 }, ownsProjectionSlot: registration.projector !== undefined, executionStarted: false,
+    const skeleton = { registration, tool: registration.tool, executor, definition, rawDefinition, assertDefinitionCurrent, definitionRevision, captureCurrent, preparationGuards: { callbacks: new Set<() => void>(), revision: 0 }, ownsProjectionSlot: registration.projector !== undefined, executionStarted: false,
       signal: combined, assertCurrent: undefined, assertRepairedArgs: undefined, release: undefined,
       executionContext: undefined, admissionEvidence: undefined, settingsMutation: undefined, resultPublication: undefined, released: false, claimed: false };
     const provisional: CapturedProjection = { ...skeleton, call: Object.freeze({ callId, name, args: Object.freeze({}),
@@ -437,6 +444,7 @@ export class ToolRegistry {
       let projected = captured;
       let nativeCurrent: (() => void) | undefined;
       let nativeAssertArgs: ((args: Record<string, unknown>) => void) | undefined;
+      let nativeSchemaArgs: ((args: Record<string, unknown>) => Record<string, unknown>) | undefined;
       let nativeReferenceContext: object | undefined;
       if (registration.captureNativeReferences) {
         const native: unknown = applyIntrinsic(registration.captureNativeReferences, registration.projector, [Object.freeze({
@@ -447,7 +455,8 @@ export class ToolRegistry {
           if (nodeTypes.isPromise(native)) { assertProjectionCurrent(() => native); throw new ToolInputProjectionError('invalid'); }
           release = projectionFunction<() => Promise<void>>(projectionProperty(native, 'release'));
           const binding = captureNativeReferenceProjection(native, captured, name);
-          projected = binding.args; nativeCurrent = binding.assertCurrent; nativeAssertArgs = binding.assertArgs; nativeReferenceContext = binding.executionContext;
+          projected = binding.args; nativeCurrent = binding.assertCurrent; nativeAssertArgs = binding.assertArgs;
+          nativeSchemaArgs = binding.schemaArgs; nativeReferenceContext = binding.executionContext;
         } else projected = captureProjectionArgs(captured, name);
         this.assertCaptured(provisional, true); assertProjectionCurrent(nativeCurrent);
       }
@@ -509,7 +518,7 @@ export class ToolRegistry {
       const call = Object.freeze({ callId, name, args: projected, schemaRevision: definitionRevision,
         projectionRevision: registration.revision });
       const record: CapturedProjection = { ...skeleton, call, signal: combineProjectionSignals(combined, resultSignal),
-        assertCurrent, nativeCurrent, assertRepairedArgs, release, executionContext, admissionEvidence, settingsMutation, resultPublication };
+        assertCurrent, nativeCurrent, nativeSchemaArgs, assertRepairedArgs, release, executionContext, admissionEvidence, settingsMutation, resultPublication };
       capturedRecord = record;
       this.assertCaptured(record, true);
       this.projections.set(call, record);
@@ -578,11 +587,24 @@ export class ToolRegistry {
     if (this.registrations.get(call.name) !== registration || this.tools.get(call.name) !== record.tool) {
       throw new ToolInputProjectionError('stale');
     }
-    const current = preparationData(record.tool, call.name, true);
-    // Exact autonomousRevision bytes over this freshly captured owned snapshot.
-    // Never cache a successful check or refresh the already-screened baseline.
-    const currentRevision = createHash('sha256').update(canonicalJson(current.definition as unknown as EntryType)).digest('hex');
-    if (current.executor !== record.executor || currentRevision !== record.definitionRevision) {
+    const rawDefinition = dataProperty(record.tool, 'definition', call.name);
+    const execute = dataProperty(record.tool, 'execute', call.name);
+    if (typeof execute !== 'function' || nodeTypes.isProxy(execute)) throw new ToolError('Autonomous executor must be a data-backed function', call.name);
+    // Hidden descendants are also metadata, even though canonical JSON omits
+    // them. Keep their complete accessor/proxy check on every observation.
+    plainMetadata(rawDefinition, call.name);
+    let unchanged = rawDefinition === record.rawDefinition;
+    if (unchanged) {
+      try { record.assertDefinitionCurrent(); }
+      catch { unchanged = false; }
+    }
+    if (!unchanged) {
+      // A graph change can still preserve the prior canonical definition.
+      // Compare through the original full path; never adopt a new baseline.
+      const current = preparationData(record.tool, call.name, true);
+      const currentRevision = createHash('sha256').update(canonicalJson(current.definition as unknown as EntryType)).digest('hex');
+      if (current.executor !== record.executor || currentRevision !== record.definitionRevision) throw new ToolInputProjectionError('stale');
+    } else if (execute !== record.executor) {
       throw new ToolInputProjectionError('stale');
     }
     if (registration.projector && (projectionProperty(registration.projector, 'project') !== registration.project
@@ -669,7 +691,8 @@ export class ToolRegistry {
       assertProjectionSignal(signal);
       const effective = captureProjectionArgs(repair.repaired ? repair.fixed : projection.args, name);
       this.repairProjection(record, effective);
-      if (await firstJsonSchemaFailureAsync(record.definition.parameters, effective, { signal, assertCurrent: () => this.assertPreparationCurrent(record) })) throw new ToolError('Prepared tool arguments do not match the registered schema', name);
+      const schemaArgs = record.nativeSchemaArgs ? record.nativeSchemaArgs(effective) : effective;
+      if (await firstJsonSchemaFailureAsync(record.definition.parameters, schemaArgs, { signal, assertCurrent: () => this.assertPreparationCurrent(record) })) throw new ToolError('Prepared tool arguments do not match the registered schema', name);
       const call = Object.freeze({ callId, name, args: effective, schemaRevision: record.definitionRevision, judgmentDecisionIds: Object.freeze(ids) });
       this.prepared.set(call, { tool: record.tool, executor: record.executor, definitionRevision: record.definitionRevision,
         warnings: [...(repair.warnings ?? [])], projection: record, claimed: false });

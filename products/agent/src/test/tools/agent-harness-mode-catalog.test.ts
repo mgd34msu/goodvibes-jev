@@ -57,20 +57,19 @@ afterEach(() => { installJudgmentPort(previous); });
 afterAll(cleanupResearchScreeningFixtures);
 
 describe('agent_harness mode catalog', () => {
-  test('stays in sync with the schema and names the adopted settings admission exception', () => {
+  test('stays in sync with the schema without advertising caller-authored effect grants', () => {
     const schemaModes = [...AGENT_HARNESS_MODES].sort();
     const catalogModes = HARNESS_MODE_DESCRIPTORS.map((descriptor) => descriptor.id).sort();
 
     expect(new Set(catalogModes).size).toBe(catalogModes.length);
     expect(catalogModes).toEqual(schemaModes);
 
-    // Settings have an authentic owner plan instead of model-authored confirmation.
+    // Authentic admission belongs to the recorded invocation, not JSON flags.
     const unsafeEffects = HARNESS_MODE_DESCRIPTORS
-      .filter((descriptor) => descriptor.kind === 'effect' && descriptor.family !== 'settings')
+      .filter((descriptor) => descriptor.kind === 'effect')
       .filter((descriptor) => (
-        descriptor.requiresConfirmation !== true
-        || !descriptor.parameters?.includes('confirm')
-        || !descriptor.parameters?.includes('explicitUserRequest')
+        descriptor.parameters?.includes('confirm')
+        || descriptor.parameters?.includes('explicitUserRequest')
       ))
       .map((descriptor) => descriptor.id);
 
@@ -93,7 +92,22 @@ describe('agent_harness mode catalog', () => {
       id: 'run_command',
       route: 'agent_harness mode:"run_command"',
     });
-    expect(runCommand?.parameters).toEqual(expect.arrayContaining(['confirm', 'explicitUserRequest']));
+    expect(runCommand?.parameters).toEqual(expect.not.arrayContaining(['confirm', 'explicitUserRequest']));
+  });
+
+  test('a yes reading below the action floor remains an ambiguous mode detail', async () => {
+    installJudgmentPort(fakePort((_name, _question, rawState) => {
+      if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState)
+        || !rawState.candidate || typeof rawState.candidate !== 'object' || Array.isArray(rawState.candidate)) {
+        throw new Error('Unexpected mode detail control.');
+      }
+      return noulAnswer(rawState.candidate.name === 'run_command' ? 0.58 : 0.01);
+    }).port);
+    const detail = await describeHarnessMode({ query: 'run slash command' }, rankingOptions());
+    expect(detail.status).toBe('ambiguous');
+    if (detail.status !== 'ambiguous') throw new Error('Held reading selected a mode');
+    expect(detail.candidates).toHaveLength(1);
+    expect(detail.candidates[0]?.judgment).toMatchObject({ reading: { verdict: 'yes', outcome: 'confirm' } });
   });
 
   test('finds route decision by user-task wording', async () => {
@@ -204,14 +218,14 @@ describe('agent_harness mode catalog', () => {
     expect(memory.modes.filter((mode) => mode.summary.length > 72)).toEqual([]);
 
     const refinement = await listHarnessModes({ query: 'closed learning loop semantic refinement knowledge gaps', includeParameters: true, limit: 10 }, rankingOptions()) as {
-      readonly modes: readonly { readonly id: string; readonly requiresConfirmation?: boolean; readonly parameters?: readonly string[]; readonly summary: string }[];
+      readonly modes: readonly { readonly id: string; readonly admission?: string; readonly parameters?: readonly string[]; readonly summary: string }[];
     };
     const refinementIds = refinement.modes.map((mode) => mode.id);
     expect(refinementIds).toContain('memory_refinement');
     expect(refinementIds).toContain('run_memory_refinement');
     expect(refinement.modes.find((mode) => mode.id === 'memory_refinement')?.parameters).toEqual(expect.arrayContaining(['knowledgeSpaceId', 'gapIds', 'includeParameters']));
-    expect(refinement.modes.find((mode) => mode.id === 'run_memory_refinement')?.requiresConfirmation).toBe(true);
-    expect(refinement.modes.find((mode) => mode.id === 'run_memory_refinement')?.parameters).toEqual(expect.arrayContaining(['gapIds', 'maxRunMs', 'confirm', 'explicitUserRequest']));
+    expect(refinement.modes.find((mode) => mode.id === 'run_memory_refinement')?.admission).toBe('current recorded effect admission');
+    expect(refinement.modes.find((mode) => mode.id === 'run_memory_refinement')?.parameters).toEqual(expect.arrayContaining(['gapIds', 'maxRunMs']));
     expect(refinement.modes.filter((mode) => mode.summary.length > 72)).toEqual([]);
   });
 
@@ -232,27 +246,27 @@ describe('agent_harness mode catalog', () => {
     expect(repair.modes.filter((mode) => mode.summary.length > 72)).toEqual([]);
 
     const smoke = await listHarnessModes({ query: 'run setup smoke', includeParameters: true, limit: 5 }, rankingOptions()) as {
-      readonly modes: readonly { readonly id: string; readonly requiresConfirmation?: boolean; readonly parameters?: readonly string[] }[];
+      readonly modes: readonly { readonly id: string; readonly admission?: string; readonly parameters?: readonly string[] }[];
     };
     expect(smoke.modes[0]?.id).toBe('run_setup_smoke');
-    expect(smoke.modes[0]?.requiresConfirmation).toBe(true);
-    expect(smoke.modes[0]?.parameters).toEqual(expect.arrayContaining(['confirm', 'explicitUserRequest']));
+    expect(smoke.modes[0]?.admission).toBe('current recorded effect admission');
+    expect(smoke.modes[0]?.parameters).toEqual(expect.not.arrayContaining(['confirm', 'explicitUserRequest']));
 
     const auth = await listHarnessModes({ query: 'connected host token provision', includeParameters: true, limit: 5 }, rankingOptions()) as {
-      readonly modes: readonly { readonly id: string; readonly requiresConfirmation?: boolean; readonly parameters?: readonly string[] }[];
+      readonly modes: readonly { readonly id: string; readonly admission?: string; readonly parameters?: readonly string[] }[];
     };
     expect(auth.modes[0]?.id).toBe('provision_connected_host_token');
-    expect(auth.modes[0]?.requiresConfirmation).toBe(true);
-    expect(auth.modes[0]?.parameters).toEqual(expect.arrayContaining(['confirm', 'explicitUserRequest']));
+    expect(auth.modes[0]?.admission).toBe('current recorded effect admission');
+    expect(auth.modes[0]?.parameters).toEqual(expect.not.arrayContaining(['confirm', 'explicitUserRequest']));
   });
 
-  test('finds confirmed local model smoke by local server wording', async () => {
+  test('finds admitted local model smoke by local server wording', async () => {
     const smoke = await listHarnessModes({ query: 'check local servers ollama models', includeParameters: true, limit: 10 }, rankingOptions()) as {
-      readonly modes: readonly { readonly id: string; readonly requiresConfirmation?: boolean; readonly parameters?: readonly string[]; readonly summary: string }[];
+      readonly modes: readonly { readonly id: string; readonly admission?: string; readonly parameters?: readonly string[]; readonly summary: string }[];
     };
     const localSmoke = smoke.modes.find((mode) => mode.id === 'run_local_model_smoke');
-    expect(localSmoke?.requiresConfirmation).toBe(true);
-    expect(localSmoke?.parameters).toEqual(expect.arrayContaining(['modelRouteId', 'timeoutMs', 'confirm', 'explicitUserRequest']));
+    expect(localSmoke?.admission).toBe('current recorded effect admission');
+    expect(localSmoke?.parameters).toEqual(expect.arrayContaining(['modelRouteId', 'timeoutMs']));
     expect(smoke.modes.filter((mode) => mode.summary.length > 72)).toEqual([]);
   });
 
@@ -296,13 +310,13 @@ describe('agent_harness mode catalog', () => {
 
   test('finds browser cockpit and PWA surface wording', async () => {
     const web = await listHarnessModes({ query: 'web dashboard pwa browser cockpit', includeParameters: true, limit: 10 }, rankingOptions()) as {
-      readonly modes: readonly { readonly id: string; readonly parameters?: readonly string[]; readonly requiresConfirmation?: boolean; readonly summary: string }[];
+      readonly modes: readonly { readonly id: string; readonly parameters?: readonly string[]; readonly admission?: string; readonly summary: string }[];
     };
     const ids = web.modes.map((mode) => mode.id);
     expect(ids).toContain('ui_surfaces');
     expect(ids).toContain('ui_surface');
     expect(ids).toContain('open_ui_surface');
-    expect(web.modes.find((mode) => mode.id === 'open_ui_surface')?.requiresConfirmation).toBe(true);
+    expect(web.modes.find((mode) => mode.id === 'open_ui_surface')?.admission).toBe('current recorded effect admission');
     expect(web.modes.filter((mode) => mode.summary.length > 96)).toEqual([]);
   });
 

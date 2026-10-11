@@ -3,7 +3,7 @@ import { FieldKindReader } from './field-kind-reading.js';
 import { fieldKind, type FieldKind } from './batteries/field-kind.js';
 import { assertRedactionCurrent, ProfileDistinctiveReader, readCredentialProjection, readResidualProjection, type ProfileRedactionRole } from './redaction-reading.js';
 import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { assertJudgmentInput, captureOwnedJson, judgmentInputProblem, snapshotJudgmentInput } from '../gate/judgment-input.js';
+import { assertJudgmentInput, captureOwnedJson, retainOwnedJson, judgmentInputProblem, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { captureStructuredCredentialReferenceConfigValue } from '../config/structured-credential-config.js';
 import type { RedactionPart } from './batteries/redaction.js';
 
@@ -421,18 +421,50 @@ function outgoingSpans(text: string): OutgoingSpan[] {
       marker: '[REDACTED_API_KEY]', syntax: 'candidate-token' });
   }
   // Grammar finds values, never decides whether their field is secret.
-  const assignments = /(?:^|[\s{[,;])["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[:=]\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\n,;}]+)/g;
-  const declarations = /(?:^|\s)([A-Za-z_][A-Za-z0-9_.-]*)\s+is\s+([^\n,;}]+)/g;
-  for (const match of [...text.matchAll(assignments), ...text.matchAll(declarations)]) {
-    const field = match[1], value = match[2];
-    if (field === undefined || value === undefined) continue;
-    if (/^[A-Za-z]$/.test(field) && value.startsWith('\\')) continue; // Windows drive syntax is not a field declaration.
-    const start = match.index + match[0].length - value.length;
-    const candidate = found.find((span) => span.start >= start && span.end <= start + value.length);
-    const protectedMarker = value.match(/^\[REDACTED(?:_[A-Z]+)*\]$/)?.[0];
-    found.push({ start, end: start + value.length, value, field, syntax: 'assignment-value', marker: protectedMarker ?? candidate?.marker ?? '[REDACTED]' });
+  const quoted = String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'`;
+  const boundary = String.raw`(?=\s+["']?[A-Za-z_][A-Za-z0-9_.-]*["']?(?:\s*[:=]|\s+is\s+)|[ \t]*(?:[\n,;}]|$))`;
+  // A complete quoted value owns its contents. An unquoted value ends before
+  // the next field, so each independent role reaches the canonical reader.
+  const value = new RegExp(String.raw`(${quoted}|["']|[^"'\n,;}][^\n,;}]*?${boundary})`, 'y');
+  const assignments = /(?:^|[\s{[,;])["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[:=]\s*/g;
+  const declarations = /(?:^|\s)([A-Za-z_][A-Za-z0-9_.-]*)\s+is\s+/g;
+  const completeQuoted = new RegExp(`^(?:${quoted})$`);
+  const headers: { readonly field: string; readonly start: number; readonly keyStart: number }[] = [];
+  for (const grammar of [assignments, declarations]) {
+    for (let match = grammar.exec(text); match !== null; match = grammar.exec(text)) {
+      grammar.lastIndex = match.index + 1;
+      const field = match[1];
+      if (field !== undefined) headers.push({ field, start: match.index + match[0].length,
+        keyStart: match.index + match[0].indexOf(field) });
+    }
   }
-  found.sort((a, b) => a.start - b.start || b.end - a.end);
+  const keyStarts = new Set(headers.map((header) => header.keyStart));
+  const values: { readonly field: string; readonly value: string; readonly start: number; readonly end: number }[] = [];
+  for (const { field, start } of headers) {
+    if (keyStarts.has(start)) continue; // The next field follows an empty value.
+    value.lastIndex = start;
+    const token = value.exec(text)?.[1];
+    if (token !== undefined) values.push({ field, value: token, start, end: start + token.length });
+  }
+  values.sort((a, b) => a.start - b.start || b.end - a.end);
+  const quotedOwners: typeof values = [];
+  for (const entry of values) {
+    if (completeQuoted.test(entry.value) && (quotedOwners.at(-1)?.end ?? -1) <= entry.start) quotedOwners.push(entry);
+  }
+  let quotedIndex = 0;
+  for (const { field, value, start, end } of values) {
+    while (quotedOwners[quotedIndex] !== undefined && quotedOwners[quotedIndex]!.end <= start) quotedIndex++;
+    const owner = quotedOwners[quotedIndex];
+    if (owner !== undefined && owner.start < start && start < owner.end) continue;
+    if ((value.startsWith('"') || value.startsWith("'")) && !completeQuoted.test(value))
+      throw new Error('Malformed quoted redaction source.');
+    if (/^[A-Za-z]$/.test(field) && value.startsWith('\\')) continue; // Windows drive syntax is not a field declaration.
+    const candidate = found.find((span) => span.start >= start && span.end <= end);
+    const protectedMarker = value.match(/^\[REDACTED(?:_[A-Z]+)*\]$/)?.[0];
+    found.push({ start, end, value, field, syntax: 'assignment-value', marker: protectedMarker ?? candidate?.marker ?? '[REDACTED]' });
+  }
+  found.sort((a, b) => a.start - b.start || b.end - a.end
+    || (a.syntax === b.syntax ? 0 : a.syntax === 'assignment-value' ? -1 : 1));
   const spans: OutgoingSpan[] = [];
   for (const span of found) {
     const previous = spans.at(-1);
@@ -462,14 +494,25 @@ interface OperationFieldReadings {
 
 /** Reuse only equal field requests within this complete, still-owned source. */
 function operationFieldReadings(options: JudgmentReadingOptions): OperationFieldReadings {
-  const contract = () => JSON.stringify(captureOwnedJson({ name: fieldKind.name, version: fieldKind.version,
-    model: fieldKind.model, items: fieldKind.items }));
-  const originalContract = contract(), run = fieldKind.run;
+  const contractKeys = ['name', 'version', 'model', 'items', 'run'] as const;
+  const contractDescriptors = contractKeys.map(key => Object.getOwnPropertyDescriptor(fieldKind, key));
+  if (contractDescriptors.some(descriptor => descriptor && !('value' in descriptor))) throw new Error('Field reading source is unavailable');
+  const contract = retainOwnedJson({ name: fieldKind.name, version: fieldKind.version,
+    model: fieldKind.model, items: fieldKind.items });
+  const contractPrototype = Object.getPrototypeOf(fieldKind);
   const callerCurrent = options.assertCurrent, signal = options.signal;
   const assertSource = () => {
     assertRedactionCurrent(callerCurrent);
     if (options.signal !== signal || options.assertCurrent !== callerCurrent || signal?.aborted
-      || fieldKind.run !== run || contract() !== originalContract) throw new Error('Field reading source is no longer current');
+      || Object.getPrototypeOf(fieldKind) !== contractPrototype) throw new Error('Field reading source is no longer current');
+    for (const [index, key] of contractKeys.entries()) {
+      const original = contractDescriptors[index], current = Object.getOwnPropertyDescriptor(fieldKind, key);
+      if (original === undefined ? current !== undefined : current === undefined || !('value' in current)
+        || !Object.is(current.value, original.value) || current.writable !== original.writable
+        || current.enumerable !== original.enumerable || current.configurable !== original.configurable)
+        throw new Error('Field reading source is no longer current');
+    }
+    contract.assertCurrent();
   };
   let owner: JudgmentPortCapture | undefined;
   const assertCurrent = () => { if (owner) owner.assertCurrent(); else assertSource(); };
@@ -511,21 +554,23 @@ async function redactTextSource(text: string, options: RedactionOptions,
   const signal = options.signal, ownerCurrent = options.assertCurrent, purpose = options.purpose ?? 'redaction';
   let source: ReturnType<typeof captureRedactionSource>;
   let secrets: readonly string[];
-  let secretSnapshot: string;
+  let secretSource: ReturnType<typeof retainOwnedJson>;
+  const originalSecrets = options.secretValues;
   let readingOwner: JudgmentPortCapture | undefined;
   try {
     source = captureRedactionSource();
     captureOwnedJson(text);
-    const captured = captureOwnedJson(options.secretValues ?? []);
+    secretSource = retainOwnedJson(originalSecrets ?? []);
+    const captured = secretSource.snapshot;
     if (!Array.isArray(captured) || !captured.every((value: unknown) => typeof value === 'string')) return '[REDACTED]';
     secrets = captured;
-    secretSnapshot = JSON.stringify(captured);
   } catch { return '[REDACTED]'; }
   const assertSource = () => {
     assertRedactionCurrent(ownerCurrent); source.assertCurrent();
     if (signal?.aborted || options.signal !== signal || options.assertCurrent !== ownerCurrent
       || (options.purpose ?? 'redaction') !== purpose
-      || JSON.stringify(captureOwnedJson(options.secretValues ?? [])) !== secretSnapshot) throw new Error('Redaction operation is no longer current');
+      || options.secretValues !== originalSecrets) throw new Error('Redaction operation is no longer current');
+    secretSource.assertCurrent();
   };
   const assertCurrent = () => { if (readingOwner) readingOwner.assertCurrent(); else assertSource(); };
   const kinds = operationFields ?? operationFieldReadings({ ...(signal ? { signal } : {}), assertCurrent });
@@ -630,9 +675,10 @@ export function redactStructuredData(value: unknown): unknown {
 /** Shared asynchronous egress recursion. Field values never enter field-role readings. */
 export async function redactStructuredDataAsync(value: unknown, options: RedactionOptions = {}): Promise<unknown> {
   const signal = options.signal, ownerCurrent = options.assertCurrent;
-  let source: ReturnType<typeof captureRedactionSource>, snapshot: unknown, original: string;
-  const purpose = options.purpose, capturedSecrets = captureOwnedJson(options.secretValues ?? []);
-  const secrets = JSON.stringify(capturedSecrets), secretLiterals: string[] = [];
+  let source: ReturnType<typeof captureRedactionSource>, snapshot: unknown, retainedValue: ReturnType<typeof retainOwnedJson>;
+  const purpose = options.purpose, originalSecrets = options.secretValues;
+  const secretSource = retainOwnedJson(originalSecrets ?? []), capturedSecrets = secretSource.snapshot;
+  const secretLiterals: string[] = [];
   if (!Array.isArray(capturedSecrets)) return '[REDACTED]';
   for (const secret of capturedSecrets) {
     if (typeof secret !== 'string') return '[REDACTED]';
@@ -640,12 +686,11 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
   }
   secretLiterals.sort((a, b) => b.length - a.length);
   type ReferenceCapture = { readonly kind: 'held' } | { readonly kind: 'sentinel' }
-    | { readonly kind: 'reference'; readonly value: ReturnType<typeof captureStructuredCredentialReferenceConfigValue>; readonly snapshot: string };
+    | { readonly kind: 'reference'; readonly value: ReturnType<typeof captureStructuredCredentialReferenceConfigValue> };
   const nativeReferences = new Map<string, { readonly path: readonly string[]; readonly capture: ReferenceCapture }>();
   let readingOwner: JudgmentPortCapture | undefined;
   try {
-    source = captureRedactionSource(); snapshot = captureOwnedJson(value);
-    original = JSON.stringify(snapshot);
+    source = captureRedactionSource(); retainedValue = retainOwnedJson(value); snapshot = retainedValue.snapshot;
     // Only native config and the support bundle's root config envelope carry
     // this declaration. An arbitrary extension suffix grants no exemption.
     for (const path of [['judgment.fallbacks'], ['judgment', 'fallbacks'], ['config', 'judgment.fallbacks'], ['config', 'judgment', 'fallbacks']]) {
@@ -655,7 +700,7 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
       if (raw.value === '<redacted>') capture = { kind: 'sentinel' };
       else try {
         const references = captureStructuredCredentialReferenceConfigValue('judgment.fallbacks', raw.value);
-        capture = { kind: 'reference', value: references, snapshot: JSON.stringify(references) };
+        capture = { kind: 'reference', value: references };
       } catch { /* Malformed declared values remain opaque throughout this operation. */ }
       nativeReferences.set(JSON.stringify(path), { path, capture });
     }
@@ -663,15 +708,8 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
   const assertSource = () => {
     assertRedactionCurrent(ownerCurrent); source.assertCurrent();
     if (signal?.aborted || options.signal !== signal || options.assertCurrent !== ownerCurrent
-      || options.purpose !== purpose || JSON.stringify(captureOwnedJson(options.secretValues ?? [])) !== secrets
-      || JSON.stringify(captureOwnedJson(value)) !== original) throw new Error('Structured redaction source is no longer current');
-    for (const { path, capture } of nativeReferences.values()) {
-      if (capture.kind === 'held') continue;
-      const raw = originalPath(path);
-      if (raw.kind === 'missing' || (capture.kind === 'sentinel' ? raw.value !== '<redacted>'
-        : JSON.stringify(captureStructuredCredentialReferenceConfigValue('judgment.fallbacks', raw.value)) !== capture.snapshot))
-        throw new Error('Structured reference source is no longer current');
-    }
+      || options.purpose !== purpose || options.secretValues !== originalSecrets) throw new Error('Structured redaction source is no longer current');
+    secretSource.assertCurrent(); retainedValue.assertCurrent();
   };
   const assertCurrent = () => { if (readingOwner) readingOwner.assertCurrent(); else assertSource(); };
   const reading = { ...options, assertCurrent };

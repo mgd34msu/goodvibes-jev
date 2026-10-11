@@ -8,6 +8,7 @@ import unavailableModelRoutes from '../fixtures/e2e-judgments/unavailable-model-
 import cancelledTurnTimings from '../fixtures/e2e-judgments/cancelled-turn-timings.json';
 import cancelledTurnPending from '../fixtures/e2e-judgments/cancelled-turn-pending.json';
 import privacyNegative from '../fixtures/e2e-judgments/privacy-negative.json';
+import diagnosticFixtures from '../fixtures/e2e-judgments/ci-diagnostics.json';
 
 const prompts = ['first words in a brand new workspace', 'please answer the e2e marmot question'] as const;
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
@@ -83,8 +84,24 @@ function expectedPrivacyRefusal(body: unknown, ownedRoot: string | undefined): b
     serialized === stable({ model: contract.model, questions: contract.questions, state })));
 }
 
+function diagnosticAnswer(body: unknown, ownedRoot: string | undefined): { kind: string; answers: unknown } | undefined {
+  let serialized = stable(body);
+  const marker = '<owned-fixture-root>';
+  if (serialized.includes(marker)) return undefined;
+  if (ownedRoot) serialized = serialized.split(JSON.stringify(ownedRoot).slice(1, -1)).join(marker);
+  for (const contract of diagnosticFixtures.contracts) for (const reading of contract.readings) {
+    if (serialized === stable({ model: contract.model, questions: contract.questions, state: reading.state })) return { kind: contract.kind, answers: reading.answers };
+  }
+  return undefined;
+}
+
 export function startE2EJudgments(options: { readonly ownedRoot?: string } = {}) {
   const accepted: string[] = [];
+  // Preserve every original model, turn and cancellation fixture decision.
+  // Startup/redaction diagnostics have their own complete, observable wire;
+  // they cannot satisfy any original accepted/native-action assertion.
+  const acceptedDiagnostics: { readonly kind: string; readonly body: unknown }[] = [];
+  const allRequests: unknown[] = [];
   const rejected: unknown[] = [];
   const unexpected: unknown[] = [];
   const unavailableDiagnostics: unknown[] = [];
@@ -97,6 +114,12 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/v1/systemone') return new Response('not found', { status: 404 });
     let body: unknown;
     try { body = await request.json(); } catch { return new Response('invalid JSON', { status: 400 }); }
+    allRequests.push(body);
+    const diagnostic = diagnosticAnswer(body, options.ownedRoot);
+    if (diagnostic) {
+      acceptedDiagnostics.push({ kind: diagnostic.kind, body });
+      return Response.json({ model: conversationRoute.model, answers: diagnostic.answers, usage: { input_tokens: 10, output_tokens: 3 } });
+    }
     const reading = e2eJudgmentAnswers(body);
     if (!reading) {
       rejected.push(body);
@@ -111,7 +134,7 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
     accepted.push(reading.kind);
     return Response.json({ model: conversationRoute.model, answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
   } });
-  return { baseURL: `http://127.0.0.1:${server.port}`, accepted, rejected, unexpected, unavailableDiagnostics, unavailablePrivacy,
+  return { baseURL: `http://127.0.0.1:${server.port}`, accepted, acceptedDiagnostics, allRequests, rejected, unexpected, unavailableDiagnostics, unavailablePrivacy,
     rejectRecordedCancellationTimings() { rejectCancellationTimings = true; },
     assertNoUnexpected: () => { if (unexpected.length) throw new Error(`E2E encountered ${unexpected.length} unknown judgment request(s): ${JSON.stringify(unexpected)}`); },
     stop: () => { void server.stop(true); },

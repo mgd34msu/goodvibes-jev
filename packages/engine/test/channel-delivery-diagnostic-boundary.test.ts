@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { structuredTransience } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort, structuredTransience } from '@goodvibes-jev/engine/errors';
 import { ChannelDeliveryRouter } from '../sdk/src/platform/channels/delivery-router.js';
 import {
   createDiscordDeliveryStrategy,
@@ -77,18 +77,22 @@ let activity: ActivityLogger;
 let calls: RecordedRequest[];
 let respond: (call: RecordedRequest) => Response | Promise<Response>;
 let restore: Array<() => void>;
+let projected: Array<Record<string, unknown>>;
+let previousPort: ReturnType<typeof installJudgmentPort>;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'channel-delivery-diagnostics-'));
   activity = new ActivityLogger();
   activity.configure(root);
   calls = [];
+  projected = [];
+  previousPort = installJudgmentPort(undefined);
   respond = () => { throw new Error('Unexpected request in owned delivery fixture'); };
   // Forward to a real, separately owned ActivityLogger, so cleanup does not
   // dispose or reconfigure the process singleton used by other test files.
-  const info = spyOn(logger, 'info').mockImplementation((...args) => activity.info(...args));
-  const warn = spyOn(logger, 'warn').mockImplementation((...args) => activity.warn(...args));
-  const error = spyOn(logger, 'error').mockImplementation((...args) => activity.error(...args));
+  const info = spyOn(logger, 'info').mockImplementation((message, data) => { if (data) projected.push(data); activity.info(message, data); });
+  const warn = spyOn(logger, 'warn').mockImplementation((message, data) => { if (data) projected.push(data); activity.warn(message, data); });
+  const error = spyOn(logger, 'error').mockImplementation((message, data) => { if (data) projected.push(data); activity.error(message, data); });
   const fetch = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
     const call = {
       url: input instanceof Request ? input.url : String(input),
@@ -105,23 +109,36 @@ beforeEach(() => {
 afterEach(() => {
   for (const undo of restore) undo();
   activity.dispose();
+  installJudgmentPort(previousPort);
   rmSync(root, { recursive: true, force: true });
 });
 
 function persisted(): string {
   activity.flushSync();
   const path = join(root, 'activity.md');
-  return existsSync(path) ? readFileSync(path, 'utf8') : '';
+  const written = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  // A synchronous logger cannot publish field values without a settled role
+  // reading. This fixture has no port: code-owned event names still land,
+  // while every structured value must stay withheld.
+  const blocks = [...written.matchAll(/```json\n([\s\S]*?)\n```/g)];
+  expect(blocks.length).toBeGreaterThanOrEqual(projected.length);
+  for (const match of blocks) {
+    const record = JSON.parse(match[1]!) as Record<string, unknown>;
+    for (const value of Object.values(record)) expect(value).toBe('[REDACTED]');
+  }
+  return written;
 }
 
-function records(): Array<Record<string, unknown>> {
-  return [...persisted().matchAll(/```json\n([\s\S]*?)\n```/g)]
-    .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+function diagnostics(): Array<Record<string, unknown>> {
+  return projected;
 }
 
 function excludesPrivate(value: unknown, ...privateValues: string[]): void {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
   for (const privateValue of privateValues) expect(serialized).not.toContain(privateValue);
+  // Preserve the caller-owned structural boundary even though the canonical
+  // logger independently withholds its values when semantic proof is absent.
+  for (const privateValue of privateValues) expect(JSON.stringify(projected)).not.toContain(privateValue);
 }
 
 describe('uniform URL query withholding', () => {
@@ -132,7 +149,7 @@ describe('uniform URL query withholding', () => {
     const response = await instrumentedFetch(input);
     expect(response.status).toBe(202);
     expect(calls).toHaveLength(1);
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'OTHER', status: 202 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'OTHER', status: 202 });
     excludesPrivate(persisted(), PRIVATE_ERROR);
   });
 
@@ -144,20 +161,21 @@ describe('uniform URL query withholding', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ url, method: 'POST', body: BODY });
     expect(sanitizeUrlForLog(url)).toBe('https://example.invalid/ordinary/resource?[redacted]');
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'POST', status: 202 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'POST', status: 202 });
     excludesPrivate(persisted(), QUERY, CAPABILITY, BODY, 'synthetic-user', 'synthetic-password');
   });
 
-  test('ordinary paths, real status, and logger content remain observable controls', async () => {
+  test('ordinary paths, real status, and persisted event names remain observable controls', async () => {
     respond = () => new Response('accepted', { status: 201 });
     const url = 'https://example.invalid/ordinary/resource';
     await instrumentedFetch(url);
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'GET', url, status: 201 });
-    expect(typeof records()[0]?.latencyMs).toBe('number');
-    // A global content scrubber or disabled logger cannot accidentally pass
-    // the diagnostic assertions: the boundary must own what it publishes.
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'GET', url, status: 201 });
+    expect(typeof diagnostics()[0]?.latencyMs).toBe('number');
+    // The real logger stays active while withholding unproved content.
     activity.info('Owned negative control', { ordinary: PRIVATE_ERROR });
-    expect(persisted()).toContain(PRIVATE_ERROR);
+    expect(persisted()).toContain('Owned negative control');
+    expect(persisted()).toContain('OUTBOUND_HTTP');
+    expect(persisted()).not.toContain(PRIVATE_ERROR);
     expect(calls).toHaveLength(1);
   });
 });
@@ -172,7 +190,7 @@ describe('credential-owning channel callsites', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.url).toBe(`https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`);
       expect(JSON.parse(calls[0]!.body)).toEqual({ chat_id: 'ordinary-chat-id', text: BODY, disable_web_page_preview: true });
-      expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'POST', status: 200 });
+      expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', method: 'POST', status: 200 });
       excludesPrivate([persisted(), receipt], token, encodeURIComponent(token), BODY);
     });
   }
@@ -189,7 +207,7 @@ describe('credential-owning channel callsites', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(`https://bluebubbles.example.invalid/api/v1/message/text?password=${encodeURIComponent(password)}`);
     expect(JSON.parse(calls[0]!.body)).toMatchObject({ chatGuid: 'ordinary-chat-guid', message: BODY });
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
     excludesPrivate([persisted(), receipt], password, encodeURIComponent(password), BODY);
   });
 
@@ -202,7 +220,7 @@ describe('credential-owning channel callsites', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ url: `https://discord.com/api/v10/webhooks/${applicationId}/${token}/messages/@original`, method: 'PATCH' });
     expect(calls[0]?.body).toContain(BODY);
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
     excludesPrivate([persisted(), receipt], token, BODY);
   });
 
@@ -214,7 +232,7 @@ describe('credential-owning channel callsites', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ url: `https://discord.com/api/v10/interactions/${interactionId}/${token}/callback`, method: 'POST' });
     expect(JSON.parse(calls[0]!.body)).toEqual({ type: 4, data: { content: BODY } });
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 204 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 204 });
     excludesPrivate(persisted(), token, BODY);
   });
 
@@ -226,7 +244,7 @@ describe('credential-owning channel callsites', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ url, method: 'POST' });
     expect(calls[0]?.body).toContain(BODY);
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
     excludesPrivate([persisted(), receipt], CAPABILITY, QUERY, BODY);
   });
 
@@ -245,7 +263,7 @@ describe('credential-owning channel callsites', () => {
         expect(JSON.parse(calls[0]!.body)).toMatchObject(surface === 'slack' ? { text: BODY } : { content: BODY });
         // Slack's direct webhook currently has no OUTBOUND_HTTP wrapper.
         // Check any emitted log as well as the independently public receipt.
-        if (surface === 'discord') expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
+        if (surface === 'discord') expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
         excludesPrivate([persisted(), receipt], CAPABILITY, QUERY, BODY);
       });
     }
@@ -269,7 +287,7 @@ describe('credential-owning channel callsites', () => {
       expect(resolved).toEqual(host === '203.0.113.40' ? [] : [host]);
       if (host !== '203.0.113.40') expect(calls[0]?.headers.get('host')).toBe(host);
       expect(JSON.parse(calls[0]!.body)).toEqual({ text: BODY, message: BODY, title: 'Synthetic delivery', jobId: 'owned-job', runId: 'owned-run', attachments: [], artifacts: [] });
-      expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
+      expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
       excludesPrivate([persisted(), receipt], CAPABILITY, QUERY, BODY);
     });
   }
@@ -297,10 +315,10 @@ describe('credential-owning channel callsites', () => {
     expect(failure.error).toBe(originalRefusal);
     expect((failure.error as Error).message).toBe(`Request blocked: host "${host}" resolves to 127.0.0.1, a loopback address, SSRF risk`);
     expect(persisted()).toContain('SSRF_DENY');
-    expect(records().find((record) => record.url !== undefined)).toMatchObject({
+    expect(diagnostics().find((record) => record.url !== undefined)).toMatchObject({
       host: '[redacted-host]', url: '[redacted-url]', reason: 'Resolved address is not allowed',
     });
-    expect(records().find((record) => record.surface === 'webhook')?.reason).toBe('Delivery failed');
+    expect(diagnostics().find((record) => record.surface === 'webhook')?.reason).toBe('Delivery failed');
     excludesPrivate(persisted(), host, url, CAPABILITY, QUERY, BODY);
   });
 });
@@ -318,7 +336,7 @@ describe('structural failure publication preserves retry evidence', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(url);
     expect(JSON.parse(calls[0]!.body).text).toBe(BODY);
-    expect(records().find((record) => record.reason !== undefined)?.reason).toBe('HTTP 503');
+    expect(diagnostics().find((record) => record.reason !== undefined)?.reason).toBe('HTTP 503');
     excludesPrivate(persisted(), token, encodeURIComponent(token), BODY);
   });
 
@@ -330,7 +348,7 @@ describe('structural failure publication preserves retry evidence', () => {
     const failure = await delivery.deliver(request({ target: { kind: 'webhook', address: url }, binding: binding('slack') })).catch((error: unknown) => error);
     expect(failure).toBe(original);
     expect(structuredTransience(failure)).toMatchObject({ failureClass: 'retryable', basis: 'errno' });
-    expect(records()[0]).toMatchObject({ surface: 'webhook', strategy: 'custom', reason: 'Delivery failed' });
+    expect(diagnostics()[0]).toMatchObject({ surface: 'webhook', strategy: 'custom', reason: 'Delivery failed' });
     expect(calls).toHaveLength(0);
     excludesPrivate(persisted(), PRIVATE_ERROR, BODY, CAPABILITY, QUERY);
   });
@@ -339,7 +357,7 @@ describe('structural failure publication preserves retry evidence', () => {
     const delivery = router({ id: 'owned-synthetic-transport', canHandle: () => true, deliver: async () => { throw PRIVATE_ERROR; } });
     const failure = await delivery.deliver(request()).catch((error: unknown) => error);
     expect(failure).toBe(PRIVATE_ERROR);
-    expect(records()[0]?.reason).toBe('Delivery failed');
+    expect(diagnostics()[0]?.reason).toBe('Delivery failed');
     excludesPrivate(persisted(), PRIVATE_ERROR);
   });
 
@@ -353,7 +371,7 @@ describe('structural failure publication preserves retry evidence', () => {
     const failure = await delivery.deliver(request()).catch((error: unknown) => error);
     expect(failure).toBe(original);
     expect(privateReads).toBe(0);
-    expect(records()[0]?.reason).toBe('HTTP 429');
+    expect(diagnostics()[0]?.reason).toBe('HTTP 429');
     excludesPrivate(persisted(), PRIVATE_ERROR, BODY);
   });
 
@@ -364,7 +382,7 @@ describe('structural failure publication preserves retry evidence', () => {
     // to read its hostile `then` getter before this assertion can inspect it.
     const failure = await delivery.deliver(request()).then(() => ({ error: undefined }), (error: unknown) => ({ error }));
     expect(failure.error === original).toBe(true);
-    expect(records()[0]?.reason).toBe('Delivery failed');
+    expect(diagnostics()[0]?.reason).toBe('Delivery failed');
     excludesPrivate(persisted(), PRIVATE_ERROR);
   });
 
@@ -376,7 +394,7 @@ describe('structural failure publication preserves retry evidence', () => {
     const delivery = router({ id: 'owned-synthetic-transport', canHandle: () => true, deliver: async () => { throw original; } });
     const failure = await delivery.deliver(input).catch((error: unknown) => error);
     expect(failure).toBe(original);
-    expect(records()[0]?.reason).toBe('HTTP 400');
+    expect(diagnostics()[0]?.reason).toBe('HTTP 400');
     excludesPrivate(persisted(), PRIVATE_ERROR, BODY, CAPABILITY);
   });
 
@@ -417,7 +435,7 @@ describe('structural failure publication preserves retry evidence', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(`https://discord.com/api/v10/channels/${channelId}/messages`);
     expect(JSON.parse(calls[0]!.body).content).toBe(BODY);
-    expect(records()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
+    expect(diagnostics()[0]).toMatchObject({ type: 'OUTBOUND_HTTP', status: 200 });
     excludesPrivate(persisted(), BODY, 'synthetic-owned-primary');
   });
 });

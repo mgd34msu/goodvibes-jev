@@ -16,6 +16,7 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { forgetFailureReadings, installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { forgetCatastrophicReadings } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { authoredPrivacyAnswer, errorSpan, errorText } from '../helpers/authored-diagnostic-readings.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -177,7 +178,22 @@ describe('AgentOrchestrator', () => {
     // afterwards with explicit readings for these runner integration cases.
     forgetFailureReadings();
     forgetCatastrophicReadings();
-    previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
+    const readDiagnostic = authoredPrivacyAnswer({
+      parts: [
+        [errorText('API unavailable')],
+        [errorText('primary unavailable')],
+        [errorText("Unknown model 'nonexistent-model-xyz'. Did you mean: mock:"), errorSpan('mock'), errorText(', huggingface:'), errorSpan('huggingface', 2), errorText(', mistral:'), errorSpan('mistral', 3), errorText(' reference: '), errorSpan('reference', 4), errorText('.')],
+        [errorText("Unknown model 'some-other-model'. Did you mean: mock:"), errorSpan('mock'), errorText(', openai-subscriber:'), errorSpan('openai-subscriber', 2), errorText(', openrouter:'), errorSpan('openrouter', 3), errorText(' reference: '), errorSpan('reference', 4), errorText('.')],
+        [errorText("Agent model override 'abacus:"), errorSpan('abacus'), errorText('')],
+        [errorText('Agent fail routing cannot include fallback models; use ordered-fallbacks to enable model failover.')],
+      ],
+      fields: { mock: 'other', huggingface: 'other', mistral: 'other', 'openai-subscriber': 'other', openrouter: 'other', abacus: 'other', reference: 'other' },
+    });
+    previousJudgmentPort = installJudgmentPort(fakePort((name, question, state) => {
+      if (name !== 'kind' || (typeof state === 'object' && state !== null && 'field' in state)) {
+        const diagnostic = readDiagnostic(name, question, state);
+        if (diagnostic !== undefined) return diagnostic;
+      }
       if (name === 'category') return choiceAnswer(question, 'unknown', 0.97);
       if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.97);
       if (name === 'family') return choiceAnswer(question, 'file-mutation', 0.97);

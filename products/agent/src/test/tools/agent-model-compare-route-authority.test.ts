@@ -1,10 +1,11 @@
 import { afterAll, afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { ArtifactRecord } from '@goodvibes-jev/engine/sdk/platform/artifacts';
+import { FavoritesStore } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
 import { bindAgentResearchSourceOwner } from '../../agent/protected-research-report.ts';
 import { createAgentSettingsTool } from '../../tools/agent-settings-tool.ts';
@@ -21,6 +22,8 @@ afterAll(cleanupResearchScreeningFixtures);
 function deferred() { let resolve: () => void = () => {}; const promise = new Promise<void>(finish => { resolve = finish; }); return { promise, resolve }; }
 function fixture(beforeSettingsProjection?: () => Promise<void>) {
   const root = makeProjectTempDir('model-route-native-authority'); roots.push(root);
+  const favoritesDirectory = join(root, 'favorites'); mkdirSync(favoritesDirectory, { mode: 0o700 });
+  const favorites = new FavoritesStore({ dir: favoritesDirectory });
   const configOptions = { surfaceRoot: 'agent', homeDir: root, workingDir: root, configDir: join(root, 'config') };
   const config = new ConfigManager(configOptions);
   const owner = effectAdmissionFixture('prompt', createPermissionConfigReader(config));
@@ -43,7 +46,8 @@ function fixture(beforeSettingsProjection?: () => Promise<void>) {
     async create(input, ownership) { ownership?.assertCurrent?.(); writes++; return { ...record, id: `receipt-${writes}`, metadata: input.metadata ?? {} }; },
   };
   const raw = createAgentModelCompareTool({ toolRegistry: owner.registry, artifactStore: store,
-    modelCatalog: { listModels: () => [{ registryKey: 'synthetic:b', modelId: 'b', providerId: 'synthetic', selectable: true }], async recordModelUsage() { usage++; } },
+    modelCatalog: { listModels: () => [{ registryKey: 'synthetic:b', modelId: 'b', providerId: 'synthetic', selectable: true }],
+      async recordModelUsage(key, ownership) { await favorites.recordUsage(key, ownership); usage++; } },
     providerRegistry: { getForModel() { throw new Error('Route application must not invoke a provider.'); } },
     async applyModelRoute(registryKey, parentOptions, ownership) {
       const previousModel = config.get('provider.model');
@@ -54,7 +58,7 @@ function fixture(beforeSettingsProjection?: () => Promise<void>) {
       return { previousModel, selectedModel: registryKey };
     },
   });
-  return { owner, config, configOptions, tool: owner.tool(raw), replaceJudgment() { record = { ...record, metadata: { purpose: 'replaced-source' } }; },
+  return { owner, config, configOptions, favoritesDirectory, tool: owner.tool(raw), replaceJudgment() { record = { ...record, metadata: { purpose: 'replaced-source' } }; },
     get writes() { return writes; }, get usage() { return usage; } };
 }
 
@@ -66,6 +70,7 @@ test('native selected model child transition preserves exact parent authority fo
   expect(new ConfigManager(f.configOptions).get('provider.model')).toBe('synthetic:b');
   expect(f.config.getConfigurationIncarnation()).toBeGreaterThan(before);
   expect(f.usage).toBe(1); expect(f.writes).toBe(1); expect(result.output).toContain('receipt-1');
+  expect((await new FavoritesStore({ dir: f.favoritesDirectory }).load()).history).toMatchObject([{ registryKey: 'synthetic:b', count: 1 }]);
 });
 
 test('a replaced selected judgment during actual child projection prevents native model routing', async () => {
@@ -76,4 +81,5 @@ test('a replaced selected judgment during actual child projection prevents nativ
   await entered.promise; f.replaceJudgment(); release.resolve();
   expect(await pending).toMatchObject({ success: false });
   expect(f.config.get('provider.model')).toBe(before); expect(f.usage).toBe(0); expect(f.writes).toBe(0);
+  expect((await new FavoritesStore({ dir: f.favoritesDirectory }).load()).history).toEqual([]);
 });

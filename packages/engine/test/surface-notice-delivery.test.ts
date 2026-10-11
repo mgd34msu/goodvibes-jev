@@ -129,7 +129,8 @@ describe('surface notice delivery', () => {
 
     expect(outcome.delivered).toBe(false);
     expect(outcome.delivered === false && outcome.reason).toBe('delivery-failed');
-    expect(outcome.delivered === false && outcome.error).toContain('401');
+    expect(outcome.delivered === false && outcome.error).toBe('[REDACTED]');
+    expect(JSON.stringify(outcome)).not.toContain('Telegram delivery failed HTTP 401');
   });
 
   test('with no plugin registered the direct push is used, and still refuses honestly', async () => {
@@ -142,7 +143,7 @@ describe('surface notice delivery', () => {
 
     expect(outcome.delivered).toBe(false);
     expect(outcome.delivered === false && outcome.reason).toBe('delivery-failed');
-    expect(outcome.delivered === false && outcome.error).toContain('not implemented for telegram');
+    expect(outcome.delivered === false && outcome.error).toBe('[REDACTED]');
   });
 
   test('a disabled surface refuses before any delivery is attempted', async () => {

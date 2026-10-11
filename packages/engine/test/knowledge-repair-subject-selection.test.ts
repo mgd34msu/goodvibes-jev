@@ -15,7 +15,7 @@ import { buildGapContext, linkRepairSources } from '../sdk/src/platform/knowledg
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { promoteRepairSources } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
 import { repairSubjectSelection } from '../sdk/src/platform/knowledge/semantic/repair-subject-selection/battery.js';
-import { KnowledgeRepairSubjectSelectionHeldError as Held, type RepairSubjectSelectionInput } from '../sdk/src/platform/knowledge/semantic/repair-subject-selection/reader.js';
+import { createRepairSubjectSelectionReader, KnowledgeRepairSubjectSelectionHeldError as Held, type RepairSubjectSelectionInput } from '../sdk/src/platform/knowledge/semantic/repair-subject-selection/reader.js';
 import { isKnowledgeSourceQualityFailure } from '../sdk/src/platform/knowledge/source-quality.js';
 
 let previous: JudgmentPort | undefined;
@@ -101,6 +101,57 @@ async function held(promise: Promise<unknown>, reason: Held['reason']) {
 }
 
 describe('canonical repair subject selection through real consumers', () => {
+  test('the complete subject consumer cannot hide asynchronous or self-mutating caller authority', async () => {
+    for (const change of ['async', 'input', 'caller'] as const) {
+      const item = await fixture(), fake = readings();
+      const options = { store: item.store, spaceId, nodes: [item.display, item.bridge], context: { gap: item.gap },
+        evidenceSources: [item.source], text: item.gap.title, assertCurrent() {
+          if (change === 'async') return Promise.resolve();
+          if (change === 'input') options.text += ' changed inside the caller';
+          if (change === 'caller') options.assertCurrent = () => undefined;
+        },
+      };
+      const before = state(item.store);
+      await held(canonicalRepairSubjectNodes(options), 'stale');
+      expect(fake.requests).toHaveLength(0); expect(state(item.store)).toBe(before);
+    }
+  });
+  test('the direct subject reader requires synchronous original caller authority through settlement', async () => {
+    const input: RepairSubjectSelectionInput = { reference: 'subject-1', query: 'Display inputs', candidate: 'subject-1',
+      candidates: [{ reference: 'subject-1', title: 'Living room display', kind: 'ha_device', aliases: [], identity: {} }], objectProfiles: [] };
+    for (const timing of ['initial', 'settled'] as const) for (const result of ['resolved', 'rejected', 'value'] as const) {
+      const fake = readings(); let active = timing === 'initial';
+      const reader = createRepairSubjectSelectionReader({ assertCurrent() {
+        if (!active) return;
+        if (result === 'resolved') return Promise.resolve();
+        if (result === 'rejected') return Promise.reject(new Error('Original caller rejected'));
+        return 'borrowed authority';
+      } });
+      if (timing === 'settled') { await reader.read([input]); active = true; }
+      await held(reader.read([input]), 'stale');
+      expect(fake.requests).toHaveLength(timing === 'settled' ? 1 : 0);
+    }
+  });
+  test('the direct subject reader checks captured options after the original caller', async () => {
+    const input: RepairSubjectSelectionInput = { reference: 'subject-1', query: 'Display inputs', candidate: 'subject-1',
+      candidates: [{ reference: 'subject-1', title: 'Living room display', kind: 'ha_device', aliases: [], identity: {} }], objectProfiles: [] };
+    for (const timing of ['initial', 'settled'] as const) for (const change of ['caller', 'signal', 'timeout'] as const) {
+      const fake = readings(); let active = timing === 'initial';
+      const options = { signal: new AbortController().signal, timeoutMs: 1_000, assertCurrent() {
+        if (!active) return;
+        if (change === 'caller') options.assertCurrent = () => {};
+        if (change === 'signal') options.signal = new AbortController().signal;
+        if (change === 'timeout') options.timeoutMs += 1;
+      } };
+      const reader = createRepairSubjectSelectionReader(options);
+      if (timing === 'settled') {
+        await reader.read([input]); active = true;
+        expect(() => reader.assertCurrent()).toThrow(Held);
+      }
+      await held(reader.read([input]), 'stale');
+      expect(fake.requests).toHaveLength(timing === 'settled' ? 1 : 0);
+    }
+  });
   test('gap context follows canonical selection, not model-number or entityKind labels, and retains exact node identity', async () => {
     const item = await fixture(), fake = readings();
     const result = await buildGapContext(item.store, spaceId, item.gap, []);
@@ -204,7 +255,8 @@ describe('canonical repair subject selection through real consumers', () => {
       const gapInput = { id: item.gap.id, kind: item.gap.kind, slug: item.gap.slug, title: item.gap.title, status: item.gap.status,
         metadata: { ...item.gap.metadata, linkedObjectIds: [item.display.id, item.bridge.id, 'late-candidate'] } };
       const gap = await upsertObservedKnowledgeNode(item.store, gapInput, 'research-task', gapInput, () => gapInput);
-      await item.store.replaceSourceRecord({ ...item.source, metadata: { ...item.source.metadata,
+      await item.store.upsertSource({ id: item.source.id, connectorId: item.source.connectorId,
+        sourceType: item.source.sourceType, title: item.source.title, status: item.source.status, metadata: { ...item.source.metadata,
         sourceDiscovery: { linkedObjectIds: [item.display.id, item.bridge.id, 'late-candidate'] } } });
       const source = item.store.getSource(item.source.id)!;
       const fake = readings(); let release!: () => void, started!: () => void;

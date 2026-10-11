@@ -117,7 +117,7 @@ describe('the surface holding a conversation is the one that answers for it', ()
     // A rewind.plan is waiting on this; a reason reaches the person faster and
     // more usefully than a stall does.
     expect(answered['available']).toBe(false);
-    expect(String(answered['unavailableReason'])).toContain('mid-compaction');
+    expect(answered['unavailableReason']).toBe('the surface hosting this conversation could not answer: [REDACTED]');
     await host.stop();
   });
 

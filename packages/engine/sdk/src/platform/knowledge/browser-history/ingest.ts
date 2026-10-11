@@ -5,7 +5,9 @@ import {
   emitKnowledgeIngestFailed,
   emitKnowledgeIngestStarted,
 } from '../../runtime/emitters/index.js';
-import { summarizeError } from '../../utils/error-display.js';
+import { readNormalizedError } from '../../utils/error-display.js';
+import { createSemanticWriteGuard } from '../semantic/primary-source-plan.js';
+import { retainOwnedJson } from '../../gate/judgment-input.js';
 import { compileKnowledgeSource } from '../ingest-compile.js';
 import { KnowledgeEntityAliasHoldError } from '../entity-aliases.js';
 import { KnowledgeNodeActivationHeldError } from '../activation/types.js';
@@ -336,14 +338,24 @@ export async function ingestBrowserKnowledge(
         title: source.title,
       }), source.sessionId);
     } catch (error) {
+      const store = context.store, artifactStore = context.artifactStore, emit = context.emitIfReady;
+      const selectedOptions = retainOwnedJson(options), selectedAggregate = retainOwnedJson(aggregate);
+      const sourceGuard = createSemanticWriteGuard(store);
+      if (sourceId) sourceGuard.source(sourceId);
+      const assertDiagnosticCurrent = () => {
+        selectedOptions.assertCurrent(); selectedAggregate.assertCurrent(); sourceGuard.assertCurrent();
+        if (context.store !== store || context.artifactStore !== artifactStore || context.emitIfReady !== emit) throw new KnowledgeEntityAliasHoldError();
+      };
+      const diagnostic = await readNormalizedError(error, { site: 'engine.knowledge.browser-ingest-failure', assertCurrent: assertDiagnosticCurrent });
+      assertDiagnosticCurrent();
       failed += 1;
       const held = error instanceof KnowledgeEntityAliasHoldError || error instanceof KnowledgeNodeActivationHeldError
         || error instanceof KnowledgeNodeMutationHeldError || error instanceof JudgmentInputError;
       const capture = captureCompleted ? 'completed' : sourceId ? 'partial' : 'failed';
       const compilation = captureCompleted ? held ? 'held' : 'failed' : 'not-attempted';
       const message = captureCompleted
-        ? `Browser capture retained; compilation ${compilation}: ${summarizeError(error)}`
-        : `Browser capture ${capture === 'partial' ? 'partially retained' : 'failed'}; compilation not attempted: ${summarizeError(error)}`;
+        ? `Browser capture retained; compilation ${compilation}: ${diagnostic.summary}`
+        : `Browser capture ${capture === 'partial' ? 'partially retained' : 'failed'}; compilation not attempted: ${diagnostic.summary}`;
       outcomes.push({ canonicalUri: aggregate.canonicalUri, ...(sourceId ? { sourceId } : {}), capture, compilation, error: message });
       errors.push(`${aggregate.canonicalUri}: ${message}`);
       context.emitIfReady((bus, ctx) => emitKnowledgeIngestFailed(bus, ctx, {

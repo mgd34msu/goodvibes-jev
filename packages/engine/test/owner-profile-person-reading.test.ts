@@ -4,11 +4,21 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/store.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
 import { registerOwnerProfileGatewayMethods, type OwnerProfileGatewayService } from '../sdk/src/platform/control-plane/routes/owner-profile.ts';
+
+// Logger role readings carry only field names; count the actual content readers.
+function contentRequests(fake: Pick<ReturnType<typeof fakePort>, 'requests'>) {
+  return fake.requests.filter(request => {
+    if (request.context?.battery !== fieldKind.name) return true;
+    expect(request.state).toEqual({ field: expect.any(String) });
+    return false;
+  });
+}
 
 const roots: string[] = [];
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -53,9 +63,9 @@ function gateway(store: OwnerProfileStore, afterRead?: () => void, retainBeforeR
   const fake = recorded(); installJudgmentPort(fake.port); const { store } = fixture();
   const lines = await store.person('Jo');
   expect(lines.map(line => line.text)).toEqual(['- Jo is my sister.', '- She spends Saturdays at the pottery wheel.']);
-  expect(fake.requests).toHaveLength(3);
-  expect(fake.requests.every(request => request.context?.battery === 'engine.owner-profile.person-line')).toBe(true);
-  const sent = JSON.stringify(fake.requests.map(request => request.state));
+  expect(contentRequests(fake)).toHaveLength(3);
+  expect(contentRequests(fake).every(request => request.context?.battery === 'engine.owner-profile.person-line')).toBe(true);
+  const sent = JSON.stringify(contentRequests(fake).map(request => request.state));
   expect(sent).toContain('Dave works with Jo'); expect(sent).not.toContain('03-14'); expect(sent).not.toContain('Avery Chen');
   expect(store.get('identity.name')?.value).toBe('Avery Chen'); expect(store.section('People')).toBeUndefined();
 });
@@ -75,7 +85,7 @@ function gateway(store: OwnerProfileStore, afterRead?: () => void, retainBeforeR
   // A synthetic credential assignment in original provenance must not reach the port.
   Object.assign(line, { provenance: { surface: 'tui', at: '2026-01-01', said: 'password=synthetic-secret' } });
   const fake = recorded(); installJudgmentPort(fake.port);
-  await expect(store.person('Jo')).rejects.toThrow(); expect(fake.requests).toHaveLength(0);
+  await expect(store.person('Jo')).rejects.toThrow(); expect(contentRequests(fake)).toHaveLength(0);
 });
  test('a same-bytes profile reload retires a pending person reading', async () => {
   const h = fixture(), b = blocked(); const pending = h.store.person('Jo'); void pending.catch(() => {});
@@ -129,7 +139,7 @@ function gateway(store: OwnerProfileStore, afterRead?: () => void, retainBeforeR
  test('gateway validates shadowed original query values before starting a reading', async () => {
   const h = fixture(), fake = recorded(); installJudgmentPort(fake.port);
   await expect(gateway(h.store).invoke('profile.person', { body: { name: 'Jo' }, query: { name: 'password=synthetic-secret' }, context: {} })).rejects.toThrow();
-  expect(fake.requests).toHaveLength(0);
+  expect(contentRequests(fake)).toHaveLength(0);
 });
  test('a returned observation cannot be retained across profile changes', async () => {
   const h = fixture(); installJudgmentPort(recorded().port); const checks: (() => void)[] = [];

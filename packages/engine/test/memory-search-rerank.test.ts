@@ -15,6 +15,23 @@ import type { MemoryRecord } from '../sdk/src/platform/state/index.js';
 import { SqliteVecMemoryIndex } from '../sdk/src/platform/state/memory-vector-store.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { useMemoryReadings } from './_helpers/memory-readings.ts';
+import { fieldKind } from '../sdk/src/platform/utils/batteries/field-kind.js';
+
+function memoryRequests(readings: Pick<ReturnType<typeof useMemoryReadings>, 'requests'>, battery: 'engine.state.memory-search' | 'engine.state.memory-review-priority') {
+  for (const request of readings.requests) {
+    if (request.context?.battery === battery) continue;
+    expect(request.context?.battery).toBe(fieldKind.name);
+    expect(request.questions).toEqual({ kind: fieldKind.items.kind.question });
+    const state = request.state;
+    if (!state || typeof state !== 'object' || Array.isArray(state) || !('field' in state) || typeof state.field !== 'string') {
+      throw new Error('Unexpected memory logger privacy projection');
+    }
+    expect(state).toEqual({ field: state.field });
+    expect(['ready', 'id', 'cls', 'path']).toContain(state.field);
+  }
+  return readings.requests.filter(request => request.context?.battery === battery);
+}
+
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -53,8 +70,8 @@ describe('MemoryStore.search with a query', () => {
       'deploy note: staging uses deploy/staging.sh',
     ]);
     // Only the three records the SQL filter retrieved were read, each in its own request.
-    expect(readings.requests).toHaveLength(3);
-    expect(readings.requests.map((request) => (request.state as { query: string }).query)).toEqual(['deploy', 'deploy', 'deploy']);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(3);
+    expect(memoryRequests(readings, 'engine.state.memory-search').map((request) => (request.state as { query: string }).query)).toEqual(['deploy', 'deploy', 'deploy']);
     store.close();
   });
 
@@ -67,7 +84,7 @@ describe('MemoryStore.search with a query', () => {
     const found = await store.search({ query: 'alpha', limit: 1 });
     expect(found).toHaveLength(1);
     // limit 1 reranks max(1*4, 12) = 12 of the 20 retrieved records.
-    expect(readings.requests).toHaveLength(12);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(12);
     store.close();
   });
 
@@ -79,7 +96,7 @@ describe('MemoryStore.search with a query', () => {
     const found = await store.search({});
     expect(found.map((record) => record.summary)).toEqual(['confident', 'modest', 'flagged but confident']);
     expect(store.retrieve({}).map((record) => record.summary)).toEqual(['confident', 'modest', 'flagged but confident']);
-    expect(readings.requests).toHaveLength(0);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(0);
     store.close();
   });
 
@@ -109,7 +126,7 @@ describe('MemoryStore.searchSemantic', () => {
 
     const candidates = store.semanticCandidates({ query: 'how do we deploy to production' });
     expect(candidates.length).toBe(3);
-    expect(readings.requests).toHaveLength(0);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(0);
 
     const results = await store.searchSemantic({ query: 'how do we deploy to production', limit: 2 });
     expect(results.map((entry) => entry.record.summary)).toEqual([
@@ -118,7 +135,7 @@ describe('MemoryStore.searchSemantic', () => {
     ]);
     expect(results[0]!.score).toBeCloseTo(94);
     expect(results[0]!.similarity).toBeGreaterThan(0);
-    expect(readings.requests).toHaveLength(3);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(3);
     store.close();
   });
 
@@ -141,7 +158,7 @@ describe('MemoryStore.searchSemantic', () => {
     await store.add({ cls: 'fact', summary: 'one', review: { confidence: 70 } });
     const results = await store.searchSemantic({});
     expect(results.map((entry) => entry.score)).toEqual([70]);
-    expect(readings.requests).toHaveLength(0);
+    expect(memoryRequests(readings, 'engine.state.memory-search')).toHaveLength(0);
     store.close();
   });
 });
@@ -177,8 +194,8 @@ describe('MemoryStore.reviewQueue', () => {
     await store.add({ cls: 'incident', summary: 'unverified guess', review: { confidence: 35 } });
     const queue = await store.reviewQueue(2);
     expect(queue.map((record) => record.summary)).toEqual(['unverified guess', 'stale runtime note']);
-    expect(readings.requests).toHaveLength(3);
-    const states = readings.requests.map((request) => (request.state as { record: Record<string, unknown> }).record);
+    expect(memoryRequests(readings, 'engine.state.memory-review-priority')).toHaveLength(3);
+    const states = memoryRequests(readings, 'engine.state.memory-review-priority').map((request) => (request.state as { record: Record<string, unknown> }).record);
     expect(states).toContainEqual({ review_state: 'stale', confidence: 70, stale_reason: 'aged out', class: 'constraint', summary: 'stale runtime note', tags: [] });
     store.close();
   });
@@ -186,7 +203,7 @@ describe('MemoryStore.reviewQueue', () => {
   test('an empty queue makes no request; a non-empty one with no port installed throws', async () => {
     const store = await openStore(false);
     expect(await store.reviewQueue(5)).toEqual([]);
-    expect(readings.requests).toHaveLength(0);
+    expect(memoryRequests(readings, 'engine.state.memory-review-priority')).toHaveLength(0);
     await store.add({ cls: 'fact', summary: 'anything' });
     const previous = installJudgmentPort(undefined);
     try {

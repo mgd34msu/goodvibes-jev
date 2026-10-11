@@ -353,14 +353,18 @@ describe('planContract: failure, with no single-item fallback', () => {
     expect(contract.units).toEqual([]);
   });
 
-  test('no route for the planner fails the contract with planning and the route planner\'s reason, and no planner agent runs', async () => {
+  test('no route for the planner fails with protected routing context and no planner agent runs', async () => {
     install();
     const contract = shapedContract();
     const { deps, requests } = harness([plannerOutput(validPlan())]);
     const noRoute = new NoRouteError('No configured, healthy provider serves a model that meets this work\'s requirements (tool calling, context window, image input).');
-    const outcome = await planContract(contract, { ...deps, routeSelector: async () => { throw noRoute; } });
+    let routes = 0;
+    const outcome = await planContract(contract, { ...deps, routeSelector: async () => { routes++; throw noRoute; } });
     expect(outcome).toMatchObject({ kind: 'failed', failureKind: 'planning' });
-    expect(contract.error).toBe(`no route for the planner: ${noRoute.message}`);
+    expect(contract.error).toBe('no route for the planner: [REDACTED]');
+    expect(routes).toBe(1);
+    expect(contract.units).toEqual([]);
+    expect(contract.groups).toEqual([]);
     expect(requests).toHaveLength(0);
   });
 

@@ -3612,6 +3612,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     },
     "output": {
       "id": "sample",
+      "mutationRevision": "sample",
       "name": "sample",
       "description": "sample",
       "labels": [
@@ -3737,7 +3738,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "automation.jobs.delete": {
     "input": {
-      "jobId": "sample"
+      "jobId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "removed": false,
@@ -3746,7 +3749,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "automation.jobs.disable": {
     "input": {
-      "jobId": "sample"
+      "jobId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "id": "sample",
@@ -3755,7 +3760,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "automation.jobs.enable": {
     "input": {
-      "jobId": "sample"
+      "jobId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "id": "sample",
@@ -3771,6 +3778,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "jobs": [
         {
           "id": "sample",
+          "mutationRevision": "sample",
           "name": "sample",
           "description": "sample",
           "labels": [
@@ -3914,6 +3922,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   "automation.jobs.update": {
     "input": {
       "jobId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous",
       "name": "sample",
       "description": "sample",
       "prompt": "sample",
@@ -4001,6 +4011,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     },
     "output": {
       "id": "sample",
+      "mutationRevision": "sample",
       "name": "sample",
       "description": "sample",
       "labels": [
@@ -4818,6 +4829,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     },
     "output": {
       "id": "sample",
+      "mutationRevision": "sample",
       "name": "sample",
       "description": "sample",
       "labels": [
@@ -4943,7 +4955,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "automation.schedules.delete": {
     "input": {
-      "scheduleId": "sample"
+      "scheduleId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "removed": false,
@@ -4952,7 +4966,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "automation.schedules.disable": {
     "input": {
-      "scheduleId": "sample"
+      "scheduleId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "id": "sample",
@@ -4961,7 +4977,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "automation.schedules.enable": {
     "input": {
-      "scheduleId": "sample"
+      "scheduleId": "sample",
+      "expectedMutationRevision": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "id": "sample",
@@ -4974,6 +4992,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "jobs": [
         {
           "id": "sample",
+          "mutationRevision": "sample",
           "name": "sample",
           "description": "sample",
           "labels": [
@@ -6405,7 +6424,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "channels.drafts.delete": {
     "input": {
-      "draftId": "sample"
+      "draftId": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "deleted": false,
@@ -6482,7 +6502,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "sample"
       ],
       "sentResponseId": "sample",
-      "sendError": "sample"
+      "sendError": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "draft": {
@@ -6848,6 +6869,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "channels.routing.assign": {
     "input": {
+      "admission": "autonomous",
       "channelId": "sample",
       "surfaceKind": "sample",
       "routeId": "sample",
@@ -6867,7 +6889,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "channels.routing.delete": {
     "input": {
-      "assignmentId": "sample"
+      "assignmentId": "sample",
+      "admission": "autonomous"
     },
     "output": {
       "deleted": false,
@@ -20315,6 +20338,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.acknowledge": {
     "input": {
+      "admission": "autonomous",
       "occasionId": "sample",
       "source": "conversation",
       "occurrence": "sample"
@@ -20327,6 +20351,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.answer": {
     "input": {
+      "admission": "autonomous",
       "occasionId": "sample",
       "answer": "yes",
       "occurrence": "sample"
@@ -20357,6 +20382,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.confirm": {
     "input": {
+      "admission": "autonomous",
       "title": "sample",
       "date": "sample",
       "kind": "gift-giving",
@@ -20377,6 +20403,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.conflict.resolve": {
     "input": {
+      "admission": "autonomous",
       "occasionId": "sample"
     },
     "output": {
@@ -20403,6 +20430,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.interview.answer": {
     "input": {
+      "admission": "autonomous",
       "interviewId": "sample",
       "stepId": "sample",
       "text": "sample"
@@ -20459,6 +20487,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.interview.record": {
     "input": {
+      "admission": "autonomous",
       "interviewId": "sample",
       "landedOn": "sample"
     },
@@ -20606,6 +20635,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.plans.confirm": {
     "input": {
+      "admission": "autonomous",
       "title": "sample",
       "from": "sample",
       "to": "sample",
@@ -20705,6 +20735,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "occasions.remove": {
     "input": {
+      "admission": "autonomous",
       "occasionId": "sample",
       "confirmed": false,
       "authority": "sample"
@@ -20740,7 +20771,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     }
   },
   "occasions.sweep": {
-    "input": {},
+    "input": {
+      "admission": "autonomous"
+    },
     "output": {
       "ranAt": 0,
       "today": "sample",
@@ -21349,6 +21382,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "profile.append": {
     "input": {
+      "admission": "autonomous",
       "section": "sample",
       "text": "sample",
       "surface": "sample",
@@ -21372,6 +21406,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "profile.forget": {
     "input": {
+      "admission": "autonomous",
       "fieldId": "sample",
       "section": "sample",
       "text": "sample",
@@ -21524,6 +21559,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "profile.set": {
     "input": {
+      "admission": "autonomous",
       "fieldId": "sample",
       "value": "sample",
       "surface": "sample",
@@ -21568,6 +21604,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   },
   "profile.undo": {
     "input": {
+      "admission": "autonomous",
       "fieldId": "sample",
       "authority": "sample"
     },

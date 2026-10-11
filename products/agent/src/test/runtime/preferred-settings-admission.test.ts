@@ -70,7 +70,7 @@ beforeEach(() => {
 afterEach(async () => {
   try {
     for (const runtime of runtimes.splice(0).reverse()) {
-      try { await runtime.processManager.close(); } finally { runtime.dispose(); }
+      try { await runtime.processManager.close(); } finally { await runtime.close(); }
     }
   } finally {
     restoreRead?.(); restoreRead = undefined;
@@ -186,6 +186,12 @@ const mutation = (name: string, operation = 'set', key = 'display.theme', value:
   name === 'settings' ? { action: operation, key, ...(operation === 'set' ? { value } : {}) }
     : { mode: operation === 'set' ? 'set_setting' : 'reset_setting', key, ...(operation === 'set' ? { value } : {}) };
 
+function expectNoSettingsAdmission(...withheld: string[]) {
+  expect(requests.filter(request => 'disposition' in request.questions || 'hazard' in request.questions)).toHaveLength(0);
+  expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
+  for (const value of withheld) expect(JSON.stringify(requests)).not.toContain(value);
+}
+
 test.each(['settings', 'agent_harness'])('%s applies recorded act without human/model confirmation metadata', async name => {
   const f = await fixture();
   const result = await f.run(name, { ...mutation(name), confirm: false, explicitUserRequest: 'unrelated model assertion' });
@@ -253,7 +259,7 @@ test('alias coercion is captured before judgment and alias/schema replacement re
 test('raw credential aliases are refused before any judgment, reference routes stay opaque', async () => {
   const f = await fixture();
   await f.run('settings', { action: 'set', target: 'EMAIL.PASSWORDREF', value: 'synthetic-private' }).catch(() => undefined);
-  expect(requests).toHaveLength(0); expect(f.prompts()).toBe(0);
+  expectNoSettingsAdmission('synthetic-private'); expect(f.prompts()).toBe(0);
 });
 
 test('host boolean writes use the real prepared owner and enforce literal coercion', async () => {
@@ -366,7 +372,7 @@ for (const name of ['settings', 'agent_harness']) {
     test(`${name} ${operation} rejects a read-only physical ConfigManager before any judgment`, async () => {
       const f = await fixture(undefined, true); const before = f.runtime.configManager.get('display.theme');
       await expect(f.run(name, mutation(name, operation))).rejects.toThrow();
-      expect(requests).toHaveLength(0); expect(f.runtime.configManager.get('display.theme')).toBe(before);
+      expectNoSettingsAdmission(); expect(f.runtime.configManager.get('display.theme')).toBe(before);
       expect(f.prompts()).toBe(0);
     });
   }

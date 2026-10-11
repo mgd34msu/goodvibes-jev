@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import type { JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -212,7 +212,7 @@ describe('knowledgeCommand', () => {
     const fixture = await scopedFixture();
     const previous = installJudgmentPort(fixture.readings.port);
     try {
-      await knowledgeCommand.handler(command, fixture.context);
+      await knowledgeCommand.handler([...command], fixture.context);
       expect(printed.join('\n')).toContain(expected);
       expect(printed.join('\n')).not.toContain('Installation device catalog');
       expect(printed.join('\n')).not.toContain('Private kitchen passport');
@@ -237,9 +237,9 @@ describe('knowledgeCommand', () => {
     'pending scoped Agent command retains %s ownership and publishes no stale output or usage', async state => {
       const fixture = await scopedFixture();
       const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-      const port: JudgmentPort = { ...fixture.readings.port, async ask(request, options) {
+      const port: JudgmentPort = { ...fixture.readings.port, async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
         if (Object.hasOwn(request.questions, 'included')) { entered.resolve(); await release.promise; }
-        return fixture.readings.port.ask(request, options);
+        return fixture.readings.port.ask(request);
       } };
       const previous = installJudgmentPort(port);
       const controller = new AbortController();

@@ -96,10 +96,9 @@ describe('workstream draft planner inputs', () => {
     const { workstreamCommands, orchestrationEngine, planner } = makeServices({ decomposition: 'heuristic' });
 
     await workstreamCommands.proposeDraft('Move the billing service to webhooks and migrate existing customers.');
-
-    expect(requests).toHaveLength(2);
-    expect(Object.keys(requests[0]!.questions)).toEqual(['risk']);
-    expect(requests[0]!.state).toEqual({ purpose: 'planner', work: 'Move the billing service to webhooks and migrate existing customers.' });
+    const feature = assertReadingPartition(requests, ['routing.request-risk', 'engine.core.execution-strategy'], ['strategy', 'outcome', 'decisionId']);
+    expect(Object.keys(feature[0]!.questions)).toEqual(['risk']);
+    expect(feature[0]!.state).toEqual({ purpose: 'planner', work: 'Move the billing service to webhooks and migrate existing customers.' });
     const inputs = planner.getLatest()!.inputs;
     expect(inputs.riskScore).toBeCloseTo(0.5, 5);
     expect(inputs.latencyBudgetMs).toBe(Number.POSITIVE_INFINITY);
@@ -159,3 +158,13 @@ describe('workstream draft planner inputs', () => {
     orchestrationEngine.dispose();
   });
 });
+
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
+  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
+  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
+  expect(requests).toHaveLength(batteries.length + fields.length);
+  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
+  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
+  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
+  return feature;
+}

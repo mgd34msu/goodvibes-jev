@@ -22,9 +22,9 @@ const body = 'The bedside luminaire offers continuous dimming down to one percen
 const roots: string[] = [], services: HomeGraphService[] = [];
 let previous: JudgmentPort | undefined;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => {
+afterEach(async () => {
   installJudgmentPort(previous);
-  for (const service of services.splice(0)) service.dispose();
+  for (const service of services.splice(0)) await service.dispose();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 async function fixture(semantic = false) {
@@ -55,6 +55,7 @@ function readings(options: { evidence?: Readonly<Record<string, number>>; object
   const fake = fakePort((name, question, state) => {
     const candidate = (state as { candidate?: { title?: string; text?: string; reference?: string } }).candidate;
     const title = candidate?.title ?? '';
+    if (name === 'included') return noulAnswer(0.99);
     if (name === 'integrationIntent') return noulAnswer(options.intent ?? 0.01);
     if (name === 'concreteObject') return noulAnswer(0.99);
     if (name === 'integrationObject') return noulAnswer(options.integrations?.includes(title) ? 0.99 : 0.01);
@@ -201,7 +202,7 @@ describe('Home Graph shared answer judgments (authored synthetic evidence)', () 
     const enriched = Promise.withResolvers<readonly KnowledgeSourceRecord[]>();
     const enrich = spyOn(semantic, 'enrichSources').mockImplementation(async sources => { enriched.resolve(sources); return []; });
     try {
-      const result = await ask(f, { includeSources: false });
+      const result = await f.service.ask({ knowledgeSpaceId: spaceId, query, includeSources: false });
       expect(result.answer.sources).toEqual([]);
       expect(result.results.map(row => row.id)).toEqual(['local-booklet']);
       const selected = await enriched.promise;

@@ -3,7 +3,7 @@ import type { OwnedInboxTagging } from '@goodvibes-jev/engine/sdk/platform/intak
 /** Product host surfaces over canonical engine implementations. */
 import type { EmailService } from '@goodvibes-jev/engine/sdk/platform/email';
 import { registerOwnedMailInbox } from './owned-inbox-mail.js';
-import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
+import type { ConfigKey, ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createDaemonCredentialStore } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ClusterCoordinator } from '@goodvibes-jev/engine/sdk/platform/cluster';
 import type { GatewayMethodCatalog, NativeMutationHost } from '@goodvibes-jev/engine/sdk/platform/control-plane';
@@ -30,6 +30,8 @@ export interface DaemonInboxControls extends Required<Pick<RegisterInboxSurfaceO
   readonly gatePollingOwned?: (providerId: string, control: InboxPollingControl) => () => Promise<void>;
   /** Subscribe to local config/credential revocation without exposing secrets. */
   readonly onAccountInvalidation?: (listener: () => void) => () => void;
+  /** Value-free notifications from the native configuration owner. */
+  readonly onConfigurationChange?: (key: ConfigKey, listener: () => void) => () => void;
   /** Trusted root-owned constructor; no credentials or generic secret access escape. */
   readonly createEmailService?: () => { readonly service: EmailService; close(): void };
 }

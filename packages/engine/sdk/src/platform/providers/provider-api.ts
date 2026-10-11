@@ -394,8 +394,9 @@ function buildFavoriteRecord(
 
 async function loadFavoritesSnapshot(
   deps: ProviderApiDependencies,
+  ownership?: FavoritesUsageRestriction,
 ): Promise<ProviderApiFavoritesSnapshot> {
-  const favorites = cloneFavoritesData(await deps.favoritesStore.load());
+  const favorites = cloneFavoritesData(ownership ? await deps.favoritesStore.load(ownership) : await deps.favoritesStore.load());
   const models = deps.providerRegistry.listModels();
   const pinned = favorites.pinned.map((entry) =>
     buildFavoriteRecord(entry.registryKey, models, { pinnedAt: entry.pinnedAt }),
@@ -588,7 +589,7 @@ export function createProviderApi(deps: ProviderApiDependencies): ProviderApi {
       ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
       await deps.favoritesStore.recordUsage(model.registryKey, ownership);
       ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
-      const result = await loadFavoritesSnapshot(deps);
+      const result = await loadFavoritesSnapshot(deps, ownership);
       ownership?.signal?.throwIfAborted(); ownership?.assertCurrent?.();
       return result;
     },

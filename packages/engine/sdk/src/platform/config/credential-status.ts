@@ -29,7 +29,7 @@ import type {
   CredentialStatusProviderLike,
   CredentialStatusRecord,
 } from '@goodvibes-jev/engine/daemon-sdk';
-import { BUILTIN_PROVIDER_ENV_KEYS } from '../providers/builtin-catalog.js';
+import { BUILTIN_PROVIDER_ENV_KEYS } from './provider-credential-catalog.js';
 import type { SecretsManager } from './secrets.js';
 
 /**

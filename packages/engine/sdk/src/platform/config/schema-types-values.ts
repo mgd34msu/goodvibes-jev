@@ -192,6 +192,8 @@ export type ConfigValue<K extends ConfigKey> =
   K extends 'surfaces.discord.publicKey' ? string :
   K extends 'surfaces.discord.botToken' ? string :
   K extends 'surfaces.discord.applicationId' ? string :
+  K extends 'surfaces.discord.inboxBotUserId' ? string :
+  K extends 'surfaces.discord.inboxChannelIds' ? string :
   K extends 'surfaces.discord.defaultChannelId' ? string :
   K extends 'surfaces.discord.guildId' ? string :
   K extends 'surfaces.ntfy.enabled' ? boolean :

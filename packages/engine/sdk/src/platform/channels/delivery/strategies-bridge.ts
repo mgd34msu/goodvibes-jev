@@ -27,6 +27,7 @@ export function createSignalDeliveryStrategy(
   return {
     id: 'channel-delivery:signal',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'signal';
     },
@@ -82,6 +83,7 @@ export function createWhatsAppDeliveryStrategy(
   return {
     id: 'channel-delivery:whatsapp',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'whatsapp';
     },
@@ -176,6 +178,7 @@ export function createTelephonyDeliveryStrategy(
   return {
     id: 'channel-delivery:telephony',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'telephony';
     },
@@ -272,6 +275,7 @@ export function createIMessageDeliveryStrategy(
   return {
     id: 'channel-delivery:imessage',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'imessage';
     },
@@ -327,6 +331,7 @@ export function createBlueBubblesDeliveryStrategy(
   return {
     id: 'channel-delivery:bluebubbles',
     supportsGuardedDelivery: true,
+    supportsPublication: true,
     canHandle(request) {
       return resolveChannelDeliverySurfaceKind(request.target) === 'bluebubbles';
     },

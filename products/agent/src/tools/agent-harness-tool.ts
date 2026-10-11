@@ -401,7 +401,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           return output({
             ...catalogEnvelope('commands', commands, totalHarnessCliCommands(), catalogFilters(args, CQ.cli_commands.filters), CQ.cli_commands.discovery),
             blockedTokens: blockedHarnessCliCommandTokens(),
-            policy: 'CLI modes are read-only discovery. Use first-class model tools, workspace actions, settings modes, or confirmed slash-command mirrors for in-process operation.',
+            policy: 'CLI modes are read-only discovery. Use first-class model tools, workspace actions, settings modes, or admitted slash-command mirrors for in-process operation.',
           });
         }
         if (dispatchMode === 'cli_command') {
