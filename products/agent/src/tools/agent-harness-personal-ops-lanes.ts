@@ -1,4 +1,4 @@
-import { captureCatalogData, captureCatalogMethods, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
+import { captureCatalogMethods, captureCatalogSnapshotGuard, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { CommandContext } from '../input/command-registry.ts';
@@ -44,10 +44,10 @@ export async function buildLanes(
   };
   optionsCurrent(); ownerCurrent(); signal?.throwIfAborted(); assertCaller();
   const original = buildAgentWorkspaceRuntimeSnapshot(context);
-  const serialized = JSON.stringify(captureCatalogData(original));
+  const assertSnapshot = captureCatalogSnapshotGuard(original);
   const assertSource = () => {
     optionsCurrent(); ownerCurrent(); signal?.throwIfAborted();
-    if (JSON.stringify(captureCatalogData(buildAgentWorkspaceRuntimeSnapshot(context))) !== serialized) throw new ToolInputProjectionError('held');
+    assertSnapshot(buildAgentWorkspaceRuntimeSnapshot(context));
   };
   const assertCurrent = () => { assertSource(); assertCaller(); assertSource(); };
   const assertChildren = () => { for (const guards of staged.values()) for (const guard of guards) guard(); };

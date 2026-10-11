@@ -6,6 +6,12 @@ import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/too
 import type { Ranked, Rerank } from '@goodvibes-jev/judgment';
 import { withModelReadingSource } from './agent-harness-model-reading-source.ts';
 
+const ownDescriptor = Object.getOwnPropertyDescriptor;
+const ownDescriptors = Object.getOwnPropertyDescriptors;
+const prototypeOf = Object.getPrototypeOf;
+const ownKeys = Reflect.ownKeys;
+const isProxy = nodeTypes.isProxy;
+
 export interface CatalogRankingOptions {
   readonly signal?: AbortSignal | undefined;
   readonly sourceOwner?: ProtectedSourceOwner | undefined;
@@ -53,41 +59,147 @@ export function captureCatalogData<T>(value: T, budget = { nodes: 0, characters:
   return capture(value, 0) as T;
 }
 
+type CatalogSnapshot = { readonly kind: 'value'; readonly value: unknown } | {
+  readonly kind: 'object'; readonly array: boolean; readonly length: number;
+  readonly enumerableKeys: readonly string[];
+  readonly slots: ReadonlyMap<string, { readonly enumerable: boolean; readonly value: CatalogSnapshot }>;
+};
+
+/** Compare fresh complete DTOs without copying them. Every call keeps the
+ * original capture grammar and budgets, including alias and hidden-slot rules. */
+export function captureCatalogSnapshotGuard(source: unknown): (current: unknown) => void {
+  const captured = captureCatalogData(source);
+  const snapshots = new WeakMap<object, CatalogSnapshot>();
+  const snapshot = (value: unknown): CatalogSnapshot => {
+    if (value === null || typeof value !== 'object') return { kind: 'value', value };
+    const existing = snapshots.get(value); if (existing) return existing;
+    const array = Array.isArray(value);
+    const slots = new Map<string, { readonly enumerable: boolean; readonly value: CatalogSnapshot }>();
+    const enumerableKeys: string[] = [];
+    const result: CatalogSnapshot = { kind: 'object', array, length: array ? value.length : 0, enumerableKeys, slots };
+    snapshots.set(value, result);
+    for (const key of ownKeys(value)) {
+      if (typeof key !== 'string') throw new ToolInputProjectionError('invalid');
+      if (array && key === 'length') continue;
+      const descriptor = ownDescriptor(value, key);
+      if (!descriptor || !('value' in descriptor)) throw new ToolInputProjectionError('invalid');
+      if (!array && descriptor.enumerable) enumerableKeys.push(key);
+      slots.set(key, { enumerable: descriptor.enumerable === true, value: snapshot(descriptor.value) });
+    }
+    return result;
+  };
+  const original = snapshot(captured);
+  return current => {
+    const budget = { nodes: 0, characters: 0, slots: 0 };
+    const ancestors = new Set<object>();
+    const copies = new WeakMap<object, CatalogSnapshot>();
+    const compared = new WeakMap<object, WeakSet<object>>();
+    const changed = (): never => { throw new ToolInputProjectionError('held'); };
+    const equal = (left: CatalogSnapshot, right: CatalogSnapshot): void => {
+      if (left === right) return;
+      if (left.kind === 'value' || right.kind === 'value') {
+        if (left.kind !== 'value' || right.kind !== 'value' || !Object.is(left.value, right.value)) changed();
+        return;
+      }
+      if (left.array !== right.array || left.length !== right.length || left.slots.size !== right.slots.size) changed();
+      if (left.enumerableKeys.length !== right.enumerableKeys.length
+        || left.enumerableKeys.some((key, index) => key !== right.enumerableKeys[index])) changed();
+      const matches = compared.get(left) ?? new WeakSet<object>();
+      if (matches.has(right)) return;
+      matches.add(right); compared.set(left, matches);
+      for (const [key, slot] of left.slots) {
+        const other = right.slots.get(key);
+        if (!other || other.enumerable !== slot.enumerable) return changed();
+        equal(slot.value, other.value);
+      }
+    };
+    const compare = (value: unknown, expected: CatalogSnapshot, depth: number): void => {
+      if (++budget.nodes > 100_000 || depth > 64) changed();
+      if (typeof value === 'string') {
+        budget.characters += value.length;
+        if (budget.characters > 1_000_000) changed();
+      } else if (value !== null && value !== undefined && typeof value !== 'boolean'
+        && (typeof value !== 'number' || !Number.isFinite(value)) && typeof value !== 'object') changed();
+      if (value === null || typeof value !== 'object') {
+        if (typeof value === 'number' && !Number.isFinite(value)) changed();
+        if (expected.kind !== 'value' || !Object.is(value, expected.value)) changed();
+        return;
+      }
+      if (isProxy(value) || ancestors.has(value) || expected.kind !== 'object') return changed();
+      const existing = copies.get(value);
+      if (existing) { equal(existing, expected); return; }
+      const array = Array.isArray(value), prototype: unknown = prototypeOf(value);
+      if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) changed();
+      const descriptors = ownDescriptors(value), keys = ownKeys(descriptors);
+      if (keys.some(key => typeof key !== 'string') || Object.hasOwn(descriptors, 'toJSON')
+        || array && Object.hasOwn(descriptors, 'constructor')
+        || Object.values(descriptors).some(descriptor => !('value' in descriptor) || typeof descriptor.value === 'function')) changed();
+      const length: unknown = array ? descriptors.length?.value : 0;
+      if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || length > 20_000) return changed();
+      if (array && (budget.slots += length) > 100_000) changed();
+      if (array !== expected.array || length !== expected.length || keys.length !== expected.slots.size + (array ? 1 : 0)) changed();
+      ancestors.add(value);
+      try {
+        let enumerableIndex = 0;
+        for (const key of keys) {
+          if (typeof key !== 'string') return changed();
+          if (array && key === 'length') continue;
+          budget.characters += key.length;
+          if (budget.characters > 1_000_000) changed();
+          const descriptor = descriptors[key], slot = expected.slots.get(key);
+          if (!descriptor || !slot || descriptor.enumerable !== slot.enumerable) return changed();
+          if (!array && descriptor.enumerable && key !== expected.enumerableKeys[enumerableIndex++]) changed();
+          compare(descriptor.value, slot.value, depth + 1);
+        }
+        copies.set(value, expected);
+      } finally { ancestors.delete(value); }
+    };
+    compare(current, original, 0);
+  };
+}
+
 /** Compare descriptors before touching a previously acquired backend again.
  * The installed recording port's stable model getter is the sole accessor. */
 function catalogBackendSlots(subject: object, keys: readonly string[], modelGetter = false) {
   const chain: object[] = [];
   let owner: object | null = subject;
   while (owner) {
-    if (nodeTypes.isProxy(owner) || chain.length >= 64) throw new ToolInputProjectionError('held');
-    chain.push(owner); owner = Object.getPrototypeOf(owner) as object | null;
+    if (isProxy(owner) || chain.length >= 64) throw new ToolInputProjectionError('held');
+    chain.push(owner); owner = prototypeOf(owner);
   }
   return { chain, fields: keys.map(key => {
     for (const owner of chain) {
-      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      const descriptor = ownDescriptor(owner, key);
       if (descriptor) {
         if (!('value' in descriptor) && (!modelGetter || key !== 'model' || typeof descriptor.get !== 'function' || descriptor.set)) throw new ToolInputProjectionError('held');
-        return { owner, descriptor };
+        return { key, owner, descriptor };
       }
     }
-    return undefined;
+    return { key, owner: undefined, descriptor: undefined };
   }) };
 }
-function assertCatalogBackendSlots(before: ReturnType<typeof catalogBackendSlots>, after: ReturnType<typeof catalogBackendSlots>): void {
-  if (after.chain.length !== before.chain.length || after.chain.some((owner, index) => owner !== before.chain[index])) throw new ToolInputProjectionError('held');
-  for (const [index, field] of before.fields.entries()) {
-    const current = after.fields[index];
-    if (field?.owner !== current?.owner || field?.descriptor.value !== current?.descriptor.value
-      || field?.descriptor.get !== current?.descriptor.get || field?.descriptor.set !== current?.descriptor.set
-      || field?.descriptor.enumerable !== current?.descriptor.enumerable || field?.descriptor.configurable !== current?.descriptor.configurable
-      || field?.descriptor.writable !== current?.descriptor.writable) throw new ToolInputProjectionError('held');
+function assertCatalogBackendSlots(before: ReturnType<typeof catalogBackendSlots>): void {
+  for (let index = 0; index < before.chain.length; index++) {
+    const owner = before.chain[index];
+    if (!owner || prototypeOf(owner) !== (before.chain[index + 1] ?? null)) throw new ToolInputProjectionError('held');
+  }
+  for (const field of before.fields) {
+    let owner: object | undefined, descriptor: PropertyDescriptor | undefined;
+    for (const candidate of before.chain) {
+      descriptor = ownDescriptor(candidate, field.key);
+      if (descriptor) { owner = candidate; break; }
+    }
+    if (field.owner !== owner || field.descriptor?.value !== descriptor?.value
+      || field.descriptor?.get !== descriptor?.get || field.descriptor?.set !== descriptor?.set
+      || field.descriptor?.enumerable !== descriptor?.enumerable || field.descriptor?.configurable !== descriptor?.configurable
+      || field.descriptor?.writable !== descriptor?.writable) throw new ToolInputProjectionError('held');
   }
 }
 /** Retain descriptor and prototype identity without invoking replacement accessors. */
 export function captureCatalogMethods(subject: object, keys: readonly string[]): () => void {
   const names = [...keys];
   const captured = catalogBackendSlots(subject, names);
-  return () => assertCatalogBackendSlots(captured, catalogBackendSlots(subject, names));
+  return () => assertCatalogBackendSlots(captured);
 }
 function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: Rerank) {
   const decisionKeys = ['name', 'version', 'description', 'accuracyFloor', 'model', 'fixtureCount', 'checkFixtures', 'rerank'];
@@ -99,9 +211,9 @@ function captureCatalogBackend(port: ReturnType<typeof judgmentPort>, decision: 
   const recorderKeys = ['recordReadings', 'recordAction'];
   const recording = recorder ? catalogBackendSlots(recorder, recorderKeys) : undefined;
   return { model, recorder, rerank, assertCurrent() {
-    assertCatalogBackendSlots(definition, catalogBackendSlots(decision, decisionKeys));
-    assertCatalogBackendSlots(slots, catalogBackendSlots(port, portKeys, true));
-    if (recorder && recording) assertCatalogBackendSlots(recording, catalogBackendSlots(recorder, recorderKeys));
+    assertCatalogBackendSlots(definition);
+    assertCatalogBackendSlots(slots);
+    if (recorder && recording) assertCatalogBackendSlots(recording);
     if (port.model !== model || port.ask !== ask || port.recorder !== recorder) throw new ToolInputProjectionError('held');
   } };
 }

@@ -8,6 +8,11 @@ import { getOperatorContract, OPERATOR_CONTRACT } from '@goodvibes-jev/engine/sd
 import type { CommandContext } from '../input/command-registry.ts';
 import type { McpSchemaSummary, McpToolRecord, McpToolSchema, OperatorContractMethod, PersonalOpsConnectorSignal, PersonalOpsConnectorTool, PersonalOpsWorkflow, PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
 
+const isFrozen = Object.isFrozen;
+const descriptorsOf = Object.getOwnPropertyDescriptors;
+const propertyKeys = Reflect.ownKeys;
+const isProxy = nodeTypes.isProxy;
+
 export function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -82,11 +87,11 @@ const immutableContractMetadata = new WeakMap<object, ContractMetadata>();
 
 function isFrozenDataTree(value: unknown, seen = new WeakSet<object>()): boolean {
   if (value === null || typeof value !== 'object') return true;
-  if (nodeTypes.isProxy(value) || !Object.isFrozen(value)) return false;
+  if (isProxy(value) || !isFrozen(value)) return false;
   if (seen.has(value)) return true;
   seen.add(value);
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  return Reflect.ownKeys(descriptors).every(key => typeof key === 'string' && Object.hasOwn(descriptors[key]!, 'value')
+  const descriptors = descriptorsOf(value);
+  return propertyKeys(descriptors).every(key => typeof key === 'string' && Object.hasOwn(descriptors[key]!, 'value')
     && isFrozenDataTree(descriptors[key]!.value, seen));
 }
 
@@ -114,7 +119,7 @@ function prepareContractMetadata(manifest: ReturnType<typeof getOperatorContract
       entries: prepareHarnessCatalog(methods.map(method => method.value), describeContractMethod),
     }))),
   });
-  if (manifest === OPERATOR_CONTRACT && Object.isFrozen(manifest) && Object.isFrozen(operator) && isFrozenDataTree(original)) {
+  if (manifest === OPERATOR_CONTRACT && isFrozen(manifest) && isFrozen(operator) && isFrozenDataTree(original)) {
     for (const method of captured) method.assertCurrent();
     immutableContractMetadata.set(original, metadata);
   }
@@ -152,7 +157,12 @@ async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options:
     return Object.freeze({ value, index, assertCurrent: () => assertSnapshot(method) });
   });
   const assertSource = () => {
-    assertRoot(); arrayCurrent();
+    assertRoot();
+    // This private proof exists only after the exact native producer and every
+    // descendant have been captured and proven irreversibly immutable.
+    const immutable = immutableContractMetadata.get(original);
+    if (manifest === OPERATOR_CONTRACT && immutable?.manifest === manifest && immutable.operator === operator) return;
+    arrayCurrent();
     if (Reflect.ownKeys(original).length !== keys.length) throw new ToolInputProjectionError('held');
     for (const method of captured) method.assertCurrent();
   };
@@ -167,8 +177,12 @@ async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options:
       assertCurrent();
       const assertIndices = captureCatalogMethods(original, methods.map(method => String(method.index)));
       const assertBatch = () => {
-        callerCurrent?.(); assertRoot(); assertIndices();
-        for (const method of methods) method.assertCurrent();
+        callerCurrent?.(); assertRoot();
+        const immutable = immutableContractMetadata.get(original);
+        if (manifest !== OPERATOR_CONTRACT || immutable?.manifest !== manifest || immutable.operator !== operator) {
+          assertIndices();
+          for (const method of methods) method.assertCurrent();
+        }
         for (const guard of retained.values()) guard();
       };
       const matches = await personalOpsLaneMembers(entries, lane, describeContractMethod,
