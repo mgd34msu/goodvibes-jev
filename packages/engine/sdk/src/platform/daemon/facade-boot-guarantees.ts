@@ -74,13 +74,15 @@ export function migrateDaemonOwnedConfigOnBoot(
   homeDirectory: string,
 ): void {
   try {
-    const result = migrateDaemonOwnedConfig({ homeDir: homeDirectory });
+    const daemonTierPath = configManager.getDaemonTierPath();
+    const result = migrateDaemonOwnedConfig({ homeDir: homeDirectory,
+      ...(daemonTierPath === null ? {} : { daemonStorePath: daemonTierPath }),
+    });
     if (!result.migrated) return;
     // Same shared file, same hazard as the credential sweep: this migration
     // rewrites settings every component on the machine reads. Record the floor
     // BEFORE the reload, so the file a reader sees never carries a migrated
     // shape without the version that explains it.
-    const daemonTierPath = configManager.getDaemonTierPath();
     if (daemonTierPath !== null) {
       raiseReaderFloorInFile(daemonTierPath, SWEPT_CREDENTIAL_READER_FLOOR, 'daemon-owned-config-migration');
     }

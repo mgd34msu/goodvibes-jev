@@ -49,6 +49,7 @@ import { SecretsManager } from '../sdk/src/platform/config/secrets.ts';
 import { secretWriteTarget } from '../sdk/src/platform/config/secrets-store-paths.ts';
 import { ensureConnectorConfigSections } from '../sdk/src/platform/config/connector-config-sections.ts';
 import { migrateDaemonNeededCredentials } from '../sdk/src/platform/config/daemon-credential-migration.ts';
+import { migrateDaemonOwnedConfig } from '../sdk/src/platform/config/daemon-config-migration.ts';
 import { daemonSecretKeyFor } from '../sdk/src/platform/config/daemon-secret-keys.ts';
 import { CONFIG_KEYS } from '../sdk/src/platform/config/schema.ts';
 import { CARD_MATERIAL_FIELDS, cardSecretKey } from '../sdk/src/platform/payments/host/card-store.ts';
@@ -61,6 +62,7 @@ import {
 } from '../sdk/src/platform/config/secret-bearing-config-keys.ts';
 import {
   credentialMigrationReceiptPath,
+  migrateDaemonOwnedConfigOnBoot,
   runDaemonBootGuarantees,
 } from '../sdk/src/platform/daemon/facade-boot-guarantees.ts';
 import {
@@ -1164,3 +1166,38 @@ describe('a boot migration that rewrites the shared settings file records the re
     expect(second.configManager.getIngestionQuarantine()).toHaveLength(0);
   });
 });
+
+for (const defaultDaemonHome of [false, true]) {
+  test(`facade migration preserves the CLI-admitted ${defaultDaemonHome ? 'default' : 'selected'} daemon home and native configuration lifetime`, () => {
+    const home = throwawayHome();
+    const daemonHome = defaultDaemonHome ? join(home, '.goodvibes', 'daemon') : join(home, 'selected-daemon');
+    const selectedSettings = join(daemonHome, 'settings.json');
+    mkdirSync(daemonHome, { recursive: true });
+    writeFileSync(selectedSettings, JSON.stringify({ surfaces: { hostedInboxScreening: 'abacus-typesafe-provider-managed' } }));
+    migrateDaemonOwnedConfig({ homeDir: home, daemonStorePath: selectedSettings });
+    const config = new ConfigManager({ homeDir: home, workingDir: workdirFor(home), surfaceRoot: 'daemon', daemonTierPath: selectedSettings });
+    const bytes = readFileSync(selectedSettings), incarnation = config.getConfigurationIncarnation();
+    const durable = config.captureDurableConfigurationIncarnation();
+    let invalidations = 0, incarnationChanges = 0;
+    const stops = [config.onDidInvalidate(() => { invalidations++; }),
+      config.onDidChangeIncarnation(() => { incarnationChanges++; }), config.watchConfigFiles()];
+    try {
+      migrateDaemonOwnedConfigOnBoot(config, home);
+      config.flushConfigFileChanges();
+      expect(config.getConfigurationIncarnation()).toBe(incarnation);
+      expect(config.getDurableConfigurationIncarnation()).toBe(durable);
+      expect(readFileSync(selectedSettings)).toEqual(bytes);
+      if (!defaultDaemonHome) expect(existsSync(join(home, '.goodvibes', 'daemon', 'settings.json'))).toBe(false);
+      expect(invalidations).toBe(0); expect(incarnationChanges).toBe(0);
+      expect(config.get('surfaces.hostedInboxScreening')).toBe('abacus-typesafe-provider-managed');
+      config.set('surfaces.hostedInboxScreening', 'disabled');
+      expect(invalidations).toBe(1); expect(incarnationChanges).toBe(1);
+      expect(config.getConfigurationIncarnation()).not.toBe(incarnation);
+      expect(config.getDurableConfigurationIncarnation()).not.toBe(durable);
+      config.set('surfaces.hostedInboxScreening', 'abacus-typesafe-provider-managed');
+      expect(invalidations).toBe(2); expect(incarnationChanges).toBe(2);
+      expect(config.getConfigurationIncarnation()).not.toBe(incarnation);
+      expect(config.getDurableConfigurationIncarnation()).not.toBe(durable);
+    } finally { for (const stop of stops.reverse()) stop(); }
+  });
+}
