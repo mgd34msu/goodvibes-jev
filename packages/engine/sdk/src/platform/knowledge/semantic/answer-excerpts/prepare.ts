@@ -65,7 +65,7 @@ function prepareSourceExcerpts(store: KnowledgeStore, query: string,
   observeModel?: (model: string, requestedModel: string) => void,
 ) {
   const rows = entries.map(({ source, context }, index) => {
-    const original = guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
+    const original = guard.source(source.id, source);
     if (!original) throw new Held('stale');
     const snapshot = snapshotNodeInput(original);
     const extraction = snapshotNodeInput(guard.extraction(source.id));

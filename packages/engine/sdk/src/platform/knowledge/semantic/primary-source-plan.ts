@@ -1,11 +1,27 @@
 import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
 import { projectSemanticPrimaryClaim } from './primary-claim-projection.js';
 import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
+import { retainStrictJudgmentJson, type RetainedStrictJudgmentJson } from '../../gate/judgment-result.js';
 import { sourceRankingContent } from './answer-source-ranking.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import { createKnowledgePageSourceReader, KnowledgeSourceQualityHeldError } from '../source-quality.js';
 import type { KnowledgeStore } from '../store.js';
-import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
+import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
+
+const originalJson = JSON;
+const originalStringify = JSON.stringify;
+const ownDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
+const prototype = Object.getPrototypeOf;
+const originalObjectPrototype = Object.prototype;
+const originalArrayPrototype = Array.prototype;
+function originalRecordSerializer(): boolean {
+  const descriptor = ownDescriptor(JSON, 'stringify');
+  return JSON === originalJson && descriptor?.value === originalStringify && !descriptor.get && !descriptor.set
+    && Object.prototype === originalObjectPrototype && Array.prototype === originalArrayPrototype
+    && prototype(originalObjectPrototype) === null && prototype(originalArrayPrototype) === originalObjectPrototype
+    && !hasOwn(originalObjectPrototype, 'toJSON') && !hasOwn(originalArrayPrototype, 'toJSON');
+}
 
 /** A cooperative lifecycle stop never authorizes a fallback or late write. */
 export function assertSemanticWriteAllowed(signal?: AbortSignal, shouldStop?: () => boolean): void {
@@ -26,11 +42,41 @@ export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSi
     check();
     return expected;
   }
+  function watchRecord<T extends KnowledgeSourceRecord | KnowledgeNodeRecord | KnowledgeExtractionRecord | null>(key: string, read: () => T, expected: T): T {
+    const version = JSON.stringify(expected);
+    let original: { readonly value: T; readonly slots: RetainedStrictJudgmentJson<T> } | undefined;
+    let first = true;
+    const check = () => {
+      const firstRead = first;
+      first = false;
+      const current = read();
+      if (original && current === original.value && originalRecordSerializer()) {
+        try { original.slots.assertCurrent(); return; } catch { /* Compare the original complete value below. */ }
+      }
+      if (JSON.stringify(current) !== version) throw new KnowledgeSourceQualityHeldError('stale');
+      if (firstRead) {
+        // Adopt only the actual first getter result after full original equality.
+        // A later equal replacement never becomes a new retained baseline.
+        if (originalRecordSerializer()) {
+          try {
+            const slots = retainStrictJudgmentJson(current);
+            if (originalRecordSerializer() && originalStringify(slots.snapshot) === version) {
+              slots.assertCurrent(); original = { value: current, slots };
+            }
+          } catch { /* Unsupported original shapes keep the full comparison. */ }
+        }
+      }
+    };
+    checks.get(key)?.();
+    if (!checks.has(key)) checks.set(key, check);
+    check();
+    return expected;
+  }
   return {
     watch,
-    source(id: string) { return watch(`source:${id}`, () => store.getSource(id)); },
-    node(id: string) { return watch(`node:${id}`, () => store.getNode(id)); },
-    extraction(id: string) { return watch(`extraction:${id}`, () => store.getExtractionBySourceId(id)); },
+    source(id: string, expected = store.getSource(id)) { return watchRecord(`source:${id}`, () => store.getSource(id), expected); },
+    node(id: string, expected = store.getNode(id)) { return watchRecord(`node:${id}`, () => store.getNode(id), expected); },
+    extraction(id: string, expected = store.getExtractionBySourceId(id)) { return watchRecord(`extraction:${id}`, () => store.getExtractionBySourceId(id), expected); },
     assertCurrent() {
       try { store.assertRecordSnapshotFrame(() => {
         assertSemanticWriteAllowed(signal, shouldStop);

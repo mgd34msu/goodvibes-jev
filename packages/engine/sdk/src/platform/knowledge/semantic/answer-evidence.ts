@@ -113,7 +113,7 @@ export async function collectAnswerEvidence(
   store.assertRecordSnapshotFrame(() => {
     for (const source of sources) {
       const snapshot = snapshotNodeInput(source);
-      guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
+      guard.source(source.id, source);
       const extraction = snapshotNodeInput(guard.extraction(source.id));
       if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) {
         throw new KnowledgeEvidenceRelevanceHeldError('malformed');
@@ -124,7 +124,7 @@ export async function collectAnswerEvidence(
     }
     for (const node of nodes) {
       const snapshot = snapshotNodeInput(node);
-      guard.watch(`node:${node.id}`, () => store.getNode(node.id), node);
+      guard.node(node.id, node);
       texts.set(`node:${node.id}`, [renderNodeEvidence(snapshot), ...snapshot.aliases,
         readString(snapshot.metadata.manufacturer), readString(snapshot.metadata.model),
         initialNodeReferenceContext(store, snapshot, selection, guard, candidateWindow?.sourceIds)].filter(Boolean).join('\n'));
@@ -132,7 +132,7 @@ export async function collectAnswerEvidence(
     }
     for (const fact of uniqueNodes(items.flatMap((item) => item.facts))) {
       snapshotNodeInput(fact);
-      guard.watch(`node:${fact.id}`, () => store.getNode(fact.id), fact);
+      guard.node(fact.id, fact);
     }
   });
   const candidates: AnswerEvidenceCandidate[] = [];
@@ -310,7 +310,7 @@ export async function includeOfficialLinkedEvidence(
     .filter((source) => linkedSourceIds.has(source.id) || readStringArray(readRecord(source.metadata.sourceDiscovery).linkedObjectIds).some((id) => linkedIds.has(id)))
     .slice(0, 50);
   if (officialSources.length === 0) return carryInitialPass([...evidence], initial);
-  for (const node of scopedObjects) guard.watch(`node:${node.id}`, () => store.getNode(node.id), snapshotNodeInput(node));
+  for (const node of scopedObjects) guard.node(node.id, snapshotNodeInput(node));
   const retrievalScores = new Map(evidence.filter((item) => item.source).map((item) => [item.source!.id, item]));
   const candidates: EvidenceItem[] = officialSources.map((source) => ({
     kind: 'source', id: source.id, title: source.title ?? source.canonicalUri ?? source.sourceUri ?? source.id,
@@ -394,7 +394,7 @@ async function prepareAnswerEvidenceScope(store: KnowledgeStore, spaceId: string
     // Preserve complete original records through preparation and later use.
     // Scope jobs retain their own consumed record and extraction inputs.
     for (const source of sources) {
-      preparationGuard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
+      preparationGuard.source(source.id, source);
       const extraction = preparationGuard.extraction(source.id);
       assertKnowledgeExtractionInput(extraction);
       if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) {
@@ -403,7 +403,7 @@ async function prepareAnswerEvidenceScope(store: KnowledgeStore, spaceId: string
       assertJudgmentInput(sourceSemanticText({ ...snapshotNodeInput(source), ...knowledgeSourceJudgmentUris(source) }, extraction));
     }
     for (const node of nodes) {
-      preparationGuard.watch(`node:${node.id}`, () => store.getNode(node.id), node);
+      preparationGuard.node(node.id, node);
       const snapshot = snapshotNodeInput(node);
       assertJudgmentInput({ text: renderNodeEvidence(snapshot), claim: projectAnswerFactClaim(withoutLocalTargetKeys(store, snapshot), nodes) });
     }

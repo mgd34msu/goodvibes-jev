@@ -253,7 +253,7 @@ async function promoteRepairEvidenceFacts(
   // Rebase only that timestamp; every intent/provenance/status field must match,
   // and the complete current row is guarded through subsequent judgment awaits.
   const currentGap = store.getNode(gap.id);
-  guard.watch(`node:${gap.id}`, () => store.getNode(gap.id), { ...gap, updatedAt: currentGap?.updatedAt ?? gap.updatedAt });
+  guard.node(gap.id, { ...gap, updatedAt: currentGap?.updatedAt ?? gap.updatedAt });
   const inputs: SourceLinkedRepairProfileFactInput[] = [];
   const entries = sourceIds.flatMap((sourceId) => {
     const source = guard.source(sourceId);
@@ -435,9 +435,9 @@ export async function prepareSourceLinkedRepairProfileFacts(
       ...freezePlanData(structuredClone(data)), store: inputStore, metadataBuilder,
     });
     if (input.store !== store) throw new TypeError('A prepared repair fact pass must use one store.');
-    guard.watch(`source:${input.source.id}`, () => store.getSource(input.source.id), input.source);
-    guard.watch(`extraction:${input.source.id}`, () => store.getExtractionBySourceId(input.source.id), input.extraction);
-    for (const subject of input.subjects) guard.watch(`node:${subject.id}`, () => store.getNode(subject.id), subject);
+    guard.source(input.source.id, input.source);
+    guard.extraction(input.source.id, input.extraction);
+    for (const subject of input.subjects) guard.node(subject.id, subject);
     const subjectIds = input.subjects.map((subject) => subject.id);
     const factId = semanticFactId({ spaceId: input.spaceId, kind: input.classification.kind,
       title: input.title, value: input.classification.value, summary: input.summary, subjectIds, fallbackScope: input.source.id });
