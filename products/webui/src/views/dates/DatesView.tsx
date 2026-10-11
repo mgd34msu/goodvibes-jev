@@ -36,7 +36,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, Cake, Plane, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { sdk } from '../../lib/goodvibes';
 import type { OperatorMethodInput, OperatorMethodOutput } from '../../lib/goodvibes';
-import { WEBUI_PROFILE_AUTHORITY, WEBUI_PROFILE_SURFACE } from '../../lib/owner-profile';
+import { readProfileWriteOutcome, WEBUI_PROFILE_AUTHORITY, WEBUI_PROFILE_SURFACE } from '../../lib/owner-profile';
 import { queryKeys } from '../../lib/queries';
 import { formatError, isMethodNotInvokableError, isMethodUnavailableError } from '../../lib/errors';
 import { formatRelative } from '../../lib/object';
@@ -90,6 +90,9 @@ type OccasionKind = 'gift-giving' | 'neither' | 'remember-only';
 type Recurrence = 'annual' | 'once';
 
 type Selection = { kind: 'occasion' | 'plan' | 'interview'; id: string } | null;
+type RemovalTarget =
+  | { readonly kind: 'occasion'; readonly id: string; readonly title: string }
+  | { readonly kind: 'plan'; readonly title: string; readonly text: string };
 
 const KIND_OPTIONS = [
   { value: 'gift-giving', label: 'Gift-giving' },
@@ -300,6 +303,24 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
     onError: (error: unknown) => toast({ title: 'Removal failed', description: formatError(error), tone: 'danger' }),
   });
 
+  const removePlan = useMutation({
+    mutationFn: (text: string) =>
+      sdk.operator.profile.forget({ section: 'Plans', text, authority: WEBUI_PROFILE_AUTHORITY }),
+    onSuccess: async (result) => {
+      const outcome = readProfileWriteOutcome(result);
+      await invalidateAll();
+      if (outcome?.ok) setSelection(null);
+      toast({
+        title: outcome?.ok ? 'Removed' : 'Not removed',
+        description: outcome === null
+          ? 'The daemon did not say whether the plan was removed.'
+          : outcome.ok ? outcome.disclosure : (outcome.reason ?? undefined),
+        tone: outcome?.ok ? 'success' : 'danger',
+      });
+    },
+    onError: (error: unknown) => toast({ title: 'Removal failed', description: formatError(error), tone: 'danger' }),
+  });
+
   const resolveConflict = useMutation({
     mutationFn: (occasionId: string) => sdk.operator.occasions.conflict.resolve(occasionId),
     onSuccess: async () => {
@@ -439,17 +460,20 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
     if (plan.title.trim() && plan.from && plan.to) proposePlan.mutate();
   }
 
-  async function askRemove(kind: 'occasion' | 'plan', id: string, title: string): Promise<void> {
+  async function askRemove(target: RemovalTarget): Promise<void> {
     const ok = await confirm.ask({
-      title: kind === 'occasion' ? 'Remove this occasion?' : 'Remove this plan?',
-      target: title,
-      description: kind === 'occasion'
+      title: target.kind === 'occasion' ? 'Remove this occasion?' : 'Remove this plan?',
+      target: target.title,
+      description: target.kind === 'occasion'
         ? 'It leaves your profile for good, along with its acknowledgements and gift records.'
-        : 'It leaves your profile for good, along with every record against it.',
+        : 'This removes the selected plan from your profile.',
       confirmLabel: 'Remove',
       tone: 'danger',
     });
-    if (ok) removeOccasion.mutate(id);
+    if (ok) {
+      if (target.kind === 'occasion') removeOccasion.mutate(target.id);
+      else removePlan.mutate(target.text);
+    }
   }
 
   function refreshAll(): void {
@@ -501,7 +525,7 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
               size="sm"
               icon={<Trash2 />}
               disabled={removeOccasion.isPending}
-              onClick={() => void askRemove('occasion', entry.occasion.id, entry.occasion.title)}
+              onClick={() => void askRemove({ kind: 'occasion', id: entry.occasion.id, title: entry.occasion.title })}
             >
               Remove
             </Button>
@@ -554,8 +578,8 @@ export function DatesView({ tabs }: DatesViewProps = {}) {
               variant="ghost"
               size="sm"
               icon={<Trash2 />}
-              disabled={removeOccasion.isPending}
-              onClick={() => void askRemove('plan', item.id, item.title)}
+              disabled={removePlan.isPending}
+              onClick={() => void askRemove({ kind: 'plan', title: item.title, text: item.text })}
             >
               Remove
             </Button>

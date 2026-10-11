@@ -85,12 +85,19 @@ interface SqlJsStatic {
 }
 
 interface NativeProbePlans {
+  readonly raw: NativeSqlDatabase;
   readonly identities: string;
-  readonly initial: readonly NativeSqlStatement[];
-  readonly versions: readonly NativeSqlStatement[];
+  readonly statement: NativeSqlStatement;
   readonly dispose: () => void;
-  retired: boolean;
+  readonly retired: boolean;
 }
+
+const nativeProbeSql = `SELECT r.read_uncommitted,d.seq,d.name,d.file,v.data_version,s.schema_version,
+ EXISTS(SELECT 1 FROM main.sqlite_schema WHERE name COLLATE NOCASE IN
+ ('pragma_read_uncommitted','pragma_database_list','pragma_data_version','pragma_schema_version')) AS shadowed
+ FROM main.pragma_read_uncommitted() AS r CROSS JOIN main.pragma_database_list() AS d
+ CROSS JOIN main.pragma_data_version() AS v CROSS JOIN main.pragma_schema_version() AS s ORDER BY d.seq`;
+const nativeProbeColumns = ['read_uncommitted', 'seq', 'name', 'file', 'data_version', 'schema_version', 'shadowed'];
 
 interface OwnedSqlDatabase {
   readonly raw: NativeSqlDatabase;
@@ -168,44 +175,56 @@ function executeProbePlans(statements: readonly NativeSqlStatement[]): ReturnTyp
  * probe steps fresh values, including native alias data_version changes. */
 function installDatabaseProbe(state: OwnedSqlDatabase, identities: readonly (readonly string[])[]): void {
   retireDatabaseProbe(state);
-  const allocated: NativeSqlStatement[] = [];
-  const initial: NativeSqlStatement[] = [], versions: NativeSqlStatement[] = [];
+  // This sql.js build's table-valued version PRAGMAs report main only.
+  // Other database sets retain the complete schema-qualified PRAGMA path.
+  if (identities.length !== 1 || identities[0]?.[0] !== '0' || identities[0]?.[1] !== 'main') return;
+  let statement: NativeSqlStatement;
+  try { statement = state.raw.prepare(nativeProbeSql); } catch { return; }
+  let retired = false;
   const plans: NativeProbePlans = {
-    identities: JSON.stringify(identities), initial, versions, retired: false,
+    raw: state.raw, identities: JSON.stringify(identities), statement,
+    get retired() { return retired; },
     dispose() {
-      if (plans.retired) return;
-      plans.retired = true;
-      let failure: unknown;
-      for (const statement of allocated) {
-        try { if (!statement.free()) throw new SQLiteObservationRetiredError(); }
-        catch (error) { failure ??= error; }
-      }
-      if (failure !== undefined) throw failure;
+      if (retired) return;
+      retired = true;
+      if (!statement.free()) throw new SQLiteObservationRetiredError();
     },
   };
-  const prepare = (sql: string) => { const statement = state.raw.prepare(sql); allocated.push(statement); return statement; };
-  try {
-    initial.push(prepare('PRAGMA read_uncommitted'), prepare('PRAGMA database_list'));
-    for (const identity of identities) {
-      const schema = `"${identity[1]!.replaceAll('"', '""')}"`;
-      versions.push(prepare(`PRAGMA ${schema}.data_version`), prepare(`PRAGMA ${schema}.schema_version`));
-    }
-    state.probePlans = plans;
-  } catch {
-    plans.dispose();
-  }
+  state.probePlans = plans;
 }
 
 function databaseProbe(raw: SqlDatabase, plans?: NativeProbePlans): DatabaseProbe {
   const unsupported: DatabaseProbe = { signature: null, cacheable: false, isolated: false, guarded: false, identities: [] };
   if (plans?.retired) plans = undefined;
+  if (plans) {
+    let result: ReturnType<SqlDatabase['exec']> | undefined;
+    if (raw === plans.raw) {
+      try { result = executeProbePlans([plans.statement]); } catch { /* Use the original full probe below. */ }
+    }
+    const columns = result?.[0]?.columns, rows = result?.[0]?.values;
+    const row = rows?.[0];
+    if (result?.length === 1 && columns?.length === nativeProbeColumns.length
+      && nativeProbeColumns.every((name, index) => columns[index] === name)
+      && rows?.length === 1 && row?.length === 7) {
+      const [mode, sequence, name, file, version, schemaVersion, shadowed] = row;
+      if (mode === 0n && sequence === 0n && name === 'main' && typeof file === 'string'
+        && !file.includes('\0') && !file.includes('\ufffd') && Buffer.from(file).toString('utf8') === file
+        && typeof version === 'bigint' && typeof schemaVersion === 'bigint' && shadowed === 0n) {
+        const identities = [[String(sequence), name, file]];
+        if (JSON.stringify(identities) === plans.identities) {
+          return { signature: JSON.stringify([String(mode), [[...identities[0]!, String(version), String(schemaVersion)]]]),
+            cacheable: true, isolated: file === '', guarded: true, identities };
+        }
+      }
+    }
+    plans.dispose();
+    return databaseProbe(raw);
+  }
   let initial: ReturnType<SqlDatabase['exec']>;
-  try { initial = plans ? executeProbePlans(plans.initial) : raw.exec('PRAGMA read_uncommitted;PRAGMA database_list', undefined, { useBigInt: true }); }
-  catch (error) { if (!plans) throw error; plans.dispose(); return databaseProbe(raw); }
+  initial = raw.exec('PRAGMA read_uncommitted;PRAGMA database_list', undefined, { useBigInt: true });
   const mode = initial[0]?.values[0]?.[0];
   const databases = initial[1]?.values;
   if ((mode !== 0n && mode !== 1n) || !databases?.length) {
-    if (plans) { plans.dispose(); return databaseProbe(raw); }
     return unsupported;
   }
   const identities: Array<readonly string[]> = [];
@@ -214,21 +233,15 @@ function databaseProbe(raw: SqlDatabase, plans?: NativeProbePlans): DatabaseProb
     const [sequence, name, file] = row;
     if (typeof sequence !== 'bigint' || typeof name !== 'string' || typeof file !== 'string'
       || [name, file].some(value => value.includes('\0') || value.includes('\ufffd') || Buffer.from(value).toString('utf8') !== value)) {
-      if (plans) { plans.dispose(); return databaseProbe(raw); }
       return unsupported;
     }
     const schema = `"${name.replaceAll('"', '""')}"`;
     schemas.push(`PRAGMA ${schema}.data_version;PRAGMA ${schema}.schema_version`);
     identities.push([String(sequence), name, file]);
   }
-  if (plans && (mode !== 0n || JSON.stringify(identities) !== plans.identities)) {
-    plans.dispose(); return databaseProbe(raw);
-  }
   let versions: ReturnType<SqlDatabase['exec']>;
-  try { versions = plans ? executeProbePlans(plans.versions) : raw.exec(schemas.join(';'), undefined, { useBigInt: true }); }
-  catch (error) { if (!plans) throw error; plans.dispose(); return databaseProbe(raw); }
+  versions = raw.exec(schemas.join(';'), undefined, { useBigInt: true });
   if (versions.length !== identities.length * 2) {
-    if (plans) { plans.dispose(); return databaseProbe(raw); }
     return unsupported;
   }
   const observed = identities.map((identity, index) => {
@@ -236,7 +249,6 @@ function databaseProbe(raw: SqlDatabase, plans?: NativeProbePlans): DatabaseProb
     return typeof version === 'bigint' && typeof schemaVersion === 'bigint' ? [...identity, String(version), String(schemaVersion)] : null;
   });
   if (observed.some(identity => identity === null)) {
-    if (plans) { plans.dispose(); return databaseProbe(raw); }
     return unsupported;
   }
   const guarded = mode === 0n && identities.filter(row => row[1] === 'main').length === 1
@@ -304,6 +316,21 @@ export interface SqliteStoreInitOptions {
     readonly migrate: (db: SqlDatabase) => void;
   }> | undefined;
 }
+
+const frameImageStampBrand: unique symbol = Symbol('native-frame-image');
+interface NativeFrameImageStamp { readonly [frameImageStampBrand]: true }
+const frameImageStamps = new WeakMap<NativeFrameImageStamp, {
+  readonly store: SQLiteStore;
+  readonly frame: object;
+  readonly data: Uint8Array;
+  readonly persistence: SQLiteStorePersistence;
+  readonly plan: NativeKnowledgeSchemaReadPlan;
+  readonly validator: SqliteStoreInitOptions['validateCurrentSchema'];
+  readonly schemaVersion: number;
+  readonly imageEpoch: number;
+  readonly observationEpoch: number;
+  readonly digest: string;
+}>();
 
 export class SQLiteStore {
   private db: SqlDatabase | null = null;
@@ -528,7 +555,17 @@ export class SQLiteStore {
         }
         const persisted = this.persistence?.read();
         frame.persisted = persisted ? imageDigest(persisted) : undefined;
-        frame.db = this.openPrivateReadImage();
+        const plan = this.nativeSchemaReadPlan;
+        const stamp = persisted && this.persistence && plan && frame.localState
+          && nativeKnowledgeSchemaReadPlanMatches(plan, this.validateCurrentSchema, this.schemaVersion)
+          ? Object.freeze<NativeFrameImageStamp>({ [frameImageStampBrand]: true }) : undefined;
+        if (stamp && persisted && this.persistence && plan && frame.persisted) {
+          frameImageStamps.set(stamp, { store: this, frame, data: persisted, persistence: this.persistence,
+            plan, validator: this.validateCurrentSchema, schemaVersion: this.schemaVersion,
+            imageEpoch: this.imageEpoch, observationEpoch: this.observationEpoch, digest: frame.persisted });
+        }
+        try { frame.db = this.openPrivateReadImage(stamp); }
+        finally { if (stamp) frameImageStamps.delete(stamp); }
         frame.owned = true;
         frame.assertCurrent();
       }
@@ -937,20 +974,35 @@ export class SQLiteStore {
 
   /** Callback-exposed images require a private clone. The closed native schema
    * plan can keep its unloaned image when every linked authority table is empty. */
-  private openPrivateReadImage(): SqlDatabase {
-    const exposed = this.openCurrentImage(this.nativeSchemaReadPlan);
+  private openPrivateReadImage(stamp?: NativeFrameImageStamp): SqlDatabase {
+    const exposed = this.openCurrentImage(this.nativeSchemaReadPlan, stamp);
     if (this.privateSchemaImages.delete(exposed)) return exposed;
     try { return ownDatabase(new this.sqlEngine!.Database(exposed.export())); }
     finally { this.closeReadImage(exposed); }
   }
 
-  private openCurrentImage(privateReadPlan?: NativeKnowledgeSchemaReadPlan): SqlDatabase {
+  private openCurrentImage(privateReadPlan?: NativeKnowledgeSchemaReadPlan, stamp?: NativeFrameImageStamp): SqlDatabase {
     this.getDb(true);
     if (!this.persistence && (this.cleanContent === null || this.cleanBytes === null
       || observeDatabase(this.getDb(), 'clean-content') !== this.cleanContent)) {
       throw new Error('SQLiteStore: no proven clean ephemeral image is available');
     }
-    const data = this.persistence ? this.persistence.read() : this.cleanBytes;
+    let entryBytes: Uint8Array | undefined;
+    if (stamp) {
+      const captured = frameImageStamps.get(stamp), frame = this.persistedReadFrame;
+      if (captured?.store === this) frameImageStamps.delete(stamp);
+      if (captured?.store === this && captured.frame === frame && frame && frame.db === null
+        && captured.persistence === this.persistence && captured.plan === privateReadPlan && privateReadPlan === this.nativeSchemaReadPlan
+        && captured.validator === this.validateCurrentSchema && captured.schemaVersion === this.schemaVersion
+        && captured.imageEpoch === this.imageEpoch && captured.observationEpoch === this.observationEpoch
+        && captured.digest === frame.persisted
+        && nativeKnowledgeSchemaReadPlanMatches(privateReadPlan, this.validateCurrentSchema, this.schemaVersion)) {
+        frame.assertCurrent();
+        if (captured.persistence.observationIdentity() !== frame.identity) throw new SQLiteObservationRetiredError();
+        entryBytes = captured.data;
+      }
+    }
+    const data = entryBytes ?? (this.persistence ? this.persistence.read() : this.cleanBytes);
     if (data !== null) assertSqliteImage(data);
     const current = ownDatabase(new this.sqlEngine!.Database(data ?? undefined));
     try {

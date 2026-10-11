@@ -83,6 +83,8 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
     let owner: EmailInboxOwner | undefined;
     let release: (() => void) | undefined;
     let surface: T | undefined;
+    const constructed = Promise.withResolvers<T>();
+    void constructed.promise.catch(() => {});
     try {
       owner = (factories.createOwner ?? createEmailInboxOwner)({ account: options.account, service: mail.service,
         screening: options.screening, assertCurrent: current, resolveRouteId,
@@ -102,14 +104,20 @@ function createEmailAccountFactory<T extends InboxSurfaceRegistration>(options: 
         acquireReadLease: () => selectedOwner.acquireReadLease(),
         gatePolling: (_provider, control) => {
           if (!clustered) return controls.gatePolling(`email:${selectedOwner.scopeId}`, control);
-          eligibility = ownInboxEligibility({ verify: async () => { await surface!.ready; return selectedOwner.verifyEligibility!(); }, control,
+          eligibility = ownInboxEligibility({ verify: async () => {
+            const registration = await constructed.promise;
+            await registration.ready;
+            return selectedOwner.verifyEligibility!();
+          }, control,
             ...(factories.eligibilityClock ? { clock: factories.eligibilityClock } : {}),
             register: gated => controls.gatePollingOwned!(`email:${selectedOwner.scopeId}`, gated),
           });
           return () => eligibility!.close();
         },
       }, selectedOwner);
+      constructed.resolve(surface);
     } catch {
+      constructed.reject(new Error('Email inbox source construction failed'));
       try { await Promise.all([owner?.close(), eligibility?.close()]); } finally { try { mail.close(); } finally { release?.(); } }
       throw new Error('Email inbox composition could not acquire its owned account and storage');
     }

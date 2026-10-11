@@ -202,7 +202,7 @@ describe('primary source persistence preplanning', () => {
     const { store, source } = await fixture();
     const entityId = `sem-entity-${semanticHash(spaceId, source.id, 'Collision')}`;
     await store.upsertNode({ id: entityId, kind: 'knowledge_entity', slug: 'collision', title: 'Old TV-987', status: 'active', metadata: { knowledgeSpaceId: spaceId, entityKind: 'device' } });
-    await store.replaceSourceRecord({ ...source, metadata: { ...source.metadata, sourceDiscovery: { linkedObjectIds: [entityId] } } });
+    await store.upsertSource({ ...source, metadata: { ...source.metadata, sourceDiscovery: { linkedObjectIds: [entityId] } } });
     const current = store.getSource(source.id)!; const fact = claim('Collision claim');
     await enrich(store, current, [fact], [{ title: 'Collision', confidence: 90 }]);
     const id = semanticFactId({ spaceId, kind: fact.kind, title: fact.title, summary: fact.summary, subjectIds: [], fallbackScope: source.id });

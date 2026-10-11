@@ -1,8 +1,9 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
-import { copyFileSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadSqlJsEngine, SQLiteObservationRetiredError, SQLiteStore, type SqlDatabase } from '../sdk/src/platform/state/sqlite-store.js';
+import { SQLiteStorePersistence } from '../sdk/src/platform/state/sqlite-store-persistence.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { assertKnowledgeRecordAdmissions, KnowledgeRecordAdmissionHeldError, prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
 import { createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
@@ -67,13 +68,207 @@ async function database() {
 }
 const read = (sqlite: SQLiteStore) => sqlite.readPersistedRow('knowledge_sources', 'id', 'pending direct change');
 
+function interceptPrivateImage(sqlite: SQLiteStore, intercept: (open: (...args: unknown[]) => unknown, args: unknown[]) => unknown) {
+  const original: unknown = Reflect.get(sqlite, 'openPrivateReadImage');
+  if (typeof original !== 'function') throw new Error('No private image method');
+  Object.defineProperty(sqlite, 'openPrivateReadImage', { configurable: true, writable: true,
+    value: (...args: unknown[]) => intercept((...values) => Reflect.apply(original, sqlite, values), args) });
+  return () => { Reflect.deleteProperty(sqlite, 'openPrivateReadImage'); };
+}
+
+function observePhysicalReads() {
+  const read = SQLiteStorePersistence.prototype.read;
+  let count = 0;
+  const observing = spyOn(SQLiteStorePersistence.prototype, 'read').mockImplementation(function (this: SQLiteStorePersistence) {
+    count++; return read.call(this);
+  });
+  return { count: () => count, restore: () => observing.mockRestore() };
+}
+
+test('native frame construction consumes its exact hashed entry bytes once and keeps a fresh exit read', async () => {
+  const { sqlite, source } = await fixture(), physical = observePhysicalReads();
+  try {
+    const current = () => sqlite.assertPersistedReadFrame(() => {
+      expect(sqlite.readPersistedRow('knowledge_sources', 'id', source.id)[0]?.values).toHaveLength(1);
+      sqlite.assertPersistedReadFrame(() => { sqlite.readPersistedRow('knowledge_sources', 'id', source.id); });
+    });
+    current(); expect(physical.count()).toBe(2);
+    await Promise.resolve();
+    current(); expect(physical.count()).toBe(4);
+  } finally { physical.restore(); }
+});
+
+test.each(['missing', 'copied', 'proxy', 'replayed'] as const)(
+  'native entry bytes require the authentic one-use frame token, rejecting %s tokens', async kind => {
+    const { sqlite, source } = await fixture();
+    let previous: unknown;
+    const restore = interceptPrivateImage(sqlite, (open, args) => {
+      const token: unknown = args[0];
+      expect(token).toBeDefined();
+      if (!token || typeof token !== 'object') throw new Error('No native frame token');
+      const supplied = kind === 'missing' ? undefined : kind === 'copied' ? Object.assign({}, token)
+        : kind === 'proxy' ? new Proxy(token, {}) : previous ?? token;
+      previous = token;
+      return open(supplied);
+    });
+    const physical = observePhysicalReads();
+    try {
+      const current = () => sqlite.assertPersistedReadFrame(() => { sqlite.readPersistedRow('knowledge_sources', 'id', source.id); });
+      current();
+      expect(physical.count()).toBe(kind === 'replayed' ? 2 : 3);
+      current();
+      expect(physical.count()).toBe(kind === 'replayed' ? 5 : 6);
+    } finally { physical.restore(); restore(); }
+  },
+);
+
+test('native entry-byte tokens cannot cross store owners', async () => {
+  const first = await fixture(), second = await fixture();
+  let firstToken: unknown;
+  const restoreSecond = interceptPrivateImage(second.sqlite, (open, args) => { expect(args[0]).toBeDefined(); return open(firstToken); });
+  const restoreFirst = interceptPrivateImage(first.sqlite, (open, args) => {
+    firstToken = args[0];
+    second.sqlite.assertPersistedReadFrame(() => { second.sqlite.readPersistedRow('knowledge_sources', 'id', second.source.id); });
+    return open(...args);
+  });
+  const physical = observePhysicalReads();
+  try {
+    first.sqlite.assertPersistedReadFrame(() => { first.sqlite.readPersistedRow('knowledge_sources', 'id', first.source.id); });
+    expect(physical.count()).toBe(5);
+  } finally { physical.restore(); restoreFirst(); restoreSecond(); }
+});
+
+test('native entry bytes stay private when a reflected image interceptor attempts substitution', async () => {
+  const { store, sqlite, source } = await fixture();
+  const SQL = await loadSqlJsEngine(), forged = new SQL.Database(readFileSync(store.storagePath));
+  let replacement: Uint8Array;
+  try {
+    forged.run("UPDATE knowledge_sources SET title='substituted frame bytes' WHERE id=?", [source.id]);
+    replacement = forged.export();
+  } finally { forged.close(); }
+  const restore = interceptPrivateImage(sqlite, (open, args) => {
+    const registry: unknown = Reflect.get(sqlite, 'frameImageStamps'), token: unknown = args[0];
+    if (registry instanceof WeakMap && token && typeof token === 'object') {
+      const captured: unknown = registry.get(token);
+      if (captured && typeof captured === 'object') Object.defineProperty(captured, 'data', { value: replacement });
+    }
+    return open(...args);
+  });
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      const row = sqlite.readPersistedRow('knowledge_sources', 'id', source.id)[0];
+      expect(row?.values[0]?.[row.columns.indexOf('title')]).toBe(source.title);
+    });
+    expect(Reflect.get(sqlite, 'frameImageStamps')).toBeUndefined();
+  } finally { restore(); }
+});
+
+test('unknown schema plans retain the constructor reread', async () => {
+  const { sqlite } = await database(), physical = observePhysicalReads();
+  try {
+    sqlite.assertPersistedReadFrame(() => { read(sqlite); });
+    expect(physical.count()).toBe(3);
+  } finally { physical.restore(); }
+});
+
+test('an unowned local facade cannot supply a native entry-byte stamp', async () => {
+  const { sqlite, source } = await fixture();
+  const original: unknown = Reflect.get(sqlite, 'db');
+  if (!original || typeof original !== 'object') throw new Error('No native owner facade');
+  Reflect.set(sqlite, 'db', new Proxy(original, {}));
+  const physical = observePhysicalReads();
+  try {
+    sqlite.assertPersistedReadFrame(() => { sqlite.readPersistedRow('knowledge_sources', 'id', source.id); });
+    expect(physical.count()).toBe(3);
+  } finally { physical.restore(); Reflect.set(sqlite, 'db', original); }
+});
+
+test('a custom native validator keeps the reread and callback image isolation', async () => {
+  const exposed: SqlDatabase[] = [];
+  const { sqlite, source } = await fixture(path(), db => { exposed.push(db); });
+  const physical = observePhysicalReads(), previous = exposed.length;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      sqlite.readPersistedRow('knowledge_sources', 'id', source.id);
+      expect(exposed).toHaveLength(previous + 1);
+      const image = exposed.at(-1);
+      if (!image) throw new Error('No custom validator image');
+      expect(() => image.run('SELECT 1')).toThrow();
+    });
+    expect(physical.count()).toBe(3);
+  } finally { physical.restore(); }
+});
+
+test.each(['plan', 'validator', 'version'] as const)('entry-byte adoption rechecks the current native %s', async changed => {
+  const { sqlite, source } = await fixture();
+  const key = changed === 'plan' ? 'nativeSchemaReadPlan' : changed === 'validator' ? 'validateCurrentSchema' : 'schemaVersion';
+  const original: unknown = Reflect.get(sqlite, key);
+  let callbacks = 0;
+  const restore = interceptPrivateImage(sqlite, (open, args) => {
+    const replacement = changed === 'plan' && original && typeof original === 'object' ? Object.assign({}, original)
+      : changed === 'validator' ? (db: SqlDatabase) => {
+        callbacks++;
+        if (typeof original !== 'function') throw new Error('No original native validator');
+        Reflect.apply(original, undefined, [db]);
+      } : 11;
+    Reflect.set(sqlite, key, replacement);
+    try { return open(...args); } finally { Reflect.set(sqlite, key, original); }
+  });
+  const physical = observePhysicalReads();
+  try {
+    const current = () => sqlite.assertPersistedReadFrame(() => { sqlite.readPersistedRow('knowledge_sources', 'id', source.id); });
+    if (changed === 'version') { expect(current).toThrow('persisted schema changed'); expect(physical.count()).toBe(2); }
+    else { current(); expect(physical.count()).toBe(3); }
+    expect(callbacks).toBe(changed === 'validator' ? 1 : 0);
+  } finally { physical.restore(); restore(); }
+});
+
+test.each(['file replacement', 'row rollback', 'native alias restore', 'native schema change', 'native pragma shadow'] as const)(
+  'native entry-byte adoption preserves the %s fence before row consumption', async mutation => {
+    const { store, sqlite, source } = await fixture();
+    let retained: SqlDatabase | undefined;
+    await sqlite.transactPersisted(db => { retained = db; db.run('UPDATE knowledge_sources SET title=title WHERE id=?', [source.id]);
+      return { changed: true, value: undefined }; }, () => {});
+    if (!retained) throw new Error('No native owner handle');
+    const handle = retained, title = source.title;
+    if (typeof title !== 'string') throw new Error('No original source title');
+    const main = handle.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+    if (typeof main !== 'string') throw new Error('No native owner VFS path');
+    const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    const restore = interceptPrivateImage(sqlite, (open, args) => {
+      if (mutation === 'file replacement') {
+        copyFileSync(store.storagePath, `${store.storagePath}.replacement`); renameSync(`${store.storagePath}.replacement`, store.storagePath);
+      } else if (mutation === 'row rollback') {
+        handle.run('BEGIN');
+        try { handle.run("UPDATE knowledge_sources SET title='temporary' WHERE id=?", [source.id]); }
+        finally { handle.run('ROLLBACK'); }
+      } else if (mutation === 'native alias restore') {
+        alias.run("UPDATE original.knowledge_sources SET title='temporary' WHERE id=?", [source.id]);
+        alias.run('UPDATE original.knowledge_sources SET title=? WHERE id=?', [title, source.id]);
+      } else if (mutation === 'native pragma shadow') {
+        alias.run('CREATE TABLE original.pragma_read_uncommitted (read_uncommitted INTEGER)');
+      } else alias.run('CREATE TABLE original.foreign_ddl (id INTEGER)');
+      return open(...args);
+    });
+    let consumed = false;
+    try {
+      expect(() => sqlite.assertPersistedReadFrame(() => {
+        sqlite.readPersistedRow('knowledge_sources', 'id', source.id); consumed = true;
+      })).toThrow(SQLiteObservationRetiredError);
+      expect(consumed).toBe(false);
+    } finally { restore(); alias.close(); }
+  },
+);
+
 async function observeProbePlans() {
   const SQL = await loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare;
   const active = new Set<ReturnType<typeof prepare>>();
   let allocated = 0, freed = 0, stepped = 0;
+  const queries: string[] = [];
   const observing = spyOn(SQL.Database.prototype, 'prepare').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql) {
     const statement = prepare.call(this, sql), free = statement.free, step = statement.step;
-    allocated++; active.add(statement);
+    allocated++; active.add(statement); queries.push(sql);
     statement.free = () => {
       expect(active.delete(statement)).toBe(true);
       freed++; return free.call(statement);
@@ -81,7 +276,7 @@ async function observeProbePlans() {
     statement.step = () => { stepped++; return step.call(statement); };
     return statement;
   });
-  return { restore: () => observing.mockRestore(), current: () => ({ allocated, freed, stepped, active: active.size }) };
+  return { restore: () => observing.mockRestore(), current: () => ({ allocated, freed, stepped, active: active.size }), queries };
 }
 
 test.each(['success', 'assertion', 'run', 'exec', 'export', 'close'] as const)('private PRAGMA plans are refreshed and freed on frame %s', async operation => {
@@ -96,7 +291,9 @@ test.each(['success', 'assertion', 'run', 'exec', 'export', 'close'] as const)('
     const assertion = () => sqlite.assertPersistedReadFrame(() => {
       read(sqlite);
       const first = plans.current();
-      expect(first.active).toBe(4);
+      expect(first.active).toBe(1);
+      expect(plans.queries[0]).toContain('FROM main.pragma_read_uncommitted()');
+      expect(plans.queries[0]).toContain('name COLLATE NOCASE');
       expect(Object.keys(handle).sort()).toEqual(['close', 'exec', 'export', 'run']);
       read(sqlite);
       expect(plans.current().stepped).toBeGreaterThan(first.stepped);
@@ -113,8 +310,8 @@ test.each(['success', 'assertion', 'run', 'exec', 'export', 'close'] as const)('
     expect(plans.current().freed).toBe(plans.current().allocated);
     if (operation !== 'close') {
       sqlite.assertPersistedReadFrame(() => { read(sqlite); });
-      expect(plans.current().allocated).toBe(8);
-      expect(plans.current().freed).toBe(8);
+      expect(plans.current().allocated).toBe(2);
+      expect(plans.current().freed).toBe(2);
     }
   } finally { plans.restore(); }
 });
@@ -122,13 +319,14 @@ test.each(['success', 'assertion', 'run', 'exec', 'export', 'close'] as const)('
 test.each(['prepare', 'reset'] as const)('private PRAGMA %s failure frees statements and uses fresh full probes', async failure => {
   const { store, source, sqlite } = await fixture();
   const SQL = await loadSqlJsEngine(), prepare = SQL.Database.prototype.prepare;
-  let allocated = 0, freed = 0, resetFailed = false;
+  let allocated = 0, freed = 0, attempts = 0, resetFailed = false;
   const observing = spyOn(SQL.Database.prototype, 'prepare').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql) {
-    if (failure === 'prepare' && sql === 'PRAGMA "main".schema_version') throw new Error('native plan unavailable');
+    attempts++;
+    if (failure === 'prepare' && sql.includes('FROM main.pragma_read_uncommitted()')) throw new Error('native plan unavailable');
     const statement = prepare.call(this, sql), free = statement.free, reset = statement.reset;
     allocated++;
     statement.free = () => { freed++; return free.call(statement); };
-    if (failure === 'reset' && sql === 'PRAGMA "main".data_version') statement.reset = () => {
+    if (failure === 'reset' && sql.includes('FROM main.pragma_read_uncommitted()')) statement.reset = () => {
       if (!resetFailed) { resetFailed = true; return false; }
       return reset.call(statement);
     };
@@ -140,7 +338,8 @@ test.each(['prepare', 'reset'] as const)('private PRAGMA %s failure frees statem
       expect(store.getSourceGeneration(source.id)).toBe(original);
       expect(freed).toBe(allocated);
     });
-    expect(allocated).toBe(failure === 'prepare' ? 3 : 4);
+    expect(allocated).toBe(failure === 'prepare' ? 0 : 1);
+    expect(attempts).toBe(1);
     expect(freed).toBe(allocated);
     let consumed = false;
     expect(() => store.assertRecordSnapshotFrame(() => {
@@ -151,6 +350,118 @@ test.each(['prepare', 'reset'] as const)('private PRAGMA %s failure frees statem
     expect(consumed).toBe(false);
     expect(freed).toBe(allocated);
   } finally { observing.mockRestore(); }
+});
+
+test.each(['mode', 'temp', 'attachment'] as const)('an existing %s database state retains the full native PRAGMA path', async operation => {
+  const { sqlite } = await database();
+  if (operation === 'mode') sqlite.run('PRAGMA read_uncommitted=1');
+  else if (operation === 'temp') sqlite.run('CREATE TEMP TABLE separate_version (id);CREATE TEMP TABLE another_version (id)');
+  else sqlite.run('ATTACH DATABASE \':memory:\' AS "other\"\"schema"');
+  const plans = await observeProbePlans();
+  try {
+    sqlite.assertPersistedReadFrame(() => { read(sqlite); read(sqlite); });
+    expect(plans.current().allocated).toBe(0);
+    expect(plans.current().active).toBe(0);
+  } finally { plans.restore(); }
+});
+
+const pragmaNames = ['pragma_read_uncommitted', 'pragma_database_list', 'pragma_data_version', 'pragma_schema_version'];
+const shadowCases = pragmaNames.flatMap(name => ['table', 'view', 'uppercase'].map(kind => ({ name, kind })));
+test.each(shadowCases)('a main $kind shadow of $name uses full probes and retires native row restore', async ({ name, kind }) => {
+  const { sqlite } = await database();
+  sqlite.run("INSERT INTO knowledge_sources VALUES ('original')");
+  const columns = name === 'pragma_read_uncommitted' ? ['read_uncommitted']
+    : name === 'pragma_database_list' ? ['seq', 'name', 'file'] : [name.slice('pragma_'.length)];
+  const target = kind === 'uppercase' ? name.toUpperCase() : name;
+  if (kind === 'view') sqlite.run(`CREATE VIEW ${target} AS SELECT ${columns.map(column => `0 AS ${column}`).join(',')}`);
+  else sqlite.run(`CREATE TABLE ${target}(${columns.join(',')})`);
+  await sqlite.save();
+  const main = sqlite.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database(), plans = await observeProbePlans();
+  const execute = SQL.Database.prototype.exec;
+  let fullProbes = 0, consumed = false;
+  const observing = spyOn(SQL.Database.prototype, 'exec').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql, params, config) {
+    if (sql === 'PRAGMA read_uncommitted;PRAGMA database_list') fullProbes++;
+    return execute.call(this, sql, params, config);
+  });
+  try {
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      expect(sqlite.readPersistedRow('knowledge_sources', 'id', 'original')[0]?.values).toEqual([['original']]);
+      const before = fullProbes;
+      read(sqlite);
+      expect(fullProbes).toBeGreaterThan(before);
+      expect(plans.current().active).toBe(0);
+      expect(plans.current().freed).toBe(plans.current().allocated);
+      alias.run("UPDATE original.knowledge_sources SET id = 'changed';UPDATE original.knowledge_sources SET id = 'original'");
+      read(sqlite); consumed = true;
+    })).toThrow(SQLiteObservationRetiredError);
+    expect(consumed).toBe(false);
+  } finally { observing.mockRestore(); plans.restore(); alias.close(); }
+});
+
+test.each(pragmaNames.flatMap(name => [name, name.toUpperCase()]))
+('a newly created virtual %s shadow retires the combined cursor before a cached row returns', async name => {
+  const { sqlite } = await database();
+  sqlite.run("INSERT INTO knowledge_sources VALUES ('original')"); await sqlite.save();
+  const main = sqlite.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+  if (typeof main !== 'string') throw new Error('No original VFS file');
+  const lower = name.toLowerCase(), columns = lower === 'pragma_read_uncommitted' ? ['read_uncommitted']
+    : lower === 'pragma_database_list' ? ['seq', 'name', 'file'] : [lower.slice('pragma_'.length)];
+  const SQL = await loadSqlJsEngine(), alias = new SQL.Database(), plans = await observeProbePlans();
+  let consumed = false;
+  try {
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    expect(() => sqlite.assertPersistedReadFrame(() => {
+      read(sqlite);
+      expect(plans.current().active).toBe(1);
+      alias.run(`CREATE VIRTUAL TABLE original.${name} USING fts4(${columns.join(',')})`);
+      read(sqlite); consumed = true;
+    })).toThrow(SQLiteObservationRetiredError);
+    expect(consumed).toBe(false);
+    expect(plans.current().active).toBe(0);
+    expect(plans.current().freed).toBe(plans.current().allocated);
+  } finally { plans.restore(); alias.close(); }
+});
+
+test.each(['columns', 'width', 'mode', 'sequence', 'name', 'file', 'data-version', 'schema-version', 'shadow', 'step'] as const)
+('an unsupported combined probe %s frees its cursor before using full native metadata', async failure => {
+  const { sqlite } = await database(), SQL = await loadSqlJsEngine();
+  const prepare = SQL.Database.prototype.prepare, execute = SQL.Database.prototype.exec;
+  let allocated = 0, freed = 0, fullProbes = 0;
+  const executing = spyOn(SQL.Database.prototype, 'exec').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql, params, config) {
+    if (sql === 'PRAGMA read_uncommitted;PRAGMA database_list' && allocated > 0) {
+      expect(freed).toBe(allocated); fullProbes++;
+    }
+    return execute.call(this, sql, params, config);
+  });
+  const observing = spyOn(SQL.Database.prototype, 'prepare').mockImplementation(function (this: InstanceType<typeof SQL.Database>, sql) {
+    const statement = prepare.call(this, sql), get = statement.get, names = statement.getColumnNames, free = statement.free;
+    allocated++;
+    statement.free = () => { freed++; return free.call(statement); };
+    if (failure === 'step') statement.step = () => { throw new Error('native cursor unavailable'); };
+    else if (failure === 'columns') statement.getColumnNames = () => [...names.call(statement), 'extra'];
+    else statement.get = (params, config) => {
+      const row = get.call(statement, params, config);
+      if (failure === 'width') row.push('extra');
+      if (failure === 'mode') row[0] = 1n;
+      if (failure === 'sequence') row[1] = 1n;
+      if (failure === 'name') row[2] = 'temp';
+      if (failure === 'file') row[3] = 'different identity';
+      if (failure === 'data-version') row[4] = 1;
+      if (failure === 'schema-version') row[5] = '1';
+      if (failure === 'shadow') row[6] = 1n;
+      return row;
+    };
+    return statement;
+  });
+  try {
+    sqlite.assertPersistedReadFrame(() => { read(sqlite); read(sqlite); });
+    expect(allocated).toBe(1);
+    expect(freed).toBe(1);
+    expect(fullProbes).toBeGreaterThan(0);
+  } finally { observing.mockRestore(); executing.mockRestore(); }
 });
 
 test('reused PRAGMA plans retire an actual foreign native schema change before a cached row can return', async () => {
@@ -168,7 +479,7 @@ test('reused PRAGMA plans retire an actual foreign native schema change before a
     expect(() => store.assertRecordSnapshotFrame(() => {
       const original = store.getSourceGeneration(source.id);
       expect(store.getSourceGeneration(source.id)).toBe(original);
-      expect(plans.current().active).toBe(4);
+      expect(plans.current().active).toBe(1);
       alias.run('CREATE TABLE original.foreign_schema_change (id INTEGER)');
       store.getSourceGeneration(source.id); consumed = true;
     })).toThrow(KnowledgeRecordAdmissionHeldError);
@@ -584,6 +895,145 @@ test('independent admission guard sees persisted extraction changes without adop
   expect(store.getExtraction(extraction.id)).toBe(extraction);
   expect(() => store.assertRecordSnapshotFrame(() => { receipt.assertCurrent(); })).toThrow(KnowledgeRecordAdmissionHeldError);
 });
+
+test('retained edge descriptor fast paths still open a fresh native image for every observation', async () => {
+  const { store, source, sqlite } = await fixture();
+  const edge = await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'source', toId: source.id,
+    relation: 'references', weight: 0.8, metadata: { detail: 'original' } });
+  const fake = fakePort(() => noulAnswer(0.99)), previous = installJudgmentPort(fake.port);
+  try {
+    const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] });
+    const current = selection.retainEdges([edge]);
+    const images = instrument(sqlite), before = images.privateImages();
+    current();
+    expect(images.privateImages()).toEqual({ opened: before.opened + 1, closed: before.closed + 1 });
+    await Promise.resolve(); current();
+    expect(images.privateImages()).toEqual({ opened: before.opened + 2, closed: before.closed + 2 });
+  } finally { installJudgmentPort(previous); }
+});
+
+test('retained scope signatures preserve both extraction reads and a fresh image for each observation', async () => {
+  const { store, source, extraction, sqlite } = await fixture();
+  const fake = fakePort(() => noulAnswer(0.99)), previous = installJudgmentPort(fake.port);
+  try {
+    const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] });
+    const images = instrument(sqlite), before = images.privateImages(), requests = fake.requests.length;
+    const read = store.getExtractionBySourceId.bind(store); let reads = 0;
+    spyOn(store, 'getExtractionBySourceId').mockImplementation(id => {
+      if (id === source.id) reads++;
+      return read(id);
+    });
+    selection.assertCurrent();
+    expect(reads).toBe(2); expect(store.getExtraction(extraction.id)).toBe(extraction);
+    expect(images.privateImages()).toEqual({ opened: before.opened + 1, closed: before.closed + 1 });
+    await Promise.resolve(); selection.assertCurrent();
+    expect(reads).toBe(4);
+    expect(images.privateImages()).toEqual({ opened: before.opened + 2, closed: before.closed + 2 });
+    expect(fake.requests).toHaveLength(requests);
+  } finally { installJudgmentPort(previous); }
+});
+
+test.each(['equal replacement', 'changed text', 'hidden child', 'accessor', 'native alias ABA', 'row ABA', 'file ABA'] as const)(
+  'a retained scope signature observes %s on the original second extraction read', async mutation => {
+    const { store, source, extraction, sqlite } = await fixture();
+    let writer: SqlDatabase | undefined;
+    await sqlite.transactPersisted(db => {
+      writer = db;
+      db.run('UPDATE knowledge_sources SET summary = summary WHERE id = ?', [source.id]);
+      return { changed: true, value: undefined };
+    }, () => {});
+    if (!writer) throw new Error('No original native writer');
+    const main = writer.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+    if (typeof main !== 'string') throw new Error('No original native VFS filename');
+    const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    const fake = fakePort(() => noulAnswer(0.99)), previous = installJudgmentPort(fake.port);
+    try {
+      const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'] });
+      const originalSections = JSON.stringify(extraction.sections), requests = fake.requests.length;
+      const images = instrument(sqlite), read = store.getExtractionBySourceId.bind(store);
+      let reads = 0, changed = false, accessors = 0;
+      spyOn(store, 'getExtractionBySourceId').mockImplementation(id => {
+        const current = read(id);
+        if (id !== source.id || ++reads !== 2) return current;
+        changed = true;
+        if (mutation === 'equal replacement') expect(Reflect.set(extraction, 'sections', [...extraction.sections])).toBe(true);
+        else if (mutation === 'changed text') expect(Reflect.set(extraction, 'sections', [...extraction.sections, 'Changed reference meaning'])).toBe(true);
+        else if (mutation === 'hidden child') Object.defineProperty(extraction.structure, 'hidden', { value: 'never-wire child' });
+        else if (mutation === 'accessor') Object.defineProperty(extraction, 'sections', { enumerable: true,
+          get() { accessors++; return ['Original reference']; } });
+        else if (mutation === 'native alias ABA') {
+          alias.run('UPDATE original.knowledge_extractions SET sections = ? WHERE id = ?', ['["Native replacement"]', extraction.id]);
+          alias.run('UPDATE original.knowledge_extractions SET sections = ? WHERE id = ?', [originalSections, extraction.id]);
+        } else if (mutation === 'row ABA') {
+          sqlite.run('UPDATE knowledge_extractions SET sections = ? WHERE id = ?', ['["Local replacement"]', extraction.id]);
+          sqlite.run('UPDATE knowledge_extractions SET sections = ? WHERE id = ?', [originalSections, extraction.id]);
+        } else {
+          copyFileSync(store.storagePath, `${store.storagePath}.replacement`);
+          renameSync(`${store.storagePath}.replacement`, store.storagePath);
+        }
+        return current;
+      });
+      if (mutation === 'equal replacement') {
+        selection.assertCurrent(); await Promise.resolve(); selection.assertCurrent();
+        expect(reads).toBe(4);
+        expect(Reflect.set(extraction, 'sections', [...extraction.sections, 'A later semantic correction'])).toBe(true);
+        expect(selection.assertCurrent).toThrow(KnowledgeScopeSelectionHeldError);
+      } else expect(selection.assertCurrent).toThrow(KnowledgeScopeSelectionHeldError);
+      expect(changed).toBe(true); expect(accessors).toBe(0); expect(fake.requests).toHaveLength(requests);
+      expect(images.privateImages().opened).toBe(images.privateImages().closed);
+    } finally { installJudgmentPort(previous); alias.close(); }
+  },
+);
+
+test.each(['native alias ABA', 'file ABA', 'row ABA', 'caller owner ABA', 'caller cancellation'] as const)(
+  'retained edge fast paths preserve the original %s fence inside an actual composed guard', async mutation => {
+    const { store, source, sqlite } = await fixture();
+    const edge = await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'source', toId: source.id,
+      relation: 'references', weight: 0.8, metadata: { detail: 'original' } });
+    let writer: SqlDatabase | undefined;
+    await sqlite.transactPersisted(db => {
+      writer = db;
+      db.run('UPDATE knowledge_edges SET relation = relation WHERE id = ?', [edge.id]);
+      return { changed: true, value: undefined };
+    }, () => {});
+    if (!writer) throw new Error('No original writer');
+    const main = writer.exec('PRAGMA database_list')[0]?.values.find(row => row[1] === 'main')?.[2];
+    if (typeof main !== 'string') throw new Error('No original VFS filename');
+    const SQL = await loadSqlJsEngine(), alias = new SQL.Database();
+    alias.run('ATTACH DATABASE ? AS original', [main]);
+    const controller = new AbortController(), fake = fakePort(() => noulAnswer(0.99));
+    let armed = false, changed = false;
+    bindJudgmentPortAuthority(fake.port, () => ({ identity: fake.port, assertCurrent() {
+      if (!armed || changed) return;
+      changed = true;
+      if (mutation === 'native alias ABA') {
+        alias.run('UPDATE original.knowledge_edges SET relation = ? WHERE id = ?', ['contradicts', edge.id]);
+        alias.run('UPDATE original.knowledge_edges SET relation = ? WHERE id = ?', [edge.relation, edge.id]);
+      } else if (mutation === 'file ABA') {
+        copyFileSync(store.storagePath, `${store.storagePath}.replacement`);
+        renameSync(`${store.storagePath}.replacement`, store.storagePath);
+      } else if (mutation === 'row ABA') {
+        sqlite.run('UPDATE knowledge_edges SET relation = ? WHERE id = ?', ['contradicts', edge.id]);
+        sqlite.run('UPDATE knowledge_edges SET relation = ? WHERE id = ?', [edge.relation, edge.id]);
+      } else if (mutation === 'caller owner ABA') {
+        installJudgmentPort(undefined); installJudgmentPort(fake.port);
+      } else controller.abort();
+    } }));
+    const previous = installJudgmentPort(fake.port);
+    try {
+      const selection = await prepareKnowledgeScopeSelection(store, {}, { kinds: ['source'], signal: controller.signal });
+      const current = selection.retainEdges([edge]), requests = fake.requests.length, images = instrument(sqlite);
+      expect(() => store.assertRecordSnapshotFrame(() => {
+        selection.assertCurrent(); armed = true; current();
+      })).toThrow(KnowledgeScopeSelectionHeldError);
+      expect(changed).toBe(true);
+      expect(fake.requests).toHaveLength(requests);
+      expect(images.privateImages().opened).toBe(images.privateImages().closed);
+      expect(store.getEdgeSnapshot(edge.id).record?.relation).toBe(edge.relation);
+    } finally { installJudgmentPort(previous); alias.close(); }
+  },
+);
 
 test('throws and swallowed nested misuse retire and close the frame before an independent read', async () => {
   const { sqlite } = await database(); const snapshots = instrument(sqlite);

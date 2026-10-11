@@ -26,7 +26,7 @@ function diagnosticBody(contract: typeof diagnostics.contracts[number], state: u
     .split('<owned-fixture-root>').join(ownedRoot));
 }
 
-test('165 exact safe CI and native diagnostics retain canonical questions and original answer distributions', async () => {
+test('167 exact safe CI and native diagnostics retain canonical questions and original answer distributions', async () => {
   const ownedRoot = mkdtempSync(join(tmpdir(), 'agent-diagnostics-peer-'));
   const server = startE2EJudgments({ ownedRoot });
   try {
@@ -61,9 +61,9 @@ test('165 exact safe CI and native diagnostics retain canonical questions and or
         count++;
       }
     }
-    expect(count).toBe(165);
-    expect(server.acceptedDiagnostics).toHaveLength(165);
-    expect(server.allRequests).toHaveLength(165);
+    expect(count).toBe(167);
+    expect(server.acceptedDiagnostics).toHaveLength(167);
+    expect(server.allRequests).toHaveLength(167);
     expect(server.accepted).toHaveLength(0);
     expect(server.rejected).toHaveLength(0);
     expect(server.unexpected).toHaveLength(0);

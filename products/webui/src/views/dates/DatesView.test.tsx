@@ -13,7 +13,7 @@ import { flushSync } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../lib/toast';
 import { ToastViewport } from '../../components/toast/ToastViewport';
-import type { OperatorMethodOutput } from '../../lib/goodvibes';
+import type { OperatorMethodInput, OperatorMethodOutput } from '../../lib/goodvibes';
 
 type ListResult = { today: string; timezone: string; occasions: unknown[]; unparsed: unknown[]; conflicts: unknown[] };
 type PendingResult = { today: string; nudge: unknown; conflicts: unknown[]; interviews: unknown[] };
@@ -28,9 +28,12 @@ let pendingImpl: () => Promise<PendingResult> = () => Promise.resolve({ today: '
 let plansImpl: () => Promise<PlansResult> = () => Promise.resolve({ today: '2026-07-29', plans: [], unparsed: [], awayNow: null });
 let stateImpl: () => Promise<StateResultShape> = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
 let sweepImpl: () => Promise<OperatorMethodOutput<'occasions.sweep'>> = () => Promise.reject(new Error('not used'));
+let forgetImpl: (input: OperatorMethodInput<'profile.forget'>) => Promise<unknown> = () => Promise.reject(new Error('not used'));
 
 const answerCalls: unknown[] = [];
 const giftsCalls: string[] = [];
+const removeCalls: OperatorMethodInput<'occasions.remove'>[] = [];
+const forgetCalls: OperatorMethodInput<'profile.forget'>[] = [];
 
 mock.module('../../lib/goodvibes', () => ({
   // src/lib/queries.ts (imported transitively via queryKeys) destructures these off
@@ -40,6 +43,12 @@ mock.module('../../lib/goodvibes', () => ({
   invokeMethod: () => Promise.resolve({}),
   sdk: {
     operator: {
+      profile: {
+        forget: (input: OperatorMethodInput<'profile.forget'>) => {
+          forgetCalls.push(input);
+          return forgetImpl(input);
+        },
+      },
       occasions: {
         list: () => listImpl(),
         pending: () => pendingImpl(),
@@ -53,7 +62,10 @@ mock.module('../../lib/goodvibes', () => ({
           answerCalls.push(input);
           return Promise.resolve({ ok: true, reason: null, interview: null });
         },
-        remove: () => Promise.resolve({ ok: true, reason: null, occasionId: 'occ-1', disclosure: 'Removed.', droppedRecords: 1 }),
+        remove: (input: OperatorMethodInput<'occasions.remove'>) => {
+          removeCalls.push(input);
+          return Promise.resolve({ ok: true, reason: null, occasionId: 'occ-1', disclosure: 'Removed.', droppedRecords: 1 });
+        },
         propose: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
         confirm: () => Promise.reject(Object.assign(new Error('not used'), { status: 500 })),
         gifts: (occasionId: string) => {
@@ -131,8 +143,11 @@ afterEach(() => {
   plansImpl = () => Promise.resolve({ today: '2026-07-29', plans: [], unparsed: [], awayNow: null });
   stateImpl = () => Promise.resolve({ path: '/tmp/state.json', acknowledgements: 0, giftRecords: 0, openItems: 0, interviews: 0, mirrors: 0, lastSweep: null, corruption: null });
   sweepImpl = () => Promise.reject(new Error('not used'));
+  forgetImpl = () => Promise.reject(new Error('not used'));
   answerCalls.length = 0;
   giftsCalls.length = 0;
+  removeCalls.length = 0;
+  forgetCalls.length = 0;
 });
 
 describe('DatesView: manual sweep outcomes', () => {
@@ -333,6 +348,145 @@ describe('DatesView: populated / empty ("no fourth reading")', () => {
     await waitFor(() => Boolean(el.querySelector('[data-testid="dates-plan-list"]')));
     expect(el.textContent).toContain('Lisbon');
     unmount();
+  });
+});
+
+describe('DatesView: plan removal uses the exact native profile line', () => {
+  const plan = {
+    id: 'lisbon', title: 'Lisbon', from: '2026-09-12', to: '2026-09-19', away: true,
+    destination: 'Lisbon', extras: [], lineIndex: 5,
+    text: 'Lisbon · 2026-09-12..2026-09-19 · away · in Lisbon',
+  } satisfies OperatorMethodOutput<'occasions.plans.list'>['plans'][number];
+  const original = { today: '2026-07-29', plans: [plan], unparsed: [], awayNow: null } satisfies OperatorMethodOutput<'occasions.plans.list'>;
+
+  function click(root: ParentNode, name: string): void {
+    const button = buttonNamed(root, name);
+    if (button === undefined) throw new Error(`Missing ${name} button`);
+    flushSync(() => button.click());
+  }
+
+  async function askRemovePlan(el: HTMLElement): Promise<Element> {
+    const row = el.querySelector('[data-testid="dates-plan-list"] .gv-row__main');
+    if (!(row instanceof HTMLElement)) throw new Error('Missing native plan row');
+    flushSync(() => row.click());
+    await waitFor(() => buttonNamed(el, 'Remove') !== undefined);
+    click(el, 'Remove');
+    await waitFor(() => Boolean(el.querySelector('.gv-confirm')));
+    const confirmation = el.querySelector('.gv-confirm');
+    if (confirmation === null) throw new Error('Missing plan confirmation');
+    expect(confirmation.textContent).toContain('Remove this plan?');
+    expect(confirmation.textContent).toContain('This removes the selected plan from your profile.');
+    expect(confirmation.textContent).not.toContain('every record');
+    return confirmation;
+  }
+
+  test('Cancel sends no mutation; one later confirmation forgets the exact plan and closes its detail', async () => {
+    plansImpl = () => Promise.resolve(original);
+    forgetImpl = () => {
+      plansImpl = () => Promise.resolve({ ...original, plans: [] });
+      return Promise.resolve({
+        ok: true, reason: null,
+        changes: [{ kind: 'forget', fieldId: null, section: 'Plans', label: 'note', superseded: false }],
+        disclosure: 'Removed note from Plans.',
+      });
+    };
+    const { el, unmount } = render();
+    try {
+      await waitFor(() => Boolean(el.querySelector('[data-testid="dates-plan-list"]')));
+      click(await askRemovePlan(el), 'Cancel');
+      await waitFor(() => !el.querySelector('.gv-confirm'));
+      expect(forgetCalls).toEqual([]);
+      expect(removeCalls).toEqual([]);
+      expect(buttonNamed(el, 'Close plan')).toBeDefined();
+
+      click(el, 'Remove');
+      await waitFor(() => Boolean(el.querySelector('.gv-confirm')));
+      const confirmation = el.querySelector('.gv-confirm');
+      if (confirmation === null) throw new Error('Missing plan confirmation');
+      click(confirmation, 'Remove');
+      await waitFor(() => el.textContent?.includes('Removed note from Plans.') === true);
+      expect(forgetCalls).toEqual([{ section: 'Plans', text: plan.text, authority: 'owner-direct' }]);
+      expect(removeCalls).toEqual([]);
+      expect(buttonNamed(el, 'Close plan')).toBeUndefined();
+      expect(el.querySelector('[data-testid="dates-plan-list"] .gv-row__main')).toBeNull();
+      expect(el.querySelector('.gv-confirm')).toBeNull();
+    } finally { unmount(); }
+  });
+
+  for (const cause of ['refused', 'stale'] as const) {
+    test(`${cause} native forget retains plan detail and reports its actual reason`, async () => {
+      plansImpl = () => Promise.resolve(original);
+      const reason = cause === 'stale'
+        ? 'That line is not in Plans any more, so nothing was removed.'
+        : 'That source carries no command authority over the owner profile.';
+      forgetImpl = () => {
+        if (cause === 'stale') {
+          plansImpl = () => Promise.resolve({
+            ...original,
+            plans: [{ ...plan, to: '2026-09-20', text: 'Lisbon · 2026-09-12..2026-09-20 · away · in Lisbon' }],
+          });
+        }
+        return Promise.resolve({ ok: false, reason, changes: [], disclosure: '' });
+      };
+      const { el, unmount } = render();
+      try {
+        await waitFor(() => Boolean(el.querySelector('[data-testid="dates-plan-list"]')));
+        click(await askRemovePlan(el), 'Remove');
+        await waitFor(() => el.textContent?.includes(reason) === true);
+        expect(forgetCalls).toEqual([{ section: 'Plans', text: plan.text, authority: 'owner-direct' }]);
+        expect(removeCalls).toEqual([]);
+        expect(buttonNamed(el, 'Close plan')).toBeDefined();
+        expect(el.querySelector('[data-testid="dates-plan-list"] .gv-row__main')?.textContent).toContain('Lisbon');
+        expect(el.querySelector('.gv-confirm')).toBeNull();
+      } finally { unmount(); }
+    });
+  }
+
+  test('a malformed profile write outcome keeps the plan selected and never reports removal', async () => {
+    plansImpl = () => Promise.resolve(original);
+    forgetImpl = () => Promise.resolve({ ok: 'true' });
+    const { el, unmount } = render();
+    try {
+      await waitFor(() => Boolean(el.querySelector('[data-testid="dates-plan-list"]')));
+      click(await askRemovePlan(el), 'Remove');
+      await waitFor(() => el.textContent?.includes('The daemon did not say whether the plan was removed.') === true);
+      expect(forgetCalls).toEqual([{ section: 'Plans', text: plan.text, authority: 'owner-direct' }]);
+      expect(removeCalls).toEqual([]);
+      expect(buttonNamed(el, 'Close plan')).toBeDefined();
+      expect(el.querySelector('[data-testid="dates-plan-list"] .gv-row__main')?.textContent).toContain('Lisbon');
+      expect(el.textContent).toContain('Not removed');
+    } finally { unmount(); }
+  });
+
+  test('occasion removal retains its native record-cleanup command', async () => {
+    listImpl = () => Promise.resolve({
+      today: '2026-07-29', timezone: 'America/Chicago',
+      occasions: [{
+        occasion: {
+          id: 'anniversary', title: 'Anniversary', date: { kind: 'dated', year: 2027, month: 5, day: 1 },
+          recurrence: 'annual', kind: 'gift-giving', person: '', selfDeclared: false, subject: 'unattributed',
+          leadDays: null, mirrored: false, extras: [], lineIndex: 2,
+          text: 'Anniversary · 2027-05-01 · annual · gift-giving',
+        },
+        nextOccurrence: '2027-05-01', daysUntil: 276, leadDays: 10, inLeadWindow: false, answer: null, mirrored: false,
+      }],
+      unparsed: [], conflicts: [],
+    } satisfies OperatorMethodOutput<'occasions.list'>);
+    const { el, unmount } = render();
+    try {
+      await waitFor(() => Boolean(el.querySelector('[data-testid="dates-occasion-list"]')));
+      openFirstRow(el);
+      await waitFor(() => buttonNamed(el, 'Remove') !== undefined);
+      click(el, 'Remove');
+      await waitFor(() => Boolean(el.querySelector('.gv-confirm')));
+      const confirmation = el.querySelector('.gv-confirm');
+      if (confirmation === null) throw new Error('Missing occasion confirmation');
+      expect(confirmation.textContent).toContain('acknowledgements and gift records');
+      click(confirmation, 'Remove');
+      await waitFor(() => removeCalls.length === 1);
+      expect(removeCalls).toEqual([{ occasionId: 'anniversary', confirmed: true, authority: 'owner-direct' }]);
+      expect(forgetCalls).toEqual([]);
+    } finally { unmount(); }
   });
 });
 

@@ -17,10 +17,11 @@ test('identifier admission offers complete actual lexical text and excludes synt
 test('shared-file policy carveout rejects internal declaration side effects', () => {
   const source = readFileSync(new URL('../scripts/batteries/static-source.ts', import.meta.url), 'utf8');
   expect(deferredBatteryPolicyStatements(source)).not.toBeNull();
-  const unsafe = source.replace("name: 'engine.gates.internal-identifier', version: 2", "name: 'engine.gates.internal-identifier', version: (STAKES_BANDS.high.yesNo.no.actAt = 0.1)");
+  const unsafe = source.replace("name: 'engine.gates.internal-identifier', version: 3", "name: 'engine.gates.internal-identifier', version: (STAKES_BANDS.high.yesNo.no.actAt = 0.1)");
+  expect(unsafe).not.toBe(source);
   expect(deferredBatteryPolicyStatements(unsafe)).toBeNull();
-  expect(deferredBatteryPolicyStatements(source.replace("name: 'engine.gates.internal-identifier', version: 2", "name: 'engine.gates.internal-identifier', version: ++STAKES_BANDS.high.yesNo.no.actAt"))).toBeNull();
-  expect(deferredBatteryPolicyStatements(source.replace("name: 'engine.gates.internal-identifier', version: 2", "name: 'engine.gates.internal-identifier', version: delete STAKES_BANDS.high.yesNo.no.actAt"))).toBeNull();
+  expect(deferredBatteryPolicyStatements(source.replace("name: 'engine.gates.internal-identifier', version: 3", "name: 'engine.gates.internal-identifier', version: ++STAKES_BANDS.high.yesNo.no.actAt"))).toBeNull();
+  expect(deferredBatteryPolicyStatements(source.replace("name: 'engine.gates.internal-identifier', version: 3", "name: 'engine.gates.internal-identifier', version: delete STAKES_BANDS.high.yesNo.no.actAt"))).toBeNull();
 });
 
 test('escaped literals and interpolated templates retain original bytes and mechanical lexical values', () => {

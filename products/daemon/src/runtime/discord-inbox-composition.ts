@@ -108,6 +108,8 @@ export function createDiscordDaemonInboxSourceFactory(options: DiscordDaemonInbo
     let surface: OwnedInboxSource | undefined;
     let release: (() => void) | undefined;
     let eligibility: ReturnType<typeof ownInboxEligibility> | undefined;
+    const constructed = Promise.withResolvers<OwnedInboxSource>();
+    void constructed.promise.catch(() => {});
     // Subscribe before the first await, including owner and storage construction.
     const unsubscribe = controls.onAccountInvalidation(() => { generation++; owner?.invalidateCredential(); });
     const startupGeneration = generation;
@@ -142,14 +144,20 @@ export function createDiscordDaemonInboxSourceFactory(options: DiscordDaemonInbo
         ...(clustered ? { awaitInitialPoll: false } : {}), acquireReadLease: () => owner!.acquireReadLease(),
         gatePolling(_provider, control) {
           if (!clustered) return controls.gatePolling(`discord:${owner!.scopeId}`, control);
-          eligibility = ownInboxEligibility({ verify: async () => { await surface!.ready; return owner!.verifyEligibility(); }, control,
+          eligibility = ownInboxEligibility({ verify: async () => {
+            const registration = await constructed.promise;
+            await registration.ready;
+            return owner!.verifyEligibility();
+          }, control,
             ...(factories.eligibilityClock ? { clock: factories.eligibilityClock } : {}),
             register: gated => controls.gatePollingOwned!(`discord:${owner!.scopeId}`, gated),
           });
           return () => eligibility!.close();
         },
       });
+      constructed.resolve(surface);
     } catch {
+      constructed.reject(new Error('Discord inbox source construction failed'));
       closed = true; unsubscribe();
       const cleanup = await Promise.allSettled([surface?.close(), owner?.close(), eligibility?.close()]);
       if (cleanup[0]?.status === 'fulfilled') release?.();

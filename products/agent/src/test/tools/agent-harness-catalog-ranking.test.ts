@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import * as operatorContracts from '@goodvibes-jev/engine/sdk/contracts';
 import { judgmentPort, installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
@@ -15,6 +16,7 @@ import { createAgentHostTool, registerAgentHostTool } from '../../tools/agent-ho
 import { createAgentWorkspaceTool, registerAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { searchHarnessModelTools } from '../../tools/agent-harness-model-tool-catalog.ts';
 import { prepareHarnessCatalog, rankHarnessCatalog } from '../../tools/agent-harness-catalog-ranking.ts';
+import { contractMethodsForAutonomy, contractMethodsForLane } from '../../tools/agent-harness-personal-ops-discovery.ts';
 import { captureModelReadingInput, captureModelReadingSnapshotGuard } from '../../tools/agent-harness-model-reading-source.ts';
 import { ordinaryResearchOwner, cleanupResearchScreeningFixtures, researchScreeningFixture, exactSensitiveSpans } from '../helpers/research-screening.ts';
 
@@ -662,4 +664,127 @@ test('prepared metadata never reuses a prior positive reading for uncertain or n
     expect(result.judgments[0]?.reading.verdict).toBe(probability === 0.99 ? 'yes' : probability === 0.5 ? 'uncertain' : 'no');
     expect(result.matches).toHaveLength(probability === 0.01 ? 0 : 1);
   }
+});
+
+function completeContractReadings(evidence: ReadonlyMap<string, string>, lanes: readonly string[], chosen: string | undefined) {
+  const seen = new Map(lanes.map(lane => [lane, new Set<string>()]));
+  const fake = fakePort((name, question, state) => {
+    if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'owner_profile'))
+      return choiceAnswer(question, 'other', 0.999);
+    if (['lineHasCredential', 'spanIsCredential', 'credentialRemains', 'identifying'].includes(name) && question.type === 'noul')
+      return noulAnswer(0.001);
+    if (name !== 'match' || question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)
+      || typeof state.query !== 'string' || !state.candidate || typeof state.candidate !== 'object' || Array.isArray(state.candidate)
+      || typeof state.candidate.name !== 'string' || typeof state.candidate.evidenceJson !== 'string')
+      throw new Error('Unexpected complete contract request');
+    const ids = seen.get(state.query), expected = evidence.get(state.candidate.name);
+    if (!ids || expected === undefined || state.candidate.evidenceJson !== expected || ids.has(state.candidate.name))
+      throw new Error('Unscripted complete contract evidence');
+    ids.add(state.candidate.name);
+    return noulAnswer(state.candidate.name === chosen ? 0.999 : 0.001);
+  });
+  return { ...fake, seen };
+}
+
+function foreignContractMethod() {
+  const original = operatorContracts.OPERATOR_CONTRACT.operator.methods[0];
+  if (!original) throw new Error('Missing native fixture template');
+  return { ...original, id: 'native.fixture-method', title: 'Synthetic complete method',
+    description: 'Complete synthetic native method contract', metadata: { nested: { text: 'Original complete metadata tail' } },
+  };
+}
+function foreignContract(methods: ReturnType<typeof operatorContracts.getOperatorContract>['operator']['methods']) {
+  const native = operatorContracts.OPERATOR_CONTRACT;
+  return { ...native, operator: { ...native.operator, methods } };
+}
+
+test('immutable native contract metadata retains every fresh lane reading across replacement model owners', async () => {
+  const native = operatorContracts.OPERATOR_CONTRACT;
+  const evidence = new Map(native.operator.methods.map(method => [method.id, JSON.stringify(captureModelReadingInput(method))]));
+  const chosen = native.operator.methods.find(method => method.id === 'accounts.snapshot');
+  if (!chosen || chosen.invokable !== true) throw new Error('Missing native dispatchable control');
+  expect(Object.isFrozen(native)).toBe(true); expect(Object.isFrozen(native.operator)).toBe(true);
+  expect(Object.isFrozen(native.operator.methods)).toBe(true);
+  const lanes = ['approvals', 'automation', 'schedules', 'tasks'];
+  for (const selected of [chosen.id, undefined]) {
+    const fake = completeContractReadings(evidence, lanes, selected), screening = researchScreeningFixture();
+    installJudgmentPort({ ...fake.port, model: selected ? 'native-owner-first' : 'native-owner-second' });
+    const result = await contractMethodsForAutonomy({ sourceOwner: screening.owner });
+    for (const lane of lanes) expect(fake.seen.get(lane)?.size).toBe(native.operator.methods.length);
+    expect(fake.requests.filter(request => request.context?.battery === 'agent.personal-ops.lane-member'))
+      .toHaveLength(native.operator.methods.length * lanes.length);
+    expect(screening.calls.filter(call => call.path === '/v1/chat/completions').length).toBeGreaterThan(0);
+    expect(result.tasks.available).toEqual(selected ? [chosen.id] : []);
+    expect(result.tasks.unavailable).toEqual([]);
+  }
+});
+
+test('cached native contract metadata still refuses the current caller and cancellation before any reading', async () => {
+  const fake = completeContractReadings(new Map(), ['tasks'], undefined), screening = researchScreeningFixture();
+  installJudgmentPort(fake.port);
+  const controller = new AbortController(); controller.abort();
+  await expect(contractMethodsForLane('tasks', { sourceOwner: screening.owner, signal: controller.signal })).rejects.toThrow();
+  await expect(contractMethodsForLane('tasks', { sourceOwner: screening.owner,
+    assertCurrent() { throw new Error('Native caller retired'); },
+  })).rejects.toThrow('Native caller retired');
+  expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+});
+
+test.each(['mutable', 'frozen-parent'] as const)('foreign %s contract metadata is recaptured with the complete changed subtree', async kind => {
+  const method = foreignContractMethod(), methods = [method], manifest = foreignContract(methods);
+  if (kind === 'frozen-parent') { Object.freeze(method); Object.freeze(methods); Object.freeze(manifest.operator); Object.freeze(manifest); }
+  const getter = spyOn(operatorContracts, 'getOperatorContract').mockReturnValue(manifest);
+  try {
+    for (const tail of ['Original complete metadata tail', 'Changed complete metadata tail']) {
+      method.metadata.nested.text = tail;
+      const evidence = new Map([[method.id, JSON.stringify(captureModelReadingInput(method))]]);
+      const fake = completeContractReadings(evidence, ['tasks'], method.id), screening = researchScreeningFixture();
+      installJudgmentPort(fake.port);
+      const result = await contractMethodsForLane('tasks', { sourceOwner: screening.owner });
+      expect(result.available).toEqual([method.id]); expect(fake.seen.get('tasks')?.size).toBe(1);
+      expect(JSON.stringify(screening.calls)).toContain(tail);
+    }
+  } finally { getter.mockRestore(); }
+});
+
+for (const kind of ['array-proxy', 'method-proxy', 'method-accessor'] as const)
+  test(`foreign ${kind} cannot borrow immutable native metadata or invoke a getter`, async () => {
+    const method = foreignContractMethod(); let touched = 0;
+    const methods = kind === 'array-proxy' ? new Proxy([method], { get() { touched++; throw new Error('Unexpected proxy read'); } })
+      : kind === 'method-proxy' ? [new Proxy(method, { get() { touched++; throw new Error('Unexpected proxy read'); } })] : [method];
+    if (kind === 'method-accessor') Object.defineProperty(method.metadata.nested, 'text', { get() { touched++; return 'Hidden getter value'; } });
+    const getter = spyOn(operatorContracts, 'getOperatorContract').mockReturnValue(foreignContract(methods));
+    const screening = researchScreeningFixture(), fake = completeContractReadings(new Map(), ['tasks'], undefined);
+    installJudgmentPort(fake.port);
+    try {
+      await expect(contractMethodsForLane('tasks', { sourceOwner: screening.owner })).rejects.toThrow();
+      expect(touched).toBe(0); expect(screening.calls).toHaveLength(0); expect(fake.requests).toHaveLength(0);
+    } finally { getter.mockRestore(); }
+  });
+
+test('foreign complete private tail is screened before any native membership publication', async () => {
+  const method = foreignContractMethod(), privateTail = 'Private foreign complete metadata tail';
+  method.metadata.nested.text = `${'Complete ordinary metadata. '.repeat(80)}${privateTail}`;
+  const getter = spyOn(operatorContracts, 'getOperatorContract').mockReturnValue(foreignContract([method]));
+  const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateTail]) });
+  const fake = completeContractReadings(new Map([[method.id, JSON.stringify(captureModelReadingInput(method))]]), ['tasks'], method.id);
+  installJudgmentPort(fake.port);
+  try {
+    await expect(contractMethodsForLane('tasks', { sourceOwner: screening.owner })).rejects.toThrow();
+    expect(JSON.stringify(screening.calls)).toContain(privateTail); expect(fake.requests).toHaveLength(0);
+  } finally { getter.mockRestore(); }
+});
+
+test('foreign contract root replacement during actual privacy retires its complete source', async () => {
+  const method = foreignContractMethod(), manifest = foreignContract([method]);
+  const getter = spyOn(operatorContracts, 'getOperatorContract').mockReturnValue(manifest);
+  const replacement = foreignContract(manifest.operator.methods);
+  const screening = researchScreeningFixture({ beforeProposal: async () => { getter.mockReturnValue(replacement); } });
+  const fake = completeContractReadings(new Map([[method.id, JSON.stringify(captureModelReadingInput(method))]]), ['tasks'], method.id);
+  installJudgmentPort(fake.port);
+  try {
+    await expect(contractMethodsForLane('tasks', { sourceOwner: screening.owner })).rejects.toThrow();
+    expect(fake.requests).toHaveLength(0);
+    expect(operatorContracts.getOperatorContract()).toBe(replacement);
+  } finally { getter.mockRestore(); }
 });

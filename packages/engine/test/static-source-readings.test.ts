@@ -3,10 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { SqliteDecisionLog, validateContextBudget, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { canonicalJson, hashState, noul, SqliteDecisionLog, toJson, validateContextBudget, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, parseStaticSourceReadings, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, staticSelectionCandidates, staticSelectionContext, type StaticSourceReadings } from '../scripts/static-source-readings.ts';
-import { staticOffendingAnchor } from '../scripts/batteries/static-source.ts';
+import { INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, staticOffendingAnchor } from '../scripts/batteries/static-source.ts';
 import { preparedStaticReadings } from './_helpers/static-source-evidence.ts';
 
 const input = () => captureStaticInputs('internal-identifier', 'sdk/src/example.ts', '// Exact public source\nconst value = 3;')[0]!;
@@ -294,7 +294,8 @@ test('unchanged deferred policy revalidates through a shared-file internal-only 
   const receipt: unknown = current.readings[staticInputKey(captured)];
   if (typeof receipt !== 'object' || receipt === null || !('presence' in receipt)) throw new Error('Missing authored capture');
   const source = readFileSync(new URL('../scripts/batteries/static-source.ts', import.meta.url), 'utf8');
-  const oldSource = source.replace("name: 'engine.gates.internal-identifier', version: 2", "name: 'engine.gates.internal-identifier', version: 1");
+  const oldSource = source.replace("name: 'engine.gates.internal-identifier', version: 3", "name: 'engine.gates.internal-identifier', version: 2");
+  expect(oldSource).not.toBe(source);
   const oldManifest = staticDecisionSourceManifest().map(([path, hash]) => [path, path === 'batteries/static-source.ts' ? sha256(oldSource) : hash]);
   const oldHash = sha256(JSON.stringify(oldManifest));
   const old = { ...current, decisionSourceHash: oldHash, captureSources: { [oldHash]: oldManifest }, captureBatterySources: { [oldHash]: oldSource },
@@ -309,6 +310,94 @@ test('unchanged deferred policy revalidates through a shared-file internal-only 
   const changedHash = sha256(JSON.stringify(changedManifest));
   expect(revalidateStaticInput(captured, { ...old, captureSources: { [changedHash]: changedManifest }, captureBatterySources: { [changedHash]: changedPolicy },
     readings: { [staticInputKey(captured)]: { ...receipt, decisionSourceHash: changedHash } } })).toBeNull();
+});
+
+test('unchanged held deferred evidence survives an identifier revision without another call', async () => {
+  const captured = captureStaticInputs('deferred-work', 'source.ts', '// Intentional read-only adapter.')[0]!;
+  const current = await preparedStaticReadings([captured], 0.5);
+  const receipt: unknown = current.readings[staticInputKey(captured)];
+  if (typeof receipt !== 'object' || receipt === null || !('presence' in receipt) || !('selection' in receipt)) throw new Error('Missing authored held capture');
+  const source = readFileSync(new URL('../scripts/batteries/static-source.ts', import.meta.url), 'utf8');
+  const oldSource = source.replace("name: 'engine.gates.internal-identifier', version: 3", "name: 'engine.gates.internal-identifier', version: 2");
+  expect(oldSource).not.toBe(source);
+  const oldManifest = staticDecisionSourceManifest().map(([path, hash]) => [path, path === 'batteries/static-source.ts' ? sha256(oldSource) : hash]);
+  const oldHash = sha256(JSON.stringify(oldManifest));
+  const original = { ...receipt, decisionSourceHash: oldHash };
+  const originalBytes = JSON.stringify(original);
+  const old: StaticSourceReadings = { ...current, decisionSourceHash: oldHash,
+    captureSources: { [oldHash]: oldManifest }, captureBatterySources: { [oldHash]: oldSource },
+    readings: { [staticInputKey(captured)]: original } };
+  const retained = revalidateStaticInput(captured, old);
+  expect(retained).not.toBeNull();
+  const revalidated: StaticSourceReadings = { ...old, decisionSourceHash: staticDecisionSourceHash(),
+    readings: { [staticInputKey(captured)]: retained } };
+  expect(staticInputCaptureComplete(captured, revalidated)).toBe(true);
+  expect(staticInputStanding(captured, revalidated).kind).toBe('held');
+  using log = new SqliteDecisionLog(':memory:');
+  const forbidden = fakePort(() => { throw new Error('Unchanged held deferred evidence cannot be resampled'); });
+  const result = await readStaticInput(withDecisionLog(forbidden.port, log), log, captured, undefined, {
+    previous: revalidated, original: old, onReceipt() {},
+  });
+  expect(forbidden.requests).toHaveLength(0);
+  expect(log.query()).toHaveLength(0);
+  expect<unknown>(result.presence).toEqual(original.presence);
+  expect<unknown>(result.selection).toEqual(original.selection);
+  expect(JSON.stringify(original)).toBe(originalBytes);
+  expect(staticInputStanding(captured, revalidated).kind).toBe('held');
+});
+
+test('identifier scope revision retains old positive measurements and reads the new question only once', async () => {
+  expect(internalIdentifier.version).toBe(3);
+  const boundary = INTERNAL_IDENTIFIER_INSTRUCTIONS.indexOf(' Judge the offered authored use in this repository,');
+  expect(boundary).toBeGreaterThan(0);
+  const legacyQuestion = INTERNAL_IDENTIFIER_INSTRUCTIONS.slice(0, boundary);
+  const source = readFileSync(new URL('../scripts/batteries/static-source.ts', import.meta.url), 'utf8');
+  const legacySource = source.replace(INTERNAL_IDENTIFIER_INSTRUCTIONS.slice(boundary), '')
+    .replace("name: 'engine.gates.internal-identifier', version: 3", "name: 'engine.gates.internal-identifier', version: 2");
+  expect(legacySource).not.toBe(source);
+  const legacyManifest = staticDecisionSourceManifest().map(([path, hash]) => [path, path === 'batteries/static-source.ts' ? sha256(legacySource) : hash]);
+  const legacyHash = sha256(JSON.stringify(legacyManifest));
+  for (const probability of [0.87, 0.86]) {
+    const captured = input();
+    using log = new SqliteDecisionLog(':memory:');
+    const fixture = fakePort((name, question) => question.type === 'choice'
+      ? choiceAnswer(question, 'none', 0.45) : noulAnswer(name === 'violation' ? probability : 0.01));
+    const authored = await readStaticInput(withDecisionLog(fixture.port, log), log, captured);
+    if (!authored.selection) throw new Error('Missing authored selector measurement');
+    const original = { ...authored, decisionSourceHash: legacyHash,
+      presence: { ...authored.presence, version: 2, captureDecisionSourceHash: legacyHash,
+        questionsHash: sha256(canonicalJson(toJson({ violation: noul(legacyQuestion) }))) },
+      selection: { ...authored.selection, captureDecisionSourceHash: legacyHash,
+        stateHash: hashState({ context: { ...staticSelectionContext(captured), rule: legacyQuestion }, candidates: staticSelectionCandidates(captured) }) } };
+    const originalBytes = JSON.stringify(original);
+    const legacy: StaticSourceReadings = { format: 1, decisionSourceHash: legacyHash,
+      captureSources: { [legacyHash]: legacyManifest }, captureBatterySources: { [legacyHash]: legacySource },
+      readings: { [staticInputKey(captured)]: original } };
+    expect(revalidateStaticInput(captured, legacy)).toBeNull();
+    expect(staticInputCaptureComplete(captured, legacy)).toBe(false);
+    expect(staticInputStanding(captured, legacy).kind).toBe('held');
+    const readings: Record<string, unknown> = { ...legacy.readings };
+    const current: StaticSourceReadings = { ...legacy, decisionSourceHash: staticDecisionSourceHash(), readings,
+      captureSources: { ...legacy.captureSources, [staticDecisionSourceHash()]: staticDecisionSourceManifest() } };
+    const replacement = fakePort(() => noulAnswer(0.01));
+    const updated = await readStaticInput(withDecisionLog(replacement.port, log), log, captured, undefined, {
+      previous: current, original: legacy, onReceipt(value, receipt) { readings[staticInputKey(value)] = receipt; },
+    });
+    expect(replacement.requests).toHaveLength(1);
+    expect(replacement.requests[0]?.questions).toHaveProperty('violation', internalIdentifier.items.violation.question);
+    expect(updated.presence.version).toBe(3);
+    expect(updated.previousCaptures).toEqual([original]);
+    expect(JSON.stringify(original)).toBe(originalBytes);
+    expect(original.presence.answers).toEqual({ violation: { type: 'noul', noul: probability } });
+    expect(staticInputStanding(captured, current)).toEqual({ kind: 'clear' });
+    const forbidden = fakePort(() => { throw new Error('Current answered scope question cannot be repeated'); });
+    await readStaticInput(withDecisionLog(forbidden.port, log), log, captured, undefined, {
+      previous: current, original: legacy, onReceipt() {},
+    });
+    expect(forbidden.requests).toHaveLength(0);
+    expect(JSON.stringify(original)).toBe(originalBytes);
+    expect(staticInputStanding(captured, legacy).kind).toBe('held');
+  }
 });
 
 test('bounded semantic revision clears only when complete exact subsets each settle no', async () => {

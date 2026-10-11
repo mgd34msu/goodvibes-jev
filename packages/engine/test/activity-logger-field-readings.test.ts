@@ -28,8 +28,14 @@ test('unknown structured fields are masked synchronously without a reader', () =
   const { logger, text } = loggerFixture();
   logger.info('record', { unlockPassphrase: 'private-example', tokenCount: 42 });
   const written = text();
-  expect(written).not.toContain('private-example'); expect(written).not.toContain('42');
-  expect(written).toContain('"unlockPassphrase": "[REDACTED]"');
+  expect(written).not.toContain('private-example');
+  const lines = written.split('\n');
+  expect(lines[0]).toMatch(/^\[[^\]]+\] \[INFO\] record$/);
+  expect(lines[1]).toBe('```json');
+  expect(lines.at(-2)).toBe('```');
+  expect(lines.at(-1)).toBe('');
+  const data: unknown = JSON.parse(lines.slice(2, -2).join('\n'));
+  expect(data).toEqual({ unlockPassphrase: '[REDACTED]', tokenCount: '[REDACTED]' });
 });
 
 test('current settled fields contradict the former token substring heuristic without transmitting values', async () => {

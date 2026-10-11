@@ -102,6 +102,9 @@ function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
     let unsubscribe: (() => void) | undefined;
     let release: (() => void) | undefined;
     let surface: T | undefined;
+    const constructed = Promise.withResolvers<T>();
+    // A registrar may yield before returning its actual storage owner.
+    void constructed.promise.catch(() => {});
     try {
       if (requireFinalProof && typeof owner.acquireReadLease !== 'function') {
         throw new Error('Slack inbox source requires a generation-fenced read lease');
@@ -124,14 +127,20 @@ function createSlackAccountFactory<T extends InboxSurfaceRegistration>(
         // Keep wire provider='slack'; only the owner/election discriminator is scoped.
         gatePolling: (_provider, control) => {
           if (!clustered) return controls.gatePolling(`slack:${owner.scopeId}`, control);
-          eligibility = ownInboxEligibility({ verify: async () => { await surface!.ready; return owner.verifyEligibility!(); }, control,
+          eligibility = ownInboxEligibility({ verify: async () => {
+            const registration = await constructed.promise;
+            await registration.ready;
+            return owner.verifyEligibility!();
+          }, control,
             ...(factories.eligibilityClock ? { clock: factories.eligibilityClock } : {}),
             register: gated => controls.gatePollingOwned!(`slack:${owner.scopeId}`, gated),
           });
           return () => eligibility!.close();
         },
       }, owner);
+      constructed.resolve(surface);
     } catch {
+      constructed.reject(new Error('Slack inbox source construction failed'));
       try { await Promise.all([Promise.resolve().then(() => unsubscribe?.()), owner.close(), eligibility?.close()]); } finally { release?.(); }
       throw new Error('Slack inbox composition could not acquire its owned storage');
     }

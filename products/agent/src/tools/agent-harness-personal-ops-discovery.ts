@@ -4,7 +4,7 @@ import { types as nodeTypes } from 'node:util';
 import { captureCatalogData, captureCatalogMethods, prepareHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { personalOpsLaneMembers, readPersonalOpsSampleField, readPersonalOpsTool, type DiscoveryLane, type PersonalOpsToolContract } from './agent-harness-personal-ops-readings.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
+import { getOperatorContract, OPERATOR_CONTRACT } from '@goodvibes-jev/engine/sdk/contracts';
 import type { CommandContext } from '../input/command-registry.ts';
 import type { McpSchemaSummary, McpToolRecord, McpToolSchema, OperatorContractMethod, PersonalOpsConnectorSignal, PersonalOpsConnectorTool, PersonalOpsWorkflow, PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
 
@@ -64,6 +64,63 @@ export async function contractMethodsForAutonomy(options: CatalogRankingOptions)
   return { approvals, automation, schedules, tasks };
 }
 
+interface CapturedContractMethod {
+  readonly value: OperatorContractMethod;
+  readonly index: number;
+  readonly assertCurrent: () => void;
+}
+interface ContractMetadata {
+  readonly manifest: ReturnType<typeof getOperatorContract>;
+  readonly operator: ReturnType<typeof getOperatorContract>['operator'];
+  readonly captured: readonly CapturedContractMethod[];
+  readonly batches: readonly {
+    readonly methods: readonly CapturedContractMethod[];
+    readonly entries: readonly OperatorContractMethod[];
+  }[];
+}
+const immutableContractMetadata = new WeakMap<object, ContractMetadata>();
+
+function isFrozenDataTree(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (value === null || typeof value !== 'object') return true;
+  if (nodeTypes.isProxy(value) || !Object.isFrozen(value)) return false;
+  if (seen.has(value)) return true;
+  seen.add(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  return Reflect.ownKeys(descriptors).every(key => typeof key === 'string' && Object.hasOwn(descriptors[key]!, 'value')
+    && isFrozenDataTree(descriptors[key]!.value, seen));
+}
+
+const describeContractMethod = (method: OperatorContractMethod) => ({
+  id: method.id, description: method.description ?? method.title ?? '', evidence: method,
+});
+
+/** Reuse only detached metadata from the exact immutable generated producer. */
+function prepareContractMetadata(manifest: ReturnType<typeof getOperatorContract>,
+  operator: ReturnType<typeof getOperatorContract>['operator'], original: readonly OperatorContractMethod[],
+  captured: readonly CapturedContractMethod[]): ContractMetadata {
+  const batches: CapturedContractMethod[][] = [];
+  let characters = 0, batch: CapturedContractMethod[] = [];
+  for (const method of captured) {
+    if (!method.value.id) continue;
+    const size = JSON.stringify([method.value.id, method.value.description ?? method.value.title ?? '', method.value]).length;
+    if (batch.length && (characters + size + 16 > 250_000 || batch.length >= 16)) {
+      batches.push(batch); batch = []; characters = 0;
+    }
+    batch.push(method); characters += size;
+  }
+  if (batch.length) batches.push(batch);
+  const metadata: ContractMetadata = Object.freeze({ manifest, operator, captured: Object.freeze(captured),
+    batches: Object.freeze(batches.map(methods => Object.freeze({ methods: Object.freeze(methods),
+      entries: prepareHarnessCatalog(methods.map(method => method.value), describeContractMethod),
+    }))),
+  });
+  if (manifest === OPERATOR_CONTRACT && Object.isFrozen(manifest) && Object.isFrozen(operator) && isFrozenDataTree(original)) {
+    for (const method of captured) method.assertCurrent();
+    immutableContractMetadata.set(original, metadata);
+  }
+  return metadata;
+}
+
 async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options: CatalogRankingOptions): Promise<readonly ReturnType<typeof partitionInvokableMethods>[]> {
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'assertCurrent', 'retainCurrent', 'sourceOwner']);
   const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
@@ -85,12 +142,14 @@ async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options:
     optionsCurrent(); signal?.throwIfAborted(); manifestCurrent(); operatorCurrent(); arrayIdentityCurrent();
     if (getOperatorContract() !== manifest) throw new ToolInputProjectionError('held');
   };
+  const found = immutableContractMetadata.get(original);
+  const existing = manifest === OPERATOR_CONTRACT && found?.manifest === manifest && found.operator === operator ? found : undefined;
   // The native manifest exceeds a single reading's budget. Each complete method
   // owns its capture; batches change scheduling, never the candidate population.
-  const captured = original.map((method, index) => {
+  const captured = existing?.captured ?? original.map((method, index) => {
     const value = captureModelReadingInput(method);
     const assertSnapshot = captureModelReadingSnapshotGuard(value);
-    return { value, index, assertCurrent: () => assertSnapshot(method) };
+    return Object.freeze({ value, index, assertCurrent: () => assertSnapshot(method) });
   });
   const assertSource = () => {
     assertRoot(); arrayCurrent();
@@ -99,26 +158,12 @@ async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options:
   };
   const assertCurrent = () => { callerCurrent?.(); assertSource(); };
   assertCurrent();
-  const batches: (typeof captured)[] = [];
-  let characters = 0, batch: typeof captured = [];
-  for (const method of captured) {
-    if (!method.value.id) continue;
-    const size = JSON.stringify([method.value.id, method.value.description ?? method.value.title ?? '', method.value]).length;
-    if (batch.length && (characters + size + 16 > 250_000 || batch.length >= 16)) {
-      batches.push(batch); batch = []; characters = 0;
-    }
-    batch.push(method); characters += size;
-  }
-  if (batch.length) batches.push(batch);
-  const describe = (method: OperatorContractMethod) => ({
-    id: method.id, description: method.description ?? method.title ?? '', evidence: method,
-  });
-  const preparedBatches = batches.map(methods => ({ methods, entries: prepareHarnessCatalog(methods.map(method => method.value), describe) }));
+  const { batches } = existing ?? prepareContractMetadata(manifest, operator, original, captured);
   const retained = new Map<string | (() => void), () => void>();
   const results: ReturnType<typeof partitionInvokableMethods>[] = [];
   for (const lane of lanes) {
     const selected: OperatorContractMethod[] = [];
-    for (const { methods, entries } of preparedBatches) {
+    for (const { methods, entries } of batches) {
       assertCurrent();
       const assertIndices = captureCatalogMethods(original, methods.map(method => String(method.index)));
       const assertBatch = () => {
@@ -126,7 +171,7 @@ async function readContractMethodLanes(lanes: readonly DiscoveryLane[], options:
         for (const method of methods) method.assertCurrent();
         for (const guard of retained.values()) guard();
       };
-      const matches = await personalOpsLaneMembers(entries, lane, describe,
+      const matches = await personalOpsLaneMembers(entries, lane, describeContractMethod,
         { ...options, assertCurrent: assertBatch, retainCurrent(guard, key) { if (!retained.has(key ?? guard)) retained.set(key ?? guard, guard); } });
       assertCurrent(); selected.push(...matches);
     }
