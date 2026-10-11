@@ -26,6 +26,17 @@ import { tmpdir } from 'node:os';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 const tempDirs: string[] = [];
+const runtimes: RuntimeServices[] = [];
+
+afterEach(async () => {
+  const shutdowns = runtimes.splice(0).flatMap(runtime => [
+    () => runtime.close(), () => runtime.workspaceCheckpointManager.drain(),
+  ]);
+  const outcomes = await Promise.allSettled(shutdowns.map(async shutdown => shutdown()));
+  const failures: unknown[] = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+  if (failures.length) throw new AggregateError(failures, 'Native fixture teardown failed');
+  for (const root of tempDirs.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 function makeTempDir(prefix: string): string {
   // Callers pass a trailing '-' (historical mkdtemp-prefix convention);
@@ -67,6 +78,7 @@ async function buildServices(opts: { registered: boolean; workingDir?: string; h
     homeDirectory: homeDir,
     getConversationTitle: () => 'checkpoint-registration-test',
   });
+  runtimes.push(services);
   return { services, runtimeBus, workingDir };
 }
 

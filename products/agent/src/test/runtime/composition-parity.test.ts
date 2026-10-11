@@ -36,6 +36,16 @@ import {
 import { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
+const runtimes: RuntimeServices[] = [];
+async function closeRuntimes(): Promise<void> {
+  const shutdowns = runtimes.splice(0).flatMap(runtime => [
+    () => runtime.close(), () => runtime.workspaceCheckpointManager.drain(),
+  ]);
+  const outcomes = await Promise.allSettled(shutdowns.map(async shutdown => shutdown()));
+  const failures: unknown[] = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+  if (failures.length) throw new AggregateError(failures, 'Native fixture teardown failed');
+}
+
 function metadataConfig(options: ConstructorParameters<typeof ConfigManager>[0]): ConfigManager {
   const config = new ConfigManager(options);
   if (!options?.homeDir || !options.workingDir) throw new Error('Fixture roots must be explicit');
@@ -46,7 +56,8 @@ function metadataConfig(options: ConstructorParameters<typeof ConfigManager>[0])
 describe('composition parity: append-only sweep + live config watch', () => {
   let root = '';
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeRuntimes();
     if (root) rmSync(root, { recursive: true, force: true });
     root = '';
   });
@@ -63,7 +74,7 @@ describe('composition parity: append-only sweep + live config watch', () => {
   }
 
   function makeServices(configManager: ConfigManager, workingDir: string, homeDir: string): RuntimeServices {
-    return createRuntimeServices({
+    const services = createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',
       runtimeBus: new RuntimeEventBus(),
@@ -72,6 +83,8 @@ describe('composition parity: append-only sweep + live config watch', () => {
       workingDir,
       homeDirectory: homeDir,
     });
+    runtimes.push(services);
+    return services;
   }
 
   test('runStartupAppendOnlySweep runs at composition with full roots, reclaiming the real on-disk activity.md', () => {
@@ -154,7 +167,8 @@ describe('composition parity: live model discovery refreshes by default, and cal
   // the suite. So the sweep is opt-in, and only the long-lived interactive
   // composition (still running when it resolves) opts in.
   let root = '';
-  afterEach(() => {
+  afterEach(async () => {
+    await closeRuntimes();
     if (root) rmSync(root, { recursive: true, force: true });
     root = '';
   });
@@ -172,7 +186,7 @@ describe('composition parity: live model discovery refreshes by default, and cal
     mkdirSync(workingDir, { recursive: true });
     mkdirSync(configDir, { recursive: true });
 
-    createRuntimeServices({
+    runtimes.push(createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',
       runtimeBus: new RuntimeEventBus(),
@@ -180,7 +194,7 @@ describe('composition parity: live model discovery refreshes by default, and cal
       configManager: metadataConfig({ workingDir, homeDir, surfaceRoot: 'agent' }),
       workingDir,
       homeDirectory: homeDir,
-    });
+    }));
 
     expect(hasProviderModelsCache(configDir)).toBe(false);
 
@@ -202,7 +216,7 @@ describe('composition parity: live model discovery refreshes by default, and cal
     expect(shouldRefreshModels('skip')).toBe(false);
   });
 
-  test('createRuntimeServices starts the sweep by default and not when told to skip', () => {
+  test('createRuntimeServices starts the sweep by default and not when told to skip', async () => {
     const calls: string[] = [];
     const real = ProviderRegistry.prototype.initProviderModelDiscovery;
     ProviderRegistry.prototype.initProviderModelDiscovery = function patched(this: ProviderRegistry) {
@@ -215,14 +229,14 @@ describe('composition parity: live model discovery refreshes by default, and cal
         const homeDir = makeProjectTempDir('gv-discovery');
         const workingDir = join(homeDir, 'workspace');
         mkdirSync(workingDir, { recursive: true });
-        createRuntimeServices({
+        runtimes.push(createRuntimeServices({
           ...(mode === undefined ? {} : { modelDiscovery: mode }),
           runtimeBus: new RuntimeEventBus(),
           runtimeStore: createRuntimeStore(),
           configManager: metadataConfig({ workingDir, homeDir, surfaceRoot: 'agent' }),
           workingDir,
           homeDirectory: homeDir,
-        });
+        }));
       };
 
       build('skip');
@@ -234,7 +248,8 @@ describe('composition parity: live model discovery refreshes by default, and cal
       build(undefined);
       expect(calls).toHaveLength(1);
     } finally {
-      ProviderRegistry.prototype.initProviderModelDiscovery = real;
+      try { await closeRuntimes(); }
+      finally { ProviderRegistry.prototype.initProviderModelDiscovery = real; }
     }
   });
 });
@@ -242,7 +257,8 @@ describe('composition parity: live model discovery refreshes by default, and cal
 describe('composition parity: the trigger family is composed, not just importable', () => {
   let root = '';
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeRuntimes();
     if (root) rmSync(root, { recursive: true, force: true });
     root = '';
   });
@@ -253,7 +269,7 @@ describe('composition parity: the trigger family is composed, not just importabl
     const homeDir = join(root, 'home');
     mkdirSync(workingDir, { recursive: true });
     mkdirSync(join(homeDir, '.goodvibes', 'agent'), { recursive: true });
-    return createRuntimeServices({
+    const services = createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',
       runtimeBus: new RuntimeEventBus(),
@@ -262,6 +278,8 @@ describe('composition parity: the trigger family is composed, not just importabl
       workingDir,
       homeDirectory: homeDir,
     });
+    runtimes.push(services);
+    return services;
   }
 
   test('it honours the shipped-off default and refuses by name', async () => {

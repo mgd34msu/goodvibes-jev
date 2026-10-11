@@ -4,11 +4,12 @@ import { join } from 'node:path';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { RuntimeEventBus } from '@/runtime/index.ts';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../../config/surface.ts';
-import { createRuntimeServices } from '../../runtime/services.ts';
+import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.ts';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 const roots: string[] = [];
+const runtimes: RuntimeServices[] = [];
 const launchToleranceEnvVars = [
   'OPENAI_API_KEY',
   'OPENAI_KEY',
@@ -18,16 +19,20 @@ const originalEnvValues = new Map<string, string | undefined>(
   launchToleranceEnvVars.map((envVar) => [envVar, process.env[envVar]]),
 );
 
-afterEach(() => {
-  for (const root of roots.splice(0)) {
-    rmSync(root, { recursive: true, force: true });
-  }
-  for (const envVar of launchToleranceEnvVars) {
-    const originalValue = originalEnvValues.get(envVar);
-    if (originalValue === undefined) {
-      delete process.env[envVar];
-    } else {
-      process.env[envVar] = originalValue;
+afterEach(async () => {
+  try {
+    const shutdowns = runtimes.splice(0).flatMap(runtime => [
+      () => runtime.close(), () => runtime.workspaceCheckpointManager.drain(),
+    ]);
+    const outcomes = await Promise.allSettled(shutdowns.map(async shutdown => shutdown()));
+    const failures: unknown[] = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+    if (failures.length) throw new AggregateError(failures, 'Native fixture teardown failed');
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  } finally {
+    for (const envVar of launchToleranceEnvVars) {
+      const originalValue = originalEnvValues.get(envVar);
+      if (originalValue === undefined) delete process.env[envVar];
+      else process.env[envVar] = originalValue;
     }
   }
 });
@@ -60,6 +65,7 @@ describe('provider registry launch tolerance', () => {
       workingDir: root,
       homeDirectory: root,
     });
+    runtimes.push(services);
     const provider = services.providerRegistry.get('openai');
 
     expect(process.env.OPENAI_API_KEY).toBeUndefined();

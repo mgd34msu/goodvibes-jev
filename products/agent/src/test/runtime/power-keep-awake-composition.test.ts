@@ -34,8 +34,15 @@ import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
 describe('power.keepAwake local live-apply (config-subscription path)', () => {
   let root = '';
+  const runtimes: RuntimeServices[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+    const shutdowns = runtimes.splice(0).flatMap(runtime => [
+      () => runtime.close(), () => runtime.workspaceCheckpointManager.drain(),
+    ]);
+    const outcomes = await Promise.allSettled(shutdowns.map(async shutdown => shutdown()));
+    const failures: unknown[] = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+    if (failures.length) throw new AggregateError(failures, 'Native fixture teardown failed');
     if (root) rmSync(root, { recursive: true, force: true });
     root = '';
   });
@@ -49,7 +56,7 @@ describe('power.keepAwake local live-apply (config-subscription path)', () => {
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(configDir, { recursive: true });
     const configManager = new ConfigManager({ surfaceRoot: 'agent', workingDir, homeDir, configDir });
-    return createRuntimeServices({
+    const services = createRuntimeServices({
       // Opt out: this process does not outlive the unawaited sweep.
       modelDiscovery: 'skip',
       runtimeBus: new RuntimeEventBus(),
@@ -58,6 +65,8 @@ describe('power.keepAwake local live-apply (config-subscription path)', () => {
       workingDir,
       homeDirectory: homeDir,
     });
+    runtimes.push(services);
+    return services;
   }
 
   test('a config write (mirroring the settings modal\'s setDynamic call) flips the real PowerManager state, with no bespoke call site', async () => {
