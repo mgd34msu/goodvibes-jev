@@ -95,7 +95,7 @@ test('real account lifecycle reports config and aliased secret ABA changes witho
       stop = capability.onAccountInvalidation!((...args: unknown[]) => { observed.push(args); });
       return { async close() {} };
     }, context, routing, controls, { configManager, secretsManager });
-    expect(Object.keys(captured!).sort()).toEqual(['createEmailService', 'gatePolling', 'onAccountInvalidation', 'onConfigurationChange']);
+    expect(Object.keys(captured!).sort()).toEqual(['acquireHostedScreening', 'createEmailService', 'gatePolling', 'onAccountInvalidation', 'onConfigurationChange']);
     expect(secretReads).not.toHaveBeenCalled();
     const initial = observed.length;
     configManager.set('surfaces.slack.workspaceId', 'T-SYNTHETIC-ONE');
@@ -108,7 +108,8 @@ test('real account lifecycle reports config and aliased secret ABA changes witho
     for (const value of ['synthetic-first', 'synthetic-second', 'synthetic-first']) {
       await secretsManager.set('SYNTHETIC_ALIAS_TARGET', value);
     }
-    expect(observed.length).toBe(beforeSecrets + 3);
+    // Both mutation onset and settlement notify, including alias/no-op writes.
+    expect(observed.length).toBe(beforeSecrets + 6);
     expect(observed.every(args => args.length === 0)).toBe(true);
     expect(secretReads).not.toHaveBeenCalled();
     const beforeClose = observed.length;

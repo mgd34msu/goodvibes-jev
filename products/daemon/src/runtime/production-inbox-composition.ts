@@ -5,6 +5,8 @@ import { createSlackDaemonInboxSourceFactory, type SlackDaemonInboxOptions, type
 import { createEmailDaemonInboxSourceFactory, type EmailDaemonInboxOptions, type EmailDaemonInboxSourceFactories } from './email-inbox-composition.js';
 import { createConfiguredDiscordDaemonInboxSourceFactory, createDiscordDaemonInboxSourceFactory, type DiscordDaemonInboxOptions, type DiscordDaemonInboxSourceFactories } from './discord-inbox-composition.js';
 import type { DaemonInboxFactory } from './daemon-handler-composition.js';
+import { createSurfaceEmailInboxConfigReader } from '@goodvibes-jev/engine/sdk/platform/email';
+import { createConfiguredHostedInboxSourceFactory } from './configured-inbox-accounts.js';
 
 /** Original254699bf inbox/index.ts registers precisely these three providers. */
 export const BUILTIN_DAEMON_INBOX_PROVIDERS = ['slack', 'discord', 'email'] as const;
@@ -34,14 +36,14 @@ function assertUnconfigured(provider: Provider, context: Parameters<DaemonInboxF
   }
   const config: { get(key: string): unknown } = context.configManager;
   if (provider !== 'email' && config.get(`surfaces.${provider}.enabled`) === true) {
-    throw new Error(`Configured ${provider} inbox requires an admitted account and trusted local screening authority`);
+    throw new Error(`Configured ${provider} inbox requires an admitted account and screening authority`);
   }
   for (const field of fields[provider]) {
     const setting = config.get(field);
     const presence = context.credentials.inspectConfigSecret?.(field);
     if (presence === undefined || presence === 'unavailable') throw new Error('Inbox credential admission is unavailable');
     if ((typeof setting === 'string' && setting.trim()) || presence === 'present') {
-      throw new Error(`Configured ${provider} inbox requires an admitted account and trusted local screening authority`);
+      throw new Error(`Configured ${provider} inbox requires an admitted account and screening authority`);
     }
   }
 }
@@ -109,11 +111,26 @@ export function createProductionDaemonInboxFactory(options: ProductionDaemonInbo
 ): DaemonInboxFactory {
   const configuredDiscord = discordScreening ? createConfiguredDiscordDaemonInboxSourceFactory(discordScreening, factories.discord) : undefined;
   const absentDiscord = unconfiguredSource('discord');
+  const nativeSources: Record<Provider, DaemonInboxSourceFactory> = {
+    slack: createConfiguredHostedInboxSourceFactory('slack', factories),
+    discord: createConfiguredHostedInboxSourceFactory('discord', factories),
+    email: createConfiguredHostedInboxSourceFactory('email', factories),
+  };
+  const configuredOrAbsent = (provider: Provider): DaemonInboxSourceFactory => {
+    const absent = unconfiguredSource(provider);
+    return (context, routing, controls) => {
+      const reader: { get(key: string): unknown } = context.configManager;
+      const enabled = provider === 'email' ? createSurfaceEmailInboxConfigReader(key => reader.get(key))('email.enabled') === true
+        : reader.get(`surfaces.${provider}.enabled`) === true;
+      const native = nativeSources[provider];
+      return (enabled && controls.acquireHostedScreening ? native : absent)(context, routing, controls);
+    };
+  };
   return createMultiOwnerDaemonInboxFactory([
-    options.slack ? createSlackDaemonInboxSourceFactory(options.slack, factories.slack) : unconfiguredSource('slack'),
+    options.slack ? createSlackDaemonInboxSourceFactory(options.slack, factories.slack) : configuredOrAbsent('slack'),
     options.discord ? createDiscordDaemonInboxSourceFactory(options.discord, factories.discord)
       : (context, routing, controls) => (configuredDiscord && context.configManager.get('surfaces.discord.enabled') === true
-        ? configuredDiscord : absentDiscord)(context, routing, controls),
-    options.email ? createEmailDaemonInboxSourceFactory(options.email, factories.email) : unconfiguredSource('email'),
+        ? configuredDiscord : controls.acquireHostedScreening ? configuredOrAbsent('discord') : absentDiscord)(context, routing, controls),
+    options.email ? createEmailDaemonInboxSourceFactory(options.email, factories.email) : configuredOrAbsent('email'),
   ]);
 }

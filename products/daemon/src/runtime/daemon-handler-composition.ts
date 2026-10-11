@@ -17,6 +17,7 @@ import { inboxPollerGate } from './cluster-composition.js';
 import type { ShellPathService } from './index.js';
 import type { SecretsManager } from '../config/secrets.js';
 import type { BrowserCheckoutSeamHolder } from './browser-checkout-seam-holder.js';
+import type { HostedInboxScreeningAcquisition, HostedInboxScreeningOperation, HostedInboxScreeningSource } from './hosted-source-screening-composition.js';
 
 /**
  * Required while the built-in adapter/triage product port remains incomplete.
@@ -34,6 +35,8 @@ export interface DaemonInboxControls extends Required<Pick<RegisterInboxSurfaceO
   readonly onConfigurationChange?: (key: ConfigKey, listener: () => void) => () => void;
   /** Trusted root-owned constructor; no credentials or generic secret access escape. */
   readonly createEmailService?: () => { readonly service: EmailService; close(): void };
+  /** Native exact-pair consent, privately resolved credentials and revocable source lifetime. */
+  readonly acquireHostedScreening?: (source: HostedInboxScreeningSource, operation: HostedInboxScreeningOperation) => Promise<HostedInboxScreeningAcquisition>;
 }
 
 export type DaemonInboxFactory = (

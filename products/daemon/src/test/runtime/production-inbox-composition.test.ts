@@ -7,6 +7,11 @@ import { createProductionDaemonInboxFactory } from '../../runtime/production-inb
 import type { HandlerContext } from '../../daemon/handlers/context.js';
 import type { DaemonInboxFactory } from '../../runtime/daemon-handler-composition.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { SecretsManager as NativeSecretsManager } from '../../config/secrets.js';
+import { registerOwnedMailInbox } from '../../runtime/owned-inbox-mail.js';
+import { createDiscordInboxOwner, createSlackInboxOwner, createEmailInboxOwner } from '@goodvibes-jev/engine/sdk/platform/intake';
+import type { OwnedInboxSource } from '@goodvibes-jev/engine/sdk/platform/intake';
+import type { HostedInboxScreeningAcquisition } from '../../runtime/hosted-source-screening-composition.js';
 
 function fixture() {
   const root = makeOwnedTempDir('production-inbox');
@@ -165,4 +170,114 @@ test('shutdown retires admitted absence reads before releasing subscriptions and
   await surface.close();
   expect((await settled).every(row => row.status === 'rejected')).toBe(true);
   expect(f.listeners.size).toBe(0); expect(f.ctx.catalog.hasHandler('channels.inbox.list')).toBe(false);
+});
+
+for (const provider of ['slack', 'discord', 'email'] as const) {
+  test(`default production ${provider} reaches its actual account owner through native hosted consent without injected screening`, async () => {
+    const f = fixture();
+    const originalEnvironment = { abacus: process.env.ABACUSAI_API_KEY, typesafe: process.env.TYPESAFE_API_KEY };
+    delete process.env.ABACUSAI_API_KEY; delete process.env.TYPESAFE_API_KEY;
+    const owners: Array<{ close(): Promise<void> }> = [];
+    const secretsManager = new NativeSecretsManager({ globalHome: f.root, projectRoot: f.root });
+    try {
+      await secretsManager.set('ABACUSAI_API_KEY', 'synthetic-native-abacus-key');
+      await secretsManager.set('TYPESAFE_API_KEY', 'synthetic-native-typesafe-key');
+      f.configManager.set('surfaces.hostedInboxScreening', 'abacus-typesafe-provider-managed');
+      if (provider === 'slack') {
+        f.configManager.set('surfaces.slack.enabled', true); f.configManager.set('surfaces.slack.workspaceId', 'T-SYNTHETIC');
+        f.configManager.set('surfaces.slack.inboxUserId', 'U-SYNTHETIC');
+      } else if (provider === 'discord') {
+        f.configManager.set('surfaces.discord.enabled', true); f.configManager.set('surfaces.discord.inboxBotUserId', '100000000000000001');
+        f.configManager.set('surfaces.discord.inboxChannelIds', '100000000000000002');
+      } else {
+        f.configManager.set('surfaces.email.imapHost', 'imap.synthetic.test'); f.configManager.set('surfaces.email.imapUser', 'mailbox@synthetic.test');
+      }
+      let admitted = 0;
+      const observe = (screening: Parameters<typeof createDiscordInboxOwner>[1]['screening']) => {
+        admitted++; expect('kind' in screening && screening.kind).toBe('hosted');
+        expect(screening.authority.retention).toBe('provider-managed-zero-retention-unverified');
+        screening.authority.assertCurrent();
+      };
+      const factory = createProductionDaemonInboxFactory({}, {
+        slack: { async createOwner(context, options) {
+          observe(options.screening); expect(options.account).toEqual({ workspaceId: 'T-SYNTHETIC', userId: 'U-SYNTHETIC' });
+          const owner = await createSlackInboxOwner(context, options); owners.push(owner);
+          throw new Error('Synthetic fixture stops after actual Slack owner construction');
+        } },
+        discord: { async createOwner(context, options) {
+          observe(options.screening); expect(options.account.userId).toBe('100000000000000001');
+          expect(options.channels.channelIds).toEqual(['100000000000000002']);
+          const owner = await createDiscordInboxOwner(context, options); owners.push(owner);
+          throw new Error('Synthetic fixture stops after actual Discord owner construction');
+        } },
+        email: { createOwner(options) {
+          observe(options.screening); expect(options.account).toMatchObject({ host: 'imap.synthetic.test', username: 'mailbox@synthetic.test', security: 'tls' });
+          const owner = createEmailInboxOwner(options); owners.push(owner);
+          throw new Error('Synthetic fixture stops after actual email owner construction');
+        } },
+      });
+      const nativeRouting: Parameters<DaemonInboxFactory>[1] = {
+        async initialize() {}, async close() {}, unregister() {}, resolveProfileId() { return 'synthetic-profile'; },
+      };
+      await expect(registerOwnedMailInbox(factory, { ...f.ctx, credentials: createDaemonCredentialStore(secretsManager) }, nativeRouting, f.controls,
+        { configManager: f.configManager, secretsManager })).rejects.toThrow();
+      expect(admitted).toBe(1); expect(owners).toHaveLength(1);
+      expect(f.polling).toBe(0); expect(f.listeners.size).toBe(0);
+      expect(f.ctx.catalog.hasHandler('channels.inbox.list')).toBe(false);
+    } finally {
+      await Promise.all(owners.map(owner => owner.close()));
+      if (originalEnvironment.abacus === undefined) delete process.env.ABACUSAI_API_KEY; else process.env.ABACUSAI_API_KEY = originalEnvironment.abacus;
+      if (originalEnvironment.typesafe === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = originalEnvironment.typesafe;
+    }
+  });
+}
+
+test('native root shutdown aborts screening immediately and drains the owned source before closing acquisition', async () => {
+  const f = fixture(); const env = { abacus: process.env.ABACUSAI_API_KEY, typesafe: process.env.TYPESAFE_API_KEY };
+  delete process.env.ABACUSAI_API_KEY; delete process.env.TYPESAFE_API_KEY;
+  const sourceDraining = Promise.withResolvers<void>(), releaseSource = Promise.withResolvers<void>();
+  const events: string[] = [];
+  const secretsManager = new NativeSecretsManager({ globalHome: f.root, projectRoot: f.root });
+  let acquisition: HostedInboxScreeningAcquisition | undefined;
+  let registration: Awaited<ReturnType<typeof registerOwnedMailInbox>> | undefined;
+  try {
+    await secretsManager.set('ABACUSAI_API_KEY', 'synthetic-root-abacus'); await secretsManager.set('TYPESAFE_API_KEY', 'synthetic-root-typesafe');
+    f.configManager.set('surfaces.hostedInboxScreening', 'abacus-typesafe-provider-managed');
+    f.configManager.set('surfaces.slack.enabled', true); f.configManager.set('surfaces.slack.workspaceId', 'T-SYNTHETIC');
+    f.configManager.set('surfaces.slack.inboxUserId', 'U-SYNTHETIC');
+    const production = createProductionDaemonInboxFactory({}, { slack: {
+      // The provider owner is real. This explicit storage seam performs no poll.
+      createOwner: createSlackInboxOwner,
+      createSource(): OwnedInboxSource { return { providerIds: ['slack'], ready: Promise.resolve(), unregister() {},
+        async acquireRead() { throw new Error('Synthetic close fixture does not read inboxes'); },
+        async close() { events.push('source draining'); sourceDraining.resolve(); await releaseSource.promise; events.push('source drained'); },
+      }; },
+    } });
+    const nativeRouting: Parameters<DaemonInboxFactory>[1] = {
+      async initialize() {}, async close() {}, unregister() {}, resolveProfileId() { return 'synthetic-profile'; },
+    };
+    registration = await registerOwnedMailInbox((context, routing, controls) => production(context, routing, { ...controls,
+      async acquireHostedScreening(source, operation) {
+        if (!controls.acquireHostedScreening) throw new Error('Expected native hosted acquisition');
+        acquisition = await controls.acquireHostedScreening(source, operation);
+        const captured = acquisition;
+        return { options: captured.options, async close() { events.push('acquisition closed'); await captured.close(); } };
+      },
+    }), { ...f.ctx, credentials: createDaemonCredentialStore(secretsManager) }, nativeRouting, f.controls,
+    { configManager: f.configManager, secretsManager });
+    await registration.ready;
+    if (!acquisition) throw new Error('Expected actual native acquisition');
+    const captured = acquisition;
+    const closing = registration.close(); expect(registration.close()).toBe(closing);
+    expect(captured.options.authority.signal.aborted).toBe(true);
+    expect(() => captured.options.authority.assertCurrent()).toThrow();
+    await sourceDraining.promise; expect(events).toEqual(['source draining']);
+    releaseSource.resolve(); await closing;
+    expect(events).toEqual(['source draining', 'source drained', 'acquisition closed']);
+    expect(f.ctx.catalog.hasHandler('channels.inbox.list')).toBe(false);
+  } finally {
+    releaseSource.resolve(); await registration?.close();
+    if (env.abacus === undefined) delete process.env.ABACUSAI_API_KEY; else process.env.ABACUSAI_API_KEY = env.abacus;
+    if (env.typesafe === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = env.typesafe;
+  }
 });
