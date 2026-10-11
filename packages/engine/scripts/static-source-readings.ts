@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fstatSync, fsyncSync, openSync, readFileSync, readSync, renameSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, createReadStream, existsSync, fstatSync, fsyncSync, openSync, readFileSync, readSync, renameSync, writeFileSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { gunzipSync, gzipSync } from 'node:zlib';
-import { canonicalJson, choice, hashState, JudgmentError, noul, PINNED_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
+import { pipeline } from 'node:stream/promises';
+import { createGunzip, gunzipSync, gzipSync } from 'node:zlib';
+import { canonicalJson, choice, hashState, JudgmentError, LIMITS, noul, PINNED_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, deferredWork, INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS, staticOffendingAnchor } from './batteries/static-source.ts';
 import { deferredBatteryPolicyStatements, internalSourceAnchors, markdownSourceContext, structuredSourceContext } from './static-source-anchors.ts';
 import { STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, STATIC_WEAK_ANCHOR_INSTRUCTIONS, staticWeakAnchor } from './batteries/static-weak-anchor.ts';
@@ -175,6 +176,203 @@ export function loadStaticSourceReadings(path = STATIC_READINGS_PATH): StaticSou
   }
   catch { return null; }
 }
+// Scalar capacity follows the authorized request context; oversize refuses the entire checkpoint.
+export const STATIC_CHECKPOINT_MAX_SCALAR_CHARS = LIMITS.maxRequestTokens * 3;
+const rootFields = new Set(['format', 'readingPlanVersion', 'decisionSourceHash', 'readings', 'captureSources', 'captureBatterySources']);
+const mapFields = new Set(['readings', 'captureSources', 'captureBatterySources']);
+const rootKeyChars = Math.max(...[...rootFields].map(field => field.length));
+const whitespace = (c: string): boolean => c === ' ' || c === '\t' || c === '\r' || c === '\n';
+const digit = (c: string): boolean => c >= '0' && c <= '9';
+const own = (o: Record<string, unknown>, k: string, v: unknown): void => {
+  Object.defineProperty(o, k, { value: v, enumerable: true, configurable: true, writable: true });
+};
+type Phase = 'key-or-end' | 'key' | 'colon' | 'value-or-end' | 'value' | 'separator';
+interface Frame {
+  kind: 'object' | 'array'; phase: Phase; retain: boolean; root: boolean;
+  object: Record<string, unknown> | null; array: unknown[] | null; key: string | null;
+}
+interface StringToken {
+  kind: 'string'; role: 'key' | 'value'; retain: boolean; rootKey: boolean;
+  parts: string[]; pending: string; count: number; escape: boolean; unicode: string | null;
+}
+type NumberPhase = 'sign' | 'zero' | 'integer' | 'dot' | 'fraction' | 'exponent' | 'exponent-sign' | 'exponent-digits';
+interface NumberToken { kind: 'number'; retain: boolean; text: string; count: number; phase: NumberPhase }
+interface LiteralToken { kind: 'literal'; retain: boolean; expected: 'true' | 'false' | 'null'; at: number }
+type Token = StringToken | NumberToken | LiteralToken;
+
+/** Build admitted data incrementally; validate discarded metadata without retaining it. */
+export class CheckpointValueReader {
+  private frames: Frame[] = [];
+  private token: Token | null = null;
+  private result: Record<string, unknown> | null = null;
+  private started = false;
+  private done = false;
+
+  private append(token: StringToken, text: string): void {
+    token.count += text.length;
+    if (!token.retain) return;
+    if (token.rootKey && token.count > rootKeyChars) {
+      token.retain = false; token.parts = []; token.pending = ''; return;
+    }
+    if (token.count > STATIC_CHECKPOINT_MAX_SCALAR_CHARS) throw new Error('Checkpoint scalar exceeds supported context capacity');
+    token.pending += text;
+    if (token.pending.length >= 4096) { token.parts.push(token.pending); token.pending = ''; }
+  }
+
+  private complete(value: unknown): void {
+    const frame = this.frames.at(-1);
+    if (!frame) throw new Error('Missing checkpoint parent');
+    if (frame.kind === 'array') {
+      if (frame.retain) frame.array!.push(value);
+    } else if (frame.retain && frame.key !== null && (!frame.root || rootFields.has(frame.key))) {
+      own(frame.object!, frame.key, value);
+    }
+    frame.key = null;
+    frame.phase = 'separator';
+  }
+
+  private retain(character: string): boolean {
+    const parent = this.frames.at(-1);
+    if (!parent?.retain) return false;
+    if (!parent.root) return true;
+    if (parent.key === null || !rootFields.has(parent.key)) return false;
+    if (mapFields.has(parent.key)) return character === '{';
+    if (parent.key === 'decisionSourceHash') return character === '"';
+    return character === '-' || digit(character);
+  }
+
+  private startValue(character: string): void {
+    const retain = this.retain(character);
+    if (character === '{' || character === '[') {
+      const object = character === '{';
+      this.frames.push({ kind: object ? 'object' : 'array', phase: object ? 'key-or-end' : 'value-or-end', retain, root: false,
+        object: retain && object ? {} : null, array: retain && !object ? [] : null, key: null });
+    } else if (character === '"') {
+      this.token = { kind: 'string', role: 'value', retain, rootKey: false, parts: [], pending: '', count: 0, escape: false, unicode: null };
+    } else if (character === '-' || digit(character)) {
+      this.token = { kind: 'number', retain, text: retain ? character : '', count: 1,
+        phase: character === '-' ? 'sign' : character === '0' ? 'zero' : 'integer' };
+    } else if (character === 't' || character === 'f' || character === 'n') {
+      this.token = { kind: 'literal', retain, expected: character === 't' ? 'true' : character === 'f' ? 'false' : 'null', at: 1 };
+    } else throw new Error('Invalid checkpoint value');
+  }
+
+  private close(): void {
+    const frame = this.frames.pop();
+    if (!frame) throw new Error('Unexpected checkpoint close');
+    const value = frame.retain ? frame.kind === 'object' ? frame.object : frame.array : null;
+    if (frame.root) { this.result = frame.object; this.done = true; }
+    else this.complete(value);
+  }
+
+  feed(chunk: string): void {
+    for (let at = 0; at < chunk.length; at++) {
+      const c = chunk[at]!;
+      const token = this.token;
+      if (token?.kind === 'string') {
+        if (token.unicode !== null) {
+          if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) throw new Error('Invalid checkpoint Unicode escape');
+          token.unicode += c;
+          if (token.unicode.length === 4) { this.append(token, String.fromCharCode(Number.parseInt(token.unicode, 16))); token.unicode = null; }
+        } else if (token.escape) {
+          token.escape = false;
+          if (c === 'u') token.unicode = '';
+          else {
+            const escaped = c === '"' ? '"' : c === '\\' ? '\\' : c === '/' ? '/' : c === 'b' ? '\b' : c === 'f' ? '\f' : c === 'n' ? '\n' : c === 'r' ? '\r' : c === 't' ? '\t' : null;
+            if (escaped === null) throw new Error('Invalid checkpoint escape');
+            this.append(token, escaped);
+          }
+        } else if (c === '\\') token.escape = true;
+        else if (c === '"') {
+          const value = token.retain ? [...token.parts, token.pending].join('') : null;
+          this.token = null;
+          if (token.role === 'key') { const frame = this.frames.at(-1)!; frame.key = value; frame.phase = 'colon'; }
+          else this.complete(value);
+        } else {
+          if (c.charCodeAt(0) < 32) throw new Error('Unescaped checkpoint control character');
+          this.append(token, c);
+        }
+        continue;
+      }
+      if (token?.kind === 'literal') {
+        if (c !== token.expected[token.at++]) throw new Error('Invalid checkpoint literal');
+        if (token.at === token.expected.length) {
+          this.token = null;
+          this.complete(token.retain ? JSON.parse(token.expected) : null);
+        }
+        continue;
+      }
+      if (token?.kind === 'number') {
+        if (whitespace(c) || c === ',' || c === '}' || c === ']') {
+          if (!['zero', 'integer', 'fraction', 'exponent-digits'].includes(token.phase)) throw new Error('Incomplete checkpoint number');
+          this.token = null; this.complete(token.retain ? JSON.parse(token.text) : null); at--; continue;
+        }
+        if (digit(c)) {
+          if (token.phase === 'zero') throw new Error('Leading checkpoint zero');
+          if (token.phase === 'sign') token.phase = c === '0' ? 'zero' : 'integer';
+          else if (token.phase === 'dot') token.phase = 'fraction';
+          else if (token.phase === 'exponent' || token.phase === 'exponent-sign') token.phase = 'exponent-digits';
+        } else if (c === '.' && (token.phase === 'zero' || token.phase === 'integer')) token.phase = 'dot';
+        else if ((c === 'e' || c === 'E') && ['zero', 'integer', 'fraction'].includes(token.phase)) token.phase = 'exponent';
+        else if ((c === '+' || c === '-') && token.phase === 'exponent') token.phase = 'exponent-sign';
+        else throw new Error('Invalid checkpoint number');
+        token.count++;
+        if (token.retain) {
+          if (token.count > STATIC_CHECKPOINT_MAX_SCALAR_CHARS) throw new Error('Checkpoint scalar exceeds supported context capacity');
+          token.text += c;
+        }
+        continue;
+      }
+
+      if (whitespace(c)) continue;
+      if (this.done) throw new Error('Trailing checkpoint content');
+      if (!this.started) {
+        if (c !== '{') throw new Error('Checkpoint must be an object');
+        this.started = true;
+        this.frames.push({ kind: 'object', phase: 'key-or-end', retain: true, root: true, object: {}, array: null, key: null });
+        continue;
+      }
+      const frame = this.frames.at(-1)!;
+      if (frame.phase === 'key-or-end' && c === '}') { this.close(); continue; }
+      if (frame.phase === 'value-or-end' && c === ']') { this.close(); continue; }
+      if (frame.phase === 'key' || frame.phase === 'key-or-end') {
+        if (c !== '"') throw new Error('Checkpoint key must be quoted');
+        this.token = { kind: 'string', role: 'key', retain: frame.retain, rootKey: frame.root,
+          parts: [], pending: '', count: 0, escape: false, unicode: null };
+      } else if (frame.phase === 'colon') {
+        if (c !== ':') throw new Error('Missing checkpoint colon');
+        frame.phase = 'value';
+      } else if (frame.phase === 'value' || frame.phase === 'value-or-end') this.startValue(c);
+      else if (frame.phase === 'separator') {
+        if (c === ',') frame.phase = frame.kind === 'object' ? 'key' : 'value';
+        else if ((frame.kind === 'object' && c === '}') || (frame.kind === 'array' && c === ']')) this.close();
+        else throw new Error('Missing checkpoint separator');
+      }
+    }
+  }
+
+  finish(): StaticSourceReadings | null {
+    if (!this.done || this.token || this.frames.length || this.result === null) throw new Error('Truncated checkpoint');
+    return parseStaticSourceReadings(this.result);
+  }
+}
+
+export async function loadStaticSourceCheckpoint(path: string): Promise<StaticSourceReadings | null> {
+  if (!existsSync(path)) return null;
+  const reader = new CheckpointValueReader();
+  const decoder = new StringDecoder('utf8');
+  const consume = async (source: AsyncIterable<Buffer>): Promise<void> => {
+    for await (const chunk of source) reader.feed(decoder.write(chunk));
+    reader.feed(decoder.end());
+  };
+  try {
+    const source = createReadStream(path, { highWaterMark: 64 * 1024 });
+    if (path.endsWith('.gz')) await pipeline(source, createGunzip({ chunkSize: 64 * 1024 }), consume);
+    else await pipeline(source, consume);
+    return reader.finish();
+  } catch { return null; }
+}
+
 export function saveStaticSourceReadings(readings: StaticSourceReadings, path = STATIC_READINGS_PATH): void {
   const ordered = Object.fromEntries(Object.entries(readings.readings).sort(([a], [b]) => a.localeCompare(b)));
   const text = `${JSON.stringify({ ...readings, readings: ordered })}\n`;

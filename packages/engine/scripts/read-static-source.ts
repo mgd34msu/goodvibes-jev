@@ -8,7 +8,7 @@ import { collectInternalIdentifierCandidates, INTERNAL_ID_ROOT, scanTargetsFromE
 import { isInternalIdentifierExempt } from './internal-identifier-rule.ts';
 import { collectDeferredSourceCandidates, TODO_ROOT } from './no-todo-markers.ts';
 import { sourceMarkerAnchors } from './no-todo-marker-rules.ts';
-import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, projectCurrentStaticSourceReadings, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_READINGS_PATH, STATIC_SOURCE_READING_PLAN_VERSION, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, type StaticSourceInput, type StaticSourceReadings, type StaticSourceReceipt } from './static-source-readings.ts';
+import { captureStaticInputs, loadStaticSourceCheckpoint, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, projectCurrentStaticSourceReadings, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_READINGS_PATH, STATIC_SOURCE_READING_PLAN_VERSION, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, type StaticSourceInput, type StaticSourceReadings, type StaticSourceReceipt } from './static-source-readings.ts';
 
 export function collectStaticInputs(): StaticSourceInput[] {
   const internal = collectInternalIdentifierCandidates(INTERNAL_ID_ROOT, scanTargetsFromEnvironment(process.env.INTERNAL_ID_DIRS_JSON))
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
   if (values['inventory-only']) return;
   if (!values.log) throw new Error('--log is required to retain genuine provider evidence');
   mkdirSync(dirname(resolve(values.log)), { recursive: true });
-  const previous = loadStaticSourceJournal(journalPath, loadStaticSourceReadings(checkpointPath) ?? loadStaticSourceReadings(path));
+  const previous = loadStaticSourceJournal(journalPath, await loadStaticSourceCheckpoint(checkpointPath) ?? loadStaticSourceReadings(path));
   const captureSources = { ...previous?.captureSources, [decisionSourceHash]: staticDecisionSourceManifest() };
   const captureBatterySources = { ...previous?.captureBatterySources,
     [decisionSourceHash]: readFileSync(resolve(import.meta.dir, 'batteries/static-source.ts'), 'utf8') };

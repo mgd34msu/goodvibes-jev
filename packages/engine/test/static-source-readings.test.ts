@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { canonicalJson, hashState, noul, SqliteDecisionLog, toJson, validateContextBudget, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { captureStaticInputs, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, parseStaticSourceReadings, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, staticSelectionCandidates, staticSelectionContext, type StaticSourceReadings } from '../scripts/static-source-readings.ts';
+import { captureStaticInputs, CheckpointValueReader, loadStaticSourceCheckpoint, loadStaticSourceJournal, loadStaticSourceReadings, openStaticSourceJournal, parseStaticSourceReadings, readStaticInput, revalidateStaticInput, saveStaticSourceReadings, sha256, STATIC_CHECKPOINT_MAX_SCALAR_CHARS, staticDecisionSourceHash, staticDecisionSourceManifest, staticInputCaptureComplete, staticInputKey, staticInputStanding, staticSelectionCandidates, staticSelectionContext, type StaticSourceReadings } from '../scripts/static-source-readings.ts';
 import { INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, staticOffendingAnchor } from '../scripts/batteries/static-source.ts';
 import { preparedStaticReadings } from './_helpers/static-source-evidence.ts';
 
@@ -520,4 +520,129 @@ test('exact observation revalidation preserves old wire provenance and requires 
   const retainedWeak = revalidateStaticInput(captured, weak);
   expect(retainedWeak).not.toBeNull();
   expect(staticInputStanding(captured, { ...weak, readings: { [staticInputKey(captured)]: retainedWeak } }).kind).toBe('held');
+});
+
+test('streaming checkpoints match native complete JSON values and ordered histories', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-checkpoint-stream-equivalence-'));
+  const text = String.raw`{"format":1,"readingPlanVersion":3,"decisionSourceHash":"controlled","readings":{"replace":{"old":true},"__proto__":{"kept":true},"replace":{"history":[{"answers":{"violation":{"type":"noul","noul":0.9876543210987654}}},null]},"numbers":[0,-0,1e-3,1e400],"escaped":"quote\" slash\\ control\b\f\n\r\t unicode\ud800\ud83d\ude00"},"captureSources":{"__proto__":{"kept":true},"ordered":[["a","b"],["c","d"]]},"captureBatterySources":{"original":"exact complete source"},"ignored":{"also":"validated"}}`;
+  try {
+    const expected = parseStaticSourceReadings(JSON.parse(text));
+    for (const size of [1, 2, 7, 61, 64 * 1024]) {
+      const reader = new CheckpointValueReader();
+      for (let at = 0; at < text.length; at += size) reader.feed(text.slice(at, at + size));
+      const actual = reader.finish();
+      expect(actual).toEqual(expected);
+      expect(Object.hasOwn(actual!.readings, '__proto__')).toBe(true);
+      expect(Object.getPrototypeOf(actual!.readings)).toBe(Object.prototype);
+      const numbers = actual!.readings.numbers as readonly number[];
+      expect(Object.is(numbers[1], -0)).toBe(true);
+      expect(numbers[3]).toBe(Infinity);
+    }
+    for (const extension of ['.json', '.json.gz']) {
+      const path = join(root, `checkpoint${extension}`);
+      writeFileSync(path, extension.endsWith('.gz') ? gzipSync(text) : text);
+      expect(await loadStaticSourceCheckpoint(path)).toEqual(loadStaticSourceReadings(path));
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('discarded metadata and overwritten wrong-type maps validate without scalar storage', () => {
+  const large = 'x'.repeat(STATIC_CHECKPOINT_MAX_SCALAR_CHARS + 65536);
+  const texts = [
+    `{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":${JSON.stringify(large)}}`,
+    `{"format":1,"decisionSourceHash":"controlled","readings":{},${JSON.stringify(large)}:{"nested":[${JSON.stringify(large)},123.5e-2,true,null]}}`,
+    `{"format":1,"decisionSourceHash":"controlled","readings":[${JSON.stringify(large)}],"readings":{},"captureSources":[${JSON.stringify(large)}],"captureSources":{}}`,
+    `{"format":1,"decisionSourceHash":"controlled","readings":{"removed":true},"readings":{"last":true}}`,
+  ];
+  for (const text of texts) {
+    const reader = new CheckpointValueReader();
+    for (let at = 0; at < text.length; at += 4093) reader.feed(text.slice(at, at + 4093));
+    expect(reader.finish()).toEqual(parseStaticSourceReadings(JSON.parse(text)));
+  }
+});
+
+test('streaming checkpoints refuse every damaged complete-document boundary', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-checkpoint-stream-refusal-'));
+  try {
+    const path = join(root, 'checkpoint.json');
+    const valid = '{"format":1,"decisionSourceHash":"controlled","readings":{"nested":[{"escaped":"a\\\"b","n":-0.125e+2},false]}}';
+    for (let at = 0; at < valid.length; at++) {
+      writeFileSync(path, valid.slice(0, at));
+      expect(await loadStaticSourceCheckpoint(path)).toBeNull();
+    }
+    for (const text of [
+      valid + ' trailing', valid + valid,
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":[1,]}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":{"x":"\\q"}}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":{"x":"\\uQQQQ"}}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":01}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":1.}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":1e+}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"ignored":trux}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":[true]}',
+      '{"format":1,"readingPlanVersion":4,"decisionSourceHash":"controlled","readings":{}}',
+      '{"format":1,"decisionSourceHash":"controlled","readings":{},"captureSources":null}',
+    ]) {
+      writeFileSync(path, text);
+      expect(await loadStaticSourceCheckpoint(path)).toEqual(loadStaticSourceReadings(path));
+      expect(await loadStaticSourceCheckpoint(path)).toBeNull();
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('streaming plain and gzip checkpoints preserve split text and refuse compressed corruption', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-checkpoint-stream-text-'));
+  try {
+    const prefix = '{"format":1,"decisionSourceHash":"controlled","readings":{"text":"';
+    const padding = 'a'.repeat(64 * 1024 - Buffer.byteLength(prefix) - 1);
+    const bytes = Buffer.from(`${prefix}${padding}😀é"}}`);
+    const malformed = Buffer.concat([Buffer.from(prefix), Buffer.from([0xc3, 0x28]), Buffer.from('"}}')]);
+    for (const content of [bytes, malformed]) for (const extension of ['.json', '.json.gz']) {
+      const path = join(root, `checkpoint${extension}`);
+      writeFileSync(path, extension.endsWith('.gz') ? gzipSync(content) : content);
+      expect(await loadStaticSourceCheckpoint(path)).toEqual(loadStaticSourceReadings(path));
+    }
+    const gzipPath = join(root, 'damaged.json.gz');
+    const encoded = gzipSync(bytes);
+    const corrupt = Buffer.from(encoded); corrupt[corrupt.length - 5] = corrupt[corrupt.length - 5]! ^ 0xff;
+    for (const content of [Buffer.from('not compressed'), encoded.subarray(0, 7), encoded.subarray(0, encoded.length - 1), corrupt]) {
+      writeFileSync(gzipPath, content);
+      expect(await loadStaticSourceCheckpoint(gzipPath)).toBeNull();
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('streaming retained-scalar capacity refuses the complete checkpoint without changing bytes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-checkpoint-stream-capacity-'));
+  try {
+    const path = join(root, 'checkpoint.json');
+    const text = JSON.stringify({ format: 1, decisionSourceHash: 'controlled', readings: { oversized: 'x'.repeat(STATIC_CHECKPOINT_MAX_SCALAR_CHARS + 1) } });
+    writeFileSync(path, text);
+    expect(await loadStaticSourceCheckpoint(path)).toBeNull();
+    expect(readFileSync(path, 'utf8')).toBe(text);
+    const below = JSON.stringify({ format: 1, decisionSourceHash: 'controlled', readings: { exact: 'x'.repeat(STATIC_CHECKPOINT_MAX_SCALAR_CHARS) } });
+    writeFileSync(path, below);
+    expect(await loadStaticSourceCheckpoint(path)).toEqual(loadStaticSourceReadings(path));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('streaming checkpoint resumes original complete held evidence without another call', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'static-checkpoint-stream-held-'));
+  try {
+    const captured = input();
+    const previous = await preparedStaticReadings([captured], 0.4);
+    const path = join(root, 'checkpoint.json');
+    saveStaticSourceReadings(previous, path);
+    const restored = await loadStaticSourceCheckpoint(path);
+    expect(restored).toEqual(previous);
+    if (!restored) throw new Error('Missing complete checkpoint');
+    expect(staticInputCaptureComplete(captured, restored)).toBe(true);
+    expect(staticInputStanding(captured, restored).kind).toBe('held');
+    using log = new SqliteDecisionLog(join(root, 'resume.sqlite'));
+    const forbidden = fakePort(() => { throw new Error('Complete unchanged held evidence must not be dispatched'); });
+    const receipt = await readStaticInput(forbidden.port, log, captured, undefined, { previous: restored, onReceipt() {} });
+    expect((Object.values(previous.readings)[0] as { presence: unknown }).presence).toEqual(receipt.presence);
+    expect(forbidden.requests).toHaveLength(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
