@@ -11,11 +11,12 @@ import { clearSetupWizardCheckpoint, saveSetupWizardCheckpoint, setupWizardCheck
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { captureHarnessLocalEffect } from './agent-harness-local-effect.ts';
+import type { SetupSmokeNativeEvidence } from './agent-setup-smoke-reference.ts';
 import { DEFAULT_AGENT_SETUP_WIZARD_CLEAR_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_INSPECT_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_MARK_CHECKPOINT_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_REVIEW_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_RERUN_SMOKE_ROUTE, DEFAULT_AGENT_SETUP_WIZARD_SAVE_SMOKE_ROUTE } from '../agent/setup-wizard.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import type { AgentHarnessSetupArgs, SetupResolution } from './agent-harness-setup-posture-types.ts';
 import { buildSetupPlan } from './agent-harness-setup-plan.ts';
-import { buildSetupWizard, describeInstallSmokeCheck, installSmokeNextAction, installSmokeRunResult, installSmokeRunSummary, latestSetupSmokeEvidence, saveSetupSmokeArtifact, setupCompletionMarkerExists, setupSmokeEvidenceFields, setupSmokeEvidenceHistory } from './agent-harness-setup-smoke.ts';
+import { buildSetupWizard, describeInstallSmokeCheck, installSmokeNextAction, installSmokeRunResult, installSmokeRunSummary, latestSetupSmokeEvidence, saveSetupSmokeArtifact, setupCompletionMarkerExists, setupSmokeEvidenceHistory } from './agent-harness-setup-smoke.ts';
 import { confirmedRepairCandidates, describeCandidate, describeHandoffCard, describeItem, describePlanItem, describeRepairCard, describeRepairDecision, describeServiceLifecycleDecision, nextSetupHandoffSummaries, planSearchText, planSummary, primarySetupRepairDecision, setupRepairTarget } from './agent-harness-setup-describe.ts';
 import { setupHandoffsForItem } from './agent-harness-setup-handoffs.ts';
 import { collectServicePosture, collectSnapshot, itemSearchText, lookupFromArgs, quoteRouteValue, readLimit, readString, safeFileMode, safeIso, summarizeLocalBehavior } from './agent-harness-setup-posture-utils.ts';
@@ -440,7 +441,8 @@ export function provisionConnectedHostOperatorToken(context: CommandContext, arg
   }
 }
 
-export async function runSetupInstallSmoke(context: CommandContext, args: AgentHarnessSetupArgs): Promise<Record<string, unknown>> {
+export async function runSetupInstallSmoke(context: CommandContext, args: AgentHarnessSetupArgs, ownership: SetupSmokeNativeEvidence, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  ownership.assertCurrent();
   const setupItemId = readString(args.setupItemId);
   if (setupItemId && setupItemId !== 'install-smoke') {
     return {
@@ -450,8 +452,11 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
   }
 
   const snapshot = await collectSnapshot(context);
-  const servicePosture = await collectServicePosture(context);
+  ownership.assertCurrent();
+  const servicePosture = await collectServicePosture(context, { signal, assertCurrent: ownership.assertCurrent });
+  ownership.assertCurrent();
   const plan = await buildSetupPlan(context, snapshot, deriveStep1Capabilities(snapshot), servicePosture);
+  ownership.assertCurrent();
   const installSmoke = plan.find((item) => item.id === 'install-smoke');
   const smokePlan = installSmoke?.installSmokePlan;
   if (!smokePlan) {
@@ -467,7 +472,7 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
   const userRunChecks = smokePlan.checks.filter((check) => check.status === 'user-run').map((check) => check.id);
   const capturedAt = new Date(snapshot.capturedAt).toISOString();
   const explicitUserRequest = readString(args.explicitUserRequest);
-  const evidenceFields = setupSmokeEvidenceFields(args.fields);
+  const evidenceFields = ownership.fields;
   const artifact = await saveSetupSmokeArtifact({
     context,
     capturedAt,
@@ -477,7 +482,9 @@ export async function runSetupInstallSmoke(context: CommandContext, args: AgentH
     blockedChecks,
     userRunChecks,
     evidenceFields,
+    ownership,
   });
+  ownership.assertCurrent();
   return {
     status: 'executed',
     mode: 'run_setup_smoke',

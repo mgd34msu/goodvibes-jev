@@ -80,13 +80,18 @@ export function setupServiceRuntime(context: CommandContext) {
   };
 }
 
-export async function collectServicePosture(context: CommandContext): Promise<CliServicePosture | null> {
+export async function collectServicePosture(context: CommandContext, ownership?: { readonly signal?: AbortSignal | undefined; readonly assertCurrent: () => void }): Promise<CliServicePosture | null> {
+  ownership?.assertCurrent();
   try {
-    return await buildCliServicePosture(setupServiceRuntime(context), {
+    const posture = await buildCliServicePosture(setupServiceRuntime(context), {
       probe: true,
       logTailBytes: 0,
+      ...(ownership ? { signal: ownership.signal, assertCurrent: ownership.assertCurrent } : {}),
     });
+    ownership?.assertCurrent();
+    return posture;
   } catch {
+    ownership?.assertCurrent();
     return null;
   }
 }

@@ -1,4 +1,5 @@
 import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
+import { resolveSetupSmokeNativeEvidence } from './agent-setup-smoke-reference.ts';
 import { captureTranscriptSource } from '../input/commands/transcript-reading.ts';
 import { createPreferredSettingsProjector, executeAdmittedPreferredSettings } from './agent-settings-admission.ts';
 import { assertCurrentToolExecution, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -522,7 +523,10 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (confirmationError) return error(confirmationError);
           const setupItemId = readString(args.setupItemId);
           if (setupItemId && setupItemId !== 'install-smoke') return error('run_setup_smoke currently supports setupItemId:"install-smoke" only.');
-          return output(await runSetupInstallSmoke(deps.commandContext, args));
+          const ownership = resolveSetupSmokeNativeEvidence(rawArgs, options, deps.commandContext);
+          const result = await runSetupInstallSmoke(deps.commandContext, args, ownership, signal);
+          ownership.assertCurrent();
+          return output(result);
         }
         if (dispatchMode === 'run_local_model_smoke') {
           const confirmationError = requireConfirmedAction(rawArgs, options, 'Local model smoke');

@@ -1,4 +1,8 @@
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
+import { containsIssuerCredential, redactIssuerCredentials } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { SetupSmokeNativeEvidence } from './agent-setup-smoke-reference.ts';
 import type { CommandContext } from '../input/command-registry.ts';
 import { requireShellPaths } from '../input/commands/runtime-services.ts';
 import { readOnboardingCompletionMarker } from '../runtime/onboarding/index.ts';
@@ -101,13 +105,139 @@ export const SETUP_SMOKE_EVIDENCE_FIELD_DEFINITIONS: readonly { readonly id: str
 
 export const MAX_SETUP_SMOKE_FIELD_CHARS = 8_000;
 
+function assertIssuerSafeJsonScalars(text: string): void {
+  const pending = [text];
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (containsIssuerCredential(current)) throw new ToolInputProjectionError('held');
+    for (const match of current.matchAll(/"(?:\\.|[^"\\])*"/g)) {
+      let decoded: unknown;
+      try { decoded = JSON.parse(match[0]); }
+      catch { continue; }
+      // A complete JSON string removes at least its two quotes. Nested source
+      // decoding therefore makes strict finite progress without a new limit.
+      if (typeof decoded !== 'string' || decoded.length >= match[0].length) throw new ToolInputProjectionError('held');
+      pending.push(decoded);
+    }
+  }
+}
+
+export function redactSetupSmokeEvidenceFull(input: string): string {
+  const text = redactIssuerCredentials(input);
+  const jsonStringSpans: { start: number; end: number }[] = [];
+  const trimmed = text.trimStart();
+  const jsonContainer = trimmed.startsWith('{') || /^\[\s*(?:[\[\{"\]\d-]|true\b|false\b|null\b)/.test(trimmed);
+  let malformedJson = false;
+  if (jsonContainer) {
+    try { JSON.parse(text); }
+    catch { malformedJson = true; }
+    for (let position = 0; !malformedJson && position < text.length; position++) {
+      if (text[position] !== '"') continue;
+      const start = position;
+      for (position++; position < text.length; position++) {
+        if (text[position] === '\\') { position++; continue; }
+        if (text[position] === '"') break;
+      }
+      jsonStringSpans.push({ start, end: position });
+    }
+  }
+  const spans: { start: number; end: number; cleared: string; empty: string; remainingStart?: number }[] = [];
+  const remainingKeys: { start: number; end: number; value: string }[] = [];
+  const headers = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie']);
+  const credentials = new Set(['apikey', 'api-key', 'api_key', 'token', 'secret', 'password', 'credential', ...headers]);
+  // An HTTP authentication header owns the complete value on its line,
+  // including opaque schemes and cookie attributes, not just its first word.
+  for (const match of text.matchAll(/(?:^|\n)[ \t]*(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=][ \t]*([^\r\n]*)/gi)) {
+    const value = match[1]!;
+    if (/^\r?\n[ \t]+\S/.test(text.slice(match.index + match[0].length))) throw new ToolInputProjectionError('held');
+    if (value) spans.push({ start: match.index + match[0].length - value.length, end: match.index + match[0].length, cleared: '<redacted>', empty: '""' });
+  }
+  // This is the authored scalar field grammar. Quoted JSON keys are decoded
+  // mechanically; quoted values retain their complete escaped source span.
+  const fields = /(?:^|[\s{[,;&?])(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([A-Za-z_][A-Za-z0-9_.-]*))[ \t]*([:=])[ \t]*/g;
+  let match: RegExpExecArray | null;
+  while ((match = fields.exec(text)) !== null) {
+    const covered = spans.find(span => fields.lastIndex >= span.start && fields.lastIndex < span.end);
+    if (covered) { fields.lastIndex = covered.end; continue; }
+    let key = match[3] ?? match[2] ?? '';
+    if (match[1] !== undefined) {
+      try { key = JSON.parse(`"${match[1]}"`) as string; }
+      catch { key = match[1]; }
+    }
+    const canonicalKey = key;
+    key = key.toLowerCase();
+    if (!credentials.has(key)) {
+      // Preserve escaped public keys verbatim, but retain their canonical
+      // declaration in the private remainder even in a JSON log/code block.
+      if (match[1]?.includes('\\')) {
+        const literal = `"${match[1]}"`;
+        const start = match.index + match[0].indexOf('"');
+        remainingKeys.push({ start, end: start + literal.length, value: JSON.stringify(canonicalKey) });
+      }
+      continue;
+    }
+    const start = fields.lastIndex;
+    const queryValue = match[4] === '=' && (text[match.index] === '?' || text[match.index] === '&');
+    const quote = text[start];
+    let end = start;
+    let cleared: string, empty: string;
+    if (quote === '"' || quote === "'") {
+      let closed = false;
+      for (end = start + 1; end < text.length; end++) {
+        if (text[end] === '\\') { end++; continue; }
+        if (text[end] === quote) { end++; closed = true; break; }
+        if (text[end] === '\n' || text[end] === '\r') break;
+      }
+      if (!closed || (end < text.length && !/[\s,;}\]&]/.test(text[end]!))) throw new ToolInputProjectionError('held');
+      if (quote === '"') {
+        try { JSON.parse(text.slice(start, end)); }
+        catch { throw new ToolInputProjectionError('held'); }
+      }
+      cleared = `${quote}<redacted>${quote}`; empty = `${quote}${quote}`;
+    } else {
+      if (headers.has(key) && text[match.index] !== '?' && text[match.index] !== '&') throw new ToolInputProjectionError('held');
+      if (quote === '{' || quote === '[') throw new ToolInputProjectionError('held');
+      while (end < text.length && !/[\s,;}\]&"']/.test(text[end]!) && !(queryValue && text[end] === '#')) end++;
+      if (text.slice(start, end).includes('\\') || (end < text.length && /["']/.test(text[end]!)
+        && end + 1 < text.length && !/[\s,;}\]]/.test(text[end + 1]!))) throw new ToolInputProjectionError('held');
+      if (end === start) continue;
+      cleared = match[4] === ':' ? '"<redacted>"' : '<redacted>';
+      empty = jsonStringSpans.some(span => start > span.start && start < span.end) ? '\\"\\"' : '""';
+    }
+    // A fully consumed query pair is a private validation hole. It is removed
+    // from the remainder so adjacent parameters keep their original meaning;
+    // the complete public subject still retains its authored key and marker.
+    spans.push({ start, end, cleared, empty: queryValue ? '' : empty, ...(queryValue ? { remainingStart: match.index + 1 } : {}) }); fields.lastIndex = end;
+  }
+  if (malformedJson && (spans.length || text !== input)) throw new ToolInputProjectionError('held');
+  spans.sort((left, right) => left.start - right.start);
+  let cursor = 0, cleared = '';
+  for (const span of spans) {
+    if (span.start < cursor) throw new ToolInputProjectionError('held');
+    cleared += text.slice(cursor, span.start) + span.cleared;
+    cursor = span.end;
+  }
+  cleared += text.slice(cursor);
+  const remainderEdits = [...remainingKeys, ...spans.map(span => ({ start: span.remainingStart ?? span.start, end: span.end, value: span.empty }))]
+    .sort((left, right) => left.start - right.start);
+  let remainingCursor = 0, remaining = '';
+  for (const edit of remainderEdits) {
+    if (edit.start < remainingCursor) throw new ToolInputProjectionError('held');
+    remaining += text.slice(remainingCursor, edit.start) + edit.value;
+    remainingCursor = edit.end;
+  }
+  remaining += text.slice(remainingCursor);
+  // Inspect the complete remaining source while its original declarations and
+  // JSON structure are intact. Splitting display markers cannot detach an
+  // unsupported credential value from the field that made it protected.
+  assertIssuerSafeJsonScalars(remaining);
+  try { snapshotJudgmentInput({ text: remaining }, 'agent_harness'); }
+  catch { throw new ToolInputProjectionError('held'); }
+  return cleared;
+}
+
 export function redactSetupSmokeEvidence(input: string): string {
-  const bounded = input.slice(0, MAX_SETUP_SMOKE_FIELD_CHARS);
-  return bounded
-    .replace(/(\bauthorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, '$1<redacted>')
-    .replace(/("?\b(?:api[-_]?key|apikey|token|secret|password|credential)\b"?\s*:\s*)("[^"]*"|[^\s,}]+)/gi, '$1"<redacted>"')
-    .replace(/(\b(?:api[-_]?key|apikey|token|secret|password|credential)\b\s*=\s*)[^\s&]+/gi, '$1<redacted>')
-    .replace(/([?&](?:api[-_]?key|apikey|token|secret|password|credential)=)[^&\s]+/gi, '$1<redacted>');
+  return redactSetupSmokeEvidenceFull(input).slice(0, MAX_SETUP_SMOKE_FIELD_CHARS);
 }
 
 export function setupSmokeEvidenceFields(fields: unknown): readonly SetupSmokeEvidenceField[] {
@@ -177,7 +307,9 @@ export async function saveSetupSmokeArtifact(input: {
   readonly blockedChecks: readonly string[];
   readonly userRunChecks: readonly string[];
   readonly evidenceFields: readonly SetupSmokeEvidenceField[];
+  readonly ownership: SetupSmokeNativeEvidence;
 }): Promise<Record<string, unknown>> {
+  input.ownership.assertCurrent();
   if (input.evidenceFields.length === 0) {
     return {
       status: 'not_requested',
@@ -185,15 +317,14 @@ export async function saveSetupSmokeArtifact(input: {
       supportedFields: SETUP_SMOKE_EVIDENCE_FIELD_DEFINITIONS.map((field) => field.id),
     };
   }
-  const artifactStore = setupSmokeArtifactStore(input.context);
-  if (!artifactStore?.create) {
+  if (!input.ownership.createArtifact) {
     return {
       status: 'unavailable',
       reason: 'This runtime did not provide an artifact store with create support.',
       evidenceFields: input.evidenceFields.map((field) => field.id),
     };
   }
-  const descriptor = await artifactStore.create({
+  const descriptor = await input.ownership.createArtifact({
     kind: 'document',
     mimeType: 'text/markdown',
     filename: safeSetupSmokeFilename(input.capturedAt),
@@ -212,6 +343,7 @@ export async function saveSetupSmokeArtifact(input: {
       redaction: 'token, secret, password, credential, authorization, and api-key-like values redacted before storage',
     },
   });
+  input.ownership.assertCurrent();
   return {
     status: 'saved',
     artifactId: descriptor.id,

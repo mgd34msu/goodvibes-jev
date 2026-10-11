@@ -8,6 +8,7 @@ import { captureModelReadingInput, assertModelReadingInputCurrent, modelReadingS
 import { captureCatalogData } from './agent-harness-catalog-ranking.ts';
 import { createPersonalOpsInputProjector } from './agent-personal-ops-ingress.ts';
 import { createChannelDraftReferenceCapture } from './agent-channel-draft-reference.ts';
+import { createSetupSmokeReferenceCapture } from './agent-setup-smoke-reference.ts';
 
 type ToolExecuteOptions = NonNullable<Parameters<Tool['execute']>[1]>;
 
@@ -95,7 +96,9 @@ function catalogContextGuard(registry: ToolRegistry, context?: CommandContext, s
 export function createHarnessCatalogInputProjector(registry: ToolRegistry, fallback?: ToolInputProjector,
   selected = isHarnessCatalogQuery, context?: CommandContext): ToolInputProjector {
   const projector = createPersonalOpsInputProjector(registry, fallback, selected);
-  return { captureNativeReferences: createChannelDraftReferenceCapture(context), async project(request) {
+  const captureChannel = createChannelDraftReferenceCapture(context);
+  const captureSmoke = createSetupSmokeReferenceCapture(context);
+  return { captureNativeReferences: request => captureChannel(request) ?? captureSmoke(request), async project(request) {
     const protectedQuery = selected(request.args);
     const retained = retainedGuards(request.args);
     const routing = catalogRoutingInput(request.args);
