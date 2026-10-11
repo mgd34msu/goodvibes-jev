@@ -166,7 +166,6 @@ export interface AutomationHeartbeatResult {
 }
 
 export class AutomationManager {
-  static readonly #managerOwnershipMethods = Object.getOwnPropertyDescriptors(AutomationManager.prototype);
   static readonly #storeOwnershipMethods = Object.getOwnPropertyDescriptors(AutomationJobStore.prototype);
   static readonly #mapGet = Map.prototype.get;
   static readonly #mapIterator = Map.prototype[Symbol.iterator];
@@ -244,7 +243,7 @@ export class AutomationManager {
       || Object.getPrototypeOf(owner.store) !== AutomationJobStore.prototype
       || Object.getPrototypeOf(AutomationJobMap.prototype) !== Map.prototype) throw new AutomationJobMutationStaleError();
     for (const [object, prototype, key, original] of [
-      [this, AutomationManager.prototype, 'requireEnabled', AutomationManager.#managerOwnershipMethods.requireEnabled],
+      [this, AutomationManager.prototype, 'requireEnabled', managerOwnershipMethods.requireEnabled],
       ...['assertCurrent', 'fileIdentity', 'directoryIdentity', 'parentIdentity'].map(key =>
         [owner.store, AutomationJobStore.prototype, key, AutomationManager.#storeOwnershipMethods[key]] as const),
     ] as const) {
@@ -974,3 +973,5 @@ export class AutomationManager {
     }, job, run);
   }
 }
+
+const managerOwnershipMethods = Object.getOwnPropertyDescriptors(AutomationManager.prototype);
