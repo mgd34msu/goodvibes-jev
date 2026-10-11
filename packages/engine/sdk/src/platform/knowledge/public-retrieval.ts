@@ -81,10 +81,11 @@ function capturedGuard(store: KnowledgeStore): SemanticWriteGuard {
   const guard = createSemanticWriteGuard(store);
   const watch = <T>(key: string, read: () => T, expected: T = read()): T =>
     guard.watch(key, () => capture(read()), capture(expected));
-  return { watch, source: (id) => watch(`source:${id}`, () => store.getSource(id)),
-    node: (id) => watch(`node:${id}`, () => store.getNode(id)),
-    extraction: (id) => watch(`extraction:${id}`, () => store.getExtractionBySourceId(id)),
-    assertCurrent: guard.assertCurrent };
+  return { ...guard, watch,
+    source: (id, expected = store.getSource(id)) => guard.watchRecord(`source:${id}`, () => store.getSource(id), expected, capture),
+    node: (id, expected = store.getNode(id)) => guard.watchRecord(`node:${id}`, () => store.getNode(id), expected, capture),
+    extraction: (id, expected = store.getExtractionBySourceId(id)) => guard.watchRecord(`extraction:${id}`, () => store.getExtractionBySourceId(id), expected, capture),
+  };
 }
 
 // Serving content, memory/catalog descriptors and object identity. Review,
@@ -225,7 +226,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
         baseGuard.watch('source-membership', () => sourceWindow().map((source) => source.id).sort(), sourceIds);
         baseGuard.watch('node-membership', () => nodeWindow().map((node) => node.id).sort(), nodeIds);
         for (const source of structuralSources) {
-          baseGuard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
+          baseGuard.source(source.id, source);
           const extraction = baseGuard.extraction(source.id);
           assertKnowledgeExtractionInput(extraction);
           if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) throw new Held('malformed');
@@ -237,7 +238,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
         }
         const structuralNodesById = new Map(structuralNodes.map((node) => [node.id, node]));
         for (const node of structuralNodes) {
-          baseGuard.watch(`node:${node.id}`, () => store.getNode(node.id), node);
+          baseGuard.node(node.id, node);
           publicNodeMeaning(store, node, structuralNodesById);
         }
       });
@@ -299,7 +300,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
         for (const source of sources) {
           const original = store.getSource(source.id);
           if (!original) throw new Held('stale');
-          guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
+          guard.source(source.id, source);
           const extraction = guard.extraction(source.id);
           assertKnowledgeExtractionInput(extraction);
           if (extraction && (extraction.sourceId !== source.id || getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(source))) throw new Held('malformed');
@@ -320,7 +321,7 @@ export async function readPublicKnowledgeSelection(store: KnowledgeStore, input:
         for (const node of nodes) {
           const original = store.getNode(node.id);
           if (!original) throw new Held('stale');
-          guard.watch(`node:${node.id}`, () => store.getNode(node.id), node);
+          guard.node(node.id, node);
           const meaning = publicNodeMeaning(store, node, nodesById,
             (id) => guard.watch(`local-subject:${id}`, () => store.getNode(id) !== null));
           const candidate: AnswerEvidenceCandidate = { reference: `candidate-${candidates.length + 1}`, kind: 'node', title: node.title,

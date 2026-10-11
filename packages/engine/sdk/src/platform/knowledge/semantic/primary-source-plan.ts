@@ -42,8 +42,11 @@ export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSi
     check();
     return expected;
   }
-  function watchRecord<T extends KnowledgeSourceRecord | KnowledgeNodeRecord | KnowledgeExtractionRecord | null>(key: string, read: () => T, expected: T): T {
-    const version = JSON.stringify(expected);
+  function watchRecord<T extends KnowledgeSourceRecord | KnowledgeNodeRecord | KnowledgeExtractionRecord | null>(
+    key: string, read: () => T, expected: T, captureRecord?: (value: T) => T,
+  ): T {
+    const snapshot = captureRecord ? captureRecord(expected) : expected;
+    const version = JSON.stringify(snapshot);
     let original: { readonly value: T; readonly slots: RetainedStrictJudgmentJson<T> } | undefined;
     let first = true;
     const check = () => {
@@ -53,7 +56,7 @@ export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSi
       if (original && current === original.value && originalRecordSerializer()) {
         try { original.slots.assertCurrent(); return; } catch { /* Compare the original complete value below. */ }
       }
-      if (JSON.stringify(current) !== version) throw new KnowledgeSourceQualityHeldError('stale');
+      if (JSON.stringify(captureRecord ? captureRecord(current) : current) !== version) throw new KnowledgeSourceQualityHeldError('stale');
       if (firstRead) {
         // Adopt only the actual first getter result after full original equality.
         // A later equal replacement never becomes a new retained baseline.
@@ -70,10 +73,11 @@ export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSi
     checks.get(key)?.();
     if (!checks.has(key)) checks.set(key, check);
     check();
-    return expected;
+    return snapshot;
   }
   return {
     watch,
+    watchRecord,
     source(id: string, expected = store.getSource(id)) { return watchRecord(`source:${id}`, () => store.getSource(id), expected); },
     node(id: string, expected = store.getNode(id)) { return watchRecord(`node:${id}`, () => store.getNode(id), expected); },
     extraction(id: string, expected = store.getExtractionBySourceId(id)) { return watchRecord(`extraction:${id}`, () => store.getExtractionBySourceId(id), expected); },
