@@ -528,3 +528,62 @@ test('an actual constructor hook cannot grant native birth provenance to a proxi
     if (original) define(Object.prototype, 'gb', original); else remove(Object.prototype, 'gb');
   }
 });
+
+test.each(['own-key', 'descriptor', 'prototype'] as const)('complete shared native prototype %s mutations hold before later callbacks', async mutation => {
+  const { sqlite, filename, read } = await fixture(true);
+  const before = readFileSync(filename), shared = Function.prototype, originalParent = Object.getPrototypeOf(shared);
+  const key = mutation === 'own-key' ? Symbol('native shared prototype field') : 'toString';
+  const descriptor = Object.getOwnPropertyDescriptor(shared, key);
+  if (mutation === 'descriptor' && (!descriptor || !descriptor.configurable)) throw new Error('No replaceable original native prototype descriptor');
+  let consumed = false, invoked = 0, caught: unknown;
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      if (mutation === 'prototype') Object.setPrototypeOf(shared, Object.create(originalParent));
+      else Object.defineProperty(shared, key, { configurable: true, get() { invoked++; throw new Error('Borrowed complete native prototype getter'); } });
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally {
+        if (mutation === 'prototype') Object.setPrototypeOf(shared, originalParent);
+        else if (descriptor) Object.defineProperty(shared, key, descriptor);
+        else Reflect.deleteProperty(shared, key);
+      }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(SQLiteObservationRetiredError);
+  expect(consumed).toBe(false); expect(invoked).toBe(0);
+  expect(readFileSync(filename)).toEqual(before);
+});
+
+test.each(['proxy', 'accessor'] as const)('an observable global receiver %s cannot restore native facts before their original check', async receiverKind => {
+  const { sqlite, filename, read } = await fixture(true);
+  const before = readFileSync(filename), globalReceiver = globalThis;
+  const self = Object.getOwnPropertyDescriptor(globalReceiver, 'globalThis');
+  if (!self || !('value' in self) || self.value !== globalReceiver || !self.configurable) throw new Error('No original replaceable global receiver');
+  const define = Object.defineProperty, remove = Reflect.deleteProperty, ownDescriptor = Reflect.getOwnPropertyDescriptor;
+  const shared = Function.prototype, key = Symbol('temporary native complete prototype field');
+  let firstTrap = 0, restorationTrap = 0, borrowedGetter = 0, receiverGetter = 0, consumed = false, caught: unknown;
+  const receiver = new Proxy(globalReceiver, {
+    getOwnPropertyDescriptor(target, field) {
+      const descriptor = ownDescriptor(target, field);
+      if (field === 'String') {
+        firstTrap++;
+        define(shared, key, { configurable: true, get() { borrowedGetter++; throw new Error('Borrowed transient prototype field'); } });
+      } else if (field === 'Uint8Array') { restorationTrap++; remove(shared, key); }
+      return descriptor;
+    },
+  });
+  try {
+    sqlite.assertPersistedReadFrame(() => {
+      expect(read()).toEqual([['original', 'Complete original source']]);
+      if (receiverKind === 'proxy') define(globalReceiver, 'globalThis', { ...self, value: receiver });
+      else define(globalReceiver, 'globalThis', { configurable: true, get() { receiverGetter++; return receiver; } });
+      try { sqlite.assertPersistedReadFrame(() => { read(); consumed = true; }); }
+      finally { define(globalReceiver, 'globalThis', self); remove(shared, key); }
+    });
+  } catch (error) { caught = error; }
+  expect(caught).toBeInstanceOf(SQLiteObservationRetiredError);
+  expect(firstTrap).toBeGreaterThan(0); expect(restorationTrap).toBe(0);
+  if (receiverKind === 'accessor') expect(receiverGetter).toBeGreaterThan(0);
+  expect(consumed).toBe(false); expect(borrowedGetter).toBe(0);
+  expect(readFileSync(filename)).toEqual(before);
+});

@@ -150,6 +150,15 @@ const nativeGetPrototypeOf = Object.getPrototypeOf, nativeGetDescriptor = Object
 const nativeDefineProperty = Object.defineProperty, nativeDeleteProperty = Reflect.deleteProperty, nativeIsExtensible = Object.isExtensible;
 const nativeEntries = Object.entries, nativeIsProxy = nativeNodeTypes.isProxy;
 const nativeString = String, nativeSafeInteger = Number.isSafeInteger, nativeIsArray = Array.isArray, nativeFreeze = Object.freeze;
+const nativeGlobalReceiver = globalThis;
+const nativeGlobalReceiverSelf = !nativeIsProxy(nativeGlobalReceiver)
+  ? nativeGetDescriptor(nativeGlobalReceiver, 'globalThis') : undefined;
+function nativeGlobalReceiverMatches(): boolean {
+  return !!nativeGlobalReceiverSelf && 'value' in nativeGlobalReceiverSelf
+    && nativeGlobalReceiverSelf.value === nativeGlobalReceiver
+    && nativeDescriptorMatches(nativeGetDescriptor(nativeGlobalReceiver, 'globalThis'), nativeGlobalReceiverSelf)
+    && globalThis === nativeGlobalReceiver;
+}
 const nativeWeakMapGet = WeakMap.prototype.get, nativeWeakMapSet = WeakMap.prototype.set,
   nativeWeakMapHas = WeakMap.prototype.has, nativeWeakMapDelete = WeakMap.prototype.delete;
 function privateMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
@@ -274,6 +283,7 @@ interface NativeScalarRuntime {
   readonly module: SqlJsStatic;
   readonly exports: readonly { readonly key: keyof SqlJsStatic; readonly descriptor: Readonly<PropertyDescriptor> }[];
   readonly globals: readonly { readonly key: string; readonly descriptor: Readonly<PropertyDescriptor>; readonly facts: readonly NativeObjectFacts[] }[];
+  readonly uniqueGlobalFacts: readonly NativeObjectFacts[] | undefined;
   readonly step: (statement: number) => number;
   readonly reset: (statement: number) => number;
   readonly clear: (statement: number) => number;
@@ -284,6 +294,33 @@ interface NativeScalarRuntime {
   readonly value: (statement: number, column: number) => number;
   readonly name: (statement: number, column: number) => number;
   readonly decode: (pointer: number) => string;
+}
+/** Only repeated ordinary original objects can share one complete descriptor
+ * traversal. Unsupported or conflicting captures keep the original checks. */
+function uniqueNativeScalarGlobalFacts(globals: NativeScalarRuntime['globals']): readonly NativeObjectFacts[] | undefined {
+  const unique: NativeObjectFacts[] = [];
+  for (let globalIndex = 0; globalIndex < globals.length; globalIndex++) {
+    const global = globals[globalIndex];
+    if (!global) return undefined;
+    for (let factIndex = 0; factIndex < global.facts.length; factIndex++) {
+      const facts = global.facts[factIndex];
+      if (!facts || nativeIsProxy(facts.object)) return undefined;
+      let duplicate = false;
+      for (let uniqueIndex = 0; uniqueIndex < unique.length; uniqueIndex++) {
+        const original = unique[uniqueIndex];
+        if (!original || original.object !== facts.object) continue;
+        if (original.prototype !== facts.prototype || original.slots.length !== facts.slots.length) return undefined;
+        for (let slotIndex = 0; slotIndex < original.slots.length; slotIndex++) {
+          const left = original.slots[slotIndex], right = facts.slots[slotIndex];
+          if (!left || !right || left.key !== right.key || !nativeDescriptorMatches(right.descriptor, left.descriptor)) return undefined;
+        }
+        duplicate = true;
+        break;
+      }
+      if (!duplicate) unique[unique.length] = facts;
+    }
+  }
+  return nativeFreeze(unique);
 }
 function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | undefined {
   const step = module._sqlite3_step, reset = module._sqlite3_reset, clear = module._sqlite3_clear_bindings,
@@ -314,12 +351,17 @@ function captureNativeScalarRuntime(module: SqlJsStatic): NativeScalarRuntime | 
     ]) }));
   }
   return nativeFreeze({ module, exports: nativeFreeze(exports), globals: nativeFreeze(globals),
+    uniqueGlobalFacts: uniqueNativeScalarGlobalFacts(globals),
     step, reset, clear, finalize, count, dataCount, type, value, name, decode });
 }
 function nativeScalarRuntimeMatches(runtime: NativeScalarRuntime): boolean {
-  return nativeEvery(runtime.exports, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(runtime.module, key), descriptor))
-    && nativeEvery(runtime.globals, ({ key, descriptor, facts }) => nativeDescriptorMatches(nativeGetDescriptor(globalThis, key), descriptor)
+  if (!nativeEvery(runtime.exports, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(runtime.module, key), descriptor))) return false;
+  if (!runtime.uniqueGlobalFacts || !nativeGlobalReceiverMatches()) {
+    return nativeEvery(runtime.globals, ({ key, descriptor, facts }) => nativeDescriptorMatches(nativeGetDescriptor(globalThis, key), descriptor)
       && nativeEvery(facts, nativeObjectFactsMatch));
+  }
+  return nativeEvery(runtime.globals, ({ key, descriptor }) => nativeDescriptorMatches(nativeGetDescriptor(nativeGlobalReceiver, key), descriptor))
+    && nativeEvery(runtime.uniqueGlobalFacts, nativeObjectFactsMatch);
 }
 const nativeEngineIdentities = new WeakMap<SqlJsStatic, {
   readonly constructor: SqlJsStatic['Database'];
