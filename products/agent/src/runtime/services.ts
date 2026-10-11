@@ -1891,6 +1891,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     // session even though the id is finalized after this manager is built.
     ...(options.resolveSessionId ? { resolveSessionId: options.resolveSessionId } : {}),
   });
+  disposalScope.registry.add('workspace checkpoints', () => workspaceCheckpointManager.drain());
   // Gate AUTOMATIC snapshots (kind 'turn' | 'agent-run', fired internally by
   // the manager's own bus subscription via `this.create(...)`) on the live
   // registration check, by overriding this instance's own `create` method,
