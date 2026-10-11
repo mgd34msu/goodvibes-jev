@@ -17,7 +17,6 @@ import {
   createRoutineUpdateEditor,
   createSkillEditorFromNote,
   createSkillUpdateEditor,
-  isAffirmative,
   splitList,
 } from '../input/agent-workspace-editors.ts';
 import type { AgentWorkspaceAction, AgentWorkspaceLocalEditor, AgentWorkspaceLocalOperation } from '../input/agent-workspace-types.ts';
@@ -31,7 +30,10 @@ export interface AgentHarnessLocalOperationArgs {
 }
 
 export interface AgentHarnessLocalOperationDeps {
-  readonly commandContext: CommandContext;
+  readonly commandContext: {
+    readonly workspace: Pick<CommandContext['workspace'], 'shellPaths'>;
+    readonly clients?: Pick<NonNullable<CommandContext['clients']>, 'agentKnowledgeApi'>;
+  };
   readonly toolRegistry: ToolRegistry;
 }
 
@@ -52,7 +54,7 @@ function output(value: unknown): HarnessResult {
   return { success: true, output: typeof value === 'string' ? value : JSON.stringify(value, null, 2) };
 }
 
-function error(message: string): HarnessResult {
+function error(message: string): { readonly success: false; readonly error: string } {
   return { success: false, error: message };
 }
 
@@ -129,7 +131,7 @@ function registryTarget(operation: AgentWorkspaceLocalOperation): RegistryTarget
   return null;
 }
 
-function editorForOperation(context: CommandContext, operation: AgentWorkspaceLocalOperation, recordId: string): AgentWorkspaceLocalEditor | null {
+function editorForOperation(context: AgentHarnessLocalOperationDeps['commandContext'], operation: AgentWorkspaceLocalOperation, recordId: string): AgentWorkspaceLocalEditor | null {
   const shellPaths = context.workspace.shellPaths;
   if (operation === 'memory-edit') {
     const record = context.clients?.agentKnowledgeApi?.memory?.get(recordId);
@@ -165,25 +167,73 @@ function editorForOperation(context: CommandContext, operation: AgentWorkspaceLo
   return null;
 }
 
-function localRegistryArgsFromEditor(editor: AgentWorkspaceLocalEditor, fields: Readonly<Record<string, string>>, id?: string): Record<string, unknown> {
+type RegistryArgsResult =
+  | { readonly success: true; readonly args: Record<string, unknown> }
+  | { readonly success: false; readonly error: string };
+
+function localRegistryArgsFromEditor(editor: AgentWorkspaceLocalEditor, fields: Readonly<Record<string, string>>, id?: string): RegistryArgsResult {
   const read = fieldReader(editor, fields);
-  if (editor.kind === 'memory') return { domain: 'memory', action: editor.mode === 'update' ? 'update' : 'create', id, cls: read('cls'), scope: read('scope'), summary: read('summary'), detail: read('detail'), tags: splitList(read('tags')), confidence: read('confidence'), provenance: editor.recordId ? 'agent-harness-local-operation' : 'agent-harness-note-promotion' };
-  if (editor.kind === 'note') return { domain: 'note', action: editor.mode === 'update' ? 'update' : 'create', id, title: read('title'), body: read('body'), sourceUrl: read('sourceUrl'), tags: splitList(read('tags')), provenance: editor.recordId ? 'agent-harness-local-operation' : 'agent-harness-note-promotion' };
-  if (editor.kind === 'persona') return { domain: 'persona', action: editor.mode === 'update' ? 'update' : 'create', id, name: read('name'), description: read('description'), body: read('body'), tags: splitList(read('tags')), triggers: splitList(read('triggers')), activate: read('activate'), provenance: editor.recordId ? 'agent-harness-local-operation' : 'agent-harness-note-promotion' };
-  if (editor.kind === 'skill') return { domain: 'skill', action: editor.mode === 'update' ? 'update' : 'create', id, name: read('name'), description: read('description'), procedure: read('procedure'), tags: splitList(read('tags')), triggers: splitList(read('triggers')), requiresEnv: splitList(read('requiresEnv')), requiresCommands: splitList(read('requiresCommands')), enabled: isAffirmative(read('enabled')), provenance: editor.recordId ? 'agent-harness-local-operation' : 'agent-harness-note-promotion' };
-  return { domain: 'routine', action: editor.mode === 'update' ? 'update' : 'create', id, name: read('name'), description: read('description'), steps: read('steps'), tags: splitList(read('tags')), triggers: splitList(read('triggers')), requiresEnv: splitList(read('requiresEnv')), requiresCommands: splitList(read('requiresCommands')), enabled: isAffirmative(read('enabled')), provenance: editor.recordId ? 'agent-harness-local-operation' : 'agent-harness-note-promotion' };
+  const supplied = (field: string) => editor.mode !== 'update' || Object.hasOwn(fields, field);
+  const args: Record<string, unknown> = {
+    domain: editor.kind,
+    action: editor.mode === 'update' ? 'update' : 'create',
+    ...(id ? { id } : {}),
+    provenance: editor.recordId ? 'agent-harness-local-operation' : 'agent-harness-note-promotion',
+  };
+  const textFields = editor.kind === 'memory' ? ['cls', 'scope', 'summary', 'detail']
+    : editor.kind === 'note' ? ['title', 'body', 'sourceUrl']
+    : editor.kind === 'persona' ? ['name', 'description', 'body']
+    : editor.kind === 'skill' ? ['name', 'description', 'procedure']
+    : ['name', 'description', 'steps'];
+  const listFields = editor.kind === 'memory' || editor.kind === 'note' ? ['tags']
+    : ['tags', 'triggers'];
+  for (const field of textFields) if (supplied(field)) args[field] = read(field);
+  for (const field of listFields) if (supplied(field)) args[field] = splitList(read(field));
+  if (editor.kind === 'skill' || editor.kind === 'routine') {
+    const requirementFields = ['requiresEnv', 'requiresCommands'] as const;
+    if (editor.mode !== 'update' || requirementFields.some(field => Object.hasOwn(fields, field))) {
+      for (const field of requirementFields) {
+        if (editor.mode === 'update' && !Object.hasOwn(fields, field)
+          && !editor.fields.some(descriptor => descriptor.id === field)) {
+          return error('Workspace requirement update needs the current paired requirement field.');
+        }
+        args[field] = splitList(read(field));
+      }
+    }
+  }
+  if (editor.kind === 'memory' && supplied('confidence')) {
+    const value = read('confidence').trim();
+    if (value) {
+      const confidence = Number(value);
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 100) {
+        return error('Workspace memory confidence must be a finite number between 0 and 100.');
+      }
+      args.confidence = confidence;
+    }
+  }
+  const booleanField = editor.kind === 'persona' ? 'activate'
+    : editor.kind === 'skill' || editor.kind === 'routine' ? 'enabled' : null;
+  if (booleanField && supplied(booleanField)) {
+    const value = read(booleanField).trim().toLowerCase();
+    if (value) {
+      if (value !== 'yes' && value !== 'no') return error(`Workspace ${booleanField} must be yes or no.`);
+      args[booleanField] = value === 'yes';
+    }
+  }
+  return { success: true, args };
 }
 
-function localRegistryArgsForTarget(target: RegistryTarget, args: AgentHarnessLocalOperationArgs, recordId: string): Record<string, unknown> {
+function localRegistryArgsForTarget(target: RegistryTarget, args: AgentHarnessLocalOperationArgs, recordId: string): RegistryArgsResult {
   const fields = readFieldMap(args.fields);
   const base = { domain: target.domain, action: target.action, ...(recordId ? { id: recordId } : {}) };
-  const edit = target.action === 'update' ? localRegistryArgsFromEditor({ kind: target.domain, mode: 'update', recordId, title: '', selectedFieldIndex: 0, message: '', fields: [] } as AgentWorkspaceLocalEditor, fields, recordId) : {};
-  return {
+  const edit: RegistryArgsResult = target.action === 'update' ? localRegistryArgsFromEditor({ kind: target.domain, mode: 'update', recordId, title: '', selectedFieldIndex: 0, message: '', fields: [] }, fields, recordId) : { success: true, args: {} };
+  if (!edit.success) return edit;
+  return { success: true, args: {
     ...base,
-    ...edit,
+    ...edit.args,
     ...(target.action === 'stale' && fields.reason ? { reason: fields.reason } : {}),
     ...(readString(args.explicitUserRequest) ? { explicitUserRequest: readString(args.explicitUserRequest) } : {}),
-  };
+  } };
 }
 
 async function executeTool(toolRegistry: ToolRegistry, name: string, toolArgs: Record<string, unknown>, options: Parameters<Tool['execute']>[1]): Promise<HarnessResult> {
@@ -231,10 +281,12 @@ export async function runLocalWorkspaceEditorAction(
       editor: describeEditor(editor),
     });
   }
+  const built = localRegistryArgsFromEditor(editor, fields, editor.recordId);
+  if (!built.success) return built;
   return executeTool(
     deps.toolRegistry,
     'agent_local_registry',
-    localRegistryArgsFromEditor(editor, fields, editor.recordId),
+    built.args,
     options,
   );
 }
@@ -260,8 +312,12 @@ export async function runLocalWorkspaceAction(
     const missing = missingRequiredFields(editor, fields);
     if (missing.length > 0) return output({ status: 'missing_required_fields', missing, action: action.id, editor: describeEditor(editor) });
     if (editor.kind === 'knowledge-url') return executeTool(deps.toolRegistry, 'agent_knowledge_ingest', { sourceKind: 'url', url: fieldReader(editor, fields)('url'), tags: splitList(fieldReader(editor, fields)('tags')), folderPath: fieldReader(editor, fields)('folder'), ...(readString(args.explicitUserRequest) ? { explicitUserRequest: readString(args.explicitUserRequest) } : {}) }, options);
-    return executeTool(deps.toolRegistry, 'agent_local_registry', localRegistryArgsFromEditor(editor, fields, recordId), options);
+    const built = localRegistryArgsFromEditor(editor, fields, recordId);
+    if (!built.success) return built;
+    return executeTool(deps.toolRegistry, 'agent_local_registry', built.args, options);
   }
   if (!target) return output({ status: 'local_registry_action', action: action.id, modelExecution: describeLocalWorkspaceModelExecution(action) });
-  return executeTool(deps.toolRegistry, 'agent_local_registry', localRegistryArgsForTarget(target, args, recordId), options);
+  const built = localRegistryArgsForTarget(target, args, recordId);
+  if (!built.success) return built;
+  return executeTool(deps.toolRegistry, 'agent_local_registry', built.args, options);
 }

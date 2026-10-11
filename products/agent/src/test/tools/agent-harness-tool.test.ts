@@ -5,8 +5,9 @@ import type { ModelFacts, ModelTierStore, TierRecord } from '@goodvibes-jev/engi
 import { autonomyIntake } from '@goodvibes-jev/engine/sdk/platform/routing';
 import { getOperatorContract } from '@goodvibes-jev/engine/sdk/contracts';
 import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
-import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
+import { gateJudgmentRegistry } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { hashState, SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { securityPort } from '../helpers/security-readings.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -16,8 +17,9 @@ import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactS
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { ProcessManager, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
-import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
+import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { FileUndoManager, MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore, type MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 import { createLocalMemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
 import { CommandRegistry, type CommandContext } from '../../input/command-registry.ts';
@@ -39,8 +41,8 @@ import { createAgentDocumentsTool } from '../../tools/agent-documents-tool.ts';
 import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { createAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { registerAgentTerminalProcessTools } from '../../tools/agent-terminal-process-tools.ts';
-import { createAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
-import { createAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
+import { createAgentLocalRegistryTool, registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
+import { registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
 import { createAgentReviewPacketPresetsTool } from '../../tools/agent-review-packet-presets-tool.ts';
 import { createAgentReviewPacketShareTool } from '../../tools/agent-review-packet-share-tool.ts';
 import { createAgentResearchRunsTool } from '../../tools/agent-research-runs-tool.ts';
@@ -60,6 +62,7 @@ import { compactRegisteredToolDefinitions } from '../../tools/tool-definition-co
 import type { AgentExecutionRecord } from '../../runtime/execution-ledger.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { createStaticUiReadModel } from '../helpers/ui-read-models.ts';
+import { authoredPrivacyAnswer, errorSpan, errorText } from '../helpers/authored-diagnostic-readings.ts';
 
 afterAll(cleanupResearchScreeningFixtures);
 
@@ -74,6 +77,7 @@ interface HarnessFixture {
   readonly secretsManager: SecretsManager | null;
   readonly keybindingsManager: KeybindingsManager;
   readonly toolRegistry: ToolRegistry;
+  readonly permissionManager: PermissionManager;
   readonly processManager: ProcessManager;
   readonly tool: ReturnType<typeof createAgentHarnessTool>;
   readonly admittedTool: Tool;
@@ -165,11 +169,7 @@ function makeFixture(options: {
   const keybindingsManager = new KeybindingsManager({
     configPath: paths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'keybindings.json'),
   });
-  const reader: PermissionConfigReader = {
-    getAutonomousSnapshot: () => ({ permissions: configManager.getCategory('permissions'), autoApprove: configManager.get('behavior.autoApprove') === true, directory: paths.workingDirectory }),
-    getSnapshot: () => ({ permissions: configManager.getCategory('permissions') }),
-    isAutoApproveEnabled: () => configManager.get('behavior.autoApprove') === true, getWorkingDirectory: () => paths.workingDirectory,
-  };
+  const reader = createPermissionConfigReader(configManager);
   const manager = new PermissionManager(undefined, reader, new PolicyRuntimeState());
   const toolRegistry = new ToolRegistry(manager);
   bindAgentResearchSourceOwner(toolRegistry, ordinaryResearchOwner());
@@ -486,6 +486,7 @@ function makeFixture(options: {
     secretsManager,
     keybindingsManager,
     toolRegistry,
+    permissionManager: manager,
     processManager,
     tool,
     admittedTool,
@@ -920,7 +921,7 @@ describe('agent_harness tool', () => {
       }
       const picks: Readonly<Record<string, readonly string[]>> = {
         knowledge: ['knowledge'], 'Call isolated Agent Knowledge routes': ['knowledge'], Agent: ['tui', 'knowledge'], 'zzz-no-such-cli': [],
-        workspace: ['workspace-picker', 'workspace-close'], 'conversation search': ['search'], help: ['? / F1'],
+        workspace: ['workspace-picker', 'workspace-close'], 'conversation search': ['search'], 'Toggle conversation search': ['search'], help: ['? / F1'],
         'runtime activity': ['F2'], 'shortcut reference': ['/shortcuts'],
       };
       const selected = picks[rawState.query];
@@ -3500,7 +3501,7 @@ describe('agent_harness tool', () => {
           setupItemId: 'connected-host-auth',
         });
         expect(unconfirmedProvision.success).toBe(false);
-        expect(unconfirmedProvision.error).toContain('explicitUserRequest');
+        expect(unconfirmedProvision.error).toContain('current recorded effect admission');
 
         const missingProvisionConfirm = await fixture.tool.execute({
           mode: 'provision_connected_host_token',
@@ -3508,7 +3509,7 @@ describe('agent_harness tool', () => {
           explicitUserRequest: 'Provision connected-host auth for setup.',
         });
         expect(missingProvisionConfirm.success).toBe(false);
-        expect(missingProvisionConfirm.error).toContain('confirm:true');
+        expect(missingProvisionConfirm.error).toContain('current recorded effect admission');
 
         const provisioned = await executeHarnessJson<{
           readonly status: string;
@@ -3708,22 +3709,15 @@ describe('agent_harness tool', () => {
       });
 
       const summary = await executeHarnessJson<{
-        readonly personalOps?: { readonly lanes: number; readonly gap: number; readonly ready: number; readonly workflows: number; readonly setupWorkflows: number };
+        readonly personalOps?: { readonly lanes: number; readonly gap: number; readonly ready: number; readonly workflows: number; readonly setupWorkflows: number; readonly capabilityDiscovery: string };
       }>(fixture, { mode: 'summary' });
       expect(summary.personalOps?.lanes).toBe(7);
-      // Capability-advertisement honesty, after the mail and calendar services
-      // became platform capability and the daemon started serving email.* and
-      // calendar.*: the lanes no longer read as gaps, because the methods are
-      // genuinely dispatchable now. They read PARTIAL rather than ready, the
-      // routes exist, but no account is connected in this fixture, which is
-      // the distinction that keeps this from claiming a working mailbox.
-      expect(summary.personalOps?.gap).toBe(0);
+      // The startup summary counts native registrations. Discovering actual
+      // capabilities and workflows belongs to the awaited personal_ops read below.
+      expect(summary.personalOps?.gap).toBe(4);
       expect(summary.personalOps?.ready).toBeGreaterThan(0);
-      expect(summary.personalOps?.workflows).toBeGreaterThan(0);
-      // 4 needs-setup workflows. The writing-style-matched draft-reply workflow was
-      // pulled from the advertised inbox lane (capability-honesty, 2026-07): it has no
-      // sent-corpus reader and is recorded "not yet shipped", so it is no longer
-      // advertised as a needs-setup workflow.
+      expect(summary.personalOps?.workflows).toBe(0);
+      expect(summary.personalOps?.capabilityDiscovery).toBe('read-on-request');
       expect(summary.personalOps?.setupWorkflows).toBe(0);
 
       const ops = await executeHarnessJson<{
@@ -12170,14 +12164,41 @@ describe('agent_harness tool', () => {
       expect(single.output).toContain('"action": "search"');
       expect(single.output).toContain('Default keybinding descriptor only');
 
-      const run = await fixture.admittedTool.execute({
-        mode: 'run_keybinding',
-        actionId: 'search',
-        confirm: true,
-        explicitUserRequest: 'Open conversation search.',
+      const diagnostic = 'workspace.keybindingsManager is unavailable in this Agent runtime';
+      const readDiagnostic = authoredPrivacyAnswer({ fields: { 'workspace.keybindingsManager': 'other' }, parts: [
+        [errorText('workspace.keybindingsManager is '), errorSpan('workspace.keybindingsManager'), errorText('')],
+      ] });
+      const diagnosticReadings = fakePort((name, question, state) => {
+        const answer = readDiagnostic(name, question, state);
+        if (answer === undefined) throw new Error('Unexpected authored missing-manager diagnostic reading.');
+        return answer;
       });
-      expect(run.success).toBe(false);
-      expect(run.error).toContain('workspace.keybindingsManager is unavailable');
+      const base = judgmentPort('harness missing-manager fixture');
+      using diagnosticLog = new SqliteDecisionLog(':memory:');
+      const diagnosticPort = withDecisionLog({ model: base.model, ask(request) {
+        return ['engine.redaction.field-kind', 'engine.redaction.credential', 'engine.export.credential',
+          'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive'].includes(request.context?.battery ?? '')
+          ? diagnosticReadings.port.ask(request) : base.ask(request);
+      } }, diagnosticLog);
+      const previous = installJudgmentPort(diagnosticPort);
+      const configBefore = JSON.stringify(fixture.configManager.getRaw());
+      const keybindingPath = fixture.paths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'keybindings.json');
+      const keybindingBefore = existsSync(keybindingPath) ? readFileSync(keybindingPath) : null;
+      try {
+        expect(await redactSensitiveDataAsync(diagnostic)).toBe(diagnostic);
+        expect(await redactSensitiveDataAsync('password=unrelated-private-diagnostic')).not.toContain('unrelated-private-diagnostic');
+        const run = await fixture.admittedTool.execute({
+          mode: 'run_keybinding',
+          actionId: 'search',
+          confirm: true,
+          explicitUserRequest: 'Open conversation search.',
+        });
+        expect(run.success).toBe(false);
+        expect(run.error).toContain('workspace.keybindingsManager is unavailable');
+        expect(fixture.openedSurfaces).toEqual([]);
+        expect(JSON.stringify(fixture.configManager.getRaw())).toBe(configBefore);
+        expect(existsSync(keybindingPath) ? readFileSync(keybindingPath) : null).toEqual(keybindingBefore);
+      } finally { installJudgmentPort(previous); }
     } finally {
       fixture.cleanup();
     }
@@ -12812,28 +12833,96 @@ describe('agent_harness tool', () => {
       expect(preview.output).not.toContain('xoxb-import-secret');
       expect(fixture.configManager.get('behavior.saveHistory')).toBe(!nextSaveHistory);
 
+      fixture.configManager.flushConfigFileChanges();
+      const configBefore = JSON.stringify(fixture.configManager.getRaw());
+      const configPaths = [fixture.configManager.getConfigPath(), fixture.configManager.getProjectConfigPath()]
+        .filter((path): path is string => typeof path === 'string');
+      const configFilesBefore = configPaths.map(path => existsSync(path) ? readFileSync(path) : null);
+      const importSourcePath = fixture.paths.resolveUserPath('tui', 'settings.json');
+      const importSourceBefore = readFileSync(importSourcePath);
+      const secretBefore = await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'));
       const missingUserRequest = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'import-goodvibes-tui-settings',
         confirm: true,
       });
       expect(missingUserRequest.success).toBe(false);
-      expect(missingUserRequest.error).toContain('recorded effect admission');
+      expect(missingUserRequest.error).toContain('current recorded effect-owner admission');
+      expect(JSON.stringify(fixture.configManager.getRaw())).toBe(configBefore);
+      expect(configPaths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(configFilesBefore);
+      expect(readFileSync(importSourcePath)).toEqual(importSourceBefore);
+      expect(await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBe(secretBefore);
 
-      const applied = await fixture.admittedTool.execute({
-        mode: 'run_workspace_action',
-        actionId: 'import-goodvibes-tui-settings',
-        confirm: true,
-        explicitUserRequest: 'Import my existing GoodVibes settings into Agent.',
+      const originalSource = { goal: 'Verify the exact Agent harness operation requested by this isolated test',
+        criteria: ['Only modify temporary fixture files, stubbed service owners, and explicitly configured loopback hosts'] };
+      const expectedSettingsProposal = {
+        key: 'behavior.saveHistory', value: 'null',
+        invocation: { mode: 'set', actionId: 'import-goodvibes-tui-settings', confirm: true,
+          explicitUserRequest: 'Import my existing GoodVibes settings into Agent.', key: 'behavior.saveHistory' },
+        source: originalSource, request: JSON.stringify(originalSource),
+        effect: { operation: 'set', key: 'behavior.saveHistory', appliedBy: 'local', import: 'goodvibes-tui',
+          sources: [{ path: importSourcePath, present: true }, { path: importSourcePath, present: true },
+            { path: fixture.paths.resolveUserPath('tui', 'subscriptions.json'), present: false }],
+          effects: [{ operation: 'set', key: 'behavior.saveHistory', value: nextSaveHistory,
+            destinations: [{ path: fixture.paths.resolveUserPath('agent', 'settings.json'), tier: 'global', operation: 'set' }] },
+          { operation: 'set', key: 'surfaces.slack.botToken',
+            value: buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.slack.botToken')),
+            destinations: [{ path: fixture.paths.resolveUserPath('daemon', 'settings.json'), tier: 'daemon', operation: 'set' }] }],
+          credential: { operation: 'import', beforeGeneration: 0,
+            items: [{ key: buildGoodVibesSecretKey('surfaces.slack.botToken'), scope: 'daemon', configured: true }],
+            destinations: [{ path: fixture.paths.resolveUserPath('daemon', 'secrets.enc'), operation: 'set', tier: 'daemon' }] },
+          skippedSubscriptions: 0 },
+      };
+      const battery = gateJudgmentRegistry.get('engine.gate.settings-hazard');
+      if (!battery || !('items' in battery) || !battery.items || typeof battery.items !== 'object') {
+        throw new Error('Canonical settings import question schema is unavailable.');
+      }
+      const questions = Object.fromEntries(Object.entries(battery.items).map(([name, item]) => {
+        if (!item || typeof item !== 'object' || !('question' in item)) throw new Error('Invalid canonical settings import question.');
+        return [name, item.question];
+      }));
+      expect(Object.keys(questions).sort()).toEqual(['hazard', 'requested']);
+      const settingsReadings = fakePort((name, question, state) => {
+        expect<unknown>(state).toEqual(expectedSettingsProposal);
+        expect<unknown>(question).toEqual(questions[name]);
+        if (name === 'hazard' && question.type === 'choice' && Object.hasOwn(question.criteria, 'none')) {
+          return choiceAnswer(question, 'none', 0.999);
+        }
+        if (name === 'requested' && question.type === 'noul') return noulAnswer(0.001);
+        throw new Error('Unexpected exact settings import observation.');
       });
-      expect(applied.success).toBe(true);
-      expect(applied.output).toContain('GoodVibes settings imported');
+      const base = judgmentPort('agent.harness.settings-import-fixture');
+      using settingsLog = new SqliteDecisionLog(':memory:');
+      const scoped: JudgmentPort = { model: base.model, ask(request) {
+        if (request.context?.battery !== 'engine.gate.settings-hazard') return base.ask(request);
+        if (request.context.site !== 'engine.gate.settings-write') throw new Error('Unexpected settings import observation site.');
+        expect(request.questions).toEqual(questions);
+        expect<unknown>(request.state).toEqual(expectedSettingsProposal);
+        return settingsReadings.port.ask(request);
+      } };
+      const previous = installJudgmentPort(withDecisionLog(scoped, settingsLog));
+      let applied: Awaited<ReturnType<Tool['execute']>>;
+      try {
+        applied = await fixture.admittedTool.execute({
+          mode: 'run_workspace_action',
+          actionId: 'import-goodvibes-tui-settings',
+          confirm: true,
+          explicitUserRequest: 'Import my existing GoodVibes settings into Agent.',
+        });
+      } finally { installJudgmentPort(previous); }
+      expect(applied.success, JSON.stringify(applied)).toBe(true);
+      if (!applied.success || typeof applied.output !== 'string') throw new Error('Native settings import did not return its committed receipt.');
+      const receipt: unknown = JSON.parse(applied.output);
+      expect(receipt).toMatchObject({ status: 'committed', action: 'import_goodvibes_settings',
+        verifiedInOwningStore: true, completedPaths: expect.any(Array) });
       expect(applied.output).not.toContain('xoxb-import-secret');
       expect(fixture.configManager.get('behavior.saveHistory')).toBe(nextSaveHistory);
       expect(fixture.configManager.get('surfaces.slack.botToken')).toBe(
         buildGoodVibesSecretRef(buildGoodVibesSecretKey('surfaces.slack.botToken')),
       );
       expect(await fixture.secretsManager?.get(buildGoodVibesSecretKey('surfaces.slack.botToken'))).toBe('xoxb-import-secret');
+      expect(configPaths.map(path => existsSync(path) ? readFileSync(path) : null)).not.toEqual(configFilesBefore);
+      expect(readFileSync(importSourcePath)).toEqual(importSourceBefore);
     } finally {
       fixture.cleanup();
     }
@@ -12843,7 +12932,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const memoryRegistry = await createMemoryRegistry(fixture.paths, fixture.configManager);
-      fixture.toolRegistry.register(createAgentLocalRegistryTool(fixture.paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry)));
+      registerAgentLocalRegistryTool(fixture.toolRegistry, fixture.paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry));
 
       const targetRun = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -12938,7 +13027,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const memoryRegistry = await createMemoryRegistry(fixture.paths, fixture.configManager);
-      fixture.toolRegistry.register(createAgentLocalRegistryTool(fixture.paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry)));
+      registerAgentLocalRegistryTool(fixture.toolRegistry, fixture.paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry));
 
       const missingFields = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13571,9 +13660,9 @@ describe('agent_harness tool', () => {
     const artifacts = createHarnessArtifactStore();
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
-      fixture.toolRegistry.register(createAgentResearchReportTool(artifacts.store, ordinaryResearchOwner()));
+      registerAgentResearchReportTool(fixture.toolRegistry, artifacts.store, ordinaryResearchOwner());
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const unconfirmedArgs = {
         mode: 'run_workspace_action',
         actionId: 'research-save-report',
         confirm: true,
@@ -13585,10 +13674,73 @@ describe('agent_harness tool', () => {
           sources: 'Ollama docs | https://example.test/ollama?token=secret | high | Official docs.',
           confirm: 'no',
         },
+      };
+      fixture.configManager.flushConfigFileChanges();
+      const configBefore = JSON.stringify(fixture.configManager.getRaw());
+      const configPaths = [fixture.configManager.getConfigPath(), fixture.configManager.getProjectConfigPath()]
+        .filter((path): path is string => typeof path === 'string');
+      const configFilesBefore = configPaths.map(path => existsSync(path) ? readFileSync(path) : null);
+      const id = 'harness-research-report-refusal';
+      const call = await fixture.toolRegistry.prepareCall(id, fixture.tool.definition.name, unconfirmedArgs);
+      const source = { goal: 'Verify the exact Agent harness operation requested by this isolated test',
+        criteria: ['Only modify temporary fixture files, stubbed service owners, and explicitly configured loopback hosts'] };
+      const rejection = fakePort((name, question, state) => {
+        if (name !== 'disposition' || question.type !== 'choice' || !Object.hasOwn(question.criteria, 'reject')
+          || !state || typeof state !== 'object' || Array.isArray(state)
+          || !state.binding || typeof state.binding !== 'object' || Array.isArray(state.binding)) {
+          throw new Error('Unexpected exact research report refusal proposal.');
+        }
+        expect(Object.keys(state.binding).sort()).toEqual(['actionId', 'actionRevision', 'authorityId', 'authorityRevision',
+          'inputRevision', 'scopeId', 'scopeRevision', 'sourceId']);
+        expect(state.binding.sourceId).toBe(id);
+        expect(state.binding.authorityId).toBe('engine.permission-runtime');
+        expect(question.criteria).toEqual({ act: 'Execute exactly this prepared tool action.',
+          reject: 'Refuse this action. Do not execute it or ask a human for approval.',
+          defer_0: 'Wait for registered condition: Registered host condition 1 changes from its offered revision.. Obtain a fresh decision after it changes.' });
+        for (const key of ['actionId', 'actionRevision', 'authorityRevision', 'inputRevision', 'scopeId', 'scopeRevision']) {
+          const value = state.binding[key];
+          expect(typeof value).toBe('string');
+          if (typeof value !== 'string') throw new Error('Invalid native research refusal binding.');
+          expect(value).toMatch(/^[a-f0-9]{64}$/);
+        }
+        expect<unknown>(state).toEqual({
+          binding: state.binding,
+          input: { tool: 'agent_harness', arguments: call.args, source, workingDirectory: fixture.paths.workingDirectory,
+            evidence: {
+              boundary: { passed: true, checks: [
+                { check: 'judgment-input', result: 'pass' }, { check: 'catastrophic', result: 'skipped' },
+                { check: 'surface-authority', result: 'pass', detail: 'local owner session' },
+                { check: 'card-details', result: 'skipped' }, { check: 'outward-effect', result: 'skipped' },
+              ] },
+              reading: { family: 'generic', stakes: 'low', facts: { mutates: false, outward: false, secrets: false,
+                irreversible: false, beyondProject: false, weakensSecurity: false, obfuscated: false }, uncertain: [] },
+              constraints: { allowAct: true, mode: 'prompt', explicitToolDeny: false, durableEffect: null },
+            } },
+          evidence: [
+            { id: 'prepared-tool-input', revision: state.binding.inputRevision },
+            { id: 'source-goal-and-criteria', revision: hashState(source) },
+            { id: 'live-authority', revision: state.binding.authorityRevision },
+          ],
+          offeredChoices: { continuations: [], resumeConditions: [{ ref: { id, revision: state.binding.inputRevision },
+            description: 'Registered host condition 1 changes from its offered revision.' }] },
+        });
+        return choiceAnswer(question, 'reject', 0.999);
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
-      expect(unconfirmed.output).toContain('research-save-report');
+      using rejectionLog = new SqliteDecisionLog(':memory:');
+      const admission = await fixture.permissionManager.admitAutonomous(id, call.name, call.args, {
+        sourceOf: () => source, schemaRevision: call.schemaRevision, preparedCall: { registry: fixture.toolRegistry, call },
+        decoratePort: base => withDecisionLog({ model: base.model, ask(request) {
+          return request.context?.battery === 'engine.gate.autonomous-disposition' && request.context?.site === 'engine.gate.autonomous-tool'
+            ? rejection.port.ask(request) : base.ask(request);
+        } }, rejectionLog),
+      });
+      expect(admission.result).toMatchObject({ approved: false, reasonCode: 'jev_reject', autonomousDecision: { outcome: 'reject' } });
+      await expect(fixture.toolRegistry.executePrepared(call, admission)).rejects.toThrow(
+        'Autonomous admission does not authenticate this prepared tool call',
+      );
+      expect(artifacts.records).toEqual([]);
+      expect(JSON.stringify(fixture.configManager.getRaw())).toBe(configBefore);
+      expect(configPaths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(configFilesBefore);
 
       const saved = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
