@@ -132,6 +132,7 @@ export type {
   LocalConfigReader,
 } from './daemon-config-read.js';
 export type { GoodVibesConfig, ConfigKey, ConfigValue, ConfigSetting, PermissionMode, PermissionAction, PermissionsToolConfig, NotificationsConfig } from './schema.js';
+export type { HostedInboxScreening } from './schema-types-surfaces.js';
 export { DEFAULT_CONFIG, CONFIG_KEYS, CONFIG_SCHEMA, isValidConfigKey } from './schema.js';
 export { ConfigError } from '../types/errors.js';
 export {

@@ -40,7 +40,11 @@ export class SurfaceRegistry {
     const pluginDescriptors = this.pluginRegistry?.listDescriptors() ?? [];
     const enabledForSurface = (surface: string): boolean => {
       if (!isSurfaceFeatureGateEnabled(this.featureFlags, surface)) return false;
-      if (surface === 'tui') return (this.configManager.getCategory('surfaces') as Record<string, { enabled?: boolean } | undefined>).tui?.enabled !== false;
+      if (surface === 'tui') {
+        const surfaces = this.configManager.getCategory('surfaces');
+        return !('tui' in surfaces && surfaces.tui !== null && typeof surfaces.tui === 'object'
+          && 'enabled' in surfaces.tui && surfaces.tui.enabled === false);
+      }
       if (surface === 'web') return Boolean(this.configManager.get('web.enabled') || this.configManager.get('controlPlane.enabled'));
       if (surface === 'slack') return Boolean(this.configManager.get('surfaces.slack.enabled'));
       if (surface === 'discord') return Boolean(this.configManager.get('surfaces.discord.enabled'));

@@ -37,6 +37,7 @@ import type { ContractConfigValueMap } from './schema-types-contract.js';
 import type { JudgmentConfigValueMap } from './schema-types-judgment.js';
 import type { DaemonProcessConfigValueMap } from './schema-types-daemon.js';
 import type {
+  HostedInboxScreening,
   InboundEmailCapabilityPolicy,
   InboundEmailMode,
   InboundEmailNoticeMode,
@@ -182,12 +183,14 @@ export type ConfigValue<K extends ConfigKey> =
   K extends 'web.port' ? number :
   K extends 'web.publicBaseUrl' ? string :
   K extends 'web.staticAssetsDir' ? string :
+  K extends 'surfaces.hostedInboxScreening' ? HostedInboxScreening :
   K extends 'surfaces.slack.enabled' ? boolean :
   K extends 'surfaces.slack.signingSecret' ? string :
   K extends 'surfaces.slack.botToken' ? string :
   K extends 'surfaces.slack.appToken' ? string :
   K extends 'surfaces.slack.defaultChannel' ? string :
   K extends 'surfaces.slack.workspaceId' ? string :
+  K extends 'surfaces.slack.inboxUserId' ? string :
   K extends 'surfaces.discord.enabled' ? boolean :
   K extends 'surfaces.discord.publicKey' ? string :
   K extends 'surfaces.discord.botToken' ? string :

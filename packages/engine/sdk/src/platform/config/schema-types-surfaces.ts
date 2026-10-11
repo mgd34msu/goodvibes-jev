@@ -4,6 +4,8 @@
  * grandfathered line ceiling; re-exported from schema-types.ts so import
  * sites are unchanged.
  */
+export type HostedInboxScreening = 'disabled' | 'abacus-typesafe-provider-managed';
+
 export interface SlackSurfaceConfig {
   enabled: boolean;
   signingSecret: string;
@@ -11,6 +13,7 @@ export interface SlackSurfaceConfig {
   appToken: string;
   defaultChannel: string;
   workspaceId: string;
+  inboxUserId: string;
   setupVersion: number;
 }
 
@@ -275,6 +278,7 @@ export interface DaemonCalendarConfig {
 }
 
 export interface SurfacesConfig {
+  hostedInboxScreening: HostedInboxScreening;
   slack: SlackSurfaceConfig;
   discord: DiscordSurfaceConfig;
   ntfy: NtfySurfaceConfig;

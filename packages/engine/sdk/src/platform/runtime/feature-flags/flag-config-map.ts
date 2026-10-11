@@ -242,6 +242,7 @@ export const FEATURE_FLAG_CONFIG: Readonly<Record<string, FeatureFlagConfigAssoc
       'surfaces.slack.appToken',
       'surfaces.slack.defaultChannel',
       'surfaces.slack.workspaceId',
+      'surfaces.slack.inboxUserId',
     ],
   },
   'discord-surface': {
