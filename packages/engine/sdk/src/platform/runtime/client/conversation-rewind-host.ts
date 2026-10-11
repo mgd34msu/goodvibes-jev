@@ -97,41 +97,64 @@ export function createConversationRewindHost(options: ConversationRewindHostOpti
   const log = options.log ?? logger;
   const waitMs = options.waitMs ?? DEFAULT_WAIT_MS;
   const backoffMs = options.retryBackoffMs ?? RETRY_BACKOFF_MS;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  }));
+  interface Offer {
+    readonly sessionId: string;
+    readonly predecessor: Promise<void> | undefined;
+    readonly retired: Promise<void>;
+    readonly retire: () => void;
+    hostId: string | null;
+    stopped: boolean;
+    running: boolean;
+    registration: Promise<string | null> | undefined;
+    pump: Promise<number> | undefined;
+    loop: Promise<void> | undefined;
+    closing: Promise<void> | undefined;
+    cancelBackoff: (() => void) | undefined;
+  }
 
-  let sessionId: string | null = null;
-  let currentHostId: string | null = null;
-  let running = false;
-  let loop: Promise<void> | null = null;
+  let current: Offer | undefined;
+  let lastClosing: Promise<void> | undefined;
+  const idle = Promise.resolve();
+  const isCurrent = (offer: Offer): boolean => current === offer && !offer.stopped;
 
-  /** Claim the session. Returns the host id, or null when the daemon refused. */
-  const register = async (): Promise<string | null> => {
-    if (!sessionId) return null;
-    try {
-      const result = await options.verbs.invoke<{ host?: { hostId?: string } }>(
-        'rewind.conversation.host.register',
-        { sessionId, label: options.label ?? 'a connected surface' },
-      );
-      const hostId = result?.host?.hostId ?? null;
-      if (hostId) {
-        log.info(`[rewind] offered this session's conversation to the daemon (host ${hostId})`);
+  const register = (offer: Offer): Promise<string | null> => {
+    if (offer.registration) return offer.registration;
+    const pending = Promise.resolve().then(async () => {
+      // A late old registration could otherwise claim the same session after
+      // its successor. Release the predecessor before making the new claim.
+      await offer.predecessor;
+      if (!isCurrent(offer)) return null;
+      try {
+        const result = await options.verbs.invoke<{ host?: { hostId?: string } }>(
+          'rewind.conversation.host.register',
+          { sessionId: offer.sessionId, label: options.label ?? 'a connected surface' },
+        );
+        const hostId = result?.host?.hostId ?? null;
+        // Keep the actual issued id even after retirement: close must release
+        // that registration, but it must never become the successor's id.
+        offer.hostId = hostId;
+        if (hostId && isCurrent(offer)) {
+          log.info(`[rewind] offered this session's conversation to the daemon (host ${hostId})`);
+        }
+        return hostId;
+      } catch (error) {
+        if (isCurrent(offer)) {
+          log.debug('[rewind] offering this conversation to the daemon failed', { error: summarizeError(error) });
+        }
+        return null;
       }
-      return hostId;
-    } catch (error) {
-      log.debug('[rewind] offering this conversation to the daemon failed', { error: summarizeError(error) });
-      return null;
-    }
+    });
+    offer.registration = pending;
+    const clear = () => { if (offer.registration === pending) offer.registration = undefined; };
+    void pending.then(clear, clear);
+    return pending;
   };
 
-  /** Build the answer for one question, or the honest reason there is none. */
-  const answerFor = async (request: HostRequest): Promise<Record<string, unknown>> => {
-    if (!options.hosts(request.sessionId)) {
-      // Never zero. A real zero and a conversation this process is not holding
-      // are indistinguishable as a number, and reporting the second as the
-      // first is precisely the failure this contract exists to end.
+  const answerFor = async (offer: Offer, request: HostRequest): Promise<Record<string, unknown> | undefined> => {
+    if (!isCurrent(offer)) return undefined;
+    const hosted = options.hosts(request.sessionId);
+    if (!isCurrent(offer)) return undefined;
+    if (!hosted) {
       return {
         unavailableReason: `this surface is no longer holding the conversation for session ${request.sessionId}`,
       };
@@ -139,41 +162,43 @@ export function createConversationRewindHost(options: ConversationRewindHostOpti
     const anchor: RewindAnchor = { sessionId: request.sessionId, turnId: request.turnId ?? undefined };
     if (request.kind === 'preview') {
       const preview = await options.port.preview(anchor);
+      if (!isCurrent(offer)) return undefined;
       return { messagesToDrop: preview.messagesToDrop, messagesRemaining: preview.messagesRemaining };
     }
     const outcome = await options.port.rewind(anchor);
+    if (!isCurrent(offer)) return undefined;
     return { droppedMessages: outcome.droppedMessages, undoSnapshotId: outcome.undoSnapshotId };
   };
 
-  const answer = async (hostId: string, request: HostRequest): Promise<void> => {
-    let payload: Record<string, unknown>;
+  const answer = async (offer: Offer, hostId: string, request: HostRequest): Promise<void> => {
+    let payload: Record<string, unknown> | undefined;
     try {
-      payload = await answerFor(request);
+      payload = await answerFor(offer, request);
     } catch (error) {
-      // Answered, not dropped: a `rewind.plan` is waiting on this, and a reason
-      // reaches the person faster and more usefully than a timeout does.
+      if (!isCurrent(offer)) return;
       payload = { unavailableReason: `the surface hosting this conversation could not answer: ${summarizeError(error)}` };
     }
+    if (!isCurrent(offer) || !payload) return;
     try {
       await options.verbs.invoke('rewind.conversation.requests.answer', {
         hostId, requestId: request.requestId, ...payload,
       });
     } catch (error) {
-      // A 409 here means the question stopped waiting, it expired, or another
-      // surface took the session over. Nothing to do but say so.
-      log.debug('[rewind] the daemon would not accept this answer', {
-        requestId: request.requestId, error: summarizeError(error),
-      });
+      if (isCurrent(offer)) {
+        log.debug('[rewind] the daemon would not accept this answer', {
+          requestId: request.requestId, error: summarizeError(error),
+        });
+      }
     }
   };
 
-  const pump = async (): Promise<number> => {
-    if (!sessionId) return 0;
-    if (!currentHostId) {
-      currentHostId = await register();
-      if (!currentHostId) return 0;
+  const pumpOffer = async (offer: Offer): Promise<number> => {
+    if (!isCurrent(offer)) return 0;
+    if (!offer.hostId) {
+      await register(offer);
+      if (!isCurrent(offer) || !offer.hostId) return 0;
     }
-    const hostId = currentHostId;
+    const hostId = offer.hostId;
     let taken: { requests?: readonly HostRequest[] } | null = null;
     try {
       taken = await options.verbs.invoke<{ requests?: readonly HostRequest[] }>(
@@ -181,71 +206,131 @@ export function createConversationRewindHost(options: ConversationRewindHostOpti
         { hostId, waitMs },
       );
     } catch (error) {
-      // The registration is gone (lease lapsed, daemon restarted, another
-      // surface claimed the session). Drop the host id so the next cycle
-      // re-offers rather than polling an id nobody knows.
-      currentHostId = null;
-      log.debug('[rewind] taking conversation-rewind questions failed; will re-offer', {
-        error: summarizeError(error),
-      });
+      // Releasing our own host wakes its pending take with host-unknown. That
+      // retired cycle owes no retry or new semantic error/redaction reading.
+      if (isCurrent(offer)) {
+        offer.hostId = null;
+        log.debug('[rewind] taking conversation-rewind questions failed; will re-offer', {
+          error: summarizeError(error),
+        });
+      }
       return 0;
     }
+    if (!isCurrent(offer)) return 0;
     const requests = taken?.requests ?? [];
-    for (const request of requests) await answer(hostId, request);
-    return requests.length;
+    for (const request of requests) {
+      if (!isCurrent(offer)) break;
+      await answer(offer, hostId, request);
+    }
+    return isCurrent(offer) ? requests.length : 0;
   };
 
-  const run = async (): Promise<void> => {
-    while (running) {
-      const handled = await pump();
-      // Only back off when nothing was registered or the take failed. A
-      // successful empty take already consumed its own wait, so looping
-      // straight back into it is one open request, not a busy loop.
-      if (!currentHostId) await sleep(backoffMs);
-      else if (handled === 0 && waitMs === 0) await sleep(backoffMs);
+  const pump = (offer: Offer): Promise<number> => {
+    if (offer.pump) return offer.pump;
+    const pending = Promise.resolve().then(() => pumpOffer(offer));
+    offer.pump = pending;
+    const clear = () => { if (offer.pump === pending) offer.pump = undefined; };
+    void pending.then(clear, clear);
+    return pending;
+  };
+
+  const backoff = async (offer: Offer): Promise<void> => {
+    if (!isCurrent(offer) || !offer.running) return;
+    if (options.sleep) {
+      await Promise.race([options.sleep(backoffMs), offer.retired]);
+      return;
+    }
+    await new Promise<void>(resolve => {
+      const finish = () => {
+        clearTimeout(timer);
+        if (offer.cancelBackoff === finish) offer.cancelBackoff = undefined;
+        resolve();
+      };
+      const timer = setTimeout(finish, backoffMs);
+      timer.unref?.();
+      offer.cancelBackoff = finish;
+    });
+  };
+
+  const run = async (offer: Offer): Promise<void> => {
+    while (isCurrent(offer) && offer.running) {
+      const handled = await pump(offer);
+      if (!isCurrent(offer) || !offer.running) return;
+      if (!offer.hostId || (handled === 0 && waitMs === 0)) await backoff(offer);
     }
   };
 
-  const offer = (nextSessionId: string): boolean => {
-    if (!nextSessionId) return false;
-    if (sessionId === nextSessionId) return true;
-    sessionId = nextSessionId;
-    currentHostId = null;
-    return true;
+  const close = (offer: Offer): Promise<void> => {
+    if (offer.closing) return offer.closing;
+    offer.stopped = true;
+    offer.running = false;
+    if (current === offer) current = undefined;
+    offer.retire();
+    offer.cancelBackoff?.();
+    // Retire synchronously; drain each promise captured by this exact offer.
+    const pendingPump = offer.pump;
+    const pendingLoop = offer.loop;
+    offer.closing = Promise.resolve().then(async () => {
+      const failures: unknown[] = [];
+      try {
+        await offer.predecessor;
+        await offer.registration;
+        const hostId = offer.hostId;
+        offer.hostId = null;
+        if (hostId) {
+          try {
+            await options.verbs.invoke('rewind.conversation.host.release', { sessionId: offer.sessionId, hostId });
+            log.info('[rewind] withdrew this session\'s conversation from the daemon');
+          } catch {
+            // Cleanup remains observable without reading retired private error
+            // text. A lapsed registration already has the desired end state.
+            log.debug('[rewind] releasing the conversation host was not acknowledged');
+          }
+        }
+      } catch (error) { failures.push(error); }
+      const outcomes = await Promise.allSettled([pendingPump, pendingLoop]);
+      for (const outcome of outcomes) if (outcome.status === 'rejected') failures.push(outcome.reason);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, 'Conversation rewind host cleanup failed');
+    });
+    // Session changes initiate cleanup synchronously without an awaiting caller.
+    // The original rejection remains observable through the retained close.
+    void offer.closing.catch(() => {});
+    lastClosing = offer.closing;
+    return offer.closing;
+  };
+
+  const offer = (sessionId: string): Offer | undefined => {
+    if (!sessionId) return undefined;
+    if (current?.sessionId === sessionId) return current;
+    if (current) close(current);
+    let retire!: () => void;
+    const retired = new Promise<void>(resolve => { retire = resolve; });
+    current = {
+      sessionId, predecessor: lastClosing, retired, retire,
+      hostId: null, stopped: false, running: false,
+      registration: undefined, pump: undefined, loop: undefined,
+      closing: undefined, cancelBackoff: undefined,
+    };
+    return current;
   };
 
   return {
-    offer(nextSessionId: string): void { offer(nextSessionId); },
+    offer(sessionId): void { offer(sessionId); },
 
-    start(nextSessionId: string): void {
-      if (!offer(nextSessionId)) return;
-      if (running) return;
-      running = true;
-      loop = run().catch((error) => {
+    start(sessionId): void {
+      const offered = offer(sessionId);
+      if (!offered || offered.running) return;
+      offered.running = true;
+      offered.loop = run(offered).catch(error => {
+        if (!isCurrent(offered)) return;
+        offered.running = false;
         log.warn('[rewind] the conversation-host loop stopped', { error: summarizeError(error) });
       });
     },
 
-    async stop(): Promise<void> {
-      running = false;
-      const hostId = currentHostId;
-      const session = sessionId;
-      currentHostId = null;
-      sessionId = null;
-      if (hostId && session) {
-        try {
-          await options.verbs.invoke('rewind.conversation.host.release', { sessionId: session, hostId });
-          log.info('[rewind] withdrew this session\'s conversation from the daemon');
-        } catch (error) {
-          // A lapsed lease reaches the same end state, so this is worth saying
-          // once and never worth failing a shutdown over.
-          log.debug('[rewind] releasing the conversation host failed', { error: summarizeError(error) });
-        }
-      }
-      loop = null;
-    },
-
-    hostId: () => currentHostId,
-    pump,
+    stop(): Promise<void> { return current ? close(current) : lastClosing ?? idle; },
+    hostId: () => current?.hostId ?? null,
+    pump: () => current ? pump(current) : Promise.resolve(0),
   };
 }
