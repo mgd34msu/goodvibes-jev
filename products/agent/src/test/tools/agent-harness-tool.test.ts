@@ -13,10 +13,11 @@ import { securityPort } from '../helpers/security-readings.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { ArtifactCreateInput, ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { ChannelDeliveryRequest } from '@goodvibes-jev/engine/sdk/platform/channels';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import { ProcessManager, ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ProcessManager, ToolRegistry, ToolInputProjectionError, assertCurrentToolEffect, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { PolicyRuntimeState } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
 import { redactSensitiveDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
@@ -36,17 +37,19 @@ import { registerOperatorRuntimeCommands } from '../../input/commands/operator-r
 import { AGENT_WORKSPACE_CATEGORIES } from '../../input/agent-workspace-categories.ts';
 import { KeybindingsManager } from '../../input/keybindings.ts';
 import { describeCliCommandPolicy, describeCommandPolicy } from '../../tools/agent-harness-metadata.ts';
-import { createAgentArtifactsTool } from '../../tools/agent-artifacts-tool.ts';
-import { createAgentDocumentsTool } from '../../tools/agent-documents-tool.ts';
+import { registerAgentArtifactsTool } from '../../tools/agent-artifacts-tool.ts';
+import { createAgentModelCompareTool } from '../../tools/agent-model-compare-tool.ts';
+import { registerAgentKnowledgeIngestTool } from '../../tools/agent-knowledge-ingest-tool.ts';
+import { registerAgentDocumentsTool } from '../../tools/agent-documents-tool.ts';
 import { createAgentHarnessTool, registerAgentHarnessTool } from '../../tools/agent-harness-tool.ts';
 import { createAgentWorkspaceTool } from '../../tools/agent-workspace-tool.ts';
 import { registerAgentTerminalProcessTools } from '../../tools/agent-terminal-process-tools.ts';
-import { createAgentLocalRegistryTool, registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
+import { registerAgentLocalRegistryTool } from '../../tools/agent-local-registry-tool.ts';
 import { registerAgentResearchReportTool } from '../../tools/agent-research-report-tool.ts';
-import { createAgentReviewPacketPresetsTool } from '../../tools/agent-review-packet-presets-tool.ts';
-import { createAgentReviewPacketShareTool } from '../../tools/agent-review-packet-share-tool.ts';
-import { createAgentResearchRunsTool } from '../../tools/agent-research-runs-tool.ts';
-import { createAgentResearchSourcesTool } from '../../tools/agent-research-sources-tool.ts';
+import { registerAgentReviewPacketPresetsTool } from '../../tools/agent-review-packet-presets-tool.ts';
+import { registerAgentReviewPacketShareTool } from '../../tools/agent-review-packet-share-tool.ts';
+import { registerAgentResearchRunsTool } from '../../tools/agent-research-runs-tool.ts';
+import { registerAgentResearchSourcesTool } from '../../tools/agent-research-sources-tool.ts';
 import { AgentNoteRegistry } from '../../agent/note-registry.ts';
 import { recordAgentChannelDeliveryReceipt } from '../../agent/channel-delivery-receipts.ts';
 import { AgentDocumentRegistry } from '../../agent/document-registry.ts';
@@ -81,6 +84,7 @@ interface HarnessFixture {
   readonly processManager: ProcessManager;
   readonly tool: ReturnType<typeof createAgentHarnessTool>;
   readonly admittedTool: Tool;
+  readonly executeAdmittedCall: (id: string, name: string, args: Record<string, unknown>, options?: Parameters<Tool['execute']>[1]) => ReturnType<Tool['execute']>;
   readonly context: CommandContext;
   readonly printed: string[];
   readonly openedSurfaces: Array<{ readonly id: string; readonly detail?: string; readonly result?: boolean }>;
@@ -121,7 +125,7 @@ function createHarnessArtifactStore() {
         mimeType: input.mimeType ?? 'text/plain',
         ...(input.filename ? { filename: input.filename } : {}),
         sizeBytes: buffer.byteLength,
-        sha256: `sha-${records.length + 1}`,
+        sha256: createHash('sha256').update(buffer).digest('hex'),
         createdAt: Date.now() + records.length,
         acquisitionMode: input.acquisitionMode ?? 'inline-data',
         fetchMode: input.fetchMode ?? 'not-applicable',
@@ -465,17 +469,20 @@ function makeFixture(options: {
   const tool = createAgentHarnessTool({ commandRegistry, commandContext: context, toolRegistry });
   registerAgentTerminalProcessTools(toolRegistry, context);
   let invocation = 0;
-  const admittedTool: Tool = { ...tool, async execute(args, options) {
+  const executeAdmittedCall: HarnessFixture['executeAdmittedCall'] = async (id, name, args, options) => {
+    options?.signal?.throwIfAborted(); options?.assertCurrent?.();
     configManager.flushConfigFileChanges();
-    const id = `harness-effect-fixture-${++invocation}`;
-    const call = await toolRegistry.prepareCall(id, tool.definition.name, args, { signal: options?.signal });
-    const admission = await manager.admitAutonomous(id, tool.definition.name, call.args, {
+    const call = await toolRegistry.prepareCall(id, name, args, { signal: options?.signal });
+    const admission = await manager.admitAutonomous(id, name, call.args, {
       sourceOf: () => ({ goal: 'Verify the exact Agent harness operation requested by this isolated test',
         criteria: ['Only modify temporary fixture files, stubbed service owners, and explicitly configured loopback hosts'] }),
       signal: options?.signal, schemaRevision: call.schemaRevision, preparedCall: { registry: toolRegistry, call },
     });
     expect(admission.result.autonomousDecision?.outcome).toBe('act');
-    return toolRegistry.executePrepared(call, admission);
+    return toolRegistry.executePrepared(call, admission, options);
+  };
+  const admittedTool: Tool = { ...tool, execute(args, options) {
+    return executeAdmittedCall(`harness-effect-fixture-${++invocation}`, tool.definition.name, args, options);
   } };
 
   return {
@@ -490,6 +497,7 @@ function makeFixture(options: {
     processManager,
     tool,
     admittedTool,
+    executeAdmittedCall,
     context,
     printed,
     openedSurfaces,
@@ -507,6 +515,106 @@ async function createMemoryRegistry(paths: ShellPaths, configManager: ConfigMana
   const store = new MemoryStore(paths.resolveUserPath(GOODVIBES_AGENT_SURFACE_ROOT, 'memory.sqlite'), { embeddingRegistry });
   await store.init();
   return new MemoryRegistry(store);
+}
+
+/** Exact native rejected proposals for the three authored settings negatives below. */
+async function refusePreparedHarnessSetting(fixture: HarnessFixture, id: string, args: Record<string, unknown>,
+  expectedEffect: Record<string, unknown>): Promise<void> {
+  fixture.configManager.flushConfigFileChanges();
+  const call = await fixture.toolRegistry.prepareCall(id, fixture.tool.definition.name, args);
+  const owned = fixture.toolRegistry.readPreparedOwnedAdmissionEvidence(call);
+  if (owned?.kind !== 'agent-settings') throw new Error('Expected native settings ownership.');
+  expect<unknown>(owned.effect).toEqual(expectedEffect);
+  const source = { goal: 'Verify the exact Agent harness operation requested by this isolated test',
+    criteria: ['Only modify temporary fixture files, stubbed service owners, and explicitly configured loopback hosts'] };
+  const questionsFor = (name: string) => {
+    const battery = gateJudgmentRegistry.get(name);
+    if (!battery || !('items' in battery) || !battery.items || typeof battery.items !== 'object') {
+      throw new Error('Canonical settings fixture questions are unavailable.');
+    }
+    return Object.fromEntries(Object.entries(battery.items).map(([key, item]) => {
+      if (!item || typeof item !== 'object' || !('question' in item)) throw new Error('Invalid canonical settings fixture question.');
+      return [key, item.question];
+    }));
+  };
+  const hazardQuestions = questionsFor('engine.gate.settings-hazard');
+  const credentialQuestions = questionsFor('engine.tools.credential-value');
+  const hazardState = { key: owned.key, value: JSON.stringify(expectedEffect.value ?? null),
+    invocation: { ...call.args, key: owned.key, mode: owned.operation }, source, request: JSON.stringify(source), effect: expectedEffect };
+  const credentialStates = [
+    { key: 'provider.reasoningEffort', description: 'Reasoning effort level for models that support it', value: 'medium' },
+    { key: 'provider.reasoningEffort', description: 'Reasoning effort level for models that support it', value: 'high' },
+  ];
+  const settings = fakePort((name, question, state) => {
+    expect<unknown>(state).toEqual(hazardState);
+    expect<unknown>(question).toEqual(hazardQuestions[name]);
+    if (name === 'hazard' && question.type === 'choice' && Object.hasOwn(question.criteria, 'none')) return choiceAnswer(question, 'none', 0.999);
+    if (name === 'requested' && question.type === 'noul') return noulAnswer(0.001);
+    throw new Error('Unexpected exact settings negative hazard observation.');
+  });
+  const credential = fakePort((name, question, state) => {
+    expect(name).toBe('credential_material');
+    expect<unknown>(question).toEqual(credentialQuestions[name]);
+    expect(credentialStates).toContainEqual(state);
+    if (owned.key !== 'provider.reasoningEffort' || name !== 'credential_material' || question.type !== 'noul') {
+      throw new Error('Unexpected exact settings negative value observation.');
+    }
+    return noulAnswer(0.001);
+  });
+  const rejection = fakePort((name, question, state) => {
+    if (name !== 'disposition' || question.type !== 'choice' || !state || typeof state !== 'object' || Array.isArray(state)
+      || !state.binding || typeof state.binding !== 'object' || Array.isArray(state.binding)) throw new Error('Unexpected native settings negative proposal.');
+    expect(question.criteria).toEqual({ act: 'Execute exactly this prepared tool action.',
+      reject: 'Refuse this action. Do not execute it or ask a human for approval.',
+      defer_0: 'Wait for registered condition: Registered host condition 1 changes from its offered revision.. Obtain a fresh decision after it changes.' });
+    expect(Object.keys(state.binding).sort()).toEqual(['actionId', 'actionRevision', 'authorityId', 'authorityRevision',
+      'inputRevision', 'scopeId', 'scopeRevision', 'sourceId']);
+    expect(state.binding.sourceId).toBe(id); expect(state.binding.authorityId).toBe('engine.permission-runtime');
+    for (const key of ['actionId', 'actionRevision', 'authorityRevision', 'inputRevision', 'scopeId', 'scopeRevision']) {
+      const value = state.binding[key];
+      expect(typeof value).toBe('string');
+      if (typeof value !== 'string') throw new Error('Invalid native settings negative binding.');
+      expect(value).toMatch(/^[a-f0-9]{64}$/);
+    }
+    expect<unknown>(state).toEqual({ binding: state.binding,
+      input: { tool: call.name, arguments: call.args, source, workingDirectory: fixture.paths.workingDirectory,
+        evidence: { boundary: { passed: true, checks: [
+          { check: 'judgment-input', result: 'pass' }, { check: 'catastrophic', result: 'skipped' },
+          { check: 'surface-authority', result: 'pass', detail: 'local owner session' },
+          { check: 'card-details', result: 'skipped' }, { check: 'outward-effect', result: 'skipped' },
+        ] }, reading: { family: 'generic', stakes: 'low', facts: { mutates: false, outward: false, secrets: false,
+          irreversible: false, beyondProject: false, weakensSecurity: false, obfuscated: false }, uncertain: [] },
+        settingsEffect: expectedEffect,
+        settings: { key: owned.key, hazard: 'none', hazardOutcome: 'act', requested: 'no', requestedOutcome: 'act' },
+        constraints: { allowAct: true, mode: 'prompt', explicitToolDeny: false, durableEffect: null } } },
+      evidence: [ { id: 'prepared-tool-input', revision: state.binding.inputRevision },
+        { id: 'source-goal-and-criteria', revision: hashState(source) }, { id: 'live-authority', revision: state.binding.authorityRevision },
+        { id: 'agent-settings-effect', revision: owned.revision } ],
+      offeredChoices: { continuations: [], resumeConditions: [{ ref: { id, revision: state.binding.inputRevision },
+        description: 'Registered host condition 1 changes from its offered revision.' }] },
+    });
+    return choiceAnswer(question, 'reject', 0.999);
+  });
+  using log = new SqliteDecisionLog(':memory:');
+  const admission = await fixture.permissionManager.admitAutonomous(id, call.name, call.args, {
+    sourceOf: () => source, schemaRevision: call.schemaRevision, preparedCall: { registry: fixture.toolRegistry, call },
+    decoratePort: base => withDecisionLog({ model: base.model, ask(request) {
+      if (request.context?.battery === 'engine.gate.settings-hazard') {
+        expect(request.context.site).toBe('engine.gate.settings-write'); expect(request.questions).toEqual(hazardQuestions);
+        return settings.port.ask(request);
+      }
+      if (request.context?.battery === 'engine.tools.credential-value') {
+        expect(request.context.site).toBe('tools.goodvibes-runtime.credential-value'); expect(request.questions).toEqual(credentialQuestions);
+        return credential.port.ask(request);
+      }
+      if (request.context?.battery === 'engine.gate.autonomous-disposition') {
+        expect(request.context.site).toBe('engine.gate.autonomous-tool'); return rejection.port.ask(request);
+      }
+      return base.ask(request);
+    } }, log),
+  });
+  expect(admission.result).toMatchObject({ approved: false, reasonCode: 'jev_reject', autonomousDecision: { outcome: 'reject' } });
+  await expect(fixture.toolRegistry.executePrepared(call, admission)).rejects.toThrow('Autonomous admission does not authenticate this prepared tool call');
 }
 
 function makeMemoryRecord(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
@@ -566,7 +674,7 @@ function attachMemoryApi(fixture: HarnessFixture, records: readonly MemoryRecord
   (fixture.context as unknown as { clients: { agentKnowledgeApi?: unknown } }).clients.agentKnowledgeApi = { memory };
 }
 
-function registerStubTool(toolRegistry: ToolRegistry, name: string): void {
+function registerStubTool(toolRegistry: ToolRegistry, name: string): Tool {
   const tool: Tool = {
     definition: {
       name,
@@ -580,11 +688,13 @@ function registerStubTool(toolRegistry: ToolRegistry, name: string): void {
     execute: async () => ({ success: true, output: `${name} executed` }),
   };
   toolRegistry.register(tool);
+  return tool;
 }
 
 function fakeChannelDeliveryRouter(requests: ChannelDeliveryRequest[]) {
+  const strategies = [{ id: 'fake-channel', canHandle: () => true, deliver: async () => ({}) }];
   return {
-    listStrategies: () => [{ id: 'fake-channel', canHandle: () => true, deliver: async () => ({}) }],
+    listStrategies: () => strategies,
     deliver: async (request: ChannelDeliveryRequest) => {
       requests.push(request);
       return 'harness-channel-response-1';
@@ -769,237 +879,246 @@ function writeConnectedHostOperatorToken(fixture: HarnessFixture, token = 'fixtu
   writeFileSync(join(fixture.root, '.goodvibes', 'daemon', 'operator-tokens.json'), `${JSON.stringify({ token })}\n`, { mode: 0o600 });
 }
 
+const emptyCatalogPicks: Readonly<Record<string, readonly string[]>> = {
+  'zzz-no-such-tool': [], 'zzz-no-such-command': [], 'zzz-no-such-surface': [], 'zzz-no-such-cli': [],
+};
+
+function createHarnessFixtureReadings(): JudgmentPort {
+  const security = securityPort();
+  const credentials = fakePort((name, _question, state) => {
+    if (name !== 'credential' || !state || typeof state !== 'object' || !('name' in state) || typeof state.name !== 'string') {
+      throw new Error(`Unscripted harness process reading: ${name}`);
+    }
+    // Explicit test readings retain the real environment scrub: synthetic
+    // credential-shaped names are withheld, ordinary fixture env passes.
+    return noulAnswer(/key|token|secret|password|credential/i.test(state.name) ? 0.999 : 0.001);
+  });
+  // Explicit canonical PersonalOps readings. These fixtures are not lexical search rules.
+  const personalOpsPicks: Readonly<Record<string, string>> = {
+    'review-thread:artifact-1:msg-1': 'inbox:review-thread:artifact-1:msg-1',
+    'Triage my unread inbox.': 'inbox-triage-briefing',
+    'Triage my unread email.': 'inbox-triage-briefing',
+    'Draft a reply to this email thread.': 'inbox-draft-reply',
+    'Brief my calendar for today.': 'calendar-agenda-briefing',
+    'Search and list email messages for triage. User request: Triage my unread email.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.search_messages',
+    'Read the selected email conversation to draft a reply. User request: Draft a reply to this email thread.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.get_thread',
+    'Send the reviewed reply only after separate confirmation. User request: Draft a reply to this email thread.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.send_reply',
+    'Edit the selected calendar event only after separate confirmation. User request: Brief my calendar for today.': '',
+    'Read upcoming agenda events. User request: Brief my calendar for today.': 'mcp:caldav-agenda:mcp:caldav-agenda:caldav.list_events',
+  };
+  // Scripted P11 catalog readings keep discovery independent of local keyword matching.
+  const catalogPicks: Readonly<Record<string, readonly string[]>> = {
+    ...emptyCatalogPicks,
+    settings: ['settings', 'get_setting', 'set_setting', 'reset_setting'],
+    reasoning: ['provider.reasoningEffort'],
+    provider: ['provider.model', 'provider.reasoningEffort'],
+    'personal operations': ['personal_ops'],
+    'ongoing-work': ['autonomy_intake'],
+    'local shell execution': ['execution_posture'],
+    'file edit undo recovery': ['file_recovery'],
+    'execution history record': ['execution_history'],
+    'blind model comparison documents uploads': ['document_ops'],
+    'set setting': ['set_setting'],
+    'automation.schedules.create': ['automation.schedules.create'],
+    custom: ['agent_custom_action', 'agent_custom_report'],
+    'confirmed custom Agent action': ['agent_custom_action'],
+    'send notice': ['agent_z_send_notice'],
+    'target id': ['agent_custom_action'],
+    'custom Agent': ['agent_custom_action', 'agent_custom_report'],
+    knowledge: ['knowledge.map', 'knowledge.connector.doctor', 'knowledge.ingest.url'],
+    'Test briefing command': ['brief'],
+    'Agent-local memory records': ['memory', 'memory-review'],
+    'not-a-command': [],
+    local: ['route:local-model-cookbook', 'model:ollama-local:qwen2.5-coder:7b'],
+    subagent: ['delegated-subagents'],
+    auth: ['agent-alpha'],
+    'bun test': ['call-shell'],
+    'take a screenshot of the dashboard': ['screenshot-observation'],
+    'navigate browser to a logged-in page': ['browser-navigation'],
+    'take screenshot of the browser page': ['screenshot-observation'],
+    'take a browser screenshot': ['screenshot-observation'],
+  };
+  const personalOps = fakePort((_name, _question, rawState) => {
+    const state = rawState as unknown as { query: string; candidate: { name: string } };
+    if (state.query === 'vibe') return noulAnswer(state.candidate.name.startsWith('vibe:') ? 0.95 : 0.01);
+    const catalogPick = catalogPicks[state.query];
+    if (catalogPick !== undefined) return noulAnswer(catalogPick.includes(state.candidate.name) ? 0.95 : 0.01);
+    const pick = personalOpsPicks[state.query];
+    if (pick === undefined) throw new Error(`Unscripted catalog fixture ${state.query}`);
+    return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
+  });
+  // These exact contracts are authored controls for the native discovery
+  // composition. Other registered methods are explicit negative controls.
+  const nativePersonalOpsIds = new Set(getOperatorContract().operator.methods.map(method => method.id));
+  const fixtureNonPersonalOpsIds = new Set(['filesystem', 'mcp:filesystem:read_file']);
+  const laneMembers: Readonly<Record<string, readonly string[]>> = {
+    inbox: ['channels.inbox.list', 'email.inbox.list', 'email.inbox.read', 'email.draft.create', 'email.send',
+      'email.inbound.status', 'email.expectation.list', 'email.expectation.open', 'email.expectation.cancel',
+      'gmail-inbox', 'mcp:gmail-inbox:gmail.search_messages', 'mcp:gmail-inbox:gmail.get_thread', 'mcp:gmail-inbox:gmail.send_reply'],
+    calendar: ['calendar.events.list', 'calendar.events.get', 'calendar.events.create', 'calendar.ics.import', 'calendar.ics.export',
+      'caldav-agenda', 'mcp:caldav-agenda:caldav.list_events', 'mcp:caldav-agenda:caldav.update_event'],
+    tasks: ['tasks.list', 'tasks.get', 'tasks.create', 'tasks.cancel', 'tasks.retry', 'tasks.status'],
+    reminders: ['automation.schedules.create', 'automation.schedules.list', 'automation.schedules.delete',
+      'automation.schedules.disable', 'automation.schedules.enable', 'automation.schedules.run'],
+    approvals: ['approvals.approve', 'approvals.cancel', 'approvals.claim', 'approvals.deny', 'approvals.list', 'approvals.raise'],
+    automation: ['automation.heartbeat.list', 'automation.heartbeat.run', 'automation.integration.snapshot',
+      'automation.jobs.create', 'automation.jobs.delete', 'automation.jobs.disable', 'automation.jobs.enable',
+      'automation.jobs.list', 'automation.jobs.run', 'automation.jobs.update',
+      'automation.runs.cancel', 'automation.runs.get', 'automation.runs.list', 'automation.runs.retry',
+      'automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable',
+      'automation.schedules.enable', 'automation.schedules.list', 'automation.schedules.run'],
+    schedules: ['automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable',
+      'automation.schedules.enable', 'automation.schedules.list', 'automation.schedules.run'],
+  };
+  const connectorLanes: Readonly<Record<string, 'inbox' | 'calendar'>> = {
+    'gmail.search_messages': 'inbox', 'gmail.get_thread': 'inbox', 'gmail.send_reply': 'inbox',
+    'caldav.list_events': 'calendar', 'caldav.update_event': 'calendar',
+  };
+  const connectorFields: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+    'gmail.search_messages': { query: 'query', limit: 'count', mailbox: 'mailbox', unreadOnly: 'include' },
+    'gmail.get_thread': { threadId: 'record', includeAttachments: 'include' },
+    'gmail.send_reply': { threadId: 'record', body: 'body', dryRun: 'preview' },
+    'caldav.list_events': { start: 'start', end: 'end', calendarId: 'calendar' },
+    'caldav.update_event': { eventId: 'record', title: 'subject', start: 'start', end: 'end' },
+  };
+  const personalOpsDiscovery = fakePort((name, question, state) => {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected Personal Ops discovery control.');
+    if (name === 'match' && question.type === 'noul' && typeof state.query === 'string'
+      && state.candidate && typeof state.candidate === 'object' && !Array.isArray(state.candidate)
+      && typeof state.candidate.name === 'string') {
+      const members = laneMembers[state.query], id = state.candidate.name;
+      if (!members || (!nativePersonalOpsIds.has(id) && !fixtureNonPersonalOpsIds.has(id)
+        && !Object.values(laneMembers).some(entries => entries.includes(id)))) {
+        throw new Error(`Unscripted exact lane-member control ${state.query}:${id}`);
+      }
+      return noulAnswer(members.includes(id) ? 0.999 : 0.001);
+    }
+    const contract = state.contract;
+    const tool = typeof state.tool === 'string' ? state.tool
+      : contract && typeof contract === 'object' && !Array.isArray(contract) && typeof contract.tool === 'string' ? contract.tool : undefined;
+    if (!tool || !connectorLanes[tool]) throw new Error(`Unscripted connector contract ${String(tool)}`);
+    if (name === 'lane' && question.type === 'choice') return choiceAnswer(question, connectorLanes[tool]!, 0.999);
+    if (name === 'role' && question.type === 'choice' && typeof state.field === 'string') {
+      const role = connectorFields[tool]?.[state.field];
+      if (!role) throw new Error(`Unscripted connector field ${tool}:${state.field}`);
+      return choiceAnswer(question, role, 0.999);
+    }
+    if (question.type === 'noul' && ['mutates', 'outward', 'secrets'].includes(name)) {
+      const effect = tool === 'gmail.send_reply' || tool === 'caldav.update_event';
+      return noulAnswer(effect && name !== 'secrets' ? 0.999 : 0.001);
+    }
+    throw new Error(`Unscripted Personal Ops discovery question ${name}`);
+  });
+  const lifetime = fakePort(() => noulAnswer(0.01));
+  const readiness = fakePort((name, question) => question.type === 'score' ? scoreAnswer(question, name === 'memoryAdequacy' ? 2 : 3) : noulAnswer(0.95));
+  const intake = fakePort((name, question, rawState) => {
+    if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState) || typeof rawState.request !== 'string') throw new Error('Unexpected autonomy intake fixture.');
+    const fixture = autonomyIntake.fixtures.find(entry => entry.state !== null && typeof entry.state === 'object' && !Array.isArray(entry.state) && entry.state.request === rawState.request);
+    const expected = fixture && Object.entries(fixture.expect).find(([key]) => key === name)?.[1];
+    if (question.type === 'choice' && typeof expected === 'string') return choiceAnswer(question, expected, 0.99);
+    if (expected === 'yes' || expected === 'no') return noulAnswer(expected === 'yes' ? 0.99 : 0.01);
+    throw new Error(`Unscripted autonomy intake fixture ${rawState.request}:${name}`);
+  });
+  const intakeSchedule = fakePort((name, question) => {
+    const choices: Readonly<Record<string, string>> = { format: 'natural', shape: 'interval', quantity: 'stated', unit: 'hour' };
+    const selected = choices[name];
+    if (question.type !== 'choice' || !selected) throw new Error(`Unscripted intake schedule reading ${name}`);
+    return choiceAnswer(question, selected, 0.99);
+  });
+  const metadata = fakePort((_name, _question, rawState) => {
+    if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState) || typeof rawState.query !== 'string'
+      || !rawState.candidate || typeof rawState.candidate !== 'object' || Array.isArray(rawState.candidate) || typeof rawState.candidate.name !== 'string') {
+      throw new Error('Unexpected metadata catalog fixture.');
+    }
+    const picks: Readonly<Record<string, readonly string[]>> = {
+      knowledge: ['knowledge'], 'Call isolated Agent Knowledge routes': ['knowledge'], Agent: ['tui', 'knowledge'], 'zzz-no-such-cli': [],
+      workspace: ['workspace-picker', 'workspace-close'], 'conversation search': ['search'], 'Toggle conversation search': ['search'], help: ['? / F1'],
+      'runtime activity': ['F2'], 'shortcut reference': ['/shortcuts'],
+    };
+    const selected = picks[rawState.query];
+    if (!selected) throw new Error(`Unscripted metadata catalog fixture ${rawState.query}`);
+    return noulAnswer(selected.includes(rawState.candidate.name) ? 0.95 : 0.01);
+  });
+  const executionVerification = fakePort((name, question, state) => {
+    if (name !== 'verification' || question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected execution verification fixture.');
+    const id = state.callId ?? state.id;
+    if (id === 'call-shell') return noulAnswer(0.999);
+    if (id === 'call-edit') return noulAnswer(0.001);
+    throw new Error(`Unscripted execution verification fixture ${String(id)}`);
+  });
+  const receiptStatus = fakePort((name, question, state) => {
+    if (name !== 'status' || question.type !== 'choice' || !state || typeof state !== 'object' || Array.isArray(state)) {
+      throw new Error('Unexpected authored receipt-status fixture.');
+    }
+    const metadata = state.metadata;
+    const status = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata.status : undefined;
+    const expected: Readonly<Record<string, string>> = { succeeded: 'succeeded', sent: 'succeeded', failed: 'failed',
+      blocked: 'blocked', running: 'running', pending: 'running', queued: 'running' };
+    return choiceAnswer(question, typeof status === 'string' ? expected[status] ?? 'other' : 'other', 0.999);
+  });
+  const admission = fakePort((name, question) => {
+    if (question.type === 'choice') {
+      const choice = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
+      if (!choice) throw new Error(`Unscripted harness admission choice ${name}`);
+      return choiceAnswer(question, choice, 0.999);
+    }
+    if (question.type === 'noul') return noulAnswer(0.001);
+    throw new Error(`Unscripted harness admission reading ${name}`);
+  });
+  // Ordinary catalog/record scripts explicitly answer the shared privacy
+  // contracts. Focused containment suites exercise their positive readings.
+  const fixtureCredentialFields = new Set(['token', 'password', 'credential', 'apiKey', 'api_key', 'accessToken', 'access_token', 'refreshToken',
+    'refresh_token', 'clientSecret', 'client_secret', 'privateKey', 'private_key', 'unlockPassphrase']);
+  const privacy = fakePort((name, question, state) => {
+    if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'owner_profile')
+      && state && typeof state === 'object' && !Array.isArray(state) && typeof state.field === 'string') {
+      return choiceAnswer(question, fixtureCredentialFields.has(state.field) ? 'secret' : 'other', 0.999);
+    }
+    if (question.type === 'noul' && ['lineHasCredential', 'spanIsCredential', 'credentialRemains', 'identifying'].includes(name)) {
+      if ((name === 'lineHasCredential' || name === 'spanIsCredential') && state && typeof state === 'object'
+        && !Array.isArray(state) && Array.isArray(state.parts)) {
+        const protectedSpan = state.parts.some(part => part && typeof part === 'object' && !Array.isArray(part)
+          && part.kind === 'span' && typeof part.field === 'string' && fixtureCredentialFields.has(part.field)
+          && (name === 'lineHasCredential' || part.reference === state.target));
+        return noulAnswer(protectedSpan ? 0.999 : 0.001);
+      }
+      return noulAnswer(0.001);
+    }
+    throw new Error(`Unscripted harness privacy fixture ${name}`);
+  });
+  const port: JudgmentPort = {
+    model: security.port.model,
+    ask: async request => { try { return await (request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
+      : request.context?.battery === 'routing.autonomy-intake' ? intake.port.ask(request)
+      : request.context?.battery === 'automation.schedule' ? intakeSchedule.port.ask(request)
+      : request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
+      : request.context?.battery === 'engine.gate.execution-verification' ? executionVerification.port.ask(request)
+      : request.context?.battery === 'agent.personal-ops.receipt-status' ? receiptStatus.port.ask(request)
+      : ['agent.personal-ops.lane-member', 'agent.personal-ops.tool-lane', 'agent.personal-ops.sample-field'].includes(request.context?.battery ?? '')
+        || request.context?.battery === 'engine.gate.side-effect' && request.context?.site === 'agent.personal-ops.tool-effect'
+        ? personalOpsDiscovery.port.ask(request)
+      : ['engine.redaction.field-kind', 'engine.redaction.credential', 'engine.export.credential',
+        'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive'].includes(request.context?.battery ?? '') ? privacy.port.ask(request)
+      : request.context?.battery === 'engine.gate.boundary' || request.context?.battery === 'engine.gate.side-effect' || request.context?.battery === 'engine.gate.risk-family'
+        || request.context?.battery === 'engine.gate.autonomous-disposition' || request.context?.battery === 'engine.gate.autonomous-refusal' ? admission.port.ask(request)
+      : request.context?.battery === 'engine.tools.registry-rank'
+        && ['agent.harness.cli-commands', 'agent.harness.keybindings', 'agent.harness.shortcuts'].includes(request.context?.site ?? '') ? metadata.port.ask(request)
+      : request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
+      : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
+      ? credentials.port.ask(request) : security.port.ask(request)); } catch (error) {
+        process.stderr.write(JSON.stringify({ battery: request.context?.battery, site: request.context?.site, questions: Object.keys(request.questions) }) + '\n');
+        throw error;
+      } },
+  };
+  return port;
+}
+
 describe('agent_harness tool', () => {
   let previousPort: JudgmentPort | undefined;
   let fixtureLog: SqliteDecisionLog;
   beforeEach(() => {
     fixtureLog = new SqliteDecisionLog(':memory:');
-    const security = securityPort();
-    const credentials = fakePort((name, _question, state) => {
-      if (name !== 'credential' || !state || typeof state !== 'object' || !('name' in state) || typeof state.name !== 'string') {
-        throw new Error(`Unscripted harness process reading: ${name}`);
-      }
-      // Explicit test readings retain the real environment scrub: synthetic
-      // credential-shaped names are withheld, ordinary fixture env passes.
-      return noulAnswer(/key|token|secret|password|credential/i.test(state.name) ? 0.999 : 0.001);
-    });
-    // Explicit canonical PersonalOps readings. These fixtures are not lexical search rules.
-    const personalOpsPicks: Readonly<Record<string, string>> = {
-      'review-thread:artifact-1:msg-1': 'inbox:review-thread:artifact-1:msg-1',
-      'Triage my unread inbox.': 'inbox-triage-briefing',
-      'Triage my unread email.': 'inbox-triage-briefing',
-      'Draft a reply to this email thread.': 'inbox-draft-reply',
-      'Brief my calendar for today.': 'calendar-agenda-briefing',
-      'Search and list email messages for triage. User request: Triage my unread email.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.search_messages',
-      'Read the selected email conversation to draft a reply. User request: Draft a reply to this email thread.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.get_thread',
-      'Send the reviewed reply only after separate confirmation. User request: Draft a reply to this email thread.': 'mcp:gmail-inbox:mcp:gmail-inbox:gmail.send_reply',
-      'Edit the selected calendar event only after separate confirmation. User request: Brief my calendar for today.': '',
-      'Read upcoming agenda events. User request: Brief my calendar for today.': 'mcp:caldav-agenda:mcp:caldav-agenda:caldav.list_events',
-    };
-    // Scripted P11 catalog readings keep discovery independent of local keyword matching.
-    const catalogPicks: Readonly<Record<string, readonly string[]>> = {
-      settings: ['settings', 'get_setting', 'set_setting', 'reset_setting'],
-      reasoning: ['provider.reasoningEffort'],
-      provider: ['provider.model', 'provider.reasoningEffort'],
-      'personal operations': ['personal_ops'],
-      'ongoing-work': ['autonomy_intake'],
-      'local shell execution': ['execution_posture'],
-      'file edit undo recovery': ['file_recovery'],
-      'execution history record': ['execution_history'],
-      'blind model comparison documents uploads': ['document_ops'],
-      'set setting': ['set_setting'],
-      'automation.schedules.create': ['automation.schedules.create'],
-      custom: ['agent_custom_action', 'agent_custom_report'],
-      'confirmed custom Agent action': ['agent_custom_action'],
-      'send notice': ['agent_z_send_notice'],
-      'target id': ['agent_custom_action'],
-      'custom Agent': ['agent_custom_action', 'agent_custom_report'],
-      knowledge: ['knowledge.map', 'knowledge.connector.doctor', 'knowledge.ingest.url'],
-      'Test briefing command': ['brief'],
-      'Agent-local memory records': ['memory', 'memory-review'],
-      'not-a-command': [],
-      local: ['route:local-model-cookbook', 'model:ollama-local:qwen2.5-coder:7b'],
-      subagent: ['delegated-subagents'],
-      auth: ['agent-alpha'],
-      'bun test': ['call-shell'],
-      'take a screenshot of the dashboard': ['screenshot-observation'],
-      'navigate browser to a logged-in page': ['browser-navigation'],
-      'take screenshot of the browser page': ['screenshot-observation'],
-      'take a browser screenshot': ['screenshot-observation'],
-    };
-    const personalOps = fakePort((_name, _question, rawState) => {
-      const state = rawState as unknown as { query: string; candidate: { name: string } };
-      if (state.query === 'vibe') return noulAnswer(state.candidate.name.startsWith('vibe:') ? 0.95 : 0.01);
-      const catalogPick = catalogPicks[state.query];
-      if (catalogPick !== undefined) return noulAnswer(catalogPick.includes(state.candidate.name) ? 0.95 : 0.01);
-      const pick = personalOpsPicks[state.query];
-      if (pick === undefined) throw new Error(`Unscripted catalog fixture ${state.query}`);
-      return noulAnswer(state.candidate.name === pick ? 0.95 : 0.01);
-    });
-    // These exact contracts are authored controls for the native discovery
-    // composition. Other registered methods are explicit negative controls.
-    const nativePersonalOpsIds = new Set(getOperatorContract().operator.methods.map(method => method.id));
-    const fixtureNonPersonalOpsIds = new Set(['filesystem', 'mcp:filesystem:read_file']);
-    const laneMembers: Readonly<Record<string, readonly string[]>> = {
-      inbox: ['channels.inbox.list', 'email.inbox.list', 'email.inbox.read', 'email.draft.create', 'email.send',
-        'email.inbound.status', 'email.expectation.list', 'email.expectation.open', 'email.expectation.cancel',
-        'gmail-inbox', 'mcp:gmail-inbox:gmail.search_messages', 'mcp:gmail-inbox:gmail.get_thread', 'mcp:gmail-inbox:gmail.send_reply'],
-      calendar: ['calendar.events.list', 'calendar.events.get', 'calendar.events.create', 'calendar.ics.import', 'calendar.ics.export',
-        'caldav-agenda', 'mcp:caldav-agenda:caldav.list_events', 'mcp:caldav-agenda:caldav.update_event'],
-      tasks: ['tasks.list', 'tasks.get', 'tasks.create', 'tasks.cancel', 'tasks.retry', 'tasks.status'],
-      reminders: ['automation.schedules.create', 'automation.schedules.list', 'automation.schedules.delete',
-        'automation.schedules.disable', 'automation.schedules.enable', 'automation.schedules.run'],
-      approvals: ['approvals.approve', 'approvals.cancel', 'approvals.claim', 'approvals.deny', 'approvals.list', 'approvals.raise'],
-      automation: ['automation.heartbeat.list', 'automation.heartbeat.run', 'automation.integration.snapshot',
-        'automation.jobs.create', 'automation.jobs.delete', 'automation.jobs.disable', 'automation.jobs.enable',
-        'automation.jobs.list', 'automation.jobs.run', 'automation.jobs.update',
-        'automation.runs.cancel', 'automation.runs.get', 'automation.runs.list', 'automation.runs.retry',
-        'automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable',
-        'automation.schedules.enable', 'automation.schedules.list', 'automation.schedules.run'],
-      schedules: ['automation.schedules.create', 'automation.schedules.delete', 'automation.schedules.disable',
-        'automation.schedules.enable', 'automation.schedules.list', 'automation.schedules.run'],
-    };
-    const connectorLanes: Readonly<Record<string, 'inbox' | 'calendar'>> = {
-      'gmail.search_messages': 'inbox', 'gmail.get_thread': 'inbox', 'gmail.send_reply': 'inbox',
-      'caldav.list_events': 'calendar', 'caldav.update_event': 'calendar',
-    };
-    const connectorFields: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-      'gmail.search_messages': { query: 'query', limit: 'count', mailbox: 'mailbox', unreadOnly: 'include' },
-      'gmail.get_thread': { threadId: 'record', includeAttachments: 'include' },
-      'gmail.send_reply': { threadId: 'record', body: 'body', dryRun: 'preview' },
-      'caldav.list_events': { start: 'start', end: 'end', calendarId: 'calendar' },
-      'caldav.update_event': { eventId: 'record', title: 'subject', start: 'start', end: 'end' },
-    };
-    const personalOpsDiscovery = fakePort((name, question, state) => {
-      if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected Personal Ops discovery control.');
-      if (name === 'match' && question.type === 'noul' && typeof state.query === 'string'
-        && state.candidate && typeof state.candidate === 'object' && !Array.isArray(state.candidate)
-        && typeof state.candidate.name === 'string') {
-        const members = laneMembers[state.query], id = state.candidate.name;
-        if (!members || (!nativePersonalOpsIds.has(id) && !fixtureNonPersonalOpsIds.has(id)
-          && !Object.values(laneMembers).some(entries => entries.includes(id)))) {
-          throw new Error(`Unscripted exact lane-member control ${state.query}:${id}`);
-        }
-        return noulAnswer(members.includes(id) ? 0.999 : 0.001);
-      }
-      const contract = state.contract;
-      const tool = typeof state.tool === 'string' ? state.tool
-        : contract && typeof contract === 'object' && !Array.isArray(contract) && typeof contract.tool === 'string' ? contract.tool : undefined;
-      if (!tool || !connectorLanes[tool]) throw new Error(`Unscripted connector contract ${String(tool)}`);
-      if (name === 'lane' && question.type === 'choice') return choiceAnswer(question, connectorLanes[tool]!, 0.999);
-      if (name === 'role' && question.type === 'choice' && typeof state.field === 'string') {
-        const role = connectorFields[tool]?.[state.field];
-        if (!role) throw new Error(`Unscripted connector field ${tool}:${state.field}`);
-        return choiceAnswer(question, role, 0.999);
-      }
-      if (question.type === 'noul' && ['mutates', 'outward', 'secrets'].includes(name)) {
-        const effect = tool === 'gmail.send_reply' || tool === 'caldav.update_event';
-        return noulAnswer(effect && name !== 'secrets' ? 0.999 : 0.001);
-      }
-      throw new Error(`Unscripted Personal Ops discovery question ${name}`);
-    });
-    const lifetime = fakePort(() => noulAnswer(0.01));
-    const readiness = fakePort((name, question) => question.type === 'score' ? scoreAnswer(question, name === 'memoryAdequacy' ? 2 : 3) : noulAnswer(0.95));
-    const intake = fakePort((name, question, rawState) => {
-      if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState) || typeof rawState.request !== 'string') throw new Error('Unexpected autonomy intake fixture.');
-      const fixture = autonomyIntake.fixtures.find(entry => entry.state !== null && typeof entry.state === 'object' && !Array.isArray(entry.state) && entry.state.request === rawState.request);
-      const expected = fixture && Object.entries(fixture.expect).find(([key]) => key === name)?.[1];
-      if (question.type === 'choice' && typeof expected === 'string') return choiceAnswer(question, expected, 0.99);
-      if (expected === 'yes' || expected === 'no') return noulAnswer(expected === 'yes' ? 0.99 : 0.01);
-      throw new Error(`Unscripted autonomy intake fixture ${rawState.request}:${name}`);
-    });
-    const intakeSchedule = fakePort((name, question) => {
-      const choices: Readonly<Record<string, string>> = { format: 'natural', shape: 'interval', quantity: 'stated', unit: 'hour' };
-      const selected = choices[name];
-      if (question.type !== 'choice' || !selected) throw new Error(`Unscripted intake schedule reading ${name}`);
-      return choiceAnswer(question, selected, 0.99);
-    });
-    const metadata = fakePort((_name, _question, rawState) => {
-      if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState) || typeof rawState.query !== 'string'
-        || !rawState.candidate || typeof rawState.candidate !== 'object' || Array.isArray(rawState.candidate) || typeof rawState.candidate.name !== 'string') {
-        throw new Error('Unexpected metadata catalog fixture.');
-      }
-      const picks: Readonly<Record<string, readonly string[]>> = {
-        knowledge: ['knowledge'], 'Call isolated Agent Knowledge routes': ['knowledge'], Agent: ['tui', 'knowledge'], 'zzz-no-such-cli': [],
-        workspace: ['workspace-picker', 'workspace-close'], 'conversation search': ['search'], 'Toggle conversation search': ['search'], help: ['? / F1'],
-        'runtime activity': ['F2'], 'shortcut reference': ['/shortcuts'],
-      };
-      const selected = picks[rawState.query];
-      if (!selected) throw new Error(`Unscripted metadata catalog fixture ${rawState.query}`);
-      return noulAnswer(selected.includes(rawState.candidate.name) ? 0.95 : 0.01);
-    });
-    const executionVerification = fakePort((name, question, state) => {
-      if (name !== 'verification' || question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected execution verification fixture.');
-      const id = state.callId ?? state.id;
-      if (id === 'call-shell') return noulAnswer(0.999);
-      if (id === 'call-edit') return noulAnswer(0.001);
-      throw new Error(`Unscripted execution verification fixture ${String(id)}`);
-    });
-    const receiptStatus = fakePort((name, question, state) => {
-      if (name !== 'status' || question.type !== 'choice' || !state || typeof state !== 'object' || Array.isArray(state)) {
-        throw new Error('Unexpected authored receipt-status fixture.');
-      }
-      const metadata = state.metadata;
-      const status = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata.status : undefined;
-      const expected: Readonly<Record<string, string>> = { succeeded: 'succeeded', sent: 'succeeded', failed: 'failed',
-        blocked: 'blocked', running: 'running', pending: 'running', queued: 'running' };
-      return choiceAnswer(question, typeof status === 'string' ? expected[status] ?? 'other' : 'other', 0.999);
-    });
-    const admission = fakePort((name, question) => {
-      if (question.type === 'choice') {
-        const choice = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
-        if (!choice) throw new Error(`Unscripted harness admission choice ${name}`);
-        return choiceAnswer(question, choice, 0.999);
-      }
-      if (question.type === 'noul') return noulAnswer(0.001);
-      throw new Error(`Unscripted harness admission reading ${name}`);
-    });
-    // Ordinary catalog/record scripts explicitly answer the shared privacy
-    // contracts. Focused containment suites exercise their positive readings.
-    const fixtureCredentialFields = new Set(['token', 'password', 'credential', 'apiKey', 'api_key', 'accessToken', 'access_token', 'refreshToken',
-      'refresh_token', 'clientSecret', 'client_secret', 'privateKey', 'private_key', 'unlockPassphrase']);
-    const privacy = fakePort((name, question, state) => {
-      if (name === 'kind' && question.type === 'choice' && Object.hasOwn(question.criteria, 'owner_profile')
-        && state && typeof state === 'object' && !Array.isArray(state) && typeof state.field === 'string') {
-        return choiceAnswer(question, fixtureCredentialFields.has(state.field) ? 'secret' : 'other', 0.999);
-      }
-      if (question.type === 'noul' && ['lineHasCredential', 'spanIsCredential', 'credentialRemains', 'identifying'].includes(name)) {
-        if ((name === 'lineHasCredential' || name === 'spanIsCredential') && state && typeof state === 'object'
-          && !Array.isArray(state) && Array.isArray(state.parts)) {
-          const protectedSpan = state.parts.some(part => part && typeof part === 'object' && !Array.isArray(part)
-            && part.kind === 'span' && typeof part.field === 'string' && fixtureCredentialFields.has(part.field)
-            && (name === 'lineHasCredential' || part.reference === state.target));
-          return noulAnswer(protectedSpan ? 0.999 : 0.001);
-        }
-        return noulAnswer(0.001);
-      }
-      throw new Error(`Unscripted harness privacy fixture ${name}`);
-    });
-    const port: JudgmentPort = {
-      model: security.port.model,
-      ask: async request => { try { return await (request.context?.battery === 'agent.models.route-readiness' || request.context?.battery === 'agent.models.local-recipe-fit' ? readiness.port.ask(request)
-        : request.context?.battery === 'routing.autonomy-intake' ? intake.port.ask(request)
-        : request.context?.battery === 'automation.schedule' ? intakeSchedule.port.ask(request)
-        : request.context?.battery === 'agent.tools.long-lived-process' ? lifetime.port.ask(request)
-        : request.context?.battery === 'engine.gate.execution-verification' ? executionVerification.port.ask(request)
-        : request.context?.battery === 'agent.personal-ops.receipt-status' ? receiptStatus.port.ask(request)
-        : ['agent.personal-ops.lane-member', 'agent.personal-ops.tool-lane', 'agent.personal-ops.sample-field'].includes(request.context?.battery ?? '')
-          || request.context?.battery === 'engine.gate.side-effect' && request.context?.site === 'agent.personal-ops.tool-effect'
-          ? personalOpsDiscovery.port.ask(request)
-        : ['engine.redaction.field-kind', 'engine.redaction.credential', 'engine.export.credential',
-          'engine.redaction.residual-credential', 'engine.redaction.profile-distinctive'].includes(request.context?.battery ?? '') ? privacy.port.ask(request)
-        : request.context?.battery === 'engine.gate.boundary' || request.context?.battery === 'engine.gate.side-effect' || request.context?.battery === 'engine.gate.risk-family'
-          || request.context?.battery === 'engine.gate.autonomous-disposition' || request.context?.battery === 'engine.gate.autonomous-refusal' ? admission.port.ask(request)
-        : request.context?.battery === 'engine.tools.registry-rank'
-          && ['agent.harness.cli-commands', 'agent.harness.keybindings', 'agent.harness.shortcuts'].includes(request.context?.site ?? '') ? metadata.port.ask(request)
-        : request.context?.battery === 'engine.tools.registry-rank' ? personalOps.port.ask(request)
-        : Object.keys(request.questions).length === 1 && Object.hasOwn(request.questions, 'credential')
-        ? credentials.port.ask(request) : security.port.ask(request)); } catch (error) {
-          process.stderr.write(JSON.stringify({ battery: request.context?.battery, site: request.context?.site, questions: Object.keys(request.questions) }) + '\n');
-          throw error;
-        } },
-    };
-    previousPort = installJudgmentPort(withDecisionLog(port, fixtureLog));
+    previousPort = installJudgmentPort(withDecisionLog(createHarnessFixtureReadings(), fixtureLog));
   });
   afterEach(() => { installJudgmentPort(previousPort); fixtureLog[Symbol.dispose](); });
 
@@ -7228,7 +7347,7 @@ describe('agent_harness tool', () => {
       }>(fixture, { mode: 'run_background_process', processAction: 'capabilities' });
       expect(capabilities.capabilities.interactiveRuntime.status).toBe('certified-live-runtime');
       expect(capabilities.capabilities.interactiveRuntime.certifiedRecordCount).toBe(4);
-      expect(capabilities.capabilities.parity.find((entry) => entry.capability === 'process(write)')?.status).toBe('contract-discovered');
+      expect(capabilities.capabilities.parity.find((entry) => entry.capability === 'process(write)')?.status).toBe('supported');
       expect(capabilities.capabilities.parity.find((entry) => entry.capability === 'pty')?.status).toBe('contract-discovered');
       expect(capabilities.capabilities.parity.find((entry) => entry.capability === 'sudo')?.status).toBe('contract-discovered');
 
@@ -7285,15 +7404,15 @@ describe('agent_harness tool', () => {
       expect(empty.summary.tracked).toBe(0);
       expect(empty.capabilities.start).toContain('terminal command');
       expect(empty.capabilities.parity.find((entry) => entry.capability === 'process(wait)')?.status).toBe('supported');
-      expect(empty.capabilities.parity.find((entry) => entry.capability === 'process(write)')?.status).toBe('blocked-contract-gap');
+      expect(empty.capabilities.parity.find((entry) => entry.capability === 'process(write)')?.status).toBe('supported');
       expect(empty.capabilities.substrate.localProcessManager.supports).toContain('spawn');
-      expect(empty.capabilities.substrate.localProcessManager.stdinWrite.status).toBe('blocked-contract-gap');
-      expect(empty.capabilities.substrate.localProcessManager.stdinWrite.missingAnyOf).toContain('writeInput');
+      expect(empty.capabilities.substrate.localProcessManager.stdinWrite.status).toBe('contract-discovered');
+      expect(empty.capabilities.substrate.localProcessManager.stdinWrite.missingAnyOf ?? []).toEqual([]);
       expect(empty.capabilities.substrate.daemonOperatorContract.status).toContain('no-published-terminal');
       expect(empty.capabilities.substrate.daemonOperatorContract.sessionInputRoutes.map((route) => route.methodId)).toContain('sessions.inputs.list');
       expect(empty.capabilities.substrate.auditedTerms).toContain('sessions.inputs');
       expect(empty.capabilities.pty.status).toContain('not-yet-supported');
-      expect(empty.capabilities.stdinWrite.status).toContain('not-yet-supported');
+      expect(empty.capabilities.stdinWrite.status).toBe('supported');
       expect(empty.capabilities.stdinWrite.modelRoute).toContain('process action:"write"');
       expect(empty.capabilities.sudo.status).toContain('foreground');
       expect(empty.capabilities.sudo.setupRoute).toContain('sudo-execution-posture');
@@ -7302,16 +7421,17 @@ describe('agent_harness tool', () => {
       expect(empty.capabilities.sudo.credentialSignal.valueUsableForBackgroundProcess).toBe(false);
       expect(empty.capabilities.sudo.blockedRoutes.map((route) => route.id)).toContain('background-sudo-prompt');
 
-      const unconfirmed = await fixture.tool.execute({
+      const nativeSpawn = spyOn(fixture.processManager, 'spawn');
+      try {
+        await expect(fixture.tool.execute({
         mode: 'run_background_process',
         processAction: 'start',
         command: 'printf ready',
         explicitUserRequest: 'Run a quick tracked command.',
-      });
-      expect(unconfirmed.success).toBe(true);
-      const unconfirmedResult = JSON.parse(unconfirmed.output ?? '{}') as { status: string; reason: string };
-      expect(unconfirmedResult.status).toBe('needs_confirmation');
-      expect(unconfirmedResult.reason).toContain('confirm:true');
+        })).rejects.toBeInstanceOf(ToolInputProjectionError);
+        expect(nativeSpawn).not.toHaveBeenCalled();
+        expect(fixture.processManager.list()).toEqual([]);
+      } finally { nativeSpawn.mockRestore(); }
 
       const started = await executeHarnessJson<{
         readonly status: string;
@@ -7488,7 +7608,7 @@ describe('agent_harness tool', () => {
       const started = await (async () => {
         const clock = spyOn(Date, 'now').mockReturnValue(1_700_000_000_004);
         try {
-          return await fixture.toolRegistry.execute('terminal-start', 'terminal', {
+          return await fixture.executeAdmittedCall('terminal-start', 'terminal', {
             command: 'printf "adapter-output"',
             background: true,
             confirm: true,
@@ -7506,7 +7626,7 @@ describe('agent_harness tool', () => {
       };
       expect(startedJson.status).toBe('started');
       expect(startedJson.processId).toBe('bg_b_bhaaaaaaaaaae');
-      const polled = await fixture.toolRegistry.execute('process-poll', 'process', {
+      const polled = await fixture.executeAdmittedCall('process-poll', 'process', {
         action: 'poll', processId: startedJson.processId,
       });
       expect(polled.success).toBe(true);
@@ -7515,7 +7635,7 @@ describe('agent_harness tool', () => {
       expect(startedJson.routes.log).toContain('process action:"log"');
       expect(startedJson.routes.poll).toContain('process action:"poll"');
 
-      const waited = await fixture.toolRegistry.execute('process-wait', 'process', {
+      const waited = await fixture.executeAdmittedCall('process-wait', 'process', {
         action: 'wait',
         session_id: startedJson.session_id,
         timeoutMs: 5000,
@@ -7527,7 +7647,7 @@ describe('agent_harness tool', () => {
       const waitedJson = JSON.parse(waited.output ?? '{}') as { readonly status: string };
       expect(waitedJson.status).toBe('completed');
 
-      const logged = await fixture.toolRegistry.execute('process-log', 'process', {
+      const logged = await fixture.executeAdmittedCall('process-log', 'process', {
         action: 'log',
         sessionId: startedJson.processId,
       });
@@ -7542,7 +7662,7 @@ describe('agent_harness tool', () => {
       expect(loggedJson.output?.stdoutTruncated).toBe(false);
       expect(loggedJson.output?.fullOutputIncluded).toBe(true);
 
-      const listed = await fixture.toolRegistry.execute('process-list', 'process', { action: 'list' });
+      const listed = await fixture.executeAdmittedCall('process-list', 'process', { action: 'list' });
       expect(listed.success).toBe(true);
       if (!listed.success) throw new Error(listed.error);
       expect(listed.output).toContain(startedJson.processId);
@@ -7559,7 +7679,7 @@ describe('agent_harness tool', () => {
       expect(processTool.output).toContain('"name": "process"');
       expect(processTool.output).toContain('"action"');
 
-      const stopped = await fixture.toolRegistry.execute('process-kill', 'process', {
+      const stopped = await fixture.executeAdmittedCall('process-kill', 'process', {
         action: 'kill',
         processId: startedJson.processId,
         confirm: true,
@@ -7583,8 +7703,10 @@ describe('agent_harness tool', () => {
       let held: unknown;
       try { await fixture.toolRegistry.execute('process-pan-id', 'process', { action: 'poll', processId }); }
       catch (error) { held = error; }
-      expect(held).toBeInstanceOf(Error);
-      expect(String(held)).toContain('payment card material');
+      expect(held).toBeInstanceOf(ToolInputProjectionError);
+      if (!(held instanceof ToolInputProjectionError)) throw new Error('Expected native process input projection refusal.');
+      expect(held.problem).toBe('unavailable');
+      expect(fixture.processManager.list()).toEqual([]);
       expect(String(held)).not.toContain(processId);
       expect(String(held)).not.toContain('1700000000004');
     } finally { fixture.cleanup(); }
@@ -7612,29 +7734,26 @@ describe('agent_harness tool', () => {
       expect(write.status).toBe('missing_lookup');
       expect(write.usage).toContain('Unknown background process bg_missing');
 
-      const writeAction = await executeHarnessJson<{ readonly status: string; readonly capability: string; readonly processId: string | null }>(fixture, {
+      const stdin = spyOn(fixture.processManager, 'writeInput');
+      try {
+        await expect(fixture.admittedTool.execute({
         mode: 'run_background_process',
         processAction: 'write',
         sessionId: 'bg_missing',
         data: 'y\n',
         confirm: true,
         explicitUserRequest: 'Send y to the process.',
-      });
-      expect(writeAction.status).toBe('unsupported');
-      expect(writeAction.capability).toBe('stdinWrite');
-      expect(writeAction.processId).toBe('bg_missing');
-
-      const unconfirmedWrite = await fixture.tool.execute({
+        })).rejects.toBeInstanceOf(ToolInputProjectionError);
+        await expect(fixture.tool.execute({
         mode: 'run_background_process',
         processAction: 'write',
         sessionId: 'bg_missing',
         data: 'y\n',
         explicitUserRequest: 'Send y to the process.',
-      });
-      expect(unconfirmedWrite.success).toBe(true);
-      const unconfirmedWriteResult = JSON.parse(unconfirmedWrite.output ?? '{}') as { status: string; reason: string };
-      expect(unconfirmedWriteResult.status).toBe('needs_confirmation');
-      expect(unconfirmedWriteResult.reason).toContain('confirm:true');
+        })).rejects.toBeInstanceOf(ToolInputProjectionError);
+        expect(stdin).not.toHaveBeenCalled();
+        expect(fixture.processManager.list()).toEqual([]);
+      } finally { stdin.mockRestore(); }
 
       const sudo = await executeHarnessJson<{
         readonly status: string;
@@ -7684,6 +7803,11 @@ describe('agent_harness tool', () => {
   test('uses a discovered ProcessManager stdin method only after confirmation', async () => {
     const fixture = makeFixture();
     const writes: Array<{ readonly processId: string; readonly data: string }> = [];
+    const nativeWriteInput = fixture.processManager.writeInput;
+    const writeSpy = spyOn(fixture.processManager, 'writeInput').mockImplementation((processId, data, options) => {
+      writes.push({ processId, data });
+      return nativeWriteInput.call(fixture.processManager, processId, data, options);
+    });
     try {
       const started = await executeHarnessJson<{ readonly processId: string }>(fixture, {
         mode: 'run_background_process',
@@ -7692,12 +7816,7 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Start a process that can receive input.',
       });
-      Object.assign(fixture.processManager, {
-        writeInput: (processId: string, data: string) => {
-          writes.push({ processId, data });
-          return { ok: true, echoed: data, secret: 'TOKEN=hidden' };
-        },
-      });
+      expect(fixture.processManager.getStatus(started.processId)?.done).toBe(false);
 
       const capabilities = await executeHarnessJson<{
         readonly capabilities: {
@@ -7706,18 +7825,16 @@ describe('agent_harness tool', () => {
           readonly substrate: { readonly localProcessManager: { readonly stdinWrite: { readonly method: string; readonly executableByHarness: boolean } } };
         };
       }>(fixture, { mode: 'run_background_process', processAction: 'capabilities' });
-      expect(capabilities.capabilities.parity.find((entry) => entry.capability === 'process(write)')?.status).toBe('contract-discovered');
-      expect(capabilities.capabilities.stdinWrite.status).toBe('supported-with-confirmation');
-      expect(capabilities.capabilities.stdinWrite.guidance).toContain('confirm:true');
+      expect(capabilities.capabilities.parity.find((entry) => entry.capability === 'process(write)')?.status).toBe('supported');
+      expect(capabilities.capabilities.stdinWrite.status).toBe('supported');
+      expect(capabilities.capabilities.stdinWrite.guidance).toContain('current recorded admission');
       expect(capabilities.capabilities.substrate.localProcessManager.stdinWrite.method).toBe('writeInput');
       expect(capabilities.capabilities.substrate.localProcessManager.stdinWrite.executableByHarness).toBe(true);
 
       const wrote = await executeHarnessJson<{
         readonly status: string;
-        readonly capability: string;
         readonly processId: string;
-        readonly bytes: number;
-        readonly result: { readonly returned: boolean; readonly preview: string; readonly inputEchoRedacted: boolean; readonly policy: string };
+        readonly bytesWritten: number;
         readonly policy: string;
       }>(fixture, {
         mode: 'run_background_process',
@@ -7728,18 +7845,14 @@ describe('agent_harness tool', () => {
         explicitUserRequest: 'Send yes to the running process.',
       });
       expect(wrote.status).toBe('written');
-      expect(wrote.capability).toBe('stdinWrite');
       expect(wrote.processId).toBe(started.processId);
-      expect(wrote.bytes).toBe(4);
+      expect(wrote.bytesWritten).toBe(4);
       expect(writes).toEqual([{ processId: started.processId, data: 'yes\n' }]);
-      expect(wrote.result.returned).toBe(true);
-      expect(wrote.result.preview).toContain('TOKEN=<redacted>');
-      expect(wrote.result.preview).toContain('<redacted-input>');
-      expect(wrote.result.preview).not.toContain('hidden');
-      expect(wrote.result.preview).not.toContain('yes');
-      expect(wrote.result.inputEchoRedacted).toBe(true);
-      expect(wrote.result.policy).toContain('bounded');
-      expect(wrote.policy).toContain('not echoed');
+      expect(JSON.stringify(wrote)).not.toContain('yes');
+      expect(wrote).not.toHaveProperty('data');
+      expect(wrote).not.toHaveProperty('result');
+      expect(fixture.processManager.getOutput(started.processId)?.stdout).not.toContain('yes');
+      expect(wrote.policy).toContain('captured native stdin pipe');
 
       const stopped = await executeHarnessJson<{ readonly status: string }>(fixture, {
         mode: 'run_background_process',
@@ -7750,6 +7863,7 @@ describe('agent_harness tool', () => {
       });
       expect(stopped.status).toBe('stopped');
     } finally {
+      writeSpy.mockRestore();
       fixture.cleanup();
     }
   });
@@ -8229,7 +8343,7 @@ describe('agent_harness tool', () => {
         'merge-survivor',
         'stale-duplicates',
         'verify',
-        'delete-after-approval',
+        'delete-after-stale',
       ]);
       expect(curator.consolidationBatch?.topCandidates.some((candidate) => candidate.candidateId.includes('consolidation:skill'))).toBe(true);
       expect(curator.consolidationBatch?.topCandidates.some((candidate) => candidate.updateRoute?.includes('action:"update"'))).toBe(true);
@@ -8954,7 +9068,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
       registerStubTool(fixture.toolRegistry, 'agent_documents');
-      fixture.toolRegistry.register(createAgentArtifactsTool(artifacts.store));
+      registerAgentArtifactsTool(fixture.toolRegistry, artifacts.store);
       registerStubTool(fixture.toolRegistry, 'agent_knowledge_ingest');
       registerStubTool(fixture.toolRegistry, 'agent_model_compare');
       const documentRegistry = AgentDocumentRegistry.fromShellPaths(fixture.paths);
@@ -11585,7 +11699,7 @@ describe('agent_harness tool', () => {
       expect(denied.error).toContain('recorded effect admission');
       expect(fixture.openedSurfaces).toEqual([]);
 
-      const openedSettings = await fixture.tool.execute({
+      const openedSettings = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'settings',
         target: 'provider.model',
@@ -11597,7 +11711,7 @@ describe('agent_harness tool', () => {
       expectModelFacingText(openedSettings.output!);
       expect(fixture.openedSurfaces).toEqual([{ id: 'settings', detail: 'provider.model' }]);
 
-      const ambiguousSurface = await fixture.tool.execute({
+      const ambiguousSurface = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         query: 'picker',
         confirm: true,
@@ -11608,7 +11722,7 @@ describe('agent_harness tool', () => {
       expect(ambiguousSurface.output).toContain('model-picker');
       expect(fixture.openedSurfaces).toEqual([{ id: 'settings', detail: 'provider.model' }]);
 
-      const openedWorkspace = await fixture.tool.execute({
+      const openedWorkspace = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'agent-workspace',
         categoryId: 'knowledge',
@@ -11618,7 +11732,7 @@ describe('agent_harness tool', () => {
       expect(openedWorkspace.success).toBe(true);
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'agent-workspace', detail: 'knowledge' });
 
-      const disabledBrowserCockpit = await fixture.tool.execute({
+      const disabledBrowserCockpit = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'connected-browser-cockpit',
         confirm: true,
@@ -11634,7 +11748,7 @@ describe('agent_harness tool', () => {
       expect(disabledBrowserCockpitJson.descriptor?.modelRoute).toContain('computer action:"browser|open_browser"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'agent-workspace', detail: 'knowledge' });
 
-      const openedPanelPicker = await fixture.tool.execute({
+      const openedPanelPicker = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'panel-picker',
         confirm: true,
@@ -11643,7 +11757,7 @@ describe('agent_harness tool', () => {
       expect(openedPanelPicker.success).toBe(true);
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'panel-picker', detail: 'home' });
 
-      const openedSecurity = await fixture.tool.execute({
+      const openedSecurity = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'security-panel',
         confirm: true,
@@ -11652,7 +11766,7 @@ describe('agent_harness tool', () => {
       expect(openedSecurity.success).toBe(true);
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'agent-workspace', detail: 'tools' });
 
-      const openedKnowledge = await fixture.tool.execute({
+      const openedKnowledge = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'knowledge-panel',
         confirm: true,
@@ -11661,7 +11775,7 @@ describe('agent_harness tool', () => {
       expect(openedKnowledge.success).toBe(true);
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'agent-workspace', detail: 'knowledge' });
 
-      const openedSubscription = await fixture.tool.execute({
+      const openedSubscription = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'subscription-panel',
         confirm: true,
@@ -11670,7 +11784,7 @@ describe('agent_harness tool', () => {
       expect(openedSubscription.success).toBe(true);
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'agent-workspace', detail: 'setup' });
 
-      const openedProcessMonitor = await fixture.tool.execute({
+      const openedProcessMonitor = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'process-monitor',
         confirm: true,
@@ -11680,7 +11794,7 @@ describe('agent_harness tool', () => {
       expect(openedProcessMonitor.output).toContain('"status": "opened"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'process-monitor' });
 
-      const openedLiveTail = await fixture.tool.execute({
+      const openedLiveTail = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'live-tail',
         target: 'sleep',
@@ -11691,7 +11805,7 @@ describe('agent_harness tool', () => {
       expect(openedLiveTail.output).toContain('"processId": "bg-test"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'live-tail', detail: 'sleep' });
 
-      const openedConversationSearch = await fixture.tool.execute({
+      const openedConversationSearch = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'conversation-search',
         query: 'approval',
@@ -11702,7 +11816,7 @@ describe('agent_harness tool', () => {
       expect(openedConversationSearch.output).toContain('"query": "approval"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'conversation-search', detail: 'approval' });
 
-      const openedPromptHistorySearch = await fixture.tool.execute({
+      const openedPromptHistorySearch = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'prompt-history-search',
         query: 'deploy',
@@ -11713,7 +11827,7 @@ describe('agent_harness tool', () => {
       expect(openedPromptHistorySearch.output).toContain('"query": "deploy"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'prompt-history-search', detail: 'deploy' });
 
-      const openedSlashCommandMode = await fixture.tool.execute({
+      const openedSlashCommandMode = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'slash-command-mode',
         query: 'help',
@@ -11724,7 +11838,7 @@ describe('agent_harness tool', () => {
       expect(openedSlashCommandMode.output).toContain('"query": "help"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'slash-command-mode', detail: 'help' });
 
-      const openedCommandBrowser = await fixture.tool.execute({
+      const openedCommandBrowser = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'command-browser',
         confirm: true,
@@ -11738,7 +11852,7 @@ describe('agent_harness tool', () => {
         preSelectId: undefined,
       });
 
-      const openedFilePicker = await fixture.tool.execute({
+      const openedFilePicker = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'file-picker',
         target: 'inject',
@@ -11750,7 +11864,7 @@ describe('agent_harness tool', () => {
       expect(openedFilePicker.output).toContain('"mode": "inject"');
       expect(fixture.openedSurfaces.at(-1)).toEqual({ id: 'file-picker', detail: 'inject:src' });
 
-      const openedReasoningEffort = await fixture.tool.execute({
+      const openedReasoningEffort = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'reasoning-effort-picker',
         confirm: true,
@@ -11764,7 +11878,7 @@ describe('agent_harness tool', () => {
         preSelectId: 'medium',
       });
 
-      const openedBlockActions = await fixture.tool.execute({
+      const openedBlockActions = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'block-actions',
         confirm: true,
@@ -11776,7 +11890,7 @@ describe('agent_harness tool', () => {
 
       fixture.configManager.setDynamic('tts.provider', 'stream-voice');
       fixture.configManager.setDynamic('tts.voice', '');
-      const openedTtsProvider = await fixture.tool.execute({
+      const openedTtsProvider = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'tts-provider-picker',
         confirm: true,
@@ -11790,7 +11904,7 @@ describe('agent_harness tool', () => {
         preSelectId: 'stream-voice',
       });
 
-      const openedTtsProviderByQuery = await fixture.tool.execute({
+      const openedTtsProviderByQuery = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         query: 'streaming TTS provider picker',
         confirm: true,
@@ -11800,7 +11914,7 @@ describe('agent_harness tool', () => {
       expect(openedTtsProviderByQuery.output).toContain('"status": "opened"');
       expect(openedTtsProviderByQuery.output).toContain('"source": "query"');
 
-      const openedTtsVoice = await fixture.tool.execute({
+      const openedTtsVoice = await fixture.admittedTool.execute({
         mode: 'open_ui_surface',
         surfaceId: 'tts-voice-picker',
         target: 'stream-voice',
@@ -12509,8 +12623,10 @@ describe('agent_harness tool', () => {
         command: '/brief',
         explicitUserRequest: 'Show the briefing.',
       });
-      expect(preview.success).toBe(false);
-      expect(preview.error).toContain('recorded effect admission');
+      expect(preview.success).toBe(true);
+      expect(describeCommandPolicy('brief').effect).toBe('read-only');
+      expect(preview.output).toContain('Command /brief completed.');
+      expect(preview.output).toContain('briefing output');
       expect(fixture.printed).toEqual([]);
 
       const executed = await fixture.admittedTool.execute({
@@ -12539,7 +12655,7 @@ describe('agent_harness tool', () => {
       };
       expect(payload.policy.effect).toBe('ui-navigation');
       expect(payload.policy.preferredModelTool).toBe('agent_harness mode:"run_command" commandName:"work"');
-      expect(payload.policy.confirmation).toContain('confirm:true and explicitUserRequest');
+      expect(payload.policy.confirmation).toContain('current recorded engine admission');
       expect(payload.policy.boundary).toContain('native read-only work ledger');
       expect(payload.policy.boundary).toContain('existing read permissions');
       expect(payload.policy.boundary).toContain('access revocation invalidate the view');
@@ -12547,8 +12663,8 @@ describe('agent_harness tool', () => {
       expect(fixture.openedSurfaces).toEqual([]);
 
       for (const approval of [{ explicitUserRequest: 'Open the native work ledger.' }, { confirm: true }]) {
-        const refused = await fixture.tool.execute({ mode: 'run_command', command: '/work', ...approval });
-        expect(refused.success).toBe(false);
+        await expect(fixture.tool.execute({ mode: 'run_command', command: '/work', ...approval }))
+          .rejects.toBeInstanceOf(ToolInputProjectionError);
         expect(fixture.openedSurfaces).toEqual([]);
       }
       const opened = await fixture.admittedTool.execute({
@@ -12986,7 +13102,7 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const memoryRegistry = await createMemoryRegistry(fixture.paths, fixture.configManager);
-      fixture.toolRegistry.register(createAgentLocalRegistryTool(fixture.paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry)));
+      registerAgentLocalRegistryTool(fixture.toolRegistry, fixture.paths, memoryRegistry, createLocalMemoryAccess(memoryRegistry));
       const note = AgentNoteRegistry.fromShellPaths(fixture.paths).create({
         title: 'Daily triage',
         body: 'Read the queue, sort urgent items first, and summarize blocked work.',
@@ -13068,9 +13184,9 @@ describe('agent_harness tool', () => {
     const artifacts = createHarnessArtifactStore();
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
-      fixture.toolRegistry.register(createAgentDocumentsTool(fixture.paths, artifacts.store));
+      registerAgentDocumentsTool(fixture.toolRegistry, fixture.paths, artifacts.store);
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-create-draft',
         confirm: true,
@@ -13081,8 +13197,10 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
+      expect(unconfirmed.success).toBe(false);
+      expect(unconfirmed.error).toContain('current recorded effect admission');
+      expect(AgentDocumentRegistry.fromShellPaths(fixture.paths).list()).toEqual([]);
+      expect(artifacts.store.list()).toEqual([]);
 
       const created = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13280,7 +13398,7 @@ describe('agent_harness tool', () => {
     const artifacts = createHarnessArtifactStore();
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
-      fixture.toolRegistry.register(createAgentReviewPacketPresetsTool(artifacts.store));
+      registerAgentReviewPacketPresetsTool(fixture.toolRegistry, artifacts.store);
       const documentRegistry = AgentDocumentRegistry.fromShellPaths(fixture.paths);
       const draft = documentRegistry.create({
         title: 'Launch Packet',
@@ -13313,7 +13431,8 @@ describe('agent_harness tool', () => {
         },
       });
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const artifactsBefore = artifacts.store.list();
+      const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-save-review-packet-preset',
         confirm: true,
@@ -13322,11 +13441,10 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
-      expect(unconfirmed.output).toContain('Launch Packet preset');
-      expect(unconfirmed.output).toContain(docExport.id);
-      expect(unconfirmed.output).toContain(revealedJudgment.id);
+      expect(unconfirmed.success).toBe(false);
+      expect(unconfirmed.error).toContain('current recorded effect admission');
+      expect(artifacts.store.list()).toEqual(artifactsBefore);
+      expect(documentRegistry.get(draft.id)).toEqual(draft);
 
       const saved = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13443,12 +13561,9 @@ describe('agent_harness tool', () => {
     });
     const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
-      fixture.toolRegistry.register(createAgentReviewPacketShareTool(
-        artifacts.store,
-        fakeChannelDeliveryRouter(channelRequests),
-      ));
+      registerAgentReviewPacketShareTool(fixture.toolRegistry, artifacts.store, fakeChannelDeliveryRouter(channelRequests));
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-share-review-packet',
         confirm: true,
@@ -13458,9 +13573,9 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
-      expect(unconfirmed.output).toContain(archive.id);
+      expect(unconfirmed.success).toBe(false);
+      expect(unconfirmed.error).toContain('current recorded effect admission');
+      expect(artifacts.store.list()).toEqual([archive]);
       expect(channelRequests).toEqual([]);
 
       const shared = await fixture.admittedTool.execute({
@@ -13516,12 +13631,28 @@ describe('agent_harness tool', () => {
         secretToken: 'not-for-package',
       },
     });
-    const fixture = makeFixture({ artifactStore: artifacts.store });
+    const token = 'fixture-artifact-promotion-token';
+    const requests: unknown[] = [];
+    const host = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      const body: unknown = await request.json();
+      requests.push(body);
+      expect(request.method).toBe('POST');
+      expect(new URL(request.url).pathname).toBe('/api/goodvibes-agent/knowledge/ingest/artifact');
+      expect(request.headers.get('authorization')).toBe(`Bearer ${token}`);
+      expect(body).toEqual({ artifactId: 'artifact-1', title: 'Reviewed comparison report', tags: ['artifact', 'reviewed'],
+        connectorId: 'goodvibes-agent-artifact-browser', metadata: { originSurface: 'goodvibes-agent',
+          explicitUserRequest: 'Promote the reviewed comparison artifact into Agent Knowledge.' } });
+      return Response.json({ source: { id: 'synthetic-promoted-source', canonicalUri: 'artifact:artifact-1' }, artifactId: 'artifact-1' });
+    } });
+    if (host.port === undefined) throw new Error('Synthetic Knowledge handoff listener is unavailable.');
+    const fixture = makeFixture({ artifactStore: artifacts.store, controlPlanePort: host.port });
+    const previousEnv = clearEnvForTest(CONNECTED_HOST_AUTH_ENV_KEYS);
     try {
-      fixture.toolRegistry.register(createAgentArtifactsTool(artifacts.store, { projectRoot: fixture.root }));
-      registerStubTool(fixture.toolRegistry, 'agent_knowledge_ingest');
+      registerAgentArtifactsTool(fixture.toolRegistry, artifacts.store, { projectRoot: fixture.root });
+      writeConnectedHostOperatorToken(fixture, token);
+      registerAgentKnowledgeIngestTool(fixture.toolRegistry, fixture.paths, fixture.configManager);
 
-      const browse = await fixture.tool.execute({
+      const browse = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'artifact-browse',
         fields: {
@@ -13535,7 +13666,7 @@ describe('agent_harness tool', () => {
       expect(browse.output).toContain('comparison-export.md');
       expect(browse.output).not.toContain('not-for-transcript');
 
-      const show = await fixture.tool.execute({
+      const show = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-show-artifact',
         fields: {
@@ -13552,7 +13683,7 @@ describe('agent_harness tool', () => {
       expect(showPayload.output).toContain('"apiKey": "<redacted>"');
       expect(showPayload.output).not.toContain('not-for-transcript');
 
-      const unconfirmedExport = await fixture.admittedTool.execute({
+      const unconfirmedExport = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'artifact-export-file',
         confirm: true,
@@ -13563,8 +13694,9 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmedExport.success).toBe(true);
-      expect(unconfirmedExport.output).toContain('"status": "not_confirmed"');
+      expect(unconfirmedExport.success).toBe(false);
+      expect(unconfirmedExport.error).toContain('current recorded effect admission');
+      expect(existsSync(join(fixture.root, 'exports', 'comparison-export.md'))).toBe(false);
 
       const artifactExport = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13582,7 +13714,7 @@ describe('agent_harness tool', () => {
       expect(artifactExport.output).toContain('Exported Agent artifact');
       expect(readFileSync(join(fixture.root, 'exports', 'comparison-export.md'), 'utf-8')).toContain('Saved comparison report');
 
-      const unconfirmedPackage = await fixture.admittedTool.execute({
+      const unconfirmedPackage = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'artifact-export-package',
         confirm: true,
@@ -13593,8 +13725,9 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmedPackage.success).toBe(true);
-      expect(unconfirmedPackage.output).toContain('"status": "not_confirmed"');
+      expect(unconfirmedPackage.success).toBe(false);
+      expect(unconfirmedPackage.error).toContain('current recorded effect admission');
+      expect(existsSync(join(fixture.root, 'exports', 'comparison-package'))).toBe(false);
 
       const packageExport = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13621,7 +13754,7 @@ describe('agent_harness tool', () => {
       expect(readFileSync(join(packageRoot, packageFile ?? ''), 'utf-8')).toContain('"winner"');
       expect(packageExport.output).not.toContain('not-for-package');
 
-      const unconfirmedPromotion = await fixture.admittedTool.execute({
+      const unconfirmedPromotion = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'artifact-promote-knowledge',
         confirm: true,
@@ -13631,9 +13764,9 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmedPromotion.success).toBe(true);
-      expect(unconfirmedPromotion.output).toContain('"status": "not_confirmed"');
-      expect(unconfirmedPromotion.output).toContain('artifact-promote-knowledge');
+      expect(unconfirmedPromotion.success).toBe(false);
+      expect(unconfirmedPromotion.error).toContain('current recorded effect admission');
+      expect(requests).toEqual([]);
 
       const promotion = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13650,9 +13783,14 @@ describe('agent_harness tool', () => {
       expect(promotion.success).toBe(true);
       expect(promotion.output).toContain('"status": "executed_model_tool"');
       expect(promotion.output).toContain('"tool": "agent_knowledge_ingest"');
-      expect(promotion.output).toContain('agent_knowledge_ingest executed');
+      expect(promotion.output).toContain('Agent Knowledge artifact ingest accepted');
+      expect(promotion.output).toContain('synthetic-promoted-source');
+      expect(promotion.output).not.toContain(token);
+      expect(requests).toHaveLength(1);
     } finally {
       fixture.cleanup();
+      restoreEnvForTest(previousEnv);
+      host.stop(true);
     }
   });
 
@@ -13803,9 +13941,9 @@ describe('agent_harness tool', () => {
   test('runs confirmed research source workspace editor through agent_research_sources', async () => {
     const fixture = makeFixture();
     try {
-      fixture.toolRegistry.register(createAgentResearchSourcesTool(fixture.paths));
+      registerAgentResearchSourcesTool(fixture.toolRegistry, fixture.paths);
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'research-add-source',
         confirm: true,
@@ -13818,9 +13956,9 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
-      expect(unconfirmed.output).toContain('research-add-source');
+      expect(unconfirmed.success).toBe(false);
+      expect(unconfirmed.error).toContain('current recorded effect admission');
+      expect(AgentResearchSourceRegistry.fromShellPaths(fixture.paths).list()).toEqual([]);
 
       const saved = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13864,9 +14002,9 @@ describe('agent_harness tool', () => {
   test('runs confirmed research run workspace editor through agent_research_runs', async () => {
     const fixture = makeFixture();
     try {
-      fixture.toolRegistry.register(createAgentResearchRunsTool(fixture.paths));
+      registerAgentResearchRunsTool(fixture.toolRegistry, fixture.paths);
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'research-start-run',
         confirm: true,
@@ -13878,9 +14016,9 @@ describe('agent_harness tool', () => {
           confirm: 'no',
         },
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
-      expect(unconfirmed.output).toContain('research-start-run');
+      expect(unconfirmed.success).toBe(false);
+      expect(unconfirmed.error).toContain('current recorded effect admission');
+      expect(AgentResearchRunRegistry.fromShellPaths(fixture.paths).list()).toEqual([]);
 
       const saved = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13916,26 +14054,34 @@ describe('agent_harness tool', () => {
   });
 
   test('runs confirmed model compare workspace editor through agent_model_compare', async () => {
-    const fixture = makeFixture();
+    const artifacts = createHarnessArtifactStore();
+    const fixture = makeFixture({ artifactStore: artifacts.store });
     try {
       const modelCompareCalls: Record<string, unknown>[] = [];
-      fixture.toolRegistry.register({
-        definition: {
-          name: 'agent_model_compare',
-          description: 'agent_model_compare test tool',
-          parameters: {
-            type: 'object',
-            properties: {},
-            additionalProperties: true,
-          },
-        },
-        execute: async (rawArgs: Record<string, unknown>) => {
-          modelCompareCalls.push(rawArgs);
-          return { success: true, output: 'agent_model_compare executed' };
-        },
+      let providerCalls = 0;
+      const nativeComparison = createAgentModelCompareTool({
+        modelCatalog: { listModels: () => [] },
+        providerRegistry: { getForModel() { providerCalls++; throw new Error('Provider access is forbidden in this translation observer.'); } },
+        artifactStore: artifacts.store,
       });
+      const syntheticTranslationObserver: Tool = {
+        definition: nativeComparison.definition,
+        execute(rawArgs, options) {
+          options?.signal?.throwIfAborted();
+          expect(assertCurrentToolExecution(rawArgs, options)).toBe(true);
+          const mode = rawArgs.mode;
+          if (mode === 'run') expect(assertCurrentToolEffect(rawArgs, options, 'send')).toBe(true);
+          else if (['judge', 'apply', 'routeDecision', 'export', 'handoff', 'handoffArchive'].includes(String(mode))) {
+            expect(assertCurrentToolEffect(rawArgs, options, 'write')).toBe(true);
+          }
+          modelCompareCalls.push(rawArgs);
+          return { success: true, output: 'agent_model_compare executed by the synthetic translation observer' };
+        },
+      };
+      fixture.toolRegistry.register(syntheticTranslationObserver);
 
-      const unconfirmed = await fixture.admittedTool.execute({
+      const unconfirmedCallsBefore = modelCompareCalls.length;
+      const unconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-run-compare',
         fields: {
@@ -13945,8 +14091,11 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Compare release-note candidates.',
       });
-      expect(unconfirmed.success).toBe(true);
-      expect(unconfirmed.output).toContain('"status": "not_confirmed"');
+      expect(unconfirmed.success).toBe(false);
+      expect(unconfirmed.error).toContain('current recorded effect admission');
+      expect(modelCompareCalls).toHaveLength(unconfirmedCallsBefore);
+      expect(providerCalls).toBe(0);
+      expect(artifacts.store.list()).toEqual([]);
 
       const executed = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -13985,11 +14134,11 @@ describe('agent_harness tool', () => {
         taskType: 'local-model-route',
         modelRefs: ['ollama:qwen2.5-coder:7b', 'openai:gpt-4.1'],
         maxTokens: 1024,
-        confirm: true,
       });
+      expect(modelCompareCalls.at(-1)).not.toHaveProperty('confirm');
       expect(String(modelCompareCalls.at(-1)?.prompt)).toContain('Benchmark this local route');
 
-      const review = await fixture.tool.execute({
+      const review = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-review-compare',
         fields: {
@@ -14002,7 +14151,7 @@ describe('agent_harness tool', () => {
       expect(review.output).toContain('"tool": "agent_model_compare"');
       expect(review.output).toContain('agent_model_compare executed');
 
-      const sideBySide = await fixture.tool.execute({
+      const sideBySide = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-review-compare',
         fields: {
@@ -14023,7 +14172,7 @@ describe('agent_harness tool', () => {
         previewBytes: 600,
       });
 
-      const handoffDiff = await fixture.tool.execute({
+      const handoffDiff = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-review-compare',
         fields: {
@@ -14042,7 +14191,7 @@ describe('agent_harness tool', () => {
         rightArtifactId: 'artifact-10',
       });
 
-      const explicitHandoffDiff = await fixture.tool.execute({
+      const explicitHandoffDiff = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-diff-handoffs',
         fields: {
@@ -14062,7 +14211,8 @@ describe('agent_harness tool', () => {
         sectionId: 'related',
       });
 
-      const judgmentUnconfirmed = await fixture.admittedTool.execute({
+      const judgmentUnconfirmedCallsBefore = modelCompareCalls.length;
+      const judgmentUnconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-judge-compare',
         fields: {
@@ -14074,8 +14224,11 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Save comparison judgment.',
       });
-      expect(judgmentUnconfirmed.success).toBe(true);
-      expect(judgmentUnconfirmed.output).toContain('"status": "not_confirmed"');
+      expect(judgmentUnconfirmed.success).toBe(false);
+      expect(judgmentUnconfirmed.error).toContain('current recorded effect admission');
+      expect(modelCompareCalls).toHaveLength(judgmentUnconfirmedCallsBefore);
+      expect(providerCalls).toBe(0);
+      expect(artifacts.store.list()).toEqual([]);
 
       const judgment = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -14095,7 +14248,7 @@ describe('agent_harness tool', () => {
       expect(judgment.output).toContain('"tool": "agent_model_compare"');
       expect(judgment.output).toContain('agent_model_compare executed');
 
-      const analytics = await fixture.tool.execute({
+      const analytics = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-compare-analytics',
         fields: {
@@ -14119,7 +14272,7 @@ describe('agent_harness tool', () => {
         includeReasons: true,
       });
 
-      const synthesis = await fixture.tool.execute({
+      const synthesis = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-compare-analytics',
         fields: {
@@ -14144,7 +14297,8 @@ describe('agent_harness tool', () => {
         includeReasons: true,
       });
 
-      const applyUnconfirmed = await fixture.admittedTool.execute({
+      const applyUnconfirmedCallsBefore = modelCompareCalls.length;
+      const applyUnconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-apply-compare',
         fields: {
@@ -14154,8 +14308,11 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Apply comparison winner.',
       });
-      expect(applyUnconfirmed.success).toBe(true);
-      expect(applyUnconfirmed.output).toContain('"status": "not_confirmed"');
+      expect(applyUnconfirmed.success).toBe(false);
+      expect(applyUnconfirmed.error).toContain('current recorded effect admission');
+      expect(modelCompareCalls).toHaveLength(applyUnconfirmedCallsBefore);
+      expect(providerCalls).toBe(0);
+      expect(artifacts.store.list()).toEqual([]);
 
       const apply = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -14174,10 +14331,11 @@ describe('agent_harness tool', () => {
       expect(modelCompareCalls.at(-1)).toMatchObject({
         mode: 'apply',
         artifactId: 'artifact-2',
-        confirm: true,
       });
+      expect(modelCompareCalls.at(-1)).not.toHaveProperty('confirm');
 
-      const routeDecisionUnconfirmed = await fixture.admittedTool.execute({
+      const routeDecisionUnconfirmedCallsBefore = modelCompareCalls.length;
+      const routeDecisionUnconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-record-route-decision',
         fields: {
@@ -14188,8 +14346,11 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Leave comparison route unchanged.',
       });
-      expect(routeDecisionUnconfirmed.success).toBe(true);
-      expect(routeDecisionUnconfirmed.output).toContain('"status": "not_confirmed"');
+      expect(routeDecisionUnconfirmed.success).toBe(false);
+      expect(routeDecisionUnconfirmed.error).toContain('current recorded effect admission');
+      expect(modelCompareCalls).toHaveLength(routeDecisionUnconfirmedCallsBefore);
+      expect(providerCalls).toBe(0);
+      expect(artifacts.store.list()).toEqual([]);
 
       const routeDecision = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -14210,10 +14371,11 @@ describe('agent_harness tool', () => {
         mode: 'routeDecision',
         artifactId: 'artifact-2',
         decision: 'left-unchanged',
-        confirm: true,
       });
+      expect(modelCompareCalls.at(-1)).not.toHaveProperty('confirm');
 
-      const exportUnconfirmed = await fixture.admittedTool.execute({
+      const exportUnconfirmedCallsBefore = modelCompareCalls.length;
+      const exportUnconfirmed = await fixture.tool.execute({
         mode: 'run_workspace_action',
         actionId: 'document-export-compare',
         fields: {
@@ -14223,8 +14385,11 @@ describe('agent_harness tool', () => {
         confirm: true,
         explicitUserRequest: 'Export comparison report.',
       });
-      expect(exportUnconfirmed.success).toBe(true);
-      expect(exportUnconfirmed.output).toContain('"status": "not_confirmed"');
+      expect(exportUnconfirmed.success).toBe(false);
+      expect(exportUnconfirmed.error).toContain('current recorded effect admission');
+      expect(modelCompareCalls).toHaveLength(exportUnconfirmedCallsBefore);
+      expect(providerCalls).toBe(0);
+      expect(artifacts.store.list()).toEqual([]);
 
       const exportReport = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -14262,8 +14427,8 @@ describe('agent_harness tool', () => {
         mode: 'handoff',
         artifactId: 'artifact-2',
         relatedArtifactIds: ['artifact-doc', 'artifact-package'],
-        confirm: true,
       });
+      expect(modelCompareCalls.at(-1)).not.toHaveProperty('confirm');
 
       const archive = await fixture.admittedTool.execute({
         mode: 'run_workspace_action',
@@ -14283,8 +14448,10 @@ describe('agent_harness tool', () => {
       expect(modelCompareCalls.at(-1)).toMatchObject({
         mode: 'handoffArchive',
         artifactId: 'artifact-7',
-        confirm: true,
       });
+      expect(modelCompareCalls.at(-1)).not.toHaveProperty('confirm');
+      expect(providerCalls).toBe(0);
+      expect(artifacts.store.list()).toEqual([]);
     } finally {
       fixture.cleanup();
     }
@@ -14294,9 +14461,15 @@ describe('agent_harness tool', () => {
     const fixture = makeFixture();
     try {
       const previous = fixture.configManager.get('provider.model');
+      fixture.configManager.flushConfigFileChanges();
+      const paths = [fixture.configManager.getConfigPath(), fixture.configManager.getProjectConfigPath()]
+        .filter((path): path is string => typeof path === 'string');
+      const bytesBefore = paths.map(path => existsSync(path) ? readFileSync(path) : null);
       for (const confirm of [false, true]) {
-        const result = await fixture.tool.execute({ mode: 'set_setting', key: 'provider.model', value: 'openai:gpt-4.1', confirm, explicitUserRequest: 'Use this model.' });
-        expect(result.success).toBe(false); expect(fixture.configManager.get('provider.model')).toBe(previous);
+        await expect(fixture.tool.execute({ mode: 'set_setting', key: 'provider.model', value: 'openai:gpt-4.1', confirm, explicitUserRequest: 'Use this model.' }))
+          .rejects.toBeInstanceOf(ToolInputProjectionError);
+        expect(fixture.configManager.get('provider.model')).toBe(previous);
+        expect(paths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(bytesBefore);
       }
     } finally { fixture.cleanup(); }
   });
@@ -14406,23 +14579,32 @@ describe('agent_harness tool', () => {
         resolvedBy: 'search',
       });
 
-      const setByQuery = await fixture.admittedTool.execute({
+      const before = fixture.configManager.get('provider.reasoningEffort');
+      fixture.configManager.flushConfigFileChanges();
+      const configPaths = [fixture.configManager.getConfigPath(), fixture.configManager.getProjectConfigPath()]
+        .filter((path): path is string => typeof path === 'string');
+      const configBefore = configPaths.map(path => existsSync(path) ? readFileSync(path) : null);
+      await refusePreparedHarnessSetting(fixture, 'harness-reasoning-set-refusal', {
         mode: 'set_setting',
         query: 'reasoning',
         prefix: 'provider.reasoningEffort',
         value: 'high',
         confirm: true,
         explicitUserRequest: 'Use high reasoning effort.',
-      });
-      expect(setByQuery.success).toBe(false);
+      }, { operation: 'set', key: 'provider.reasoningEffort', value: 'high', previous: 'medium', appliedBy: 'local',
+        destinations: [{ path: fixture.paths.resolveUserPath('agent', 'settings.json'), tier: 'global', operation: 'set' }] });
+      expect(fixture.configManager.get('provider.reasoningEffort')).toBe(before);
+      expect(configPaths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(configBefore);
 
-      const resetByTarget = await fixture.admittedTool.execute({
+      await refusePreparedHarnessSetting(fixture, 'harness-reasoning-reset-refusal', {
         mode: 'reset_setting',
         target: 'PROVIDER.REASONINGEFFORT',
         confirm: true,
         explicitUserRequest: 'Reset reasoning effort.',
-      });
-      expect(resetByTarget.success).toBe(false);
+      }, { operation: 'reset', key: 'provider.reasoningEffort', value: 'medium', previous: 'medium', appliedBy: 'local',
+        destinations: [{ path: fixture.paths.resolveUserPath('agent', 'settings.json'), tier: 'global', operation: 'remove' }] });
+      expect(fixture.configManager.get('provider.reasoningEffort')).toBe(before);
+      expect(configPaths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(configBefore);
 
       const ambiguous = await fixture.tool.execute({
         mode: 'get_setting',
@@ -14443,11 +14625,32 @@ describe('agent_harness tool', () => {
       const key = buildGoodVibesSecretKey('surfaces.slack.botToken');
       const ref = buildGoodVibesSecretRef(key);
       fixture.configManager.setDynamic('surfaces.slack.botToken', ref);
-      const set = await fixture.admittedTool.execute({ mode: 'set_setting', key: 'surfaces.slack.botToken', value: 'xoxb-secret-value', confirm: true, explicitUserRequest: 'Set the token.' });
-      const reset = await fixture.admittedTool.execute({ mode: 'reset_setting', key: 'surfaces.slack.botToken', confirm: true, explicitUserRequest: 'Reset the token.' });
-      expect(set.success).toBe(false); expect(reset.success).toBe(false);
-      expect(set.error).not.toContain('xoxb-secret-value');
-      expect(fixture.configManager.get('surfaces.slack.botToken')).toBe(ref);
+      fixture.configManager.flushConfigFileChanges();
+      const configPaths = [fixture.configManager.getConfigPath(), fixture.configManager.getProjectConfigPath(),
+        fixture.paths.resolveUserPath('daemon', 'settings.json'), fixture.paths.resolveUserPath('daemon', 'secrets.enc'),
+        fixture.paths.resolveUserPath('daemon', 'secrets.json'), join(fixture.root, '.goodvibes', 'secrets.key')]
+        .filter((path): path is string => typeof path === 'string');
+      const configBefore = configPaths.map(path => existsSync(path) ? readFileSync(path) : null);
+      if (!fixture.secretsManager) throw new Error('Native secret owner is absent.');
+      const secretSet = spyOn(fixture.secretsManager, 'set');
+      const secretDelete = spyOn(fixture.secretsManager, 'delete');
+      try {
+        let set: unknown;
+        try { await fixture.admittedTool.execute({ mode: 'set_setting', key: 'surfaces.slack.botToken', value: 'xoxb-secret-value', confirm: true, explicitUserRequest: 'Set the token.' }); } catch (error) { set = error; }
+        expect(set).toBeInstanceOf(ToolInputProjectionError);
+        if (!(set instanceof ToolInputProjectionError)) throw new Error('Expected native secret projection refusals.');
+        expect(set.problem).toBe('unavailable');
+        expect(String(set)).not.toContain('xoxb-secret-value');
+        await refusePreparedHarnessSetting(fixture, 'harness-secret-reset-refusal',
+          { mode: 'reset_setting', key: 'surfaces.slack.botToken', confirm: true, explicitUserRequest: 'Reset the token.' },
+          { operation: 'reset', key: 'surfaces.slack.botToken', value: '', previous: { redacted: true, configured: true }, appliedBy: 'local',
+            destinations: [{ path: fixture.paths.resolveUserPath('agent', 'settings.json'), tier: 'global', operation: 'remove' },
+              { path: fixture.paths.resolveUserPath('daemon', 'settings.json'), tier: 'daemon', operation: 'remove' }],
+            credential: { operation: 'delete', key, scope: 'daemon', destinations: [] } });
+        expect(secretSet).not.toHaveBeenCalled(); expect(secretDelete).not.toHaveBeenCalled();
+        expect(configPaths.map(path => existsSync(path) ? readFileSync(path) : null)).toEqual(configBefore);
+        expect(fixture.configManager.get('surfaces.slack.botToken')).toBe(ref);
+      } finally { secretSet.mockRestore(); secretDelete.mockRestore(); }
     } finally { fixture.cleanup(); }
   });
 
@@ -14526,18 +14729,12 @@ interface CatalogPage {
 
 describe('agent_harness catalogs: an empty page states its cause', () => {
   let previousPort: JudgmentPort | undefined;
+  let fixtureLog: SqliteDecisionLog;
   beforeEach(() => {
-    const readings: Readonly<Record<string, Readonly<Record<string, number>>>> = {
-      'zzz-no-such-tool': {}, 'zzz-no-such-command': {},
-    };
-    previousPort = installJudgmentPort(fakePort((_name, _question, rawState) => {
-      const state = rawState as unknown as { query: string; candidate: { name: string } };
-      const probabilities = readings[state.query];
-      if (!probabilities) throw new Error(`Unscripted empty-catalog fixture ${state.query}`);
-      return noulAnswer(probabilities[state.candidate.name] ?? 0.01);
-    }).port);
+    fixtureLog = new SqliteDecisionLog(':memory:');
+    previousPort = installJudgmentPort(withDecisionLog(createHarnessFixtureReadings(), fixtureLog));
   });
-  afterEach(() => { installJudgmentPort(previousPort); });
+  afterEach(() => { installJudgmentPort(previousPort); fixtureLog[Symbol.dispose](); });
 
   test('an unqualified call returns the whole catalog for every discovery mode', async () => {
     const fixture = makeFixture({ builtinCommands: true });
