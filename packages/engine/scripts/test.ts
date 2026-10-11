@@ -1,4 +1,4 @@
-import { appendFileSync, createWriteStream, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, createWriteStream, fstatSync, lstatSync, mkdirSync, openSync, read, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
@@ -97,8 +97,15 @@ function captureEvidenceFile(path: string): () => void {
   };
 }
 
+interface TestOwnerLog {
+  readonly path: string;
+  readonly dev: number;
+  readonly ino: number;
+}
+
 /** Relay complete private logs without extending the shared execution deadline. */
-export async function replayTestOwnerLogs(paths: readonly string[], deadlineAt: number, sink: Writable = process.stdout, signal?: AbortSignal): Promise<{ outputTruncated: boolean; stopReason: string | null }> {
+export async function replayTestOwnerLogs(files: readonly TestOwnerLog[], deadlineAt: number, sink: Writable = process.stdout, signal?: AbortSignal,
+  assertEvidenceRoot: () => void = () => {}): Promise<{ outputTruncated: boolean; stopReason: string | null }> {
   const abort = new AbortController();
   const onInterrupt = () => abort.abort(new Error('Owner-log replay was interrupted'));
   const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
@@ -107,20 +114,50 @@ export async function replayTestOwnerLogs(paths: readonly string[], deadlineAt: 
   if (signal?.aborted) onInterrupt();
   const remaining = deadlineAt - Date.now();
   const timer = setTimeout(() => abort.abort(new Error('The shared absolute deadline expired during owner-log replay')), Math.max(1, remaining));
+  const opened: { readonly fd: number; readonly assertCurrent: () => void }[] = [];
   try {
     if (remaining <= 0 || abort.signal.aborted) return { outputTruncated: true, stopReason: 'The shared absolute deadline expired or replay was interrupted before owner-log replay' };
-    for (let index = 0; index < paths.length; index++) {
+    // Pin every original log before any asynchronous sink callback can replace a path.
+    for (const file of files) {
+      assertEvidenceRoot();
+      const fd = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const assertCurrent = () => {
+        assertEvidenceRoot();
+        const current = fstatSync(fd), path = lstatSync(file.path);
+        if (!current.isFile() || current.dev !== file.dev || current.ino !== file.ino || !path.isFile() || path.isSymbolicLink()
+          || path.dev !== current.dev || path.ino !== current.ino || realpathSync(file.path) !== file.path) throw new Error('Test owner log ownership changed');
+      };
+      opened.push({ fd, assertCurrent });
+      assertCurrent();
+    }
+    for (const [index, file] of opened.entries()) {
+      file.assertCurrent();
       const header = new ReadableStream<Uint8Array>({ start(controller) {
-        controller.enqueue(new TextEncoder().encode(`[test-owner ${index + 1}/${paths.length}]\n`));
+        controller.enqueue(new TextEncoder().encode(`[test-owner ${index + 1}/${opened.length}]\n`));
         controller.close();
       } });
       await pumpTestOutput(header, sink, { lastLine: null, lastFile: null }, abort.signal);
-      await pumpTestOutput(Bun.file(paths[index]!).stream(), sink, { lastLine: null, lastFile: null }, abort.signal);
+      file.assertCurrent();
+      let pendingRead: Promise<number> | undefined, cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          const bytes = new Uint8Array(64 * 1024);
+          pendingRead = new Promise((resolve, reject) => read(file.fd, bytes, 0, bytes.length, null,
+            (error, count) => error ? reject(error) : resolve(count)));
+          const count = await pendingRead;
+          if (cancelled) return;
+          if (count === 0) controller.close(); else controller.enqueue(bytes.subarray(0, count));
+        },
+        cancel() { cancelled = true; },
+      });
+      try { await pumpTestOutput(stream, sink, { lastLine: null, lastFile: null }, abort.signal); }
+      finally { cancelled = true; await pendingRead?.catch(() => {}); }
     }
     return { outputTruncated: false, stopReason: null };
   } catch {
     return { outputTruncated: true, stopReason: 'Owner-log replay failed or did not drain before the shared absolute deadline' };
   } finally {
+    for (const file of opened) closeSync(file.fd);
     clearTimeout(timer);
     for (const name of signals) process.off(name, onInterrupt);
     signal?.removeEventListener('abort', onInterrupt);
@@ -151,7 +188,7 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
         assertOwnerFile();
         if (readFileSync(ownerPath, 'utf8') !== ownerBytes) throw new Error('Test owner evidence issuer changed');
       };
-      const logFiles: { readonly path: string; readonly assertCurrent: () => void }[] = [];
+      const logFiles: (TestOwnerLog & { readonly assertCurrent: () => void })[] = [];
       const interrupted = new AbortController();
       const onInterrupt = () => interrupted.abort(new Error('The shared test runner was interrupted'));
       const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
@@ -168,7 +205,7 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
             const path = join(runTmpDir, `owner-${index + 1}.log`);
             const fd = openSync(path, 'wx', 0o600);
             const identity = fstatSync(fd);
-            logFiles[index] = { path, assertCurrent: () => {
+            logFiles[index] = { path, dev: identity.dev, ino: identity.ino, assertCurrent: () => {
               const current = lstatSync(path);
               if (!current.isFile() || current.isSymbolicLink() || current.dev !== identity.dev || current.ino !== identity.ino || realpathSync(path) !== path) {
                 throw new Error('Test owner log ownership changed');
@@ -211,7 +248,7 @@ export async function runTests(resolvePlans: () => readonly (readonly string[])[
             : { owner: index + 1, status: result.status }))}\n`);
           assertEvidenceRoot();
           for (const file of logFiles) file.assertCurrent();
-          replay = await replayTestOwnerLogs(logFiles.map(file => file.path), deadlineAt, process.stdout, interrupted.signal);
+          replay = await replayTestOwnerLogs(logFiles, deadlineAt, process.stdout, interrupted.signal, assertEvidenceRoot);
           const failed = replay.outputTruncated || interrupted.signal.aborted || results.some(result => result.status === 'rejected'
             || result.value.exitCode !== 0 || result.value.stopped !== null || result.value.outputTruncated);
           assertEvidenceRoot();

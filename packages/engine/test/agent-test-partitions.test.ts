@@ -229,19 +229,20 @@ test('CI keeps exact artifacts, complete gates, other product commands and uncha
 test('owner-log replay drains complete logs or reports bounded truncation and interruption', async () => {
   const { root } = fixture(), logs = [join(root, 'first.log'), join(root, 'second.log')];
   writeFileSync(logs[0]!, 'first complete tail\n'); writeFileSync(logs[1]!, 'second complete tail\n');
+  const files = logs.map(path => { const { dev, ino } = lstatSync(path); return { path, dev, ino }; });
   const chunks: Buffer[] = [];
   const delivered = new Writable({ write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
-  expect(await replayTestOwnerLogs(logs, Date.now() + 1000, delivered)).toEqual({ outputTruncated: false, stopReason: null });
+  expect(await replayTestOwnerLogs(files, Date.now() + 1000, delivered)).toEqual({ outputTruncated: false, stopReason: null });
   expect(Buffer.concat(chunks).toString()).toBe('[test-owner 1/2]\nfirst complete tail\n[test-owner 2/2]\nsecond complete tail\n');
   delivered.destroy();
   const blocked = new Writable({ write() { /* Actual sink accepts bytes but never acknowledges delivery. */ } });
   const started = Date.now();
-  const truncated = await replayTestOwnerLogs(logs, started + 200, blocked);
+  const truncated = await replayTestOwnerLogs(files, started + 200, blocked);
   expect(truncated.outputTruncated).toBe(true); expect(truncated.stopReason).toContain('shared absolute deadline');
   expect(Date.now() - started).toBeLessThan(2000); blocked.destroy();
   const interrupted = new Writable({ write() { /* Cancellation must also end a pending sink callback. */ } });
   const listeners = process.listenerCount('SIGTERM');
-  const pending = replayTestOwnerLogs(logs, Date.now() + 10000, interrupted);
+  const pending = replayTestOwnerLogs(files, Date.now() + 10000, interrupted);
   setTimeout(() => process.emit('SIGTERM'), 20);
   expect((await pending).outputTruncated).toBe(true); interrupted.destroy();
   expect(process.listenerCount('SIGTERM')).toBe(listeners);
@@ -487,4 +488,64 @@ test('settled owner diagnostics refuse a replaced native log before replay or ar
   expect(output).not.toContain('Unrelated private log must never be relayed or uploaded');
   expect(readFileSync(githubOutput, 'utf8')).toBe('');
   expect(readFileSync(peer, 'utf8')).toBe('Unrelated private log must never be relayed or uploaded');
+}, 60_000);
+
+test('owner-log replay pins original files across awaited headers and closes every descriptor on replacement', async () => {
+  for (const replacement of ['symlink', 'regular'] as const) {
+    const { root } = fixture(), scripts = copyRunner(root), nativeTmp = join(root, 'native-tmp');
+    mkdirSync(nativeTmp);
+    const peer = join(root, 'unrelated-peer.log'), githubOutput = join(root, 'github-output');
+    const observation = join(root, 'replay-observation.json'), children = join(root, 'children');
+    const marker = 'Unrelated synthetic file bytes must never enter owner replay';
+    writeFileSync(peer, marker); writeFileSync(githubOutput, '');
+    for (const file of ['first.test.ts', 'second.test.ts']) writeFileSync(join(scripts, '..', file), `
+      import {test,expect} from 'bun:test';import {appendFileSync} from 'node:fs';
+      test('owned ordinary output',()=>{appendFileSync(${JSON.stringify(children)},process.pid+'\\n');expect(true).toBe(true);});
+    `);
+    const wrapper = join(root, 'run.mjs');
+    writeFileSync(wrapper, `
+      import {runTests} from './packages/engine/scripts/test.ts';
+      import {existsSync,readdirSync,readlinkSync,renameSync,symlinkSync,writeFileSync} from 'node:fs';
+      import {join} from 'node:path';
+      const originalWrite=process.stdout.write.bind(process.stdout);let replaced=false;
+      process.stdout.write=(...args)=>{
+        if(!replaced&&(typeof args[0]==='string'?args[0]:new TextDecoder().decode(args[0])).includes('[test-owner 1/2]')){
+          const names=readdirSync(${JSON.stringify(nativeTmp)}).filter(name=>name.startsWith('goodvibes-sdk-testrun-'+process.pid+'-')&&existsSync(join(${JSON.stringify(nativeTmp)},name,'owner-2.log')));
+          if(names.length!==1)throw new Error('Expected one actual parent-owned log root');
+          const path=join(${JSON.stringify(nativeTmp)},names[0],'owner-2.log');
+          renameSync(path,path+'.original');
+          ${replacement === 'symlink' ? `symlinkSync(${JSON.stringify(peer)},path);` : `writeFileSync(path,${JSON.stringify(marker)});`}
+          replaced=true;
+        }
+        return originalWrite(...args);
+      };
+      try{await runTests(()=>[['./first.test.ts'],['./second.test.ts']]);}
+      catch{process.exitCode=1;}
+      finally{
+        process.stdout.write=originalWrite;
+        const openLogs=existsSync('/proc/self/fd')?readdirSync('/proc/self/fd').flatMap(fd=>{
+          try{const target=readlinkSync('/proc/self/fd/'+fd);return target.startsWith(${JSON.stringify(nativeTmp)})&&/owner-[12]\\.log/.test(target)?[target]:[];}catch{return [];}
+        }):null;
+        writeFileSync(${JSON.stringify(observation)},JSON.stringify({replaced,openLogs}));
+      }
+    `);
+    const parent = Bun.spawn([process.execPath, wrapper], {
+      cwd: root, env: { PATH: process.env.PATH ?? '', HOME: root, TMPDIR: nativeTmp, TMP: nativeTmp, TEMP: nativeTmp, GITHUB_OUTPUT: githubOutput }, stdout: 'pipe', stderr: 'pipe',
+    });
+    try {
+      const [code, stdout, stderr] = await Promise.all([parent.exited, new Response(parent.stdout).text(), new Response(parent.stderr).text()]);
+      const native: unknown = JSON.parse(readFileSync(observation, 'utf8'));
+      if (!native || typeof native !== 'object' || !('replaced' in native) || !('openLogs' in native)) throw new Error('Expected actual replay replacement observation');
+      expect(native.replaced).toBe(true);
+      if (process.platform === 'linux') expect(native.openLogs).toEqual([]);
+      expect(code).not.toBe(0); expect(stderr).toContain('goodvibes: test owner results ');
+      expect(stdout).not.toContain(marker); expect(stdout).not.toContain('[test-owner 2/2]');
+      expect(readFileSync(githubOutput, 'utf8')).toBe(''); expect(readFileSync(peer, 'utf8')).toBe(marker);
+      const pids = readFileSync(children, 'utf8').trim().split('\n').map(Number);
+      expect(new Set(pids).size).toBe(2);
+      for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      if (parent.exitCode === null) { parent.kill('SIGKILL'); await parent.exited; }
+    }
+  }
 }, 60_000);
